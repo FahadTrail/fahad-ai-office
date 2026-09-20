@@ -1,0 +1,34 @@
+# Secrets — nothing here may ever reach GitHub
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials/
+service-account*.json
+*service_role*
+*secret*.txt
+
+# Runtime output
+logs/
+*.log
+workspace/
+.claude/
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
