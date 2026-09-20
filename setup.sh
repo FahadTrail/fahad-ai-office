@@ -174,7 +174,7 @@ export async function getAgent(slug) {
 }
 
 export async function claimNextJob() {
-  const { data, error } = await db.schema('private').rpc('claim_next_job');
+  const { data, error } = await db.rpc('claim_next_job');
   if (error) throw new Error('claim_next_job failed: ' + error.message);
   return data && data.id ? data : null;
 }
@@ -622,7 +622,7 @@ try {
 }
 
 try {
-  const { error } = await db.schema('private').rpc('claim_next_job');
+  const { error } = await db.rpc('claim_next_job');
   if (error) throw new Error(error.message);
   pass('claim_next_job() callable');
 } catch (e) {
