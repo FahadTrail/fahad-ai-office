@@ -1,0 +1,13 @@
+node_modules
+logs
+.env
+.env.*
+.git
+.deploy-repo
+deploy-config-backup.*
+work
+test
+.github
+ops
+*.key
+*.pem

@@ -1,0 +1,30 @@
+services:
+  runtime:
+    build: .
+    image: fahad-ai-office/runtime:0.1.0
+    container_name: fahad-office-runtime
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - fahad-office-net
+    volumes:
+      - ./logs:/app/logs
+      - office-workspace:/app/workspace
+      - office-claude-home:/app/.claude
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  fahad-office-net:
+    name: fahad-office-net
+    driver: bridge
+
+volumes:
+  office-workspace:
+    name: fahad-office-workspace
+  office-claude-home:
+    name: fahad-office-claude-home
