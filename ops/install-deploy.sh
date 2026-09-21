@@ -9,6 +9,15 @@ APP=/opt/fahad-ai-office
 [[ -f /etc/sudoers.d/fahad-office-deploy && -f /usr/local/bin/fahad-office-deploy ]] || exit 1
 [[ $(command -v docker) == /usr/bin/docker ]] || exit 1
 id deploy >/dev/null
+DEPLOY_SSH=/home/deploy/.ssh
+[[ -d "$DEPLOY_SSH" && ! -L "$DEPLOY_SSH" && -f "$DEPLOY_SSH/authorized_keys" && ! -L "$DEPLOY_SSH/authorized_keys" ]] || exit 1
+# sshd reads authorized_keys under the target user's identity. Root-only 700
+# prevents even the already-authorized forced-command key from authenticating.
+# Group traversal restores that existing access; deploy still cannot edit keys.
+chown root:deploy "$DEPLOY_SSH"
+chmod 750 "$DEPLOY_SSH"
+chown root:root "$DEPLOY_SSH/authorized_keys"
+chmod 644 "$DEPLOY_SSH/authorized_keys"
 bash -n "$ROOT/ops/deploy.sh"
 visudo -c -f /etc/sudoers.d/fahad-office-deploy >/dev/null
 BACKUP=$(mktemp -d "$APP/deploy-config-backup.XXXXXXXX")

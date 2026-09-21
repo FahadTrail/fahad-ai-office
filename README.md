@@ -36,6 +36,10 @@ root authorization once, does not restart containers, and does not broaden
 the existing seven-command sudo whitelist. The workflow never updates these
 root-owned files itself. Infrastructure changes require a reviewed root install.
 
+The SSH directory is root-owned with group `deploy` and mode `750` so sshd can
+read the existing forced-command public key as the deploy user. `authorized_keys`
+remains root-owned and non-writable by deploy; the private key stays root-only.
+
 The legacy `setup.sh` and `deploy-setup.sh` now exit without changing anything.
 Their historical contents remain recoverable from Git history.
 
