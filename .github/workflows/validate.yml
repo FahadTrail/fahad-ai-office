@@ -1,0 +1,30 @@
+name: Validate Fahad AI Office
+
+on:
+  push:
+    branches: [codex/deployment-automation]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test readiness and rollback without live credentials
+        run: |
+          set -euo pipefail
+          for file in src/*.js; do node --check "$file"; done
+          node --test
+          bash -n setup.sh deploy-setup.sh ops/deploy.sh ops/install-deploy.sh
+      - name: Build locked runtime image
+        run: docker build --tag fahad-office-validation:${{ github.sha }} .
