@@ -10,6 +10,10 @@ function parseJsonObject(text) {
   }
 }
 
+function normalizedSecret(value) {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
 async function requestJson(url, init, fetchFn) {
   let response;
   try { response = await fetchFn(url, { ...init, signal: AbortSignal.timeout(120000) }); }
@@ -35,7 +39,7 @@ async function requestJson(url, init, fetchFn) {
 export class OpenAIAdapter {
   constructor({ apiKey, model = 'gpt-5.3-codex', fetchFn = fetch } = {}) {
     if (model !== 'gpt-5.3-codex') throw new ContinuityError('Only gpt-5.3-codex is approved for the primary provider');
-    this.name = 'openai'; this.model = model; this.apiKey = apiKey; this.fetchFn = fetchFn;
+    this.name = 'openai'; this.model = model; this.apiKey = normalizedSecret(apiKey); this.fetchFn = fetchFn;
   }
   async complete({ instructions, input, metadata = {} }) {
     if (!this.apiKey) throw new ContinuityError('OPENAI_API_KEY is unavailable', { status: 401, type: 'authentication_error' });
@@ -57,7 +61,7 @@ export class OpenAIAdapter {
 export class AnthropicAdapter {
   constructor({ apiKey, model = 'claude-sonnet-5', fetchFn = fetch } = {}) {
     if (model !== 'claude-sonnet-5') throw new ContinuityError('Only claude-sonnet-5 is approved for the backup provider');
-    this.name = 'anthropic'; this.model = model; this.apiKey = apiKey; this.fetchFn = fetchFn;
+    this.name = 'anthropic'; this.model = model; this.apiKey = normalizedSecret(apiKey); this.fetchFn = fetchFn;
   }
   async complete({ instructions, input }) {
     if (!this.apiKey) throw new ContinuityError('ANTHROPIC_API_KEY is unavailable', { status: 401, type: 'authentication_error' });
