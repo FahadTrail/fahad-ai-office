@@ -28,7 +28,7 @@ function fixture(overrides = {}) {
 test('readiness uses GET only and never invokes the claim RPC or an AI endpoint', async () => {
   const f = fixture();
   assert.equal(await checkHealth({ env, fetchFn: f.fetchFn, verifyCode: false }), true);
-  assert.equal(f.requests.length, 3);
+  assert.equal(f.requests.length, 4);
   for (const { url, options } of f.requests) {
     assert.equal(options.method, 'GET');
     assert.equal(url.origin, env.SUPABASE_URL);
@@ -41,6 +41,11 @@ test('missing credentials fail before network access', async () => {
   const f = fixture();
   await assert.rejects(checkHealth({ env: { ...env, ANTHROPIC_API_KEY: '' }, fetchFn: f.fetchFn, verifyCode: false }), /Missing/);
   assert.equal(f.requests.length, 0);
+  await assert.rejects(checkHealth({
+    env: { ...env, MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,openai' },
+    fetchFn: f.fetchFn,
+    verifyCode: false,
+  }), /OPENAI_API_KEY/);
 });
 test('database errors fail readiness without exposing response text', async () => {
   const f = fixture({ ok: false, status: 401, json: async () => ({ secret: 'not-for-logs' }) });

@@ -164,6 +164,7 @@ class MemoryStore {
     this.runs = [];
     this.results = [];
     this.handoffs = [];
+    this.modelAttempts = [];
     this.events = [];
   }
 
@@ -264,6 +265,11 @@ class MemoryStore {
   }
 
   async setRunModel(runId, model) { this.runs.find((run) => run.id === runId).model = model; }
+  async recordModelAttempt(attempt) {
+    const index = this.modelAttempts.findIndex((candidate) => candidate.id === attempt.id);
+    if (index >= 0) this.modelAttempts[index] = structuredClone(attempt);
+    else this.modelAttempts.push(structuredClone(attempt));
+  }
   async touchTask(taskId, progress) {
     const task = this.tasks.find((candidate) => candidate.id === taskId);
     if (task.status === 'running') { task.started_at = this.now; task.progress = progress; }
