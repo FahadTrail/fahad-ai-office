@@ -37,13 +37,18 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
     if (!response.ok) throw new Error('Database readiness request failed (HTTP ' + response.status + ')');
     return response.json();
   }
-  const agents = await get('/rest/v1/agents?select=id,slug,system_prompt&slug=eq.chief-of-staff&limit=1');
-  if (!Array.isArray(agents) || agents.length !== 1 || !agents[0].id || !agents[0].system_prompt || agents[0].system_prompt.length < 100) {
-    throw new Error('Chief of Staff configuration is missing or incomplete');
+  const agents = await get('/rest/v1/agents?select=id,slug,system_prompt,allowed_tools&slug=in.(chief-of-staff,research-strategy)');
+  if (!Array.isArray(agents) || agents.length !== 2 || agents.some((agent) => !agent.id || !agent.system_prompt || agent.system_prompt.length < 100)) {
+    throw new Error('Chief or Research configuration is missing or incomplete');
   }
+  const research = agents.find((agent) => agent.slug === 'research-strategy');
+  const tools = (research?.allowed_tools || []).map((tool) => String(tool).toLowerCase());
+  if (!tools.includes('web_search') || !tools.includes('web_fetch')) throw new Error('Research web tools are not authorized');
   // Read the service-role API schema instead of calling the mutating claim RPC.
   const spec = await get('/rest/v1/', 'application/openapi+json');
-  if (!spec.paths?.['/rpc/claim_next_job']?.post) throw new Error('Public claim_next_job RPC is not exposed to the runtime');
+  for (const name of ['claim_next_job', 'claim_next_task', 'create_task', 'complete_task', 'fail_task', 'requeue_stale_tasks']) {
+    if (!spec.paths?.['/rpc/' + name]?.post) throw new Error(`Public ${name} RPC is not exposed to the runtime`);
+  }
   await get('/rest/v1/jobs?select=id&limit=0');
   return true;
 }
@@ -60,10 +65,10 @@ export async function main() {
       return;
     }
     await checkHealth();
-    console.log('HEALTHCHECK PASSED: code, SDK, database, Chief configuration, and public RPC; no AI calls or data writes');
+    console.log('HEALTHCHECK PASSED: code, SDK, database, Chief/Research configuration, and workflow RPCs; no AI calls or data writes');
   } catch (error) {
     const message = String(error.message);
-    console.error('HEALTHCHECK FAILED: ' + (/^(Missing or placeholder|SUPABASE_URL must|JavaScript syntax|Claude Agent SDK query|Supabase client export|Database readiness request|Chief of Staff configuration|Public claim_next_job)/.test(message) ? message : 'dependency or network check failed'));
+    console.error('HEALTHCHECK FAILED: ' + (/^(Missing or placeholder|SUPABASE_URL must|JavaScript syntax|Claude Agent SDK query|Supabase client export|Database readiness request|Chief or Research configuration|Research web tools|Public .* RPC)/.test(message) ? message : 'dependency or network check failed'));
     process.exitCode = 1;
   } finally {
     clearTimeout(deadline);

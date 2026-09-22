@@ -1,6 +1,5 @@
-// Database layer. Every meaningful thing that happens in the office
-// is written to `events` — the single source of truth for the future
-// Live Feed and 3D office.
+// Supabase is the durable workflow authority. State transitions that require
+// locking or idempotency stay in the existing service-role-only RPCs.
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -20,42 +19,142 @@ export function log(...parts) {
   console.log('[' + new Date().toISOString() + ']', ...parts);
 }
 
-// Never throws: a logging failure must not kill a job.
-export async function emit(event) {
-  const row = {
-    job_id: event.jobId ?? null,
-    task_id: event.taskId ?? null,
-    run_id: event.runId ?? null,
-    agent_id: event.agentId ?? null,
-    from_agent_id: event.fromAgentId ?? null,
-    to_agent_id: event.toAgentId ?? null,
-    type: event.type,
-    level: event.level ?? 'info',
-    message: event.message,
-    payload: event.payload ?? {},
-  };
+export class SupabaseStore {
+  constructor(client = db) {
+    this.db = client;
+  }
 
-  const { error } = await db.from('events').insert(row);
-  if (error) {
-    log('WARN  could not write event:', error.message);
-  } else {
-    log('event  ' + row.type.padEnd(18) + ' ' + row.message);
+  async emit(event) {
+    const row = {
+      job_id: event.jobId ?? null,
+      task_id: event.taskId ?? null,
+      run_id: event.runId ?? null,
+      agent_id: event.agentId ?? null,
+      from_agent_id: event.fromAgentId ?? null,
+      to_agent_id: event.toAgentId ?? null,
+      type: event.type,
+      level: event.level ?? 'info',
+      message: event.message,
+      payload: event.payload ?? {},
+    };
+    const { error } = await this.db.from('events').insert(row);
+    if (error) log('WARN  could not write event:', error.message);
+    else log('event  ' + row.type.padEnd(18) + ' ' + row.message);
+  }
+
+  async getAgent(slug) {
+    const { data, error } = await this.db.from('agents').select('*').eq('slug', slug).single();
+    if (error) throw new Error(`Agent "${slug}" not found: ${error.message}`);
+    return data;
+  }
+
+  async claimNextJob() {
+    const { data, error } = await this.db.rpc('claim_next_job');
+    if (error) throw new Error('claim_next_job failed: ' + error.message);
+    return data?.id ? data : null;
+  }
+
+  async claimNextTask() {
+    const { data, error } = await this.db.rpc('claim_next_task', { p_agent_slug: null });
+    if (error) throw new Error('claim_next_task failed: ' + error.message);
+    return data?.task_id ? data : null;
+  }
+
+  async ensureTask({ jobId, agentSlug, title, brief, sequence, dependsOn = [], maxAttempts = 3 }) {
+    const { data: rows, error: readError } = await this.db
+      .from('tasks')
+      .select('id,agent_id,title,brief,sequence,depends_on,max_attempts,status')
+      .eq('job_id', jobId)
+      .eq('sequence', sequence)
+      .limit(2);
+    if (readError) throw new Error('Could not inspect task sequence: ' + readError.message);
+    if (rows.length > 1) throw new Error(`Duplicate workflow tasks found at sequence ${sequence}`);
+
+    const agent = await this.getAgent(agentSlug);
+    if (rows.length === 1) {
+      const task = rows[0];
+      const actualDependencies = [...(task.depends_on || [])].sort();
+      const expectedDependencies = [...dependsOn].sort();
+      if (task.agent_id !== agent.id || task.title !== title ||
+          JSON.stringify(actualDependencies) !== JSON.stringify(expectedDependencies)) {
+        throw new Error(`Existing task at sequence ${sequence} conflicts with the workflow plan`);
+      }
+      return { ...task, created: false };
+    }
+
+    const { data: taskId, error } = await this.db.rpc('create_task', {
+      p_job: jobId,
+      p_agent_slug: agentSlug,
+      p_title: title,
+      p_brief: brief,
+      p_sequence: sequence,
+      p_depends_on: dependsOn,
+      p_max_attempts: maxAttempts,
+    });
+    if (error) throw new Error('create_task failed: ' + error.message);
+    return { id: taskId, agent_id: agent.id, title, brief, sequence, depends_on: dependsOn, created: true };
+  }
+
+  async completeTask(task, outcome, summary) {
+    const { data, error } = await this.db.rpc('complete_task', {
+      p_task: task.task_id,
+      p_run: task.run_id,
+      p_summary: summary,
+      p_content: outcome.text,
+      p_format: 'markdown',
+      p_tokens_in: outcome.tokensIn,
+      p_tokens_out: outcome.tokensOut,
+      p_cost: outcome.costUsd,
+    });
+    if (error) throw new Error('complete_task failed: ' + error.message);
+    return data;
+  }
+
+  async failTask(task, errorMessage) {
+    const { data, error } = await this.db.rpc('fail_task', {
+      p_task: task.task_id,
+      p_run: task.run_id,
+      p_error: errorMessage,
+    });
+    if (error) throw new Error('fail_task failed: ' + error.message);
+    return data;
+  }
+
+  async requeueStaleTasks(minutes) {
+    const { data, error } = await this.db.rpc('requeue_stale_tasks', {
+      p_older_than: `${minutes} minutes`,
+    });
+    if (error) throw new Error('requeue_stale_tasks failed: ' + error.message);
+    return Number(data || 0);
+  }
+
+  async setRunModel(runId, model) {
+    const { error } = await this.db.from('runs').update({ model }).eq('id', runId).eq('status', 'running');
+    if (error) throw new Error('Could not record run model: ' + error.message);
+  }
+
+  async touchTask(taskId, progress) {
+    const values = { started_at: new Date().toISOString() };
+    if (Number.isInteger(progress)) values.progress = Math.max(0, Math.min(99, progress));
+    const { error } = await this.db.from('tasks').update(values).eq('id', taskId).eq('status', 'running');
+    if (error) throw new Error('Could not update task heartbeat: ' + error.message);
+  }
+
+  async createJob({ title, goal, priority = 'normal' }) {
+    const { data, error } = await this.db
+      .from('jobs')
+      .insert({ title, goal, priority, status: 'planning' })
+      .select('id,title,goal,status,priority')
+      .single();
+    if (error) throw new Error('Could not create job: ' + error.message);
+    return data;
+  }
+
+  async getJob(jobId) {
+    const { data, error } = await this.db.from('jobs').select('*').eq('id', jobId).single();
+    if (error) throw new Error('Could not read job: ' + error.message);
+    return data;
   }
 }
 
-export async function getAgent(slug) {
-  const { data, error } = await db
-    .from('agents')
-    .select('*')
-    .eq('slug', slug)
-    .single();
-
-  if (error) throw new Error('Agent "' + slug + '" not found: ' + error.message);
-  return data;
-}
-
-export async function claimNextJob() {
-  const { data, error } = await db.rpc('claim_next_job');
-  if (error) throw new Error('claim_next_job failed: ' + error.message);
-  return data && data.id ? data : null;
-}
+export const store = new SupabaseStore();

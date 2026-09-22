@@ -1,14 +1,14 @@
-// Office Runtime v1.
-// The only always-on process, and deliberately tiny. Holds no AI in
-// memory and spends no tokens while idle. Opens no ports.
+// Office Runtime v2: one durable Chief → Research → Chief workflow worker.
+// It opens no ports and performs no AI work while idle.
 
-import { claimNextJob, log } from './db.js';
-import { runJob } from './chief.js';
 import { writeFileSync } from 'node:fs';
+import { store, log } from './db.js';
+import { OfficeWorkflow } from './workflow.js';
 import { checkHealth } from './healthcheck.js';
+import { CHIEF_MODEL, RESEARCH_MODEL } from './config.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
-
+const workflow = new OfficeWorkflow({ store });
 let running = true;
 let busy = false;
 let lastPollAt = 0;
@@ -26,11 +26,11 @@ process.on('SIGINT', shutdown);
 function shutdown() {
   if (!running) return;
   running = false;
-  log('Shutdown signal received. Finishing current job, then stopping.');
+  log('Shutdown signal received. Finishing current task, then stopping.');
 }
 
 function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function main() {
@@ -38,44 +38,34 @@ async function main() {
   await checkHealth();
   heartbeatTimer = setInterval(heartbeat, 5000);
   log('------------------------------------------------------------');
-  log('Fahad AI Office - Runtime v1');
-  log('Agents online: Chief of Staff');
-  log('Model: ' + (process.env.CHIEF_MODEL || 'claude-sonnet-5'));
+  log('Fahad AI Office - Runtime v2 (Chief -> Research -> Chief)');
+  log('Agents online: Chief of Staff, Research & Strategy');
+  log('Models: Chief=' + CHIEF_MODEL + ', Research=' + RESEARCH_MODEL);
   log('Idle check every ' + IDLE_MS + 'ms. No ports exposed.');
   log('------------------------------------------------------------');
 
   while (running) {
     try {
-      const job = await claimNextJob();
+      busy = true;
+      const progressed = await workflow.runOnce();
+      lastPollAt = Date.now();
+      busy = false;
+      heartbeat();
+      if (!progressed) await sleep(IDLE_MS);
+    } catch (error) {
+      busy = false;
       lastPollAt = Date.now();
       heartbeat();
-
-      if (!job) {
-        await sleep(IDLE_MS);
-        continue;
-      }
-
-      busy = true;
-      log('WAKE   job ' + job.id + ' - "' + job.goal.slice(0, 80) + '"');
-
-      await runJob(job);
-
-      busy = false;
-      log('SLEEP  office idle, waiting for the next job.');
-    } catch (err) {
-      busy = false;
-      log('RUNTIME ERROR:', err.message || err);
+      log('RUNTIME ERROR:', error.message || error);
       await sleep(IDLE_MS * 2);
     }
   }
 
-  while (busy) await sleep(500);
   clearInterval(heartbeatTimer);
   log('Runtime stopped cleanly.');
-  process.exit(0);
 }
 
-main().catch((err) => {
-  log('FATAL:', err);
+main().catch((error) => {
+  log('FATAL:', error.message || error);
   process.exit(1);
 });
