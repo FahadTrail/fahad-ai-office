@@ -8,6 +8,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'test/**'
+      - 'ops/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 

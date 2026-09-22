@@ -19,10 +19,11 @@ COPIED=0
 SAVED=0
 SWITCHED=0
 restore_sources() {
-  for file in "$APP"/src/*.js; do
-    [[ -f "$BACKUP/src/$(basename "$file")" ]] || rm -f -- "$file"
-  done
-  cp -f "$BACKUP"/src/*.js "$APP/src/"
+  if [[ -d "$BACKUP/previous-src" ]]; then
+    [[ ! -e "$BACKUP/failed-src" ]] || { say 'ROLLBACK FAILED: failed source snapshot already exists'; exit 1; }
+    [[ ! -d "$APP/src" ]] || mv "$APP/src" "$BACKUP/failed-src"
+    mv "$BACKUP/previous-src" "$APP/src"
+  fi
   cp -f "$BACKUP/package.json" "$APP/package.json"
   [[ ! -f "$BACKUP/package-lock.json" ]] || cp -f "$BACKUP/package-lock.json" "$APP/package-lock.json"
 }
@@ -72,14 +73,16 @@ say "Candidate commit $COMMIT"
 for file in db.js chief.js index.js selftest.js healthcheck.js; do
   [[ -f "$REPO/src/$file" && ! -L "$REPO/src/$file" ]] || rollback "missing source file: $file"
 done
+[[ -z "$(find "$REPO/src" -type l -print -quit)" ]] || rollback 'source tree contains a symbolic link'
 [[ -f "$REPO/package.json" && -s "$REPO/package-lock.json" ]] || rollback 'missing package manifest or lockfile'
-cp -a "$APP/src" "$BACKUP/src"
 cp -p "$APP/package.json" "$BACKUP/package.json"
 [[ ! -f "$APP/package-lock.json" ]] || cp -p "$APP/package-lock.json" "$BACKUP/package-lock.json"
 sudo "$DOCKER" image tag "$IMAGE" "$PREVIOUS"
 SAVED=1
+cp -a "$REPO/src" "$BACKUP/candidate-src"
 COPIED=1
-cp -f "$REPO"/src/*.js "$APP/src/"
+mv "$APP/src" "$BACKUP/previous-src"
+mv "$BACKUP/candidate-src" "$APP/src"
 cp -f "$REPO/package.json" "$APP/package.json"
 cp -f "$REPO/package-lock.json" "$APP/package-lock.json"
 say 'Building candidate; current runtime remains running'

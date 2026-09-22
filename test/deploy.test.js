@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -17,6 +17,10 @@ for (const scenario of ['success', 'build-failed', 'preflight-failed', 'startup-
         writeFileSync(join(dir, 'src', name), 'old-source');
         writeFileSync(join(dir, '.deploy-repo/src', name), 'new-source');
       }
+      mkdirSync(join(dir, 'src', 'legacy'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'legacy', 'old.js'), 'old-nested-source');
+      mkdirSync(join(dir, '.deploy-repo/src', 'model-gateway'), { recursive: true });
+      writeFileSync(join(dir, '.deploy-repo/src', 'model-gateway', 'gateway.js'), 'new-nested-source');
       for (const name of ['package.json', 'package-lock.json']) {
         writeFileSync(join(dir, name), 'old-manifest');
         writeFileSync(join(dir, '.deploy-repo', name), 'new-manifest');
@@ -50,6 +54,8 @@ sudo() {
       const switched = !['build-failed', 'preflight-failed'].includes(scenario);
       assert.equal(commands.includes(' up -d'), switched);
       assert.equal(readFileSync(join(dir, 'src/index.js'), 'utf8'), scenario === 'success' ? 'new-source' : 'old-source');
+      assert.equal(existsSync(join(dir, 'src', 'model-gateway', 'gateway.js')), scenario === 'success');
+      assert.equal(existsSync(join(dir, 'src', 'legacy', 'old.js')), scenario !== 'success');
       assert.equal(readFileSync(join(dir, 'package-lock.json'), 'utf8'), scenario === 'success' ? 'new-manifest' : 'old-manifest');
       if (scenario === 'success') assert.match(result.stdout, /DEPLOYMENT SUCCESSFUL/);
       else if (switched) assert.match(result.stdout, /ROLLBACK SUCCEEDED/);
