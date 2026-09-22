@@ -1,6 +1,6 @@
 # Development Continuity POC
 
-This Phase 1 proof is a one-shot, logically isolated controller. It does not change `src/index.js`, `src/chief.js`, the healthcheck, Docker Compose, or the deployment workflow. It does not start Fahad AI Office Step 3C.
+This Phase 1 proof is a one-shot, logically isolated controller under `continuity/`. It does not change `src/index.js`, `src/chief.js`, the healthcheck, Docker Compose, the production image, or the deployment workflow. It does not start Fahad AI Office Step 3C.
 
 ## Scope
 
@@ -10,7 +10,7 @@ This Phase 1 proof is a one-shot, logically isolated controller. It does not cha
 - Base branch: `main`
 - Allowed change during the proof: `continuity-poc-proof.md`
 - State namespace: Supabase tables and RPCs prefixed with `continuity_`
-- Runtime entry point: `node src/continuity-poc.js`
+- Manual POC entry point: `node continuity/src/continuity-poc.js`
 
 The models never receive API keys, database keys, GitHub credentials, shell access, or direct infrastructure access. They return structured proposals. The controller validates those proposals and performs only the explicitly allowed operations.
 
@@ -29,7 +29,7 @@ Do not commit these values, add them to prompts, or store them in Supabase event
 
 ## State and ownership
 
-`ops/continuity-schema.sql` creates isolated task, checkpoint, event, usage, and handoff records. Row Level Security is enabled; anonymous and authenticated roles receive no access. The server-side Supabase role is the only application role granted access.
+`continuity/ops/continuity-schema.sql` creates isolated task, checkpoint, event, usage, and handoff records. Row Level Security is enabled; anonymous and authenticated roles receive no access. The server-side Supabase role is the only application role granted access.
 
 The lease RPC guarantees one writer. The handoff RPC changes ownership and records the handoff in one transaction. A stale writer cannot finalize a task because finalization requires the current lease token.
 
@@ -46,11 +46,10 @@ The lease RPC guarantees one writer. The handoff RPC changes ownership and recor
 9. The controller writes Claude's continuation and reruns tests.
 10. The controller creates one idempotent commit and pull request and records the result.
 
-The production runtime never invokes this entry point automatically. Run it only after the schema and server-side credentials are present:
+The production runtime and production image never include or invoke this entry point automatically. Run it only from an isolated checkout after the schema and server-side credentials are present:
 
 ```sh
-cd /opt/fahad-ai-office
-docker compose run --rm --no-deps runtime node src/continuity-poc.js
+node continuity/src/continuity-poc.js
 ```
 
 Generated proof files remain in their evidence pull requests and are not part of the controller source merged into `main`. The simulated failure adapter is confined to this manual POC entry point; the reusable provider adapters do not simulate failures.
