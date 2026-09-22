@@ -133,6 +133,41 @@ export class SupabaseStore {
     if (error) throw new Error('Could not record run model: ' + error.message);
   }
 
+  async recordModelAttempt(attempt) {
+    const usage = attempt.usage || {};
+    const row = {
+      id: attempt.id,
+      workspace_id: attempt.context?.workspaceId || null,
+      job_id: attempt.context?.jobId,
+      task_id: attempt.context?.taskId,
+      run_id: attempt.context?.runId,
+      attempt_no: attempt.attemptNo,
+      provider_attempt: attempt.providerAttempt,
+      provider: attempt.provider,
+      model: attempt.model,
+      stage: attempt.stage,
+      status: attempt.status,
+      idempotency_key: attempt.idempotencyKey,
+      client_request_id: attempt.clientRequestId,
+      provider_request_id: attempt.providerRequestId || null,
+      route: attempt.route || [],
+      input_tokens: Number(usage.inputTokens || 0),
+      output_tokens: Number(usage.outputTokens || 0),
+      reasoning_tokens: Number(usage.reasoningTokens || 0),
+      cached_input_tokens: Number(usage.cachedInputTokens || 0),
+      cost_usd: Number(usage.costUsd || 0),
+      duration_ms: Number(attempt.durationMs || 0),
+      error_code: attempt.error?.code || null,
+      failure_class: attempt.error?.failureClass || null,
+      http_status: attempt.error?.status || null,
+      started_at: attempt.startedAt,
+      ended_at: attempt.endedAt || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await this.db.from('model_attempts').upsert(row, { onConflict: 'id' });
+    if (error) throw new Error('Could not record model attempt: ' + error.message);
+  }
+
   async touchTask(taskId, progress) {
     const values = { started_at: new Date().toISOString() };
     if (Number.isInteger(progress)) values.progress = Math.max(0, Math.min(99, progress));

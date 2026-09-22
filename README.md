@@ -4,6 +4,36 @@ GitHub is the source of truth for code. Supabase holds the database, results,
 events and handoffs. Hostinger runs the production container. Step 3C adds the
 first durable multi-agent path: Chief → Research → Chief.
 
+## Provider-neutral model gateway
+
+Phase 2B introduces an in-process `ModelGateway` boundary without changing the
+default production route. Anthropic remains the only provider allowed by
+default. Provider failover is disabled unless both
+`MODEL_GATEWAY_FAILOVER_ENABLED=true` and an explicit
+`MODEL_GATEWAY_ALLOWED_PROVIDERS` allowlist are configured server-side.
+
+The gateway normalizes requests, results, usage, errors, retries, durable
+pre-switch checkpoints, provider/model attribution and idempotency. The
+OpenAI Responses adapter is available behind the same contract but is not
+enabled by default. It sends `store: false`, supplies a client request ID and
+never receives Office, GitHub or Supabase credentials.
+
+DeepSeek, Kimi, Zhipu/GLM, MiniMax and Qwen are permanent target providers in
+the catalog. They intentionally have no adapters in Phase 2B; later adapters
+can register with the same gateway contract and policy engine without changing
+workflow ownership or durable state.
+
+The action policy is AUTO for routine, reversible work and APPROVAL for merge,
+production deploy and production migrations. Policies are supplied through a
+rule source, so a future signed policy can authorize tested low-risk automation
+without replacing the engine. Destructive actions remain denied by default.
+
+The migration under `supabase/migrations/` adds a service-only
+`model_attempts` audit table. It stores provider/model/token/cost/duration and
+failure metadata but never prompts, responses, credentials or hidden reasoning.
+Apply it only through a separately approved database change before deploying
+code that requires the table.
+
 ## Runtime
 
 The runtime claims a job, asks Chief to create a constrained plan, persists a

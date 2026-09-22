@@ -113,6 +113,7 @@ export class OfficeWorkflow {
       agent,
       goal: task.goal,
       onActivity,
+      execution: this.modelExecution(task, STAGES.PLAN),
     }));
 
     const researchTask = await this.store.ensureTask({
@@ -170,6 +171,7 @@ export class OfficeWorkflow {
       goal: task.goal,
       brief: brief.researchBrief,
       onActivity,
+      execution: this.modelExecution(task, STAGES.RESEARCH),
     }));
     await this.recordOutcome(task, outcome, 'Research result is ready to save.');
     await this.store.completeTask(task, outcome, summarize(outcome.text));
@@ -189,6 +191,7 @@ export class OfficeWorkflow {
       reviewBrief: brief.reviewBrief,
       research: upstream[0],
       onActivity,
+      execution: this.modelExecution(task, STAGES.REVIEW),
     }));
     await this.recordOutcome(task, outcome, 'Chief final result is ready to save.');
     await this.store.completeTask(task, outcome, summarize(outcome.text));
@@ -211,6 +214,10 @@ export class OfficeWorkflow {
   }
 
   async recordOutcome(task, outcome, message) {
+    await this.store.setRunModel(
+      task.run_id,
+      outcome.model || (task.agent_slug === 'research-strategy' ? RESEARCH_MODEL : CHIEF_MODEL),
+    );
     await this.store.emit({
       jobId: task.job_id,
       taskId: task.task_id,
@@ -220,8 +227,8 @@ export class OfficeWorkflow {
       message,
       payload: {
         status: 'COMPLETED',
-        provider: MODEL_PROVIDER,
-        model: task.agent_slug === 'research-strategy' ? RESEARCH_MODEL : CHIEF_MODEL,
+        provider: outcome.provider || MODEL_PROVIDER,
+        model: outcome.model || (task.agent_slug === 'research-strategy' ? RESEARCH_MODEL : CHIEF_MODEL),
         tokens_in: outcome.tokensIn,
         tokens_out: outcome.tokensOut,
         cost_usd: outcome.costUsd,
@@ -229,6 +236,52 @@ export class OfficeWorkflow {
         retry_count: Math.max(0, task.attempt_no - 1),
       },
     });
+  }
+
+  modelExecution(task, stage) {
+    const context = {
+      workspaceId: task.project_id || null,
+      jobId: task.job_id,
+      taskId: task.task_id,
+      runId: task.run_id,
+      agentId: task.agent_id,
+      stage,
+    };
+    return {
+      gatewayContext: context,
+      idempotencyKey: `${task.run_id}:${stage}`,
+      onAttempt: (attempt) => this.store.recordModelAttempt(attempt),
+      onCheckpoint: (checkpoint) => this.store.emit({
+        jobId: task.job_id,
+        taskId: task.task_id,
+        runId: task.run_id,
+        agentId: task.agent_id,
+        type: 'model_checkpoint',
+        level: 'warning',
+        message: 'Provider-neutral checkpoint saved before model ownership changed.',
+        payload: checkpoint,
+      }),
+      onProviderSwitch: (checkpoint) => this.store.emit({
+        jobId: task.job_id,
+        taskId: task.task_id,
+        runId: task.run_id,
+        agentId: task.agent_id,
+        type: 'provider_switch',
+        level: 'warning',
+        message: `Model ownership changed from ${checkpoint.fromProvider} to ${checkpoint.toProvider}.`,
+        payload: checkpoint,
+      }),
+      onBudgetThreshold: (threshold) => this.store.emit({
+        jobId: task.job_id,
+        taskId: task.task_id,
+        runId: task.run_id,
+        agentId: task.agent_id,
+        type: 'cost_threshold',
+        level: threshold.threshold >= 0.9 ? 'warning' : 'info',
+        message: `Model budget reached ${threshold.threshold * 100}%.`,
+        payload: threshold,
+      }),
+    };
   }
 
   async withHeartbeat(task, operation) {

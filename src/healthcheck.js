@@ -9,17 +9,24 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
       throw new Error('Missing or placeholder setting: ' + name);
     }
   }
+  const failoverEnabled = /^(1|true|yes)$/i.test(env.MODEL_GATEWAY_FAILOVER_ENABLED || '');
+  const allowedProviders = String(env.MODEL_GATEWAY_ALLOWED_PROVIDERS || 'anthropic')
+    .split(',').map((value) => value.trim()).filter(Boolean);
+  if (failoverEnabled && allowedProviders.includes('openai') &&
+      (!env.OPENAI_API_KEY || env.OPENAI_API_KEY.length < 12 || /PASTE_HERE|YOUR_.*KEY/i.test(env.OPENAI_API_KEY))) {
+    throw new Error('Missing or placeholder setting: OPENAI_API_KEY');
+  }
   const base = new URL(env.SUPABASE_URL);
   if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/') {
     throw new Error('SUPABASE_URL must be an HTTPS project origin');
   }
   if (verifyCode) {
     const sourceDir = new URL('./', import.meta.url);
-    for (const name of readdirSync(sourceDir).filter((name) => name.endsWith('.js'))) {
-      const result = spawnSync(process.execPath, ['--check', fileURLToPath(new URL(name, sourceDir))], {
+    for (const file of listJavaScriptFiles(sourceDir)) {
+      const result = spawnSync(process.execPath, ['--check', fileURLToPath(file)], {
         encoding: 'utf8', timeout: 5000,
       });
-      if (result.status !== 0) throw new Error('JavaScript syntax check failed: ' + name);
+      if (result.status !== 0) throw new Error('JavaScript syntax check failed: ' + file.pathname);
     }
     // Importing the SDK verifies it is installed; query() is never called.
     const sdk = await import('@anthropic-ai/claude-agent-sdk');
@@ -50,7 +57,16 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
     if (!spec.paths?.['/rpc/' + name]?.post) throw new Error(`Public ${name} RPC is not exposed to the runtime`);
   }
   await get('/rest/v1/jobs?select=id&limit=0');
+  await get('/rest/v1/model_attempts?select=id&limit=0');
   return true;
+}
+
+function listJavaScriptFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const child = new URL(entry.name + (entry.isDirectory() ? '/' : ''), directory);
+    if (entry.isDirectory()) return listJavaScriptFiles(child);
+    return entry.name.endsWith('.js') ? [child] : [];
+  });
 }
 
 export async function main() {
@@ -65,7 +81,7 @@ export async function main() {
       return;
     }
     await checkHealth();
-    console.log('HEALTHCHECK PASSED: code, SDK, database, Chief/Research configuration, and workflow RPCs; no AI calls or data writes');
+    console.log('HEALTHCHECK PASSED: code, SDK, model-attempt schema, Chief/Research configuration, and workflow RPCs; no AI calls or data writes');
   } catch (error) {
     const message = String(error.message);
     console.error('HEALTHCHECK FAILED: ' + (/^(Missing or placeholder|SUPABASE_URL must|JavaScript syntax|Claude Agent SDK query|Supabase client export|Database readiness request|Chief or Research configuration|Research web tools|Public .* RPC)/.test(message) ? message : 'dependency or network check failed'));

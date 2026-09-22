@@ -9,15 +9,19 @@ const metrics = { tokensIn: 2, tokensOut: 3, costUsd: 0.004, durationMs: 7, turn
 
 test('Chief planning is tool-free and requires a real Research delegation', async () => {
   let options;
+  const onAttempt = async () => {};
   const result = await planJob({
     agent,
     goal: 'Research costs',
+    execution: { idempotencyKey: 'run:plan', onAttempt },
     run: async (received) => {
       options = received;
       return { text: JSON.stringify({ research_required: true, plan_summary: 'Delegate.', research_brief: 'Research three options.', review_brief: 'Review them.' }), ...metrics };
     },
   });
   assert.deepEqual(options.allowedTools, []);
+  assert.equal(options.idempotencyKey, 'run:plan');
+  assert.equal(options.onAttempt, onAttempt);
   assert.equal(result.plan.research_required, true);
 });
 
@@ -53,13 +57,21 @@ test('model subprocess receives Anthropic auth but no Office, GitHub or OpenAI s
   assert.deepEqual(env, { ANTHROPIC_API_KEY: 'test-anthropic', PATH: '/bin' });
 
   let received;
+  const attempts = [];
   async function* fakeQuery(input) {
     received = input;
     yield { type: 'result', subtype: 'success', result: 'ok', usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0.001 };
   }
-  await runModel({ prompt: 'safe', systemPrompt: 'safe', model: 'test-model', maxTurns: 1, queryFn: fakeQuery });
+  const output = await runModel({
+    prompt: 'safe', systemPrompt: 'safe', model: 'test-model', maxTurns: 1, queryFn: fakeQuery,
+    idempotencyKey: 'run:test', gatewayContext: { jobId: 'job', taskId: 'task', runId: 'run', stage: 'test' },
+    onAttempt: async (attempt) => attempts.push(attempt),
+  });
   assert.equal(received.options.allowedTools.length, 0);
   assert.ok(!('SUPABASE_SERVICE_ROLE_KEY' in received.options.env));
   assert.ok(!('CONTINUITY_GITHUB_TOKEN' in received.options.env));
   assert.ok(!('OPENAI_API_KEY' in received.options.env));
+  assert.equal(output.provider, 'anthropic');
+  assert.deepEqual(attempts.map((attempt) => attempt.status), ['started', 'succeeded']);
+  assert.ok(attempts.every((attempt) => !('prompt' in attempt)));
 });

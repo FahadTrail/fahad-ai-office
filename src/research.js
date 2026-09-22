@@ -1,8 +1,9 @@
 import { RESEARCH_MAX_TURNS, RESEARCH_MODEL } from './config.js';
 import { runModel } from './model-runner.js';
 
-export async function performResearch({ agent, goal, brief, run = runModel, onActivity }) {
+export async function performResearch({ agent, goal, brief, run = runModel, onActivity, execution = {} }) {
   return run({
+    ...execution,
     model: RESEARCH_MODEL,
     maxTurns: RESEARCH_MAX_TURNS,
     allowedTools: ['WebSearch', 'WebFetch'],
