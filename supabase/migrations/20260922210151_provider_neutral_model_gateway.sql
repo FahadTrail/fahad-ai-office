@@ -51,5 +51,5 @@ alter table public.model_attempts enable row level security;
 
 -- The runtime uses the server-side service role. Browser roles receive no
 -- table grants and no RLS policies in Phase 2B.
-revoke all on table public.model_attempts from public, anon, authenticated;
+revoke all on table public.model_attempts from public, anon, authenticated, service_role;
 grant select, insert, update on table public.model_attempts to service_role;
