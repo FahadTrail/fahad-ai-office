@@ -1,3 +1,4 @@
+import { setDefaultResultOrder } from 'node:dns';
 import { newTaskEnvelope, ContinuityError } from './continuity-core.js';
 import { OpenAIAdapter, AnthropicAdapter, SimulatedFailureAdapter } from './continuity-providers.js';
 import { SupabaseContinuityStore, ControlledWorkspace, GitHubPublisher } from './continuity-infra.js';
@@ -10,6 +11,7 @@ async function githubBaseSha(token) {
 }
 
 export async function main(env = process.env) {
+  setDefaultResultOrder('ipv4first');
   const required = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'CONTINUITY_GITHUB_TOKEN', 'SUPABASE_URL'];
   for (const name of required) if (!env[name]) throw new ContinuityError(`Missing secure server setting: ${name}`, { code: 'NEEDS_HUMAN_APPROVAL' });
   const supabaseKey = env.SUPABASE_SECRET_KEY || env.SUPABASE_SERVICE_ROLE_KEY;

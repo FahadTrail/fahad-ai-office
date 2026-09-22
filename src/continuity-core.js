@@ -10,6 +10,7 @@ export const FAILURE = Object.freeze({
   UNKNOWN: 'UNKNOWN',
 });
 const POC_GOAL = 'Create continuity-poc-proof.md containing a concise proof marker and no secrets. Change no other repository file.';
+const POC_PROTOCOL_VERSION = 'v2';
 const ALLOWED_TOOLS = Object.freeze(['git.read', 'workspace.write:continuity-poc-proof.md', 'test:node --test', 'github.branch', 'github.commit', 'github.pull_request', 'supabase.continuity_state']);
 const RESTRICTED_ACTIONS = Object.freeze(['deployment', 'production_runtime_change', 'secret_access', 'shell_from_model', 'write_outside_allowed_file']);
 const ACCEPTANCE_CRITERIA = Object.freeze(['GPT-5.3-Codex creates the initial proof content', 'A simulated 429 produces a durable handoff checkpoint', 'Claude Sonnet 5 preserves the initial work and completes the proof', 'Repository tests pass before and after handoff', 'One pull request is created without duplicate commits']);
@@ -61,7 +62,7 @@ export function validateTaskEnvelope(task) {
   if (task.repository !== 'FahadTrail/fahad-ai-office') throw new ContinuityError('Repository is outside the approved scope');
   if (task.baseBranch !== 'main') throw new ContinuityError('Only main may be used as the base branch');
   if (!/^[0-9a-f]{40}$/i.test(task.expectedSha)) throw new ContinuityError('expectedSha must be a full Git commit SHA');
-  if (task.idempotencyKey !== `continuity-poc:${task.expectedSha}`) throw new ContinuityError('Idempotency key does not match the approved POC');
+  if (task.idempotencyKey !== `continuity-poc:${POC_PROTOCOL_VERSION}:${task.expectedSha}`) throw new ContinuityError('Idempotency key does not match the approved POC');
   if (task.workingBranch !== `continuity/poc-${task.id.slice(0, 8)}`) throw new ContinuityError('Working branch is outside the continuity POC namespace');
   if (task.goal !== POC_GOAL) throw new ContinuityError('Task goal is outside the approved POC');
   if (JSON.stringify(task.requirements) !== JSON.stringify(ACCEPTANCE_CRITERIA)) throw new ContinuityError('Task requirements are outside the approved POC');
@@ -117,7 +118,7 @@ export function newTaskEnvelope({ expectedSha, budgetUsd = 1.5 } = {}) {
   const id = randomUUID();
   return validateTaskEnvelope({
     id,
-    idempotencyKey: `continuity-poc:${expectedSha}`,
+    idempotencyKey: `continuity-poc:${POC_PROTOCOL_VERSION}:${expectedSha}`,
     repository: 'FahadTrail/fahad-ai-office',
     baseBranch: 'main',
     expectedSha,

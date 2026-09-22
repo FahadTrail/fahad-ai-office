@@ -53,7 +53,7 @@ export class ContinuityController {
           result = await provider.complete({ ...request, stage, metadata: { task_id: task.id, stage } });
         } catch (error) {
           const failure = classifyFailure(error);
-          const failureRecord = { failure, attempt, status: error.status || null, simulated: Boolean(error.simulated), durationMs: Date.now() - startedAt, provider: providerName, model: provider.model };
+          const failureRecord = { failure, attempt, status: error.status || null, networkCode: error.networkCode || null, simulated: Boolean(error.simulated), durationMs: Date.now() - startedAt, provider: providerName, model: provider.model };
           failures.push(failureRecord);
           await this.store.event(task.id, 'provider_failure', `${providerName} failed for ${stage}`, failureRecord, 'warning', providerName);
           if (failure === FAILURE.AUTH) throw new ContinuityError('NEEDS HUMAN APPROVAL: provider authentication failed', { code: 'NEEDS_HUMAN_APPROVAL', provider: providerName });
@@ -110,7 +110,7 @@ export class ContinuityController {
         await this.store.event(task.id, 'checkpoint_restored', 'Resuming from the durable continuity checkpoint', { checkpointId: checkpoint.id, stage: checkpoint.stage });
       } else {
         const initialMarker = `Initial work by GPT-5.3-Codex at ${task.expectedSha.slice(0, 12)}`;
-        implementation = await this.callProvider(task, 'implement', {
+        implementation = await this.callProvider({ ...task, maxProviderSwitchesPerStage: 0 }, 'implement', {
           instructions: 'You are the primary coding provider in a controlled POC. Return JSON only. You cannot access credentials or tools directly.',
           input: `Task: ${task.goal}\nReturn {"summary":string,"path":"continuity-poc-proof.md","content":string,"commitMessage":string}. The Markdown must contain the exact text "${initialMarker}" and the exact marker "${HANDOFF_MARKER}" once. Leave that marker for the backup provider to complete. Include no secrets.`,
         }, 'openai', cost);

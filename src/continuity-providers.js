@@ -13,7 +13,10 @@ function parseJsonObject(text) {
 async function requestJson(url, init, fetchFn) {
   let response;
   try { response = await fetchFn(url, { ...init, signal: AbortSignal.timeout(120000) }); }
-  catch (error) { throw new ContinuityError('Provider network request failed', { cause: error, code: 'NETWORK' }); }
+  catch (error) {
+    const networkCode = String(error?.cause?.code || error?.code || '').replace(/[^A-Z0-9_-]/gi, '').slice(0, 64) || null;
+    throw new ContinuityError('Provider network request failed', { cause: error, code: 'NETWORK', networkCode });
+  }
   const requestId = response.headers.get('x-request-id') || response.headers.get('request-id') || null;
   if (!response.ok) {
     let body = {};
