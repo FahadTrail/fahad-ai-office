@@ -53,6 +53,8 @@ cd /opt/fahad-ai-office
 docker compose run --rm --no-deps runtime node src/continuity-poc.js
 ```
 
+Generated proof files remain in their evidence pull requests and are not part of the controller source merged into `main`. The simulated failure adapter is confined to this manual POC entry point; the reusable provider adapters do not simulate failures.
+
 ## Failure behavior
 
 - HTTP 429, 5xx, and temporary network failures receive at most two attempts per provider, then fail over.

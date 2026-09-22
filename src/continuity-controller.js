@@ -89,7 +89,7 @@ export class ContinuityController {
     const progress = new ProgressGuard();
     const runStartedAt = Date.now();
     const taskRow = await this.store.createTask(task);
-    if (taskRow?.status === 'completed') return taskRow.result;
+    if (taskRow?.status === 'completed') return { ...taskRow.result, taskId: taskRow.id || task.id };
     if (taskRow?.task_envelope) task = validateTaskEnvelope(taskRow.task_envelope);
     const initialSpentUsd = this.store.spent ? await this.store.spent(task.id) : Number(taskRow?.spent_usd || 0);
     const cost = new CostTracker(task.budgetUsd, async (threshold) => this.store.event(task.id, 'cost_threshold', `Cost reached ${threshold.threshold * 100}%`, threshold, threshold.threshold >= 0.9 ? 'warning' : 'info'), initialSpentUsd);
@@ -168,6 +168,7 @@ export class ContinuityController {
       await this.store.event(task.id, 'commit_created', 'Controlled commit and pull request created', published, 'success', continuation.providerName);
       const retryCount = implementation.failures.length + continuation.failures.length;
       const result = {
+        taskId: task.id,
         providers: { implementation: implementation.providerName, continuation: continuation.providerName },
         checkpointId: checkpoint.id,
         tests: { passed: true },

@@ -34,7 +34,7 @@ export class SupabaseContinuityStore {
   async spent(taskId) { const rows = await this.request(`continuity_usage?task_id=eq.${taskId}&select=cost_usd`); return (rows || []).reduce((total, row) => total + Number(row.cost_usd || 0), 0); }
   async finish(taskId, status, result, spentUsd, token) {
     const stage = status === 'completed' ? 'completed' : status === 'needs_human' ? 'needs_human' : 'failed';
-    const rows = await this.request(`continuity_tasks?id=eq.${taskId}&lease_token=eq.${token}&status=eq.running`, { method: 'PATCH', prefer: 'return=representation', body: { status, stage, result, spent_usd: spentUsd, completed_at: status === 'needs_human' ? null : new Date().toISOString() } });
+    const rows = await this.request(`continuity_tasks?id=eq.${taskId}&lease_token=eq.${token}&status=eq.running`, { method: 'PATCH', prefer: 'return=representation', body: { status, stage, result, spent_usd: spentUsd, lease_token: null, lease_expires_at: null, completed_at: status === 'needs_human' ? null : new Date().toISOString() } });
     if (!rows?.[0]) throw new ContinuityError('Stale writer could not finalize the task', { code: 'STALE_LOCK' });
   }
 }

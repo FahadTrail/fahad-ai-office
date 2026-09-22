@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GitHubPublisher, verifyHandoff } from '../src/continuity-infra.js';
+import { GitHubPublisher, SupabaseContinuityStore, verifyHandoff } from '../src/continuity-infra.js';
 import { newTaskEnvelope } from '../src/continuity-core.js';
 
 test('handoff rejects SHA, branch, file and test mismatches before ownership changes', () => {
@@ -36,4 +36,16 @@ test('GitHub publication resumes without a duplicate commit when the controlled 
   assert.equal(result.commitSha, commitSha);
   assert.equal(result.pullRequestNumber, 7);
   assert.equal(calls.filter((call) => call.method === 'PUT').length, 0);
+});
+
+test('finalizing a task releases its writer lease', async () => {
+  let request;
+  const fetchFn = async (_url, init) => {
+    request = JSON.parse(init.body);
+    return new Response(JSON.stringify([{ id: 'task-1' }]), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const store = new SupabaseContinuityStore({ url: 'https://example.supabase.co', key: 'test-key', fetchFn });
+  await store.finish('task-1', 'completed', { ok: true }, 0.01, 'lease-1');
+  assert.equal(request.lease_token, null);
+  assert.equal(request.lease_expires_at, null);
 });

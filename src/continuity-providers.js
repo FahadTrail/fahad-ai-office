@@ -77,13 +77,3 @@ export class AnthropicAdapter {
     return { data: parseJsonObject(text), rawText: text, usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0, cachedInputTokens: cached, costUsd, requestId }, model: body.model || this.model };
   }
 }
-
-export class SimulatedFailureAdapter {
-  constructor(adapter, { stage, count = 2, status = 429, retryAfter = '0' }) {
-    this.adapter = adapter; this.name = adapter.name; this.model = adapter.model; this.stage = stage; this.remaining = count; this.status = status; this.retryAfter = retryAfter;
-  }
-  async complete(request) {
-    if (request.stage === this.stage && this.remaining-- > 0) throw new ContinuityError('Simulated provider failure', { status: this.status, type: 'rate_limit_error', retryAfter: this.retryAfter, simulated: true });
-    return this.adapter.complete(request);
-  }
-}

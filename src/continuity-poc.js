@@ -1,8 +1,18 @@
 import { setDefaultResultOrder } from 'node:dns';
 import { newTaskEnvelope, ContinuityError } from './continuity-core.js';
-import { OpenAIAdapter, AnthropicAdapter, SimulatedFailureAdapter } from './continuity-providers.js';
+import { OpenAIAdapter, AnthropicAdapter } from './continuity-providers.js';
 import { SupabaseContinuityStore, ControlledWorkspace, GitHubPublisher } from './continuity-infra.js';
 import { ContinuityController } from './continuity-controller.js';
+
+class SimulatedFailureAdapter {
+  constructor(adapter, { stage, count = 2, status = 429, retryAfter = '0' }) {
+    this.adapter = adapter; this.name = adapter.name; this.model = adapter.model; this.stage = stage; this.remaining = count; this.status = status; this.retryAfter = retryAfter;
+  }
+  async complete(request) {
+    if (request.stage === this.stage && this.remaining-- > 0) throw new ContinuityError('Simulated provider failure', { status: this.status, type: 'rate_limit_error', retryAfter: this.retryAfter, simulated: true });
+    return this.adapter.complete(request);
+  }
+}
 
 async function githubBaseSha(token) {
   const response = await fetch('https://api.github.com/repos/FahadTrail/fahad-ai-office/git/ref/heads/main', { headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000) });
@@ -30,7 +40,7 @@ export async function main(env = process.env) {
     providers,
   });
   const result = await controller.run(task);
-  console.log(JSON.stringify({ ok: true, taskId: task.id, pullRequestUrl: result.pullRequestUrl, commitSha: result.commitSha, spentUsd: result.spentUsd }));
+  console.log(JSON.stringify({ ok: true, taskId: result.taskId, pullRequestUrl: result.pullRequestUrl, commitSha: result.commitSha, spentUsd: result.spentUsd }));
 }
 
 if (import.meta.url === new URL(process.argv[1], 'file:').href) main().catch((error) => { console.error(JSON.stringify({ ok: false, code: error.code || 'FAILED', message: error.message })); process.exit(1); });

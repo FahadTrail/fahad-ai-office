@@ -34,6 +34,7 @@ test('real primary work survives a simulated 429 and hands off to Claude before 
   const result = await controller.run(task);
   assert.equal(result.providers.implementation, 'openai');
   assert.equal(result.providers.continuation, 'anthropic');
+  assert.equal(result.taskId, task.id);
   assert.equal(openaiCalls, 3);
   assert.equal(store.checkpoints.length, 2);
   assert.equal(store.transfers.length, 1);
@@ -41,6 +42,16 @@ test('real primary work survives a simulated 429 and hands off to Claude before 
   assert.ok(store.events.some((event) => event.type === 'provider_switch'));
   assert.ok(store.events.some((event) => event.type === 'task_continued'));
   assert.equal(workspace.file.content, completed.content);
+});
+
+test('a completed idempotent run reports the durable task id', async () => {
+  const input = newTaskEnvelope({ expectedSha: 'b'.repeat(40), budgetUsd: 2 });
+  const durable = newTaskEnvelope({ expectedSha: input.expectedSha, budgetUsd: 2 });
+  const controller = new ContinuityController({
+    store: { async createTask() { return { id: durable.id, status: 'completed', result: { tests: { passed: true } } }; } },
+  });
+  const result = await controller.run(input);
+  assert.equal(result.taskId, durable.id);
 });
 
 test('a continuity-store failure never causes a second billable provider call', async () => {
