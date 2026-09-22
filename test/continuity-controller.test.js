@@ -59,3 +59,22 @@ test('a continuity-store failure never causes a second billable provider call', 
   await assert.rejects(controller.callProvider(task, 'implement', {}, 'openai', new CostTracker(2)), /state persistence unavailable/);
   assert.equal(providerCalls, 1);
 });
+
+test('initial implementation never falls back to the backup provider', async () => {
+  const task = newTaskEnvelope({ expectedSha: 'd'.repeat(40), budgetUsd: 2 });
+  const store = new Store();
+  let anthropicCalls = 0;
+  const controller = new ContinuityController({
+    store,
+    workspace: { prepare() {} },
+    publisher: {},
+    providers: {
+      openai: { name: 'openai', model: 'gpt-5.3-codex', async complete() { throw new ContinuityError('network', { code: 'NETWORK' }); } },
+      anthropic: { name: 'anthropic', model: 'claude-sonnet-5', async complete() { anthropicCalls++; return {}; } },
+    },
+    sleepFn: async () => {},
+  });
+  await assert.rejects(controller.run(task), /ALL PROVIDERS UNAVAILABLE/);
+  assert.equal(anthropicCalls, 0);
+  assert.equal(store.finished.status, 'failed');
+});
