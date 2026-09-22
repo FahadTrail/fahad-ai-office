@@ -16,8 +16,11 @@ function fixture(overrides = {}) {
   const requests = [];
   const fetchFn = async (url, options) => {
     requests.push({ url, options });
-    const body = url.pathname === '/rest/v1/agents' ? [{ id: 'chief', system_prompt: 'x'.repeat(120) }]
-      : url.pathname === '/rest/v1/' ? { paths: { '/rpc/claim_next_job': { post: {} } } } : [];
+    const rpcNames = ['claim_next_job', 'claim_next_task', 'create_task', 'complete_task', 'fail_task', 'requeue_stale_tasks'];
+    const body = url.pathname === '/rest/v1/agents' ? [
+      { id: 'chief', slug: 'chief-of-staff', system_prompt: 'x'.repeat(120), allowed_tools: [] },
+      { id: 'research', slug: 'research-strategy', system_prompt: 'x'.repeat(120), allowed_tools: ['web_search', 'web_fetch'] },
+    ] : url.pathname === '/rest/v1/' ? { paths: Object.fromEntries(rpcNames.map((name) => ['/rpc/' + name, { post: {} }])) } : [];
     return { ok: true, status: 200, json: async () => body, ...overrides };
   };
   return { requests, fetchFn };
@@ -43,9 +46,14 @@ test('database errors fail readiness without exposing response text', async () =
   const f = fixture({ ok: false, status: 401, json: async () => ({ secret: 'not-for-logs' }) });
   await assert.rejects(checkHealth({ env, fetchFn: f.fetchFn, verifyCode: false }), /^Error: Database readiness request failed \(HTTP 401\)$/);
 });
-test('missing Chief or public RPC fails readiness', async () => {
+test('missing agent, tool authorization or public RPC fails readiness', async () => {
   await assert.rejects(checkHealth({ env, fetchFn: fixture({ json: async () => [] }).fetchFn, verifyCode: false }), /Chief/);
   const f = fixture();
   await assert.rejects(checkHealth({ env, verifyCode: false, fetchFn: (url, options) => url.pathname === '/rest/v1/'
     ? Promise.resolve({ ok: true, json: async () => ({ paths: {} }) }) : f.fetchFn(url, options) }), /Public claim_next_job/);
+  await assert.rejects(checkHealth({ env, verifyCode: false, fetchFn: (url, options) => url.pathname === '/rest/v1/agents'
+    ? Promise.resolve({ ok: true, json: async () => [
+      { id: 'chief', slug: 'chief-of-staff', system_prompt: 'x'.repeat(120), allowed_tools: [] },
+      { id: 'research', slug: 'research-strategy', system_prompt: 'x'.repeat(120), allowed_tools: [] },
+    ] }) : f.fetchFn(url, options) }), /Research web tools/);
 });
