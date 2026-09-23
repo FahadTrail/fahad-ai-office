@@ -10,6 +10,7 @@ Security boundaries:
 - GitHub credentials never enter the OpenCode process.
 - The controller blocks deployment files, workflows, migrations, Hermes paths, credentials, and local OpenCode overrides.
 - The controller runs tests after each model pass and returns only redacted failures for autonomous repair.
+- Every successful model pass must include machine-readable token and cost accounting. The controller uses conservative DeepSeek peak rates and stops before publication above `DEVELOPMENT_MAX_COST_USD` (USD 2 by default).
 - Merge and production deployment remain outside this controller and require the existing policy approval.
 
 The CLI accepts only a controller-owned JSON file so objectives are not interpolated into a shell command. Production activation is intentionally deferred until a DeepSeek credential and billing authorization are provided and the live canary passes.

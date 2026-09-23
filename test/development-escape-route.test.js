@@ -8,6 +8,7 @@ import {
   createOpenCodeConfig,
   parseOpenCodeEvents,
   safeTaskSlug,
+  summarizeOpenCodeUsage,
 } from '../development/policy.js';
 
 test('OpenCode policy keeps provider and GitHub secrets outside the model tool environment', () => {
@@ -53,4 +54,20 @@ test('objective becomes a bounded non-shell agent prompt and safe branch slug', 
 test('headless OpenCode output must contain machine-readable progress', () => {
   assert.equal(parseOpenCodeEvents('{"type":"step_start"}\n{"type":"step_finish"}\n').length, 2);
   assert.throws(() => parseOpenCodeEvents('plain text only'), /machine-readable/);
+  assert.throws(() => parseOpenCodeEvents('{"type":"step_start"}\n'), /final usage record/);
+});
+
+test('development usage is recorded at conservative peak rates', () => {
+  const usage = summarizeOpenCodeUsage([{
+    type: 'step_finish',
+    part: {
+      type: 'step-finish',
+      tokens: { input: 1_000_000, output: 100_000, reasoning: 10_000, cache: { read: 500_000, write: 0 } },
+      cost: 0.10,
+    },
+  }]);
+  assert.equal(usage.inputTokens, 1_000_000);
+  assert.equal(usage.totalTokens, 1_610_000);
+  assert.equal(usage.costUsd, 0.435);
+  assert.equal(usage.steps, 1);
 });

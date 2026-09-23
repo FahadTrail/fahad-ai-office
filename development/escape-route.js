@@ -15,6 +15,7 @@ import {
   parseOpenCodeEvents,
   redact,
   safeTaskSlug,
+  summarizeOpenCodeUsage,
   validateObjective,
 } from './policy.js';
 
@@ -44,6 +45,7 @@ export async function runDevelopmentObjective({
   sourceRepository = resolve(sourceRepository);
   isolatedRoot = resolve(isolatedRoot);
   const taskId = randomUUID();
+  const budgetLimitUsd = readDevelopmentBudget(env.DEVELOPMENT_MAX_COST_USD);
   const branch = `automation/dev-${safeTaskSlug(objective)}-${taskId.slice(0, 8)}`;
   const worktree = assertContainedPath(isolatedRoot, join(isolatedRoot, 'worktrees', taskId));
   const controlDirectory = assertContainedPath(isolatedRoot, join(isolatedRoot, 'control', taskId));
@@ -74,6 +76,8 @@ export async function runDevelopmentObjective({
 
     const modelEnv = buildModelEnvironment({ hostEnv: env, configPath: configFile, isolatedHome: modelHome });
     let lastEvents = [];
+    let cumulativeUsage = emptyUsage();
+    let modelDurationMs = 0;
     let tests = null;
     for (let round = 0; round <= maxRepairRounds; round += 1) {
       assertNoOpenCodeOverrides(await changedPaths(run, worktree));
@@ -81,7 +85,11 @@ export async function runDevelopmentObjective({
       await writeFile(secretFile, env.DEEPSEEK_API_KEY.trim(), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
       await prepareModelOwnedPath(secretFile);
       try {
-        lastEvents = await runOpenCodeWithRetry({ run, opencodeBin, model, worktree, modelEnv, prompt });
+        const modelRun = await runOpenCodeWithRetry({ run, opencodeBin, model, worktree, modelEnv, prompt });
+        lastEvents = modelRun.events;
+        cumulativeUsage = mergeUsage(cumulativeUsage, modelRun.usage);
+        modelDurationMs += modelRun.durationMs;
+        assertDevelopmentBudget(cumulativeUsage.costUsd, budgetLimitUsd);
       } finally {
         // No provider key remains on disk while generated code or tests execute.
         await unlink(secretFile).catch(() => {});
@@ -115,6 +123,7 @@ export async function runDevelopmentObjective({
     return {
       ok: true, taskId, branch, commitSha, pullRequestUrl, tests: tests.summary,
       model, harness: 'opencode', eventCount: lastEvents.length, worktree,
+      usage: { ...cumulativeUsage, durationMs: modelDurationMs, limitUsd: budgetLimitUsd },
     };
   } finally {
     // Remove temporary provider material even when a model or test fails.
@@ -128,19 +137,49 @@ export async function runDevelopmentObjective({
 
 async function runOpenCodeWithRetry({ run, opencodeBin, model, worktree, modelEnv, prompt }) {
   let lastError;
+  const allEvents = [];
+  const startedAt = Date.now();
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const execution = await run(opencodeBin, [
       'run', '--model', model, '--agent', 'build', '--format', 'json', '--dir', worktree, prompt,
     ], { cwd: worktree, env: modelEnv, timeoutMs: 1800000, maxOutputBytes: 4_000_000, executionIdentity: 'model' });
     try {
       if (execution.code !== 0) throw new Error(`OpenCode execution exited ${execution.code}`);
-      return parseOpenCodeEvents(execution.stdout);
+      const events = parseOpenCodeEvents(execution.stdout);
+      allEvents.push(...events);
+      return { events, usage: summarizeOpenCodeUsage(allEvents), durationMs: Date.now() - startedAt };
     } catch (error) {
       lastError = error;
+      try { allEvents.push(...parseOpenCodeEvents(execution.stdout)); } catch {}
       if (attempt < 2) await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
     }
   }
   throw new Error(`OpenCode execution failed safely after automatic retry: ${lastError?.message || 'unknown failure'}`);
+}
+
+function readDevelopmentBudget(value) {
+  const budget = Number(value || 2);
+  if (!Number.isFinite(budget) || budget < 0.01 || budget > 20) {
+    throw new Error('DEVELOPMENT_MAX_COST_USD must be between 0.01 and 20');
+  }
+  return budget;
+}
+
+function emptyUsage() {
+  return { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, totalTokens: 0, costUsd: 0, steps: 0 };
+}
+
+function mergeUsage(left, right) {
+  return Object.fromEntries(Object.keys(left).map((key) => [key, key === 'costUsd'
+    ? Number((left[key] + right[key]).toFixed(8))
+    : left[key] + right[key]]));
+}
+
+function assertDevelopmentBudget(spentUsd, limitUsd) {
+  if (spentUsd <= limitUsd) return;
+  const error = new Error('NEEDS HUMAN APPROVAL: development model cost exceeded its controller budget');
+  error.code = 'NEEDS_HUMAN_APPROVAL';
+  throw error;
 }
 
 async function runValidation(run, worktree, env) {

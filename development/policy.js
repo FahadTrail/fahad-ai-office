@@ -122,7 +122,47 @@ export function parseOpenCodeEvents(output) {
     try { return [JSON.parse(line)]; } catch { return []; }
   });
   if (!events.length) throw new Error('OpenCode returned no machine-readable progress events');
+  if (!events.some((event) => event.type === 'step_finish' || event.part?.type === 'step-finish')) {
+    throw new Error('OpenCode returned no final usage record');
+  }
   return events;
+}
+
+export function summarizeOpenCodeUsage(events) {
+  const usage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    steps: 0,
+  };
+  for (const event of events || []) {
+    if (event.type !== 'step_finish' && event.part?.type !== 'step-finish') continue;
+    const part = event.part || {};
+    const tokens = part.tokens || {};
+    const input = nonNegativeNumber(tokens.input);
+    const output = nonNegativeNumber(tokens.output);
+    const reasoning = nonNegativeNumber(tokens.reasoning);
+    const cacheRead = nonNegativeNumber(tokens.cache?.read);
+    const cacheWrite = nonNegativeNumber(tokens.cache?.write);
+    const reported = nonNegativeNumber(part.cost);
+    // DeepSeek V4.1 Flash peak rates keep the development guard conservative.
+    const conservative = ((input + cacheWrite) * 0.30 + cacheRead * 0.006 + (output + reasoning) * 1.20) / 1_000_000;
+    usage.inputTokens += input;
+    usage.outputTokens += output;
+    usage.reasoningTokens += reasoning;
+    usage.cachedInputTokens += cacheRead;
+    usage.cacheWriteTokens += cacheWrite;
+    usage.totalTokens += nonNegativeNumber(tokens.total) || input + output + reasoning + cacheRead + cacheWrite;
+    usage.costUsd += Math.max(reported, conservative);
+    usage.steps += 1;
+  }
+  if (!usage.steps) throw new Error('OpenCode usage accounting is unavailable');
+  usage.costUsd = Number(usage.costUsd.toFixed(8));
+  return usage;
 }
 
 export function redact(value, secrets = []) {
@@ -143,4 +183,9 @@ function approvalError(message) {
   const error = new Error(message);
   error.code = 'NEEDS_HUMAN_APPROVAL';
   return error;
+}
+
+function nonNegativeNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number > 0 ? number : 0;
 }
