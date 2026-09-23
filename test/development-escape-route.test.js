@@ -11,10 +11,17 @@ import {
   safeTaskSlug,
   summarizeOpenCodeUsage,
 } from '../development/policy.js';
-import { MAIN_REMOTE_REFSPEC } from '../development/escape-route.js';
+import { MAIN_REMOTE_REFSPEC, safeGitArgs } from '../development/escape-route.js';
 
 test('isolated development materializes origin/main from narrow source clones', () => {
   assert.equal(MAIN_REMOTE_REFSPEC, '+refs/heads/main:refs/remotes/origin/main');
+});
+
+test('controller Git operations authorize only the isolated worktree', () => {
+  const args = safeGitArgs('/isolated/worktree', ['diff', '--check']);
+  assert.equal(args[0], '-c');
+  assert.match(args[1], /^safe\.directory=/);
+  assert.deepEqual(args.slice(-2), ['diff', '--check']);
 });
 
 test('private repository execution requires verified DeepSeek API training opt-out', () => {

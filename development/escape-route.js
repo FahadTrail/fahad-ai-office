@@ -105,9 +105,9 @@ export async function runDevelopmentObjective({
 
       const paths = assertSafeChangedPaths(await changedPaths(run, worktree));
       if (!paths.length) throw new Error('Coding agent completed without a repository change');
-      const diff = await checked(run, 'git', ['diff', '--no-ext-diff', '--binary', '--'], { cwd: worktree, timeoutMs: 120000, maxOutputBytes: 5_000_000 });
+      const diff = await checked(run, 'git', safeGitArgs(worktree, ['diff', '--no-ext-diff', '--binary', '--']), { cwd: worktree, timeoutMs: 120000, maxOutputBytes: 5_000_000 });
       assertNoSecretMaterial(diff.stdout);
-      const diffCheck = await run('git', ['diff', '--check'], { cwd: worktree, timeoutMs: 120000 });
+      const diffCheck = await run('git', safeGitArgs(worktree, ['diff', '--check']), { cwd: worktree, timeoutMs: 120000 });
       if (diffCheck.code !== 0) {
         tests = { ok: false, error: redact(diffCheck.stderr || diffCheck.stdout, [env.DEEPSEEK_API_KEY, env.CONTINUITY_GITHUB_TOKEN]) };
         continue;
@@ -118,10 +118,10 @@ export async function runDevelopmentObjective({
     }
     if (!tests?.ok) throw new Error('Coding agent exhausted repair rounds without passing validation');
 
-    await checked(run, 'git', ['add', '--all'], { cwd: worktree, timeoutMs: 120000 });
-    await checked(run, 'git', ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=Fahad AI Office', '-c', 'user.email=automation@users.noreply.github.com',
-      'commit', '-m', `Development objective: ${safeTaskSlug(objective)}`], { cwd: worktree, timeoutMs: 120000 });
-    const commitSha = (await checked(run, 'git', ['rev-parse', 'HEAD'], { cwd: worktree })).stdout.trim();
+    await checked(run, 'git', safeGitArgs(worktree, ['add', '--all']), { cwd: worktree, timeoutMs: 120000 });
+    await checked(run, 'git', safeGitArgs(worktree, ['-c', 'core.hooksPath=/dev/null', '-c', 'user.name=Fahad AI Office', '-c', 'user.email=automation@users.noreply.github.com',
+      'commit', '-m', `Development objective: ${safeTaskSlug(objective)}`]), { cwd: worktree, timeoutMs: 120000 });
+    const commitSha = (await checked(run, 'git', safeGitArgs(worktree, ['rev-parse', 'HEAD']), { cwd: worktree })).stdout.trim();
 
     let pullRequestUrl = null;
     if (publish) {
@@ -194,7 +194,7 @@ async function runValidation(run, worktree, env) {
   const secrets = [env.DEEPSEEK_API_KEY, env.CONTINUITY_GITHUB_TOKEN, env.ANTHROPIC_API_KEY, env.OPENAI_API_KEY];
   const commands = [
     ['node', ['--test']],
-    ['git', ['diff', '--check']],
+    ['git', safeGitArgs(worktree, ['diff', '--check'])],
   ];
   const testEnv = buildTestEnvironment({ hostEnv: env, isolatedHome: env.TMPDIR || env.TEMP || '/tmp' });
   for (const [command, args] of commands) {
@@ -208,13 +208,13 @@ async function runValidation(run, worktree, env) {
 }
 
 async function changedPaths(run, worktree) {
-  const tracked = await checked(run, 'git', ['diff', '--name-only', '-z', '--'], { cwd: worktree, timeoutMs: 120000 });
-  const untracked = await checked(run, 'git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: worktree, timeoutMs: 120000 });
+  const tracked = await checked(run, 'git', safeGitArgs(worktree, ['diff', '--name-only', '-z', '--']), { cwd: worktree, timeoutMs: 120000 });
+  const untracked = await checked(run, 'git', safeGitArgs(worktree, ['ls-files', '--others', '--exclude-standard', '-z']), { cwd: worktree, timeoutMs: 120000 });
   return [...new Set((tracked.stdout + untracked.stdout).split('\0').filter(Boolean))];
 }
 
 async function assertNoTrackedOpenCodeOverrides(run, worktree) {
-  const result = await checked(run, 'git', ['ls-files', '-z', '--', 'opencode.json', 'opencode.jsonc', '.opencode'], { cwd: worktree, timeoutMs: 120000 });
+  const result = await checked(run, 'git', safeGitArgs(worktree, ['ls-files', '-z', '--', 'opencode.json', 'opencode.jsonc', '.opencode']), { cwd: worktree, timeoutMs: 120000 });
   if (result.stdout) throw new Error('Repository-local OpenCode configuration cannot override the managed controller policy');
 }
 
@@ -233,14 +233,24 @@ async function pushWithAskPass({ run, worktree, branch, token, controlDirectory 
     GIT_TERMINAL_PROMPT: '0',
     CONTINUITY_GITHUB_TOKEN: token,
   };
-  const result = await run('git', ['-c', 'core.hooksPath=/dev/null', 'push', '--set-upstream', 'origin', branch], { cwd: worktree, env: pushEnv, timeoutMs: 300000 });
+  const result = await run('git', safeGitArgs(worktree, ['-c', 'core.hooksPath=/dev/null', 'push', '--set-upstream', 'origin', branch]), { cwd: worktree, env: pushEnv, timeoutMs: 300000 });
   if (result.code !== 0) throw new Error('GitHub branch publication failed');
 }
 
 async function checked(run, command, args, options) {
   const result = await run(command, args, options);
-  if (result.code !== 0) throw new Error(`${command} operation failed safely (exit ${result.code})`);
+  if (result.code !== 0) {
+    const operation = command === 'git'
+      ? `git ${args.find((arg) => ['status', 'remote', 'fetch', 'worktree', 'diff', 'ls-files', 'add', 'commit', 'rev-parse', 'push'].includes(arg)) || 'operation'}`
+      : command;
+    const detail = redact(result.stderr || result.stdout).split(/\r?\n/).find(Boolean);
+    throw new Error(`${operation} failed safely (exit ${result.code})${detail ? `: ${detail}` : ''}`);
+  }
   return result;
+}
+
+export function safeGitArgs(worktree, args) {
+  return ['-c', `safe.directory=${resolve(worktree)}`, ...args];
 }
 
 async function createPullRequest({ fetchFn, token, branch, objective, commitSha }) {
