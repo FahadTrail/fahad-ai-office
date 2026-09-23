@@ -25,7 +25,9 @@ test('simulated DeepSeek outage preserves a checkpoint before Anthropic takeover
   const checkpointDirectory = await mkdtemp(join(tmpdir(), 'phase2c-canary-test-'));
   async function* queryFn() {
     yield { type: 'assistant', message: { content: [{ type: 'text', text: '{"canary":"ok"}' }] } };
-    yield { type: 'result', subtype: 'success', result: '{"canary":"ok"}', usage: { input_tokens: 20, output_tokens: 6 }, total_cost_usd: 0.002 };
+    // Deliberately above the $0.01 live-provider ceiling: the controlled
+    // Anthropic drill has a separate, still-low allowance for SDK context.
+    yield { type: 'result', subtype: 'success', result: '{"canary":"ok"}', usage: { input_tokens: 20, output_tokens: 6 }, total_cost_usd: 0.02 };
   }
   const output = await runDeepSeekCanary({
     env: { DEEPSEEK_API_KEY: 'test-only-deepseek-key', ANTHROPIC_API_KEY: 'test-only-anthropic-key' },
@@ -36,6 +38,7 @@ test('simulated DeepSeek outage preserves a checkpoint before Anthropic takeover
   assert.equal(output.provider, 'anthropic');
   assert.equal(output.providerSwitches, 1);
   assert.equal(output.checkpointPreserved, true);
+  assert.equal(output.costUsd, 0.02);
   assert.deepEqual(output.attempts.map(({ provider, status }) => ({ provider, status })), [
     { provider: 'deepseek', status: 'failed' },
     { provider: 'anthropic', status: 'succeeded' },
