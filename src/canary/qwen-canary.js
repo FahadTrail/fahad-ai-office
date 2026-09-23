@@ -115,7 +115,20 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(JSON.stringify({ ok: false, code: error.code || 'CANARY_FAILED', message: String(error.message).slice(0, 160) }));
+    const attempts = Array.isArray(error.attempts) ? error.attempts.map(({ provider, model, status, error: attemptError }) => ({
+      provider,
+      model,
+      status,
+      errorCode: attemptError?.code || null,
+      httpStatus: attemptError?.status || null,
+      providerType: attemptError?.type || null,
+    })) : [];
+    console.error(JSON.stringify({
+      ok: false,
+      code: error.code || 'CANARY_FAILED',
+      message: String(error.message).slice(0, 160),
+      attempts,
+    }));
     process.exitCode = 1;
   });
 }
