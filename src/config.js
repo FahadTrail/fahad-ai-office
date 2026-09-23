@@ -6,6 +6,7 @@ export const MODEL_PROVIDER = 'anthropic';
 export const CHIEF_MODEL = process.env.CHIEF_MODEL || 'claude-sonnet-5';
 export const RESEARCH_MODEL = process.env.RESEARCH_MODEL || CHIEF_MODEL;
 export const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.3-codex';
+export const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
 export const MODEL_GATEWAY_FAILOVER_ENABLED = readBoolean('MODEL_GATEWAY_FAILOVER_ENABLED', false);
 export const MODEL_GATEWAY_ALLOWED_PROVIDERS = readProviderList(
   process.env.MODEL_GATEWAY_ALLOWED_PROVIDERS || MODEL_PROVIDER,

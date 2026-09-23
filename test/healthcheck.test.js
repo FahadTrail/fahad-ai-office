@@ -46,6 +46,11 @@ test('missing credentials fail before network access', async () => {
     fetchFn: f.fetchFn,
     verifyCode: false,
   }), /OPENAI_API_KEY/);
+  await assert.rejects(checkHealth({
+    env: { ...env, MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,deepseek' },
+    fetchFn: f.fetchFn,
+    verifyCode: false,
+  }), /DEEPSEEK_API_KEY/);
 });
 test('database errors fail readiness without exposing response text', async () => {
   const f = fixture({ ok: false, status: 401, json: async () => ({ secret: 'not-for-logs' }) });

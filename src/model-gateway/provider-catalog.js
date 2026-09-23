@@ -1,5 +1,6 @@
 export const PROVIDER_STATE = Object.freeze({
   ACTIVE: 'active',
+  CANARY: 'canary',
   TARGET: 'target',
   DEFERRED: 'deferred',
 });
@@ -10,7 +11,7 @@ export const PROVIDER_CATALOG = Object.freeze({
   anthropic: Object.freeze({ state: PROVIDER_STATE.ACTIVE, protocol: 'anthropic' }),
   openai: Object.freeze({ state: PROVIDER_STATE.ACTIVE, protocol: 'openai-responses' }),
   google: Object.freeze({ state: PROVIDER_STATE.TARGET, protocol: 'native-or-gateway' }),
-  deepseek: Object.freeze({ state: PROVIDER_STATE.TARGET, protocol: 'openai-compatible' }),
+  deepseek: Object.freeze({ state: PROVIDER_STATE.CANARY, protocol: 'openai-responses' }),
   kimi: Object.freeze({ state: PROVIDER_STATE.TARGET, protocol: 'openai-compatible' }),
   zhipu: Object.freeze({ state: PROVIDER_STATE.TARGET, protocol: 'openai-compatible' }),
   minimax: Object.freeze({ state: PROVIDER_STATE.TARGET, protocol: 'provider-adapter' }),

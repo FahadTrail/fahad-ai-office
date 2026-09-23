@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "selftest": "node src/selftest.js",
     "healthcheck": "node src/healthcheck.js",
+    "canary:deepseek": "node src/canary/deepseek-canary.js",
     "test": "node --test"
   },
   "engines": { "node": ">=22" },

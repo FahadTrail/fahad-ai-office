@@ -66,7 +66,12 @@ export class ModelGateway {
           id: randomUUID(),
           clientRequestId: randomUUID(),
           provider: descriptor.name,
-          model: providerIndex === 0 ? request.model : descriptor.model,
+          // Office role models belong to the proven default provider. An
+          // explicit canary route or failover always uses that adapter's own
+          // model so a Claude model name is never sent to another provider.
+          model: providerIndex === 0 && descriptor.name === this.routingPolicy.defaultProvider
+            ? request.model
+            : descriptor.model,
           providerAttempt,
           routeIndex: providerIndex,
           attemptNo: attempts.length + 1,

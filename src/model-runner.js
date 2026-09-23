@@ -28,6 +28,7 @@ export async function runModel({
     prompt,
     systemPrompt,
     model,
+    provider: gatewayContext.provider,
     maxTurns,
     allowedTools,
     onActivity,

@@ -16,6 +16,10 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
       (!env.OPENAI_API_KEY || env.OPENAI_API_KEY.length < 12 || /PASTE_HERE|YOUR_.*KEY/i.test(env.OPENAI_API_KEY))) {
     throw new Error('Missing or placeholder setting: OPENAI_API_KEY');
   }
+  if (failoverEnabled && allowedProviders.includes('deepseek') &&
+      (!env.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY.length < 12 || /PASTE_HERE|YOUR_.*KEY/i.test(env.DEEPSEEK_API_KEY))) {
+    throw new Error('Missing or placeholder setting: DEEPSEEK_API_KEY');
+  }
   const base = new URL(env.SUPABASE_URL);
   if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/') {
     throw new Error('SUPABASE_URL must be an HTTPS project origin');
