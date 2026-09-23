@@ -58,6 +58,7 @@ test('OpenCode selects only configured and explicitly privacy-authorized provide
   const env = {
     DEEPSEEK_API_KEY: 'deepseek-secret-1234', DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED: 'true',
     QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true',
+    QWEN_API_BASE_URL: 'https://workspace-123.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
     KIMI_API_KEY: 'kimi-secret-123456', KIMI_API_PRIVATE_DATA_APPROVED: 'false',
     MINIMAX_API_KEY: 'minimax-secret-1234', MINIMAX_API_PRIVATE_DATA_APPROVED: 'true',
   };
@@ -69,12 +70,21 @@ test('OpenCode selects only configured and explicitly privacy-authorized provide
 
 test('OpenCode config is generated for each prepared compatible provider without embedding its key', () => {
   for (const profile of Object.values(DEVELOPMENT_PROVIDER_PROFILES)) {
-    const config = createOpenCodeConfig({ secretFile: `/private/${profile.provider}.key`, profile });
+    const configuredProfile = profile.provider === 'qwen'
+      ? { ...profile, baseURL: 'https://workspace-123.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1' }
+      : profile;
+    const config = createOpenCodeConfig({ secretFile: `/private/${profile.provider}.key`, profile: configuredProfile });
     assert.equal(config.model, profile.model);
-    assert.equal(config.provider[profile.provider].options.baseURL, profile.baseURL);
+    assert.equal(config.provider[profile.provider].options.baseURL, configuredProfile.baseURL);
     assert.match(config.provider[profile.provider].options.apiKey, /^\{file:/);
     assert.equal(JSON.stringify(config).includes('secret-value'), false);
   }
+});
+
+test('Qwen development routing requires a Singapore workspace endpoint', () => {
+  const env = { QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true' };
+  assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'qwen/qwen3-coder-flash' }), /authorized credential/i);
+  assert.throws(() => createOpenCodeConfig({ secretFile: '/private/qwen.key', profile: DEVELOPMENT_PROVIDER_PROFILES.qwen }), /endpoint is not configured/i);
 });
 
 test('automatic development blocks privileged paths and secret-looking diffs', () => {

@@ -23,6 +23,7 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
     if (failoverEnabled && approvalName && !/^(1|true|yes)$/i.test(env[approvalName] || '')) {
       throw new Error('Missing private-data authorization: ' + approvalName);
     }
+    if (failoverEnabled && provider === 'qwen') validateQwenEndpoint(env.QWEN_API_ENDPOINT);
   }
   const base = new URL(env.SUPABASE_URL);
   if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/') {
@@ -74,6 +75,17 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
     'tool_executions',
   ]) await get(`/rest/v1/${table}?select=workspace_id&limit=0`);
   return true;
+}
+
+function validateQwenEndpoint(value) {
+  if (!value) throw new Error('Missing Qwen workspace endpoint: QWEN_API_ENDPOINT');
+  let endpoint;
+  try { endpoint = new URL(value); } catch { throw new Error('Invalid Qwen workspace endpoint: QWEN_API_ENDPOINT'); }
+  if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password
+      || !/^[a-z0-9-]+\.ap-southeast-1\.maas\.aliyuncs\.com$/i.test(endpoint.hostname)
+      || endpoint.pathname.replace(/\/$/, '') !== '/compatible-mode/v1/chat/completions') {
+    throw new Error('Invalid Qwen workspace endpoint: QWEN_API_ENDPOINT');
+  }
 }
 
 function listJavaScriptFiles(directory) {

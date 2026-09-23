@@ -76,6 +76,14 @@ test('new provider failover requires both a server key and private-data authoriz
     env: { ...env, QWEN_API_KEY: 'qwen-secret-123456', MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,qwen' },
     fetchFn: async () => { calls += 1; throw new Error('should not call'); }, verifyCode: false,
   }), /QWEN_API_PRIVATE_DATA_APPROVED/);
+  await assert.rejects(checkHealth({
+    env: { ...env, QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true', MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,qwen' },
+    fetchFn: async () => { calls += 1; throw new Error('should not call'); }, verifyCode: false,
+  }), /QWEN_API_ENDPOINT/);
+  await assert.rejects(checkHealth({
+    env: { ...env, QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true', QWEN_API_ENDPOINT: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,qwen' },
+    fetchFn: async () => { calls += 1; throw new Error('should not call'); }, verifyCode: false,
+  }), /Invalid Qwen workspace endpoint/);
   assert.equal(calls, 0);
 });
 test('database errors fail readiness without exposing response text', async () => {

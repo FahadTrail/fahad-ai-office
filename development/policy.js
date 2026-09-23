@@ -2,7 +2,7 @@ import { resolve, sep } from 'node:path';
 
 export const DEFAULT_MODEL = 'auto';
 export const DEVELOPMENT_PROVIDER_PROFILES = Object.freeze({
-  qwen: Object.freeze({ provider: 'qwen', model: 'qwen/qwen3-coder-flash', modelId: 'qwen3-coder-flash', apiKeyEnv: 'QWEN_API_KEY', approvalEnv: 'QWEN_API_PRIVATE_DATA_APPROVED', baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', privacyReviewed: true, qualityTier: 4, costTier: 2, pricing: { inputPerMillion: 0.35, cachedInputPerMillion: 0.35, outputPerMillion: 1.75 } }),
+  qwen: Object.freeze({ provider: 'qwen', model: 'qwen/qwen3-coder-flash', modelId: 'qwen3-coder-flash', apiKeyEnv: 'QWEN_API_KEY', approvalEnv: 'QWEN_API_PRIVATE_DATA_APPROVED', baseUrlEnv: 'QWEN_API_BASE_URL', baseURL: null, privacyReviewed: true, qualityTier: 4, costTier: 2, pricing: { inputPerMillion: 0.35, cachedInputPerMillion: 0.35, outputPerMillion: 1.75 } }),
   zhipu: Object.freeze({ provider: 'zhipu', model: 'zhipu/glm-5.3-flash', modelId: 'glm-5.3-flash', apiKeyEnv: 'ZHIPU_API_KEY', approvalEnv: 'ZHIPU_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.z.ai/api/paas/v4', privacyReviewed: true, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.15, cachedInputPerMillion: 0.03, outputPerMillion: 0.50 } }),
   deepseek: Object.freeze({ provider: 'deepseek', model: 'deepseek/deepseek-flash', modelId: 'deepseek-flash', apiKeyEnv: 'DEEPSEEK_API_KEY', approvalEnv: 'DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED', baseURL: 'https://api.deepseek.com', privacyReviewed: true, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.30, cachedInputPerMillion: 0.006, outputPerMillion: 1.20 } }),
   kimi: Object.freeze({ provider: 'kimi', model: 'kimi/kimi-k2.7-code', modelId: 'kimi-k2.7-code', apiKeyEnv: 'KIMI_API_KEY', approvalEnv: 'KIMI_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.moonshot.ai/v1', privacyReviewed: true, qualityTier: 5, costTier: 3, pricing: { inputPerMillion: 0.95, cachedInputPerMillion: 0.19, outputPerMillion: 4 } }),
@@ -41,11 +41,22 @@ export function resolveDevelopmentProviderRoute({ env = process.env, model = DEF
     .filter((profile) => !requestedProvider || profile.provider === requestedProvider)
     .filter((profile) => typeof env[profile.apiKeyEnv] === 'string' && env[profile.apiKeyEnv].trim().length >= 12)
     .filter((profile) => !requiresPrivateData || (profile.privacyReviewed && /^(1|true|yes)$/i.test(String(env[profile.approvalEnv] || ''))))
+    .map((profile) => resolveProfileEndpoint(profile, env))
+    .filter(Boolean)
     .toSorted((left, right) => (right.qualityTier * 4 - right.costTier * 3) - (left.qualityTier * 4 - left.costTier * 3));
   if (!profiles.length) throw approvalError(requestedProvider
     ? `No authorized credential is available for development provider: ${requestedProvider}`
     : 'No privacy-authorized development provider credential is available');
   return profiles;
+}
+
+function resolveProfileEndpoint(profile, env) {
+  if (!profile.baseUrlEnv) return profile;
+  const fromBaseUrl = env[profile.baseUrlEnv];
+  const fromEndpoint = env.QWEN_API_ENDPOINT?.replace(/\/chat\/completions\/?$/, '');
+  const baseURL = String(fromBaseUrl || fromEndpoint || '').replace(/\/$/, '');
+  if (!/^https:\/\/[a-z0-9-]+\.ap-southeast-1\.maas\.aliyuncs\.com\/compatible-mode\/v1$/i.test(baseURL)) return null;
+  return Object.freeze({ ...profile, baseURL });
 }
 
 export function safeTaskSlug(objective) {
@@ -56,6 +67,9 @@ export function safeTaskSlug(objective) {
 
 export function createOpenCodeConfig({ secretFile, profile = DEVELOPMENT_PROVIDER_PROFILES.deepseek } = {}) {
   const absoluteSecret = resolve(secretFile);
+  if (typeof profile.baseURL !== 'string' || !profile.baseURL.startsWith('https://')) {
+    throw new Error(`Provider endpoint is not configured for ${profile.provider}`);
+  }
   return {
     $schema: 'https://opencode.ai/config.json',
     model: profile.model,

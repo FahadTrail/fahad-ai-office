@@ -41,7 +41,7 @@ export function createDefaultModelGateway({
     new AnthropicModelAdapter({ queryFn, env }),
     new OpenAIResponsesAdapter({ apiKey: env.OPENAI_API_KEY, model: OPENAI_MODEL, fetchFn }),
     new DeepSeekResponsesAdapter({ apiKey: env.DEEPSEEK_API_KEY, model: DEEPSEEK_MODEL, fetchFn }),
-    new QwenChatAdapter({ apiKey: env.QWEN_API_KEY, endpoint: QWEN_API_ENDPOINT, model: QWEN_MODEL, fetchFn }),
+    new QwenChatAdapter({ apiKey: env.QWEN_API_KEY, endpoint: env.QWEN_API_ENDPOINT || QWEN_API_ENDPOINT, model: QWEN_MODEL, fetchFn }),
     new KimiChatAdapter({ apiKey: env.KIMI_API_KEY, model: KIMI_MODEL, fetchFn }),
     new ZhipuChatAdapter({ apiKey: env.ZHIPU_API_KEY, model: ZHIPU_MODEL, fetchFn }),
     new MiniMaxChatAdapter({ apiKey: env.MINIMAX_API_KEY, model: MINIMAX_MODEL, fetchFn }),

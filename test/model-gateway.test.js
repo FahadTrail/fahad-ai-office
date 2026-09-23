@@ -148,7 +148,7 @@ test('confirmed providers remain explicit and Phase 2C.1 adapters are prepared w
 
 test('prepared Chat Completions adapters normalize usage without leaking gateway metadata', async () => {
   const cases = [
-    [QwenChatAdapter, 'qwen', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions'],
+    [QwenChatAdapter, 'qwen', 'https://qwen.invalid/compatible-mode/v1/chat/completions'],
     [KimiChatAdapter, 'kimi', 'https://api.moonshot.ai/v1/chat/completions'],
     [ZhipuChatAdapter, 'zhipu', 'https://api.z.ai/api/paas/v4/chat/completions'],
     [MiniMaxChatAdapter, 'minimax', 'https://api.minimax.io/v1/chat/completions'],
