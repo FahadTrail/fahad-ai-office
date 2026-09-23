@@ -16,7 +16,10 @@ function fixture(overrides = {}) {
   const requests = [];
   const fetchFn = async (url, options) => {
     requests.push({ url, options });
-    const rpcNames = ['claim_next_job', 'claim_next_task', 'create_task', 'complete_task', 'fail_task', 'requeue_stale_tasks'];
+    const rpcNames = [
+      'claim_next_job', 'claim_next_task', 'create_task', 'complete_task', 'fail_task', 'requeue_stale_tasks',
+      'assert_workspace_execution_context', 'reserve_workspace_budget', 'settle_workspace_budget',
+    ];
     const body = url.pathname === '/rest/v1/agents' ? [
       { id: 'chief', slug: 'chief-of-staff', system_prompt: 'x'.repeat(120), allowed_tools: [] },
       { id: 'research', slug: 'research-strategy', system_prompt: 'x'.repeat(120), allowed_tools: ['web_search', 'web_fetch'] },
@@ -51,6 +54,16 @@ test('missing credentials fail before network access', async () => {
     fetchFn: f.fetchFn,
     verifyCode: false,
   }), /DEEPSEEK_API_KEY/);
+});
+test('workspace policy readiness verifies policy tables and RPCs without writes', async () => {
+  const f = fixture();
+  assert.equal(await checkHealth({
+    env: { ...env, WORKSPACE_POLICY_ENFORCEMENT_ENABLED: 'true' }, fetchFn: f.fetchFn, verifyCode: false,
+  }), true);
+  assert.equal(f.requests.length, 8);
+  assert.ok(f.requests.some(({ url }) => url.pathname === '/rest/v1/workspace_policies'));
+  assert.ok(f.requests.some(({ url }) => url.pathname === '/rest/v1/workspace_budget_reservations'));
+  assert.ok(f.requests.every(({ options }) => options.method === 'GET'));
 });
 test('database errors fail readiness without exposing response text', async () => {
   const f = fixture({ ok: false, status: 401, json: async () => ({ secret: 'not-for-logs' }) });

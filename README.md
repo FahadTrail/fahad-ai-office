@@ -62,6 +62,29 @@ failure metadata but never prompts, responses, credentials or hidden reasoning.
 Apply it only through a separately approved database change before deploying
 code that requires the table.
 
+## Workspace policy boundary
+
+Phase 2D adds an optional fail-closed policy boundary around the existing
+Model Gateway; the gateway itself and its provider adapters are unchanged.
+When `WORKSPACE_POLICY_ENFORCEMENT_ENABLED=true`, every model request must carry
+workspace, job, task and run lineage that Supabase verifies before any provider
+call. The selected route, every possible fallback model, each host tool and the
+controller-side secret reference must have an exact workspace grant.
+
+Workspace budgets are reserved atomically before execution and settled with
+the measured provider cost afterward. This prevents concurrent runs from
+independently spending the same remaining budget. Only opaque `env://` or
+`vault://` references are stored; credential values remain solely in the
+controller environment. Tool grants already use broker, tool, action, scope and
+risk fields so a later Tool Broker/MCP layer can consume the same deny-by-default
+policy without redesigning the Model Gateway.
+
+The Phase 2D migration is inert until a service-side policy is configured and
+the feature flag is enabled. Its tables and budget RPCs are service-role-only,
+and a model-attempt trigger rejects job/task/run lineage from another workspace.
+Production activation, migration application, merge and deployment remain
+separately approval-gated.
+
 ## Runtime
 
 The runtime claims a job, asks Chief to create a constrained plan, persists a
