@@ -31,3 +31,5 @@ jobs:
         run: docker build --tag fahad-office-validation:${{ github.sha }} .
       - name: Build isolated development image
         run: docker build --file development/Dockerfile --tag fahad-office-development:${{ github.sha }} .
+      - name: Verify development privilege separation
+        run: docker run --rm --entrypoint node fahad-office-development:${{ github.sha }} development/verify-isolation.js

@@ -39,7 +39,13 @@ export function createOpenCodeConfig({ secretFile, model = DEFAULT_MODEL } = {})
     },
     permission: {
       '*': 'deny',
-      read: { '*': 'allow', '*.env': 'deny', '*.env.*': 'deny' },
+      read: {
+        '*': 'allow',
+        '.env': 'deny',
+        '.env.*': 'deny',
+        '**/.env': 'deny',
+        '**/.env.*': 'deny',
+      },
       edit: 'allow',
       glob: 'allow',
       grep: 'allow',

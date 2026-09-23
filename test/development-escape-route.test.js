@@ -24,6 +24,8 @@ test('OpenCode policy keeps provider and GitHub secrets outside the model tool e
   assert.equal(config.permission.bash, 'deny');
   assert.equal(config.permission.external_directory, 'deny');
   assert.equal(config.permission.webfetch, 'deny');
+  assert.equal(config.permission.read['.env'], 'deny');
+  assert.equal(config.permission.read['**/.env.*'], 'deny');
   assert.equal(env.HOME, '/private/home');
   assert.equal(env.DEEPSEEK_API_KEY, undefined);
   assert.equal(env.CONTINUITY_GITHUB_TOKEN, undefined);
