@@ -6,7 +6,7 @@ export const DEVELOPMENT_PROVIDER_PROFILES = Object.freeze({
   zhipu: Object.freeze({ provider: 'zhipu', model: 'zhipu/glm-5.3-flash', modelId: 'glm-5.3-flash', apiKeyEnv: 'ZHIPU_API_KEY', approvalEnv: 'ZHIPU_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.z.ai/api/paas/v4', privacyReviewed: true, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.15, cachedInputPerMillion: 0.03, outputPerMillion: 0.50 } }),
   deepseek: Object.freeze({ provider: 'deepseek', model: 'deepseek/deepseek-flash', modelId: 'deepseek-flash', apiKeyEnv: 'DEEPSEEK_API_KEY', approvalEnv: 'DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED', baseURL: 'https://api.deepseek.com', privacyReviewed: true, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.30, cachedInputPerMillion: 0.006, outputPerMillion: 1.20 } }),
   kimi: Object.freeze({ provider: 'kimi', model: 'kimi/kimi-k2.7-code', modelId: 'kimi-k2.7-code', apiKeyEnv: 'KIMI_API_KEY', approvalEnv: 'KIMI_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.moonshot.ai/v1', privacyReviewed: true, qualityTier: 5, costTier: 3, pricing: { inputPerMillion: 0.95, cachedInputPerMillion: 0.19, outputPerMillion: 4 } }),
-  minimax: Object.freeze({ provider: 'minimax', model: 'minimax/MiniMax-M2.7', modelId: 'MiniMax-M2.7', apiKeyEnv: 'MINIMAX_API_KEY', approvalEnv: 'MINIMAX_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.minimax.io/v1', privacyReviewed: false, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.30, cachedInputPerMillion: 0.06, outputPerMillion: 1.20 } }),
+  minimax: Object.freeze({ provider: 'minimax', model: 'minimax/MiniMax-M2.7', modelId: 'MiniMax-M2.7', apiKeyEnv: 'MINIMAX_API_KEY', approvalEnv: 'MINIMAX_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.minimax.io/v1', privacyReviewed: false, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.30, cachedInputPerMillion: 0.06, cacheWritePerMillion: 0.375, outputPerMillion: 1.20 } }),
 });
 export const FORBIDDEN_CHANGE_PATTERNS = Object.freeze([
   /(^|\/)\.env(?:\.|$)/i,
@@ -181,7 +181,8 @@ export function summarizeOpenCodeUsage(events, pricing = DEVELOPMENT_PROVIDER_PR
     const cacheRead = nonNegativeNumber(tokens.cache?.read);
     const cacheWrite = nonNegativeNumber(tokens.cache?.write);
     const reported = nonNegativeNumber(part.cost);
-    const conservative = ((input + cacheWrite) * pricing.inputPerMillion
+    const conservative = (input * pricing.inputPerMillion
+      + cacheWrite * (pricing.cacheWritePerMillion ?? pricing.inputPerMillion)
       + cacheRead * pricing.cachedInputPerMillion
       + (output + reasoning) * pricing.outputPerMillion) / 1_000_000;
     usage.inputTokens += input;

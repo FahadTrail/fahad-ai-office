@@ -115,3 +115,10 @@ test('development usage is recorded at conservative peak rates', () => {
   assert.equal(usage.costUsd, 0.435);
   assert.equal(usage.steps, 1);
 });
+
+test('development usage honors a provider-specific cache-write rate', () => {
+  const events = [{ type: 'step_finish', part: { tokens: { cache: { write: 1_000_000 } }, cost: 0 } }];
+  const usage = summarizeOpenCodeUsage(events, DEVELOPMENT_PROVIDER_PROFILES.minimax.pricing);
+  assert.equal(usage.cacheWriteTokens, 1_000_000);
+  assert.equal(usage.costUsd, 0.375);
+});
