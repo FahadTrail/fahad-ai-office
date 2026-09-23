@@ -47,7 +47,7 @@ export async function runQwenCanary({
   const result = await gateway.execute({
     prompt: SAFE_PROMPT,
     systemPrompt: 'This is an isolated synthetic provider canary. Do not use tools or include additional data.',
-    model: 'qwen3-coder-flash',
+    model: 'qwen3.8-flash',
     provider: 'qwen',
     maxTurns: 1,
     maxOutputTokens: 40,

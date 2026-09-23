@@ -63,7 +63,7 @@ test('OpenCode selects only configured and explicitly privacy-authorized provide
     MINIMAX_API_KEY: 'minimax-secret-1234', MINIMAX_API_PRIVATE_DATA_APPROVED: 'true',
   };
   const route = resolveDevelopmentProviderRoute({ env });
-  assert.deepEqual(route.map(({ provider }) => provider), ['deepseek', 'qwen']);
+  assert.deepEqual(route.map(({ provider }) => provider), ['qwen', 'deepseek']);
   assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'kimi/kimi-k2.7-code' }), (error) => error.code === 'NEEDS_HUMAN_APPROVAL');
   assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'minimax/MiniMax-M2.7' }), /authorized credential/i);
 });
@@ -83,7 +83,7 @@ test('OpenCode config is generated for each prepared compatible provider without
 
 test('Qwen development routing requires a Singapore workspace endpoint', () => {
   const env = { QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true' };
-  assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'qwen/qwen3-coder-flash' }), /authorized credential/i);
+  assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'qwen/qwen3.8-flash' }), /authorized credential/i);
   assert.throws(() => createOpenCodeConfig({ secretFile: '/private/qwen.key', profile: DEVELOPMENT_PROVIDER_PROFILES.qwen }), /endpoint is not configured/i);
 });
 

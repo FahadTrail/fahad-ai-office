@@ -12,21 +12,27 @@ const qwenEnv = {
 };
 
 test('live Qwen canary records usage without returning provider text', async () => {
+  let receivedBody;
   const output = await runQwenCanary({
     env: qwenEnv,
-    fetchFn: async () => ({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'x-request-id': 'request-secret-not-returned' }),
-      json: async () => ({
-        model: 'qwen3-coder-flash',
-        choices: [{ message: { content: '{"canary":"ok"}' } }],
-        usage: { prompt_tokens: 12, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 2 } },
-      }),
-    }),
+    fetchFn: async (_url, init) => {
+      receivedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'x-request-id': 'request-secret-not-returned' }),
+        json: async () => ({
+          model: 'qwen3.8-flash',
+          choices: [{ message: { content: '{"canary":"ok"}' } }],
+          usage: { prompt_tokens: 12, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 2 } },
+        }),
+      };
+    },
   });
   assert.equal(output.ok, true);
   assert.equal(output.provider, 'qwen');
+  assert.equal(output.model, 'qwen3.8-flash');
+  assert.equal(receivedBody.model, 'qwen3.8-flash');
   assert.equal(output.inputTokens, 12);
   assert.equal(output.cachedInputTokens, 2);
   assert.equal('text' in output, false);
