@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  assertDeepSeekApiTrainingOptOut,
   assertNoSecretMaterial,
   assertSafeChangedPaths,
   buildAgentPrompt,
@@ -10,6 +11,12 @@ import {
   safeTaskSlug,
   summarizeOpenCodeUsage,
 } from '../development/policy.js';
+
+test('private repository execution requires verified DeepSeek API training opt-out', () => {
+  assert.equal(assertDeepSeekApiTrainingOptOut('true'), true);
+  assert.throws(() => assertDeepSeekApiTrainingOptOut(''), (error) => error.code === 'NEEDS_HUMAN_APPROVAL');
+  assert.throws(() => assertDeepSeekApiTrainingOptOut('false'), /training opt-out/i);
+});
 
 test('OpenCode policy keeps provider and GitHub secrets outside the model tool environment', () => {
   const config = createOpenCodeConfig({ secretFile: '/private/deepseek.key' });

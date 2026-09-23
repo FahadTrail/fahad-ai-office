@@ -24,13 +24,24 @@ coding-tool loop inside a separate controller boundary.
 
 ## Privacy and security condition
 
-DeepSeek's public privacy policy allows collection and model-improvement use of
-submitted content and describes processing/storage in the People's Republic of
-China. Therefore Phase 2C does not enable DeepSeek for production Office data.
-The live canary uses a synthetic prompt only. The development service must use
-a dedicated key, exclude secrets and sensitive data, and apply any available
-training opt-out or enterprise data terms before private repository work is
-authorized.
+DeepSeek's current privacy policy explicitly covers SDK and API services. Its
+Terms of Use define the Services as including APIs and state that disabling
+"Improve the model for everyone" prevents Inputs and Outputs from being used
+to improve services and technology. The current privacy policy describes this
+as disabling "Data used to optimize experience" and explicitly states that
+Inputs and Outputs will not be used for model training. The exact account UI
+path is profile/avatar -> Settings -> Data Management -> disable that setting.
+The Open Platform terms incorporate the general Terms of Use and define the
+Open Platform service as API calls, so this opt-out applies to API traffic
+associated with the same account, not only consumer chat.
+
+DeepSeek also describes processing/storage in the People's Republic of China.
+Therefore Phase 2C does not enable DeepSeek for production Office data. The
+live canary uses a synthetic prompt only. Private-repository execution fails
+closed until the account setting has been visually verified and the server-side
+non-secret authorization flag `DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED=true` is
+present. A dedicated key remains mandatory and no provider key is forwarded to
+the coding model's tool environment.
 
 OpenCode is selected instead of adding another coding agent because it already
 supports DeepSeek and headless JSON execution. Its current headless runner has
@@ -56,7 +67,7 @@ in the catalog.
 
 ## Primary references
 
-- DeepSeek: <https://api-docs.deepseek.com/quick_start/pricing/>, <https://api-docs.deepseek.com/quick_start/rate_limit/>, <https://api-docs.deepseek.com/api/create-response/>, <https://api-docs.deepseek.com/news/news260910/>, <https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html>
+- DeepSeek: <https://api-docs.deepseek.com/quick_start/pricing/>, <https://api-docs.deepseek.com/quick_start/rate_limit/>, <https://api-docs.deepseek.com/api/create-response/>, <https://api-docs.deepseek.com/news/news260910/>, <https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html>, <https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html>, <https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html>, <https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html>
 - Qwen: <https://help.aliyun.com/en/model-studio/qwen-coder>, <https://help.aliyun.com/en/model-studio/compatibility-of-openai-with-dashscope>, <https://help.aliyun.com/en/model-studio/qwen-function-calling>, <https://help.aliyun.com/en/model-studio/rate-limiting-best-practices>, <https://help.aliyun.com/en/model-studio/model-pricing>
 - Kimi: <https://github.com/MoonshotAI/Kimi-K2.5>, <https://forum.moonshot.ai/t/kimi-k2-5-api-is-now-available/218>
 - GLM: <https://open.bigmodel.cn/glm-coding>

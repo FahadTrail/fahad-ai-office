@@ -21,6 +21,13 @@ export function validateObjective(value) {
   return objective;
 }
 
+export function assertDeepSeekApiTrainingOptOut(value) {
+  if (!/^(1|true|yes)$/i.test(String(value || ''))) {
+    throw approvalError('DeepSeek API training opt-out must be verified before private repository code is transmitted');
+  }
+  return true;
+}
+
 export function safeTaskSlug(objective) {
   const slug = validateObjective(objective).toLowerCase()
     .normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 42);

@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import {
   DEFAULT_MODEL,
+  assertDeepSeekApiTrainingOptOut,
   assertContainedPath,
   assertNoSecretMaterial,
   assertSafeChangedPaths,
@@ -40,6 +41,7 @@ export async function runDevelopmentObjective({
   publish = true,
 } = {}) {
   objective = validateObjective(objective);
+  assertDeepSeekApiTrainingOptOut(env.DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED);
   assertSecret(env.DEEPSEEK_API_KEY, 'DEEPSEEK_API_KEY');
   if (publish) assertSecret(env.CONTINUITY_GITHUB_TOKEN, 'CONTINUITY_GITHUB_TOKEN');
   sourceRepository = resolve(sourceRepository);
