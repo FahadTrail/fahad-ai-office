@@ -19,9 +19,37 @@ enabled by default. It sends `store: false`, supplies a client request ID and
 never receives Office, GitHub or Supabase credentials.
 
 DeepSeek, Kimi, Zhipu/GLM, MiniMax and Qwen are permanent target providers in
-the catalog. They intentionally have no adapters in Phase 2B; later adapters
-can register with the same gateway contract and policy engine without changing
-workflow ownership or durable state.
+the catalog. Phase 2C adds only DeepSeek as a disabled-by-default canary through
+its stateless Responses endpoint. It receives no Office metadata and uses peak
+PAYG pricing for conservative budget accounting. The other confirmed targets
+remain inactive and can register with the same gateway contract and policy
+engine without changing workflow ownership or durable state.
+
+The isolated canary records only provider, model, token, cost, duration,
+attempt and checkpoint evidence; it never prints provider text, request headers
+or credentials. A simulated outage must persist its isolated checkpoint before
+the proven Anthropic adapter can take over. Production remains Anthropic-only
+unless both the failover flag and an explicit server-side allowlist are changed.
+
+## Development escape route
+
+Phase 2C also defines an isolated OpenCode execution service under
+`development/`. OpenCode is pinned in a separate image and uses DeepSeek for
+repository analysis and edits. The coding model has no shell, web, subagent,
+external-directory, Git or GitHub access. Its provider key is read from a
+controller-owned file outside the task worktree and is not present in tool
+environment variables.
+
+The controller creates a clean worktree from `origin/main`, retries transient
+headless failures, runs the fixed test suite itself, returns redacted failures
+for repair, scans the diff for secrets and protected paths, and only then owns
+the commit, branch push and safe PR creation. Workflow, deployment, migration,
+credential, local OpenCode override and Hermes paths cannot be changed through
+the automatic route. Merge and production deployment remain approval-gated.
+
+This service is not part of the production runtime image and is not activated
+until a separately stored DeepSeek credential, provider billing and the live
+canary are approved and verified.
 
 The action policy is AUTO for routine, reversible work and APPROVAL for merge,
 production deploy and production migrations. Policies are supplied through a
@@ -99,7 +127,7 @@ The startup readiness check verifies database access before polling starts.
 
 The runtime exposes no ports and keeps its own network and volumes. No command
 in this deployment lists, inspects, or controls unrelated containers.
-Supabase and Anthropic credentials stay solely in the server's root-owned
+Supabase and provider credentials stay solely in the server's root-owned
 `.env`. Do not add them to GitHub, Actions, logs, artifacts, or source files.
 `selftest` intentionally no longer performs the historical billable Claude call.
 

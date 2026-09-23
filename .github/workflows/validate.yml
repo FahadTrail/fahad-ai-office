@@ -24,8 +24,12 @@ jobs:
       - name: Test readiness and rollback without live credentials
         run: |
           set -euo pipefail
-          find src continuity/src -name '*.js' -print0 | xargs -0 -n1 node --check
+          find src continuity/src development -name '*.js' -print0 | xargs -0 -n1 node --check
           node --test
           bash -n setup.sh deploy-setup.sh ops/deploy.sh ops/install-deploy.sh
       - name: Build locked runtime image
         run: docker build --tag fahad-office-validation:${{ github.sha }} .
+      - name: Build isolated development image
+        run: docker build --file development/Dockerfile --tag fahad-office-development:${{ github.sha }} .
+      - name: Verify development privilege separation
+        run: docker run --rm --entrypoint node fahad-office-development:${{ github.sha }} development/verify-isolation.js

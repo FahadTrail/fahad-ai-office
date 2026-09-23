@@ -337,7 +337,7 @@ function summarize(text) {
 
 export function safeError(error) {
   let safe = String(error?.message || error || 'Unknown task failure');
-  for (const name of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'CONTINUITY_GITHUB_TOKEN']) {
+  for (const name of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'CONTINUITY_GITHUB_TOKEN']) {
     const value = process.env[name];
     if (value && value.length >= 8) safe = safe.replaceAll(value, '[REDACTED]');
   }

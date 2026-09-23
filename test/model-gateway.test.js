@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ModelGateway } from '../src/model-gateway/gateway.js';
 import { OpenAIResponsesAdapter } from '../src/model-gateway/adapters/openai.js';
+import { DeepSeekResponsesAdapter } from '../src/model-gateway/adapters/deepseek.js';
 import { ActionPolicyEngine, POLICY_DECISION, RoutingPolicy } from '../src/model-gateway/policy.js';
 import { CONFIRMED_TARGET_PROVIDERS, PROVIDER_CATALOG, PROVIDER_STATE } from '../src/model-gateway/provider-catalog.js';
 
@@ -133,10 +134,10 @@ test('merge and deployment are approval-gated now but policy can authorize safe 
   assert.equal(future.evaluate({ action: 'merge_main', risk: 'low', testsPassed: false, reversible: true }).decision, POLICY_DECISION.APPROVAL);
 });
 
-test('confirmed future providers are explicit targets without enabled adapters', () => {
+test('confirmed future providers remain explicit and only DeepSeek is in canary state', () => {
   assert.deepEqual(CONFIRMED_TARGET_PROVIDERS, ['deepseek', 'kimi', 'zhipu', 'minimax', 'qwen']);
   for (const provider of CONFIRMED_TARGET_PROVIDERS) {
-    assert.equal(PROVIDER_CATALOG[provider].state, PROVIDER_STATE.TARGET);
+    assert.equal(PROVIDER_CATALOG[provider].state, provider === 'deepseek' ? PROVIDER_STATE.CANARY : PROVIDER_STATE.TARGET);
   }
 });
 
@@ -172,6 +173,67 @@ test('OpenAI adapter uses the Responses API without storing server-side state', 
   assert.equal(received.body.metadata.runId, 'run-1');
   assert.equal(output.requestId, 'req-test');
   assert.ok(output.usage.costUsd > 0);
+});
+
+test('DeepSeek canary uses the stateless Responses endpoint with conservative cost accounting', async () => {
+  let received;
+  const adapter = new DeepSeekResponsesAdapter({
+    apiKey: '  test-deepseek-key  ',
+    fetchFn: async (url, init) => {
+      received = { url, init, body: JSON.parse(init.body) };
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'x-ds-trace-id': 'ds-test' }),
+        json: async () => ({
+          model: 'deepseek-flash',
+          output: [{ content: [{ type: 'output_text', text: 'canary ok' }] }],
+          usage: { input_tokens: 1000, output_tokens: 500, input_tokens_details: { cached_tokens: 200 } },
+        }),
+      };
+    },
+  });
+  const output = await adapter.complete({
+    prompt: 'safe', systemPrompt: 'safe', model: 'deepseek-flash', maxOutputTokens: 100,
+    allowedTools: [], context: { runId: 'private-run-id' }, stage: 'canary', clientRequestId: 'client-2',
+  });
+  assert.equal(received.url, 'https://api.deepseek.com/responses');
+  assert.equal(received.init.headers.authorization, 'Bearer test-deepseek-key');
+  assert.equal(received.body.store, undefined);
+  assert.equal(received.body.metadata, undefined);
+  assert.equal(output.requestId, 'ds-test');
+  assert.equal(output.text, 'canary ok');
+  assert.ok(Math.abs(output.usage.costUsd - 0.0008412) < 1e-12);
+});
+
+test('an explicit DeepSeek canary route uses its own model and checkpoints before Anthropic fallback', async () => {
+  const calls = [];
+  const deepseek = adapter('deepseek', 'deepseek-flash', async ({ model }) => {
+    calls.push(['deepseek', model]);
+    const error = new Error('temporary outage');
+    error.status = 503;
+    throw error;
+  });
+  const anthropic = adapter('anthropic', 'claude-test', async ({ model }) => {
+    calls.push(['anthropic', model]);
+    return result('fallback ok', model);
+  });
+  const gateway = new ModelGateway({
+    adapters: [anthropic, deepseek],
+    routingPolicy: new RoutingPolicy({
+      defaultProvider: 'anthropic', allowedProviders: ['anthropic', 'deepseek'], failoverEnabled: true,
+    }),
+    maxAttemptsPerProvider: 1,
+    sleepFn: async () => {},
+  });
+  const checkpoints = [];
+  const output = await gateway.execute({ ...baseRequest, provider: 'deepseek', idempotencyKey: 'run-deepseek' }, {
+    onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint),
+  });
+  assert.deepEqual(calls, [['deepseek', 'deepseek-flash'], ['anthropic', 'claude-test']]);
+  assert.equal(output.provider, 'anthropic');
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].fromProvider, 'deepseek');
 });
 
 function createGateway(adapters, { failoverEnabled = false } = {}) {

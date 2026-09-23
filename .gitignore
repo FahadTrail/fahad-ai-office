@@ -16,6 +16,7 @@ service-account*.json
 logs/
 *.log
 workspace/
+development/isolation/
 .claude/
 
 # Dependencies and build output
