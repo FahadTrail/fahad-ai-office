@@ -157,10 +157,10 @@ begin
   ) values (
     p_workspace, p_idempotency_key, p_requested_usd
   ) returning id into v_reservation_id;
-  update public.workspace_policies
-  set reserved_usd = reserved_usd + p_requested_usd,
+  update public.workspace_policies as p
+  set reserved_usd = p.reserved_usd + p_requested_usd,
       updated_at = now()
-  where workspace_id = p_workspace;
+  where p.workspace_id = p_workspace;
   return query select v_reservation_id, p_requested_usd;
 end;
 $$;

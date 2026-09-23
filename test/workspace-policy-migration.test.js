@@ -5,6 +5,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 const file = readdirSync(new URL('../supabase/migrations/', import.meta.url))
   .find((name) => name.endsWith('_workspace_policy_foundation.sql'));
 const sql = file ? readFileSync(new URL(`../supabase/migrations/${file}`, import.meta.url), 'utf8').toLowerCase() : '';
+const fixFile = readdirSync(new URL('../supabase/migrations/', import.meta.url))
+  .find((name) => name.endsWith('_fix_workspace_budget_reservation_ambiguity.sql'));
+const fixSql = fixFile ? readFileSync(new URL(`../supabase/migrations/${fixFile}`, import.meta.url), 'utf8').toLowerCase() : '';
 
 test('workspace policy migration is service-only and stores opaque secret references', () => {
   assert.ok(file);
@@ -26,6 +29,12 @@ test('budget reservation is atomic, idempotent and service-role-only', () => {
   assert.match(sql, /security invoker/);
   assert.match(sql, /revoke execute on function public\.reserve_workspace_budget[\s\S]*from public, anon, authenticated/);
   assert.match(sql, /grant execute on function public\.reserve_workspace_budget[\s\S]*to service_role/);
+  assert.match(sql, /update public\.workspace_policies as p[\s\S]*set reserved_usd = p\.reserved_usd \+ p_requested_usd/);
+  assert.ok(fixFile);
+  assert.match(fixSql, /create or replace function public\.reserve_workspace_budget/);
+  assert.match(fixSql, /set reserved_usd = p\.reserved_usd \+ p_requested_usd/);
+  assert.match(fixSql, /revoke execute on function public\.reserve_workspace_budget[\s\S]*from public, anon, authenticated/);
+  assert.match(fixSql, /grant execute on function public\.reserve_workspace_budget[\s\S]*to service_role/);
 });
 
 test('model-attempt lineage trigger prevents cross-workspace records', () => {
