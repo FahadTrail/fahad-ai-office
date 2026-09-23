@@ -12,9 +12,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY development ./development
 
-RUN mkdir -p /controller/isolation \
- && chown -R node:node /controller
+RUN mkdir -p /controller/isolation
 
-USER node
 ENV NODE_ENV=production
 ENTRYPOINT ["node", "development/escape-route.js"]

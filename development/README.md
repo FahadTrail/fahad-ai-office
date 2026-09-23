@@ -5,6 +5,7 @@ This is an isolated, approval-gated controller for future development jobs. It u
 Security boundaries:
 
 - OpenCode receives a dedicated home and an external key file; the provider key is not present in tool-process environment variables.
+- The controller is the only root process inside its isolated container. It immediately runs OpenCode as the unprivileged `node` identity and generated tests as the separate `nobody` identity; neither child can inherit the controller's credentials.
 - The coding model may read and edit only its task worktree. Shell, web, subagents, questions, external paths, and secret files are denied.
 - GitHub credentials never enter the OpenCode process.
 - The controller blocks deployment files, workflows, migrations, Hermes paths, credentials, and local OpenCode overrides.

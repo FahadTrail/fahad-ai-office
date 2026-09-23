@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lchown, lstat, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -19,6 +19,8 @@ import {
 } from './policy.js';
 
 const REPOSITORY = 'FahadTrail/fahad-ai-office';
+const MODEL_IDENTITY = Object.freeze({ uid: 1000, gid: 1000 });
+const TEST_IDENTITY = Object.freeze({ uid: 65534, gid: 65534 });
 const ORIGIN_URLS = new Set([
   `https://github.com/${REPOSITORY}.git`,
   `git@github.com:${REPOSITORY}.git`,
@@ -55,14 +57,19 @@ export async function runDevelopmentObjective({
   const origin = (await git(['remote', 'get-url', 'origin'])).stdout.trim();
   if (!ORIGIN_URLS.has(origin)) throw new Error('Development escape route is restricted to the Fahad AI Office repository');
 
-  await mkdir(dirname(worktree), { recursive: true, mode: 0o700 });
+  await mkdir(dirname(worktree), { recursive: true, mode: 0o711 });
+  await chmod(dirname(worktree), 0o711);
   await mkdir(modelHome, { recursive: true, mode: 0o700 });
   await writeFile(configFile, JSON.stringify(createOpenCodeConfig({ secretFile, model })), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-  await chmod(controlDirectory, 0o700).catch(() => {});
+  await chmod(dirname(controlDirectory), 0o711);
+  await chmod(controlDirectory, 0o711);
+  await prepareModelOwnedPath(modelHome);
+  await prepareModelOwnedPath(configFile);
 
   try {
     await checked(run, 'git', ['fetch', '--no-tags', 'origin', 'main'], { cwd: sourceRepository, timeoutMs: 120000 });
     await checked(run, 'git', ['worktree', 'add', '-b', branch, worktree, 'origin/main'], { cwd: sourceRepository, timeoutMs: 120000 });
+    await prepareModelOwnedPath(worktree, { recursive: true });
     await assertNoTrackedOpenCodeOverrides(run, worktree);
 
     const modelEnv = buildModelEnvironment({ hostEnv: env, configPath: configFile, isolatedHome: modelHome });
@@ -72,6 +79,7 @@ export async function runDevelopmentObjective({
       assertNoOpenCodeOverrides(await changedPaths(run, worktree));
       const prompt = buildAgentPrompt(objective, tests?.error || null);
       await writeFile(secretFile, env.DEEPSEEK_API_KEY.trim(), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      await prepareModelOwnedPath(secretFile);
       try {
         lastEvents = await runOpenCodeWithRetry({ run, opencodeBin, model, worktree, modelEnv, prompt });
       } finally {
@@ -88,6 +96,7 @@ export async function runDevelopmentObjective({
         tests = { ok: false, error: redact(diffCheck.stderr || diffCheck.stdout, [env.DEEPSEEK_API_KEY, env.CONTINUITY_GITHUB_TOKEN]) };
         continue;
       }
+      await makeTreeReadableForTests(worktree);
       tests = await runValidation(run, worktree, env);
       if (tests.ok) break;
     }
@@ -122,7 +131,7 @@ async function runOpenCodeWithRetry({ run, opencodeBin, model, worktree, modelEn
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const execution = await run(opencodeBin, [
       'run', '--model', model, '--agent', 'build', '--format', 'json', '--dir', worktree, prompt,
-    ], { cwd: worktree, env: modelEnv, timeoutMs: 1800000, maxOutputBytes: 4_000_000 });
+    ], { cwd: worktree, env: modelEnv, timeoutMs: 1800000, maxOutputBytes: 4_000_000, executionIdentity: 'model' });
     try {
       if (execution.code !== 0) throw new Error(`OpenCode execution exited ${execution.code}`);
       return parseOpenCodeEvents(execution.stdout);
@@ -143,7 +152,8 @@ async function runValidation(run, worktree, env) {
   const testEnv = buildTestEnvironment({ hostEnv: env, isolatedHome: env.TMPDIR || env.TEMP || '/tmp' });
   for (const [command, args] of commands) {
     const result = await run(command, args, {
-      cwd: worktree, env: testEnv, timeoutMs: 600000, maxOutputBytes: 2_000_000, sandboxed: command === 'node',
+      cwd: worktree, env: testEnv, timeoutMs: 600000, maxOutputBytes: 2_000_000,
+      executionIdentity: command === 'node' ? 'test' : null,
     });
     if (result.code !== 0) return { ok: false, error: redact(result.stderr || result.stdout, secrets) };
   }
@@ -204,9 +214,9 @@ async function createPullRequest({ fetchFn, token, branch, objective, commitSha 
   return body.html_url;
 }
 
-export function runCommand(command, args, { cwd, env = process.env, timeoutMs = 120000, maxOutputBytes = 2_000_000, sandboxed = false } = {}) {
+export function runCommand(command, args, { cwd, env = process.env, timeoutMs = 120000, maxOutputBytes = 2_000_000, executionIdentity = null } = {}) {
   return new Promise((resolvePromise, reject) => {
-    const identity = sandboxed && process.platform !== 'win32' ? { uid: 65534, gid: 65534 } : {};
+    const identity = resolveExecutionIdentity(executionIdentity);
     const child = spawn(command, args, { cwd, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], ...identity });
     let stdout = '';
     let stderr = '';
@@ -231,6 +241,41 @@ export function runCommand(command, args, { cwd, env = process.env, timeoutMs = 
       resolvePromise({ code: Number(code ?? 1), signal, stdout, stderr });
     });
   });
+}
+
+function resolveExecutionIdentity(executionIdentity) {
+  if (!executionIdentity || process.platform === 'win32') return {};
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) {
+    throw new Error('The isolated development controller must run as container root so child processes can drop privileges');
+  }
+  if (executionIdentity === 'model') return MODEL_IDENTITY;
+  if (executionIdentity === 'test') return TEST_IDENTITY;
+  throw new Error('Unknown isolated execution identity');
+}
+
+async function prepareModelOwnedPath(path, { recursive = false } = {}) {
+  if (process.platform === 'win32') return;
+  if (recursive) await chownTree(path, MODEL_IDENTITY.uid, MODEL_IDENTITY.gid);
+  else await lchown(path, MODEL_IDENTITY.uid, MODEL_IDENTITY.gid);
+}
+
+async function chownTree(path, uid, gid) {
+  const metadata = await lstat(path);
+  if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
+    for (const entry of await readdir(path)) await chownTree(join(path, entry), uid, gid);
+  }
+  await lchown(path, uid, gid);
+}
+
+async function makeTreeReadableForTests(path) {
+  if (process.platform === 'win32') return;
+  const metadata = await lstat(path);
+  if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
+    await chmod(path, metadata.mode | 0o005);
+    for (const entry of await readdir(path)) await makeTreeReadableForTests(join(path, entry));
+  } else if (!metadata.isSymbolicLink()) {
+    await chmod(path, metadata.mode | 0o004);
+  }
 }
 
 function assertSecret(value, name) {
