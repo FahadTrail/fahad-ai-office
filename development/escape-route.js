@@ -21,6 +21,7 @@ import {
 } from './policy.js';
 
 const REPOSITORY = 'FahadTrail/fahad-ai-office';
+export const MAIN_REMOTE_REFSPEC = '+refs/heads/main:refs/remotes/origin/main';
 const MODEL_IDENTITY = Object.freeze({ uid: 1000, gid: 1000 });
 const TEST_IDENTITY = Object.freeze({ uid: 65534, gid: 65534 });
 const ORIGIN_URLS = new Set([
@@ -71,7 +72,12 @@ export async function runDevelopmentObjective({
   await prepareModelOwnedPath(configFile);
 
   try {
-    await checked(run, 'git', ['fetch', '--no-tags', 'origin', 'main'], { cwd: sourceRepository, timeoutMs: 120000 });
+    // Use an explicit remote-tracking refspec so the controller also works
+    // from a shallow or single-branch source clone used by isolated runners.
+    await checked(run, 'git', [
+      'fetch', '--no-tags', 'origin',
+      MAIN_REMOTE_REFSPEC,
+    ], { cwd: sourceRepository, timeoutMs: 120000 });
     await checked(run, 'git', ['worktree', 'add', '-b', branch, worktree, 'origin/main'], { cwd: sourceRepository, timeoutMs: 120000 });
     await prepareModelOwnedPath(worktree, { recursive: true });
     await assertNoTrackedOpenCodeOverrides(run, worktree);

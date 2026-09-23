@@ -11,6 +11,11 @@ import {
   safeTaskSlug,
   summarizeOpenCodeUsage,
 } from '../development/policy.js';
+import { MAIN_REMOTE_REFSPEC } from '../development/escape-route.js';
+
+test('isolated development materializes origin/main from narrow source clones', () => {
+  assert.equal(MAIN_REMOTE_REFSPEC, '+refs/heads/main:refs/remotes/origin/main');
+});
 
 test('private repository execution requires verified DeepSeek API training opt-out', () => {
   assert.equal(assertDeepSeekApiTrainingOptOut('true'), true);
