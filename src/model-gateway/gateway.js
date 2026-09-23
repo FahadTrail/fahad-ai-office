@@ -169,7 +169,7 @@ export class ModelGateway {
   }
 
   assertBudget(budget, spentUsd, usage = null) {
-    if (!budget || spentUsd < budget.limitUsd) return;
+    if (!budget || spentUsd < budget.limitUsd || (usage && spentUsd <= budget.limitUsd)) return;
     throw new GatewayError('Model execution budget exhausted', {
       code: 'BUDGET_EXHAUSTED',
       failureClass: FAILURE_CLASS.APPROVAL,

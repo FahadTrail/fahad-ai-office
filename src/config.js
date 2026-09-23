@@ -12,6 +12,7 @@ export const MODEL_GATEWAY_ALLOWED_PROVIDERS = readProviderList(
   process.env.MODEL_GATEWAY_ALLOWED_PROVIDERS || MODEL_PROVIDER,
 );
 export const MODEL_GATEWAY_MAX_ATTEMPTS = readInteger('MODEL_GATEWAY_MAX_ATTEMPTS', 2, 1, 5);
+export const WORKSPACE_POLICY_ENFORCEMENT_ENABLED = readBoolean('WORKSPACE_POLICY_ENFORCEMENT_ENABLED', false);
 export const CHIEF_MAX_TURNS = readInteger('CHIEF_MAX_TURNS', 6, 1, 20);
 export const RESEARCH_MAX_TURNS = readInteger('RESEARCH_MAX_TURNS', 10, 1, 30);
 export const TASK_MAX_ATTEMPTS = readInteger('MAX_ATTEMPTS', 3, 1, 10);
@@ -25,7 +26,7 @@ function readInteger(name, fallback, minimum, maximum) {
   return value;
 }
 
-function readBoolean(name, fallback) {
+export function readBoolean(name, fallback) {
   const value = process.env[name];
   if (value == null || value === '') return fallback;
   if (/^(1|true|yes)$/i.test(value)) return true;

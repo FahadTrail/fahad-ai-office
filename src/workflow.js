@@ -23,6 +23,7 @@ export class OfficeWorkflow {
     maxAttempts = TASK_MAX_ATTEMPTS,
     recoveryIntervalMs = 60_000,
     now = () => Date.now(),
+    workspacePolicyStore = null,
   }) {
     this.store = store;
     this.executors = { plan, research, review };
@@ -31,6 +32,7 @@ export class OfficeWorkflow {
     this.recoveryIntervalMs = recoveryIntervalMs;
     this.now = now;
     this.lastRecoveryAt = 0;
+    this.workspacePolicyStore = workspacePolicyStore;
   }
 
   async runOnce() {
@@ -249,6 +251,7 @@ export class OfficeWorkflow {
     };
     return {
       gatewayContext: context,
+      workspacePolicyStore: this.workspacePolicyStore,
       idempotencyKey: `${task.run_id}:${stage}`,
       onAttempt: (attempt) => this.store.recordModelAttempt(attempt),
       onCheckpoint: (checkpoint) => this.store.emit({

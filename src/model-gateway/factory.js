@@ -11,14 +11,28 @@ import { DeepSeekResponsesAdapter } from './adapters/deepseek.js';
 import { OpenAIResponsesAdapter } from './adapters/openai.js';
 import { ModelGateway } from './gateway.js';
 import { RoutingPolicy } from './policy.js';
+import { WorkspacePolicyGateway } from '../workspace-policy/gateway.js';
 
-export function createDefaultModelGateway({ env = process.env, queryFn, fetchFn, sleepFn } = {}) {
+export const DEFAULT_PROVIDER_SECRET_REFS = Object.freeze({
+  anthropic: 'env://ANTHROPIC_API_KEY',
+  openai: 'env://OPENAI_API_KEY',
+  deepseek: 'env://DEEPSEEK_API_KEY',
+});
+
+export function createDefaultModelGateway({
+  env = process.env,
+  queryFn,
+  fetchFn,
+  sleepFn,
+  workspacePolicyStore,
+  providerSecretRefs = DEFAULT_PROVIDER_SECRET_REFS,
+} = {}) {
   const adapters = [
     new AnthropicModelAdapter({ queryFn, env }),
     new OpenAIResponsesAdapter({ apiKey: env.OPENAI_API_KEY, model: OPENAI_MODEL, fetchFn }),
     new DeepSeekResponsesAdapter({ apiKey: env.DEEPSEEK_API_KEY, model: DEEPSEEK_MODEL, fetchFn }),
   ];
-  return new ModelGateway({
+  const gateway = new ModelGateway({
     adapters,
     routingPolicy: new RoutingPolicy({
       defaultProvider: MODEL_PROVIDER,
@@ -28,4 +42,7 @@ export function createDefaultModelGateway({ env = process.env, queryFn, fetchFn,
     maxAttemptsPerProvider: MODEL_GATEWAY_MAX_ATTEMPTS,
     sleepFn,
   });
+  return workspacePolicyStore
+    ? new WorkspacePolicyGateway({ gateway, policyStore: workspacePolicyStore, providerSecretRefs })
+    : gateway;
 }

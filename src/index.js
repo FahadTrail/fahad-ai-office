@@ -2,13 +2,17 @@
 // It opens no ports and performs no AI work while idle.
 
 import { writeFileSync } from 'node:fs';
-import { store, log } from './db.js';
+import { db, store, log } from './db.js';
 import { OfficeWorkflow } from './workflow.js';
 import { checkHealth } from './healthcheck.js';
-import { CHIEF_MODEL, RESEARCH_MODEL } from './config.js';
+import { CHIEF_MODEL, RESEARCH_MODEL, WORKSPACE_POLICY_ENFORCEMENT_ENABLED } from './config.js';
+import { SupabaseWorkspacePolicyStore } from './workspace-policy/supabase-store.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
-const workflow = new OfficeWorkflow({ store });
+const workspacePolicyStore = WORKSPACE_POLICY_ENFORCEMENT_ENABLED
+  ? new SupabaseWorkspacePolicyStore(db)
+  : null;
+const workflow = new OfficeWorkflow({ store, workspacePolicyStore });
 let running = true;
 let busy = false;
 let lastPollAt = 0;
