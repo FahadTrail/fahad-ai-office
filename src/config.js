@@ -7,7 +7,13 @@ export const CHIEF_MODEL = process.env.CHIEF_MODEL || 'claude-sonnet-5';
 export const RESEARCH_MODEL = process.env.RESEARCH_MODEL || CHIEF_MODEL;
 export const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.3-codex';
 export const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
+export const QWEN_MODEL = process.env.QWEN_MODEL || 'qwen3-coder-flash';
+export const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.7-code';
+export const ZHIPU_MODEL = process.env.ZHIPU_MODEL || 'glm-5.3-flash';
+export const MINIMAX_MODEL = process.env.MINIMAX_MODEL || 'MiniMax-M2.7';
+export const QWEN_API_ENDPOINT = process.env.QWEN_API_ENDPOINT || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions';
 export const MODEL_GATEWAY_FAILOVER_ENABLED = readBoolean('MODEL_GATEWAY_FAILOVER_ENABLED', false);
+export const MODEL_GATEWAY_AUTO_SELECT_ENABLED = readBoolean('MODEL_GATEWAY_AUTO_SELECT_ENABLED', false);
 export const MODEL_GATEWAY_ALLOWED_PROVIDERS = readProviderList(
   process.env.MODEL_GATEWAY_ALLOWED_PROVIDERS || MODEL_PROVIDER,
 );

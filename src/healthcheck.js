@@ -12,13 +12,17 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
   const failoverEnabled = /^(1|true|yes)$/i.test(env.MODEL_GATEWAY_FAILOVER_ENABLED || '');
   const allowedProviders = String(env.MODEL_GATEWAY_ALLOWED_PROVIDERS || 'anthropic')
     .split(',').map((value) => value.trim()).filter(Boolean);
-  if (failoverEnabled && allowedProviders.includes('openai') &&
-      (!env.OPENAI_API_KEY || env.OPENAI_API_KEY.length < 12 || /PASTE_HERE|YOUR_.*KEY/i.test(env.OPENAI_API_KEY))) {
-    throw new Error('Missing or placeholder setting: OPENAI_API_KEY');
-  }
-  if (failoverEnabled && allowedProviders.includes('deepseek') &&
-      (!env.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY.length < 12 || /PASTE_HERE|YOUR_.*KEY/i.test(env.DEEPSEEK_API_KEY))) {
-    throw new Error('Missing or placeholder setting: DEEPSEEK_API_KEY');
+  const providerSecrets = { openai: 'OPENAI_API_KEY', deepseek: 'DEEPSEEK_API_KEY', qwen: 'QWEN_API_KEY', kimi: 'KIMI_API_KEY', zhipu: 'ZHIPU_API_KEY', minimax: 'MINIMAX_API_KEY' };
+  const providerApprovals = { qwen: 'QWEN_API_PRIVATE_DATA_APPROVED', kimi: 'KIMI_API_PRIVATE_DATA_APPROVED', zhipu: 'ZHIPU_API_PRIVATE_DATA_APPROVED', minimax: 'MINIMAX_API_PRIVATE_DATA_APPROVED' };
+  for (const provider of allowedProviders) {
+    const secretName = providerSecrets[provider];
+    if (failoverEnabled && secretName && (!env[secretName] || env[secretName].length < 12 || /PASTE_HERE|YOUR_.*KEY/i.test(env[secretName]))) {
+      throw new Error('Missing or placeholder setting: ' + secretName);
+    }
+    const approvalName = providerApprovals[provider];
+    if (failoverEnabled && approvalName && !/^(1|true|yes)$/i.test(env[approvalName] || '')) {
+      throw new Error('Missing private-data authorization: ' + approvalName);
+    }
   }
   const base = new URL(env.SUPABASE_URL);
   if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/') {

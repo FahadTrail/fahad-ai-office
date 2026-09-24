@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import {
   DEFAULT_MODEL,
-  assertDeepSeekApiTrainingOptOut,
+  resolveDevelopmentProviderRoute,
   assertContainedPath,
   assertNoSecretMaterial,
   assertSafeChangedPaths,
@@ -42,8 +42,7 @@ export async function runDevelopmentObjective({
   publish = true,
 } = {}) {
   objective = validateObjective(objective);
-  assertDeepSeekApiTrainingOptOut(env.DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED);
-  assertSecret(env.DEEPSEEK_API_KEY, 'DEEPSEEK_API_KEY');
+  const providerRoute = resolveDevelopmentProviderRoute({ env, model, requiresPrivateData: true });
   if (publish) assertSecret(env.CONTINUITY_GITHUB_TOKEN, 'CONTINUITY_GITHUB_TOKEN');
   sourceRepository = resolve(sourceRepository);
   isolatedRoot = resolve(isolatedRoot);
@@ -52,7 +51,7 @@ export async function runDevelopmentObjective({
   const branch = `automation/dev-${safeTaskSlug(objective)}-${taskId.slice(0, 8)}`;
   const worktree = assertContainedPath(isolatedRoot, join(isolatedRoot, 'worktrees', taskId));
   const controlDirectory = assertContainedPath(isolatedRoot, join(isolatedRoot, 'control', taskId));
-  const secretFile = join(controlDirectory, 'deepseek.key');
+  const secretFile = join(controlDirectory, 'provider.key');
   const configFile = join(controlDirectory, 'opencode.json');
   const modelHome = join(controlDirectory, 'home');
 
@@ -65,11 +64,9 @@ export async function runDevelopmentObjective({
   await mkdir(dirname(worktree), { recursive: true, mode: 0o711 });
   await chmod(dirname(worktree), 0o711);
   await mkdir(modelHome, { recursive: true, mode: 0o700 });
-  await writeFile(configFile, JSON.stringify(createOpenCodeConfig({ secretFile, model })), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   await chmod(dirname(controlDirectory), 0o711);
   await chmod(controlDirectory, 0o711);
   await prepareModelOwnedPath(modelHome);
-  await prepareModelOwnedPath(configFile);
 
   try {
     // Use an explicit remote-tracking refspec so the controller also works
@@ -86,21 +83,27 @@ export async function runDevelopmentObjective({
     let lastEvents = [];
     let cumulativeUsage = emptyUsage();
     let modelDurationMs = 0;
+    let selectedProvider = null;
+    let selectedModel = null;
+    const providerAttempts = [];
     let tests = null;
     for (let round = 0; round <= maxRepairRounds; round += 1) {
       assertNoOpenCodeOverrides(await changedPaths(run, worktree));
       const prompt = buildAgentPrompt(objective, tests?.error || null);
-      await writeFile(secretFile, env.DEEPSEEK_API_KEY.trim(), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-      await prepareModelOwnedPath(secretFile);
       try {
-        const modelRun = await runOpenCodeWithRetry({ run, opencodeBin, model, worktree, modelEnv, prompt });
+        const modelRun = await runOpenCodeProviderRoute({
+          run, opencodeBin, providerRoute, worktree, modelEnv, prompt, env, secretFile, configFile,
+        });
         lastEvents = modelRun.events;
         cumulativeUsage = mergeUsage(cumulativeUsage, modelRun.usage);
         modelDurationMs += modelRun.durationMs;
+        providerAttempts.push(...modelRun.providerAttempts);
+        selectedProvider = modelRun.provider;
+        selectedModel = modelRun.model;
         assertDevelopmentBudget(cumulativeUsage.costUsd, budgetLimitUsd);
       } finally {
         // No provider key remains on disk while generated code or tests execute.
-        await unlink(secretFile).catch(() => {});
+        await Promise.all([unlink(secretFile).catch(() => {}), unlink(configFile).catch(() => {})]);
       }
 
       const paths = assertSafeChangedPaths(await changedPaths(run, worktree));
@@ -109,7 +112,7 @@ export async function runDevelopmentObjective({
       assertNoSecretMaterial(diff.stdout);
       const diffCheck = await run('git', safeGitArgs(worktree, ['diff', '--check']), { cwd: worktree, timeoutMs: 120000 });
       if (diffCheck.code !== 0) {
-        tests = { ok: false, error: redact(diffCheck.stderr || diffCheck.stdout, [env.DEEPSEEK_API_KEY, env.CONTINUITY_GITHUB_TOKEN]) };
+        tests = { ok: false, error: redact(diffCheck.stderr || diffCheck.stdout, providerSecrets(env)) };
         continue;
       }
       await makeTreeReadableForTests(worktree);
@@ -126,11 +129,12 @@ export async function runDevelopmentObjective({
     let pullRequestUrl = null;
     if (publish) {
       await pushWithAskPass({ run, worktree, branch, token: env.CONTINUITY_GITHUB_TOKEN, controlDirectory });
-      pullRequestUrl = await createPullRequest({ fetchFn, token: env.CONTINUITY_GITHUB_TOKEN, branch, objective, commitSha });
+      pullRequestUrl = await createPullRequest({ fetchFn, token: env.CONTINUITY_GITHUB_TOKEN, branch, objective, commitSha, provider: selectedProvider, model: selectedModel });
     }
     return {
       ok: true, taskId, branch, commitSha, pullRequestUrl, tests: tests.summary,
-      model, harness: 'opencode', eventCount: lastEvents.length, worktree,
+      model: selectedModel, provider: selectedProvider, providerAttempts,
+      harness: 'opencode', eventCount: lastEvents.length, worktree,
       usage: { ...cumulativeUsage, durationMs: modelDurationMs, limitUsd: budgetLimitUsd },
     };
   } finally {
@@ -143,7 +147,36 @@ export async function runDevelopmentObjective({
   }
 }
 
-async function runOpenCodeWithRetry({ run, opencodeBin, model, worktree, modelEnv, prompt }) {
+async function runOpenCodeProviderRoute({ run, opencodeBin, providerRoute, worktree, modelEnv, prompt, env, secretFile, configFile }) {
+  const providerAttempts = [];
+  let routeUsage = emptyUsage();
+  let lastError;
+  for (const profile of providerRoute) {
+    const startedAt = Date.now();
+    try {
+      await writeFile(secretFile, env[profile.apiKeyEnv].trim(), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      await writeFile(configFile, JSON.stringify(createOpenCodeConfig({ secretFile, profile })), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      await prepareModelOwnedPath(secretFile);
+      await prepareModelOwnedPath(configFile);
+      const result = await runOpenCodeWithRetry({ run, opencodeBin, model: profile.model, pricing: profile.pricing, worktree, modelEnv, prompt });
+      routeUsage = mergeUsage(routeUsage, result.usage);
+      providerAttempts.push({ provider: profile.provider, model: profile.modelId, status: 'succeeded', usage: result.usage, durationMs: Date.now() - startedAt });
+      return { ...result, usage: routeUsage, provider: profile.provider, model: profile.model, providerAttempts };
+    } catch (error) {
+      lastError = error;
+      if (error.usage) routeUsage = mergeUsage(routeUsage, error.usage);
+      providerAttempts.push({ provider: profile.provider, model: profile.modelId, status: 'failed', reason: 'provider_execution_failed', usage: error.usage || null, durationMs: Date.now() - startedAt });
+    } finally {
+      await Promise.all([unlink(secretFile).catch(() => {}), unlink(configFile).catch(() => {})]);
+    }
+  }
+  const error = new Error(`All authorized development providers failed safely: ${lastError?.message || 'unknown failure'}`);
+  error.providerAttempts = providerAttempts;
+  error.usage = routeUsage;
+  throw error;
+}
+
+async function runOpenCodeWithRetry({ run, opencodeBin, model, pricing, worktree, modelEnv, prompt }) {
   let lastError;
   const allEvents = [];
   const startedAt = Date.now();
@@ -155,14 +188,16 @@ async function runOpenCodeWithRetry({ run, opencodeBin, model, worktree, modelEn
       if (execution.code !== 0) throw new Error(`OpenCode execution exited ${execution.code}`);
       const events = parseOpenCodeEvents(execution.stdout);
       allEvents.push(...events);
-      return { events, usage: summarizeOpenCodeUsage(allEvents), durationMs: Date.now() - startedAt };
+      return { events, usage: summarizeOpenCodeUsage(allEvents, pricing), durationMs: Date.now() - startedAt };
     } catch (error) {
       lastError = error;
       try { allEvents.push(...parseOpenCodeEvents(execution.stdout)); } catch {}
       if (attempt < 2) await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
     }
   }
-  throw new Error(`OpenCode execution failed safely after automatic retry: ${lastError?.message || 'unknown failure'}`);
+  const error = new Error(`OpenCode execution failed safely after automatic retry: ${lastError?.message || 'unknown failure'}`);
+  try { error.usage = summarizeOpenCodeUsage(allEvents, pricing); } catch {}
+  throw error;
 }
 
 function readDevelopmentBudget(value) {
@@ -191,7 +226,7 @@ function assertDevelopmentBudget(spentUsd, limitUsd) {
 }
 
 async function runValidation(run, worktree, env) {
-  const secrets = [env.DEEPSEEK_API_KEY, env.CONTINUITY_GITHUB_TOKEN, env.ANTHROPIC_API_KEY, env.OPENAI_API_KEY];
+  const secrets = providerSecrets(env);
   const commands = [
     ['node', ['--test']],
     ['git', safeGitArgs(worktree, ['diff', '--check'])],
@@ -205,6 +240,11 @@ async function runValidation(run, worktree, env) {
     if (result.code !== 0) return { ok: false, error: redact(result.stderr || result.stdout, secrets) };
   }
   return { ok: true, summary: ['node --test', 'git diff --check'] };
+}
+
+function providerSecrets(env) {
+  return [env.DEEPSEEK_API_KEY, env.QWEN_API_KEY, env.KIMI_API_KEY, env.ZHIPU_API_KEY,
+    env.MINIMAX_API_KEY, env.CONTINUITY_GITHUB_TOKEN, env.ANTHROPIC_API_KEY, env.OPENAI_API_KEY];
 }
 
 async function changedPaths(run, worktree) {
@@ -253,7 +293,7 @@ export function safeGitArgs(worktree, args) {
   return ['-c', `safe.directory=${resolve(worktree)}`, ...args];
 }
 
-async function createPullRequest({ fetchFn, token, branch, objective, commitSha }) {
+async function createPullRequest({ fetchFn, token, branch, objective, commitSha, provider, model }) {
   const response = await fetchFn(`https://api.github.com/repos/${REPOSITORY}/pulls`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'x-github-api-version': '2022-11-28' },
@@ -261,7 +301,7 @@ async function createPullRequest({ fetchFn, token, branch, objective, commitSha 
       title: `Development: ${safeTaskSlug(objective).replaceAll('-', ' ')}`,
       head: branch,
       base: 'main',
-      body: `Automated isolated development result.\n\n- External coding model: DeepSeek via OpenCode\n- Controller-side tests: passed\n- Commit: \`${commitSha}\`\n- Merge and deployment remain approval-gated.`,
+      body: `Automated isolated development result.\n\n- External coding provider: ${provider} via OpenCode\n- Model: ${model}\n- Controller-side tests: passed\n- Commit: \`${commitSha}\`\n- Merge and deployment remain approval-gated.`,
     }),
     signal: AbortSignal.timeout(30000),
   });

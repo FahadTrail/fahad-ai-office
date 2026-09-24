@@ -40,10 +40,12 @@ export class RoutingPolicy {
     defaultProvider = 'anthropic',
     allowedProviders = ['anthropic'],
     failoverEnabled = false,
+    autoSelectEnabled = false,
   } = {}) {
     this.defaultProvider = defaultProvider;
     this.allowedProviders = [...new Set(allowedProviders)];
     this.failoverEnabled = Boolean(failoverEnabled);
+    this.autoSelectEnabled = Boolean(autoSelectEnabled);
   }
 
   route(request, descriptors) {
@@ -51,12 +53,19 @@ export class RoutingPolicy {
     const order = this.failoverEnabled
       ? [requested, ...this.allowedProviders.filter((name) => name !== requested)]
       : [requested];
-    const candidates = order
+    let candidates = order
       .filter((name) => this.allowedProviders.includes(name))
       .map((name) => descriptors.find((descriptor) => descriptor.name === name))
       .filter(Boolean)
       .filter((descriptor) => descriptor.configured)
-      .filter((descriptor) => request.capabilities.every((capability) => descriptor.capabilities.includes(capability)));
+      .filter((descriptor) => request.capabilities.every((capability) => descriptor.capabilities.includes(capability)))
+      .filter((descriptor) => !request.routingHints.requiresPrivateData || descriptor.privateDataEligible)
+      .filter((descriptor) => !request.routingHints.estimatedContextTokens || descriptor.contextWindow >= request.routingHints.estimatedContextTokens)
+      .filter((descriptor) => !request.routingHints.healthyProviders || request.routingHints.healthyProviders.includes(descriptor.name));
+
+    if (this.autoSelectEnabled && !request.provider) {
+      candidates = candidates.toSorted((left, right) => candidateScore(right, request.routingHints) - candidateScore(left, request.routingHints));
+    }
 
     if (!candidates.length) {
       throw new GatewayError('No configured provider satisfies the routing policy', {
@@ -66,6 +75,11 @@ export class RoutingPolicy {
     }
     return candidates;
   }
+}
+
+function candidateScore(descriptor, hints) {
+  const qualityWeight = hints.preferQuality ? 10 : 4;
+  return descriptor.qualityTier * qualityWeight - descriptor.costTier * 3 + Math.min(5, descriptor.contextWindow / 200000);
 }
 
 function decision(value, reason) {

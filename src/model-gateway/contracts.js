@@ -26,6 +26,7 @@ export function normalizeGatewayRequest(input = {}) {
   const capabilities = normalizeStringList(input.capabilities || ['text']);
   const context = normalizeContext(input.context || {});
   const budget = normalizeBudget(input.budget);
+  const routingHints = normalizeRoutingHints(input.routingHints);
 
   return Object.freeze({
     prompt,
@@ -42,7 +43,19 @@ export function normalizeGatewayRequest(input = {}) {
     capabilities,
     context,
     budget,
+    routingHints,
     onActivity: typeof input.onActivity === 'function' ? input.onActivity : async () => {},
+  });
+}
+
+function normalizeRoutingHints(value) {
+  if (value == null) return Object.freeze({ requiresPrivateData: true, estimatedContextTokens: 0, healthyProviders: null, preferQuality: false });
+  if (typeof value !== 'object' || Array.isArray(value)) throw new GatewayError('routingHints must be an object', { code: 'INVALID_GATEWAY_REQUEST' });
+  return Object.freeze({
+    requiresPrivateData: value.requiresPrivateData !== false,
+    estimatedContextTokens: value.estimatedContextTokens == null ? 0 : nonNegativeNumber(value.estimatedContextTokens, 'routingHints.estimatedContextTokens'),
+    healthyProviders: value.healthyProviders == null ? null : normalizeStringList(value.healthyProviders),
+    preferQuality: value.preferQuality === true,
   });
 }
 

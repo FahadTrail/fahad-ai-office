@@ -7,8 +7,10 @@ import {
   buildAgentPrompt,
   buildModelEnvironment,
   createOpenCodeConfig,
+  DEVELOPMENT_PROVIDER_PROFILES,
   parseOpenCodeEvents,
   safeTaskSlug,
+  resolveDevelopmentProviderRoute,
   summarizeOpenCodeUsage,
 } from '../development/policy.js';
 import { MAIN_REMOTE_REFSPEC, safeGitArgs } from '../development/escape-route.js';
@@ -50,6 +52,29 @@ test('OpenCode policy keeps provider and GitHub secrets outside the model tool e
   assert.equal(env.DEEPSEEK_API_KEY, undefined);
   assert.equal(env.CONTINUITY_GITHUB_TOKEN, undefined);
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
+});
+
+test('OpenCode selects only configured and explicitly privacy-authorized providers', () => {
+  const env = {
+    DEEPSEEK_API_KEY: 'deepseek-secret-1234', DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED: 'true',
+    QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true',
+    KIMI_API_KEY: 'kimi-secret-123456', KIMI_API_PRIVATE_DATA_APPROVED: 'false',
+    MINIMAX_API_KEY: 'minimax-secret-1234', MINIMAX_API_PRIVATE_DATA_APPROVED: 'true',
+  };
+  const route = resolveDevelopmentProviderRoute({ env });
+  assert.deepEqual(route.map(({ provider }) => provider), ['deepseek', 'qwen']);
+  assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'kimi/kimi-k2.7-code' }), (error) => error.code === 'NEEDS_HUMAN_APPROVAL');
+  assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'minimax/MiniMax-M2.7' }), /authorized credential/i);
+});
+
+test('OpenCode config is generated for each prepared compatible provider without embedding its key', () => {
+  for (const profile of Object.values(DEVELOPMENT_PROVIDER_PROFILES)) {
+    const config = createOpenCodeConfig({ secretFile: `/private/${profile.provider}.key`, profile });
+    assert.equal(config.model, profile.model);
+    assert.equal(config.provider[profile.provider].options.baseURL, profile.baseURL);
+    assert.match(config.provider[profile.provider].options.apiKey, /^\{file:/);
+    assert.equal(JSON.stringify(config).includes('secret-value'), false);
+  }
 });
 
 test('automatic development blocks privileged paths and secret-looking diffs', () => {
