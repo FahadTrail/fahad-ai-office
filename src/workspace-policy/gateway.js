@@ -65,7 +65,7 @@ export class WorkspacePolicyGateway {
       }, {
         ...hooks,
         onAttempt: async (attempt) => {
-          if (attempt.status === 'succeeded' && !billedAttempts.has(attempt.id)) {
+          if (attempt.status !== 'started' && !billedAttempts.has(attempt.id)) {
             billedAttempts.add(attempt.id);
             actualUsd += Number(attempt.usage?.costUsd || 0);
           }

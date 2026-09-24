@@ -65,6 +65,27 @@ test('workspace policy readiness is always verified for selectively enforced job
   assert.ok(f.requests.some(({ url }) => url.pathname === '/rest/v1/tool_executions'));
   assert.ok(f.requests.every(({ options }) => options.method === 'GET'));
 });
+
+test('new provider failover requires both a server key and private-data authorization', async () => {
+  let calls = 0;
+  await assert.rejects(checkHealth({
+    env: { ...env, MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,qwen' },
+    fetchFn: async () => { calls += 1; throw new Error('should not call'); }, verifyCode: false,
+  }), /QWEN_API_KEY/);
+  await assert.rejects(checkHealth({
+    env: { ...env, QWEN_API_KEY: 'qwen-secret-123456', MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,qwen' },
+    fetchFn: async () => { calls += 1; throw new Error('should not call'); }, verifyCode: false,
+  }), /QWEN_API_PRIVATE_DATA_APPROVED/);
+  await assert.rejects(checkHealth({
+    env: { ...env, QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true', MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,qwen' },
+    fetchFn: async () => { calls += 1; throw new Error('should not call'); }, verifyCode: false,
+  }), /QWEN_API_ENDPOINT/);
+  await assert.rejects(checkHealth({
+    env: { ...env, QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true', QWEN_API_ENDPOINT: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', MODEL_GATEWAY_FAILOVER_ENABLED: 'true', MODEL_GATEWAY_ALLOWED_PROVIDERS: 'anthropic,qwen' },
+    fetchFn: async () => { calls += 1; throw new Error('should not call'); }, verifyCode: false,
+  }), /Invalid Qwen workspace endpoint/);
+  assert.equal(calls, 0);
+});
 test('database errors fail readiness without exposing response text', async () => {
   const f = fixture({ ok: false, status: 401, json: async () => ({ secret: 'not-for-logs' }) });
   await assert.rejects(checkHealth({ env, fetchFn: f.fetchFn, verifyCode: false }), /^Error: Database readiness request failed \(HTTP 401\)$/);

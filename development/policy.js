@@ -1,6 +1,13 @@
 import { resolve, sep } from 'node:path';
 
-export const DEFAULT_MODEL = 'deepseek/deepseek-flash';
+export const DEFAULT_MODEL = 'auto';
+export const DEVELOPMENT_PROVIDER_PROFILES = Object.freeze({
+  qwen: Object.freeze({ provider: 'qwen', model: 'qwen/qwen3.8-flash', modelId: 'qwen3.8-flash', apiKeyEnv: 'QWEN_API_KEY', approvalEnv: 'QWEN_API_PRIVATE_DATA_APPROVED', baseUrlEnv: 'QWEN_API_BASE_URL', baseURL: null, privacyReviewed: true, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.20, cachedInputPerMillion: 0.03, outputPerMillion: 0.60 } }),
+  zhipu: Object.freeze({ provider: 'zhipu', model: 'zhipu/glm-5.3-flash', modelId: 'glm-5.3-flash', apiKeyEnv: 'ZHIPU_API_KEY', approvalEnv: 'ZHIPU_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.z.ai/api/paas/v4', privacyReviewed: true, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.15, cachedInputPerMillion: 0.03, outputPerMillion: 0.50 } }),
+  deepseek: Object.freeze({ provider: 'deepseek', model: 'deepseek/deepseek-flash', modelId: 'deepseek-flash', apiKeyEnv: 'DEEPSEEK_API_KEY', approvalEnv: 'DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED', baseURL: 'https://api.deepseek.com', privacyReviewed: true, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.30, cachedInputPerMillion: 0.006, outputPerMillion: 1.20 } }),
+  kimi: Object.freeze({ provider: 'kimi', model: 'kimi/kimi-k2.7-code', modelId: 'kimi-k2.7-code', apiKeyEnv: 'KIMI_API_KEY', approvalEnv: 'KIMI_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.moonshot.ai/v1', privacyReviewed: true, qualityTier: 5, costTier: 3, pricing: { inputPerMillion: 0.95, cachedInputPerMillion: 0.19, outputPerMillion: 4 } }),
+  minimax: Object.freeze({ provider: 'minimax', model: 'minimax/MiniMax-M2.7', modelId: 'MiniMax-M2.7', apiKeyEnv: 'MINIMAX_API_KEY', approvalEnv: 'MINIMAX_API_PRIVATE_DATA_APPROVED', baseURL: 'https://api.minimax.io/v1', privacyReviewed: false, qualityTier: 4, costTier: 1, pricing: { inputPerMillion: 0.30, cachedInputPerMillion: 0.06, cacheWritePerMillion: 0.375, outputPerMillion: 1.20 } }),
+});
 export const FORBIDDEN_CHANGE_PATTERNS = Object.freeze([
   /(^|\/)\.env(?:\.|$)/i,
   /(^|\/)(?:secrets?|credentials?)(?:\/|$)/i,
@@ -28,21 +35,53 @@ export function assertDeepSeekApiTrainingOptOut(value) {
   return true;
 }
 
+export function resolveDevelopmentProviderRoute({ env = process.env, model = DEFAULT_MODEL, requiresPrivateData = true } = {}) {
+  const requestedProvider = model === 'auto' ? null : String(model).split('/')[0];
+  const profiles = Object.values(DEVELOPMENT_PROVIDER_PROFILES)
+    .filter((profile) => !requestedProvider || profile.provider === requestedProvider)
+    .filter((profile) => typeof env[profile.apiKeyEnv] === 'string' && env[profile.apiKeyEnv].trim().length >= 12)
+    .filter((profile) => !requiresPrivateData || (profile.privacyReviewed && /^(1|true|yes)$/i.test(String(env[profile.approvalEnv] || ''))))
+    .map((profile) => resolveProfileEndpoint(profile, env))
+    .filter(Boolean)
+    .toSorted((left, right) => (right.qualityTier * 4 - right.costTier * 3) - (left.qualityTier * 4 - left.costTier * 3));
+  if (!profiles.length) throw approvalError(requestedProvider
+    ? `No authorized credential is available for development provider: ${requestedProvider}`
+    : 'No privacy-authorized development provider credential is available');
+  return profiles;
+}
+
+function resolveProfileEndpoint(profile, env) {
+  if (!profile.baseUrlEnv) return profile;
+  const fromBaseUrl = env[profile.baseUrlEnv];
+  const fromEndpoint = env.QWEN_API_ENDPOINT?.replace(/\/chat\/completions\/?$/, '');
+  const baseURL = String(fromBaseUrl || fromEndpoint || '').replace(/\/$/, '');
+  if (!/^https:\/\/[a-z0-9-]+\.ap-southeast-1\.maas\.aliyuncs\.com\/compatible-mode\/v1$/i.test(baseURL)) return null;
+  return Object.freeze({ ...profile, baseURL });
+}
+
 export function safeTaskSlug(objective) {
   const slug = validateObjective(objective).toLowerCase()
     .normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 42);
   return slug || 'development-task';
 }
 
-export function createOpenCodeConfig({ secretFile, model = DEFAULT_MODEL } = {}) {
+export function createOpenCodeConfig({ secretFile, profile = DEVELOPMENT_PROVIDER_PROFILES.deepseek } = {}) {
   const absoluteSecret = resolve(secretFile);
+  if (typeof profile.baseURL !== 'string' || !profile.baseURL.startsWith('https://')) {
+    throw new Error(`Provider endpoint is not configured for ${profile.provider}`);
+  }
   return {
     $schema: 'https://opencode.ai/config.json',
-    model,
+    model: profile.model,
     share: 'disabled',
     autoupdate: false,
     provider: {
-      deepseek: { options: { apiKey: `{file:${absoluteSecret}}`, timeout: 120000 } },
+      [profile.provider]: {
+        npm: '@ai-sdk/openai-compatible',
+        name: profile.provider,
+        options: { apiKey: `{file:${absoluteSecret}}`, baseURL: profile.baseURL, timeout: 120000 },
+        models: { [profile.modelId]: { name: profile.modelId } },
+      },
     },
     permission: {
       '*': 'deny',
@@ -118,7 +157,7 @@ export function assertNoSecretMaterial(text) {
     /\bsk-[A-Za-z0-9_-]{16,}\b/,
     /\bgithub_pat_[A-Za-z0-9_]{16,}\b/,
     /\bghp_[A-Za-z0-9]{16,}\b/,
-    /\b(?:SUPABASE_SERVICE_ROLE_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|DEEPSEEK_API_KEY|CONTINUITY_GITHUB_TOKEN)\s*=\s*\S+/i,
+    /\b(?:SUPABASE_SERVICE_ROLE_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|DEEPSEEK_API_KEY|QWEN_API_KEY|KIMI_API_KEY|ZHIPU_API_KEY|MINIMAX_API_KEY|CONTINUITY_GITHUB_TOKEN)\s*=\s*\S+/i,
   ];
   if (patterns.some((pattern) => pattern.test(value))) throw approvalError('Potential secret material was detected in the proposed diff');
   return true;
@@ -135,7 +174,7 @@ export function parseOpenCodeEvents(output) {
   return events;
 }
 
-export function summarizeOpenCodeUsage(events) {
+export function summarizeOpenCodeUsage(events, pricing = DEVELOPMENT_PROVIDER_PROFILES.deepseek.pricing) {
   const usage = {
     inputTokens: 0,
     outputTokens: 0,
@@ -156,8 +195,10 @@ export function summarizeOpenCodeUsage(events) {
     const cacheRead = nonNegativeNumber(tokens.cache?.read);
     const cacheWrite = nonNegativeNumber(tokens.cache?.write);
     const reported = nonNegativeNumber(part.cost);
-    // DeepSeek V4.1 Flash peak rates keep the development guard conservative.
-    const conservative = ((input + cacheWrite) * 0.30 + cacheRead * 0.006 + (output + reasoning) * 1.20) / 1_000_000;
+    const conservative = (input * pricing.inputPerMillion
+      + cacheWrite * (pricing.cacheWritePerMillion ?? pricing.inputPerMillion)
+      + cacheRead * pricing.cachedInputPerMillion
+      + (output + reasoning) * pricing.outputPerMillion) / 1_000_000;
     usage.inputTokens += input;
     usage.outputTokens += output;
     usage.reasoningTokens += reasoning;

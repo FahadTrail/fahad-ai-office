@@ -7,8 +7,10 @@ import {
   buildAgentPrompt,
   buildModelEnvironment,
   createOpenCodeConfig,
+  DEVELOPMENT_PROVIDER_PROFILES,
   parseOpenCodeEvents,
   safeTaskSlug,
+  resolveDevelopmentProviderRoute,
   summarizeOpenCodeUsage,
 } from '../development/policy.js';
 import { MAIN_REMOTE_REFSPEC, safeGitArgs } from '../development/escape-route.js';
@@ -52,6 +54,39 @@ test('OpenCode policy keeps provider and GitHub secrets outside the model tool e
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
 });
 
+test('OpenCode selects only configured and explicitly privacy-authorized providers', () => {
+  const env = {
+    DEEPSEEK_API_KEY: 'deepseek-secret-1234', DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED: 'true',
+    QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true',
+    QWEN_API_BASE_URL: 'https://workspace-123.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
+    KIMI_API_KEY: 'kimi-secret-123456', KIMI_API_PRIVATE_DATA_APPROVED: 'false',
+    MINIMAX_API_KEY: 'minimax-secret-1234', MINIMAX_API_PRIVATE_DATA_APPROVED: 'true',
+  };
+  const route = resolveDevelopmentProviderRoute({ env });
+  assert.deepEqual(route.map(({ provider }) => provider), ['qwen', 'deepseek']);
+  assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'kimi/kimi-k2.7-code' }), (error) => error.code === 'NEEDS_HUMAN_APPROVAL');
+  assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'minimax/MiniMax-M2.7' }), /authorized credential/i);
+});
+
+test('OpenCode config is generated for each prepared compatible provider without embedding its key', () => {
+  for (const profile of Object.values(DEVELOPMENT_PROVIDER_PROFILES)) {
+    const configuredProfile = profile.provider === 'qwen'
+      ? { ...profile, baseURL: 'https://workspace-123.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1' }
+      : profile;
+    const config = createOpenCodeConfig({ secretFile: `/private/${profile.provider}.key`, profile: configuredProfile });
+    assert.equal(config.model, profile.model);
+    assert.equal(config.provider[profile.provider].options.baseURL, configuredProfile.baseURL);
+    assert.match(config.provider[profile.provider].options.apiKey, /^\{file:/);
+    assert.equal(JSON.stringify(config).includes('secret-value'), false);
+  }
+});
+
+test('Qwen development routing requires a Singapore workspace endpoint', () => {
+  const env = { QWEN_API_KEY: 'qwen-secret-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true' };
+  assert.throws(() => resolveDevelopmentProviderRoute({ env, model: 'qwen/qwen3.8-flash' }), /authorized credential/i);
+  assert.throws(() => createOpenCodeConfig({ secretFile: '/private/qwen.key', profile: DEVELOPMENT_PROVIDER_PROFILES.qwen }), /endpoint is not configured/i);
+});
+
 test('automatic development blocks privileged paths and secret-looking diffs', () => {
   assert.deepEqual(assertSafeChangedPaths(['src/feature.js', 'test/feature.test.js']), ['src/feature.js', 'test/feature.test.js']);
   for (const path of ['.env', 'Hermes/agent.js', '.github/workflows/release.yml', 'ops/deploy.sh',
@@ -89,4 +124,11 @@ test('development usage is recorded at conservative peak rates', () => {
   assert.equal(usage.totalTokens, 1_610_000);
   assert.equal(usage.costUsd, 0.435);
   assert.equal(usage.steps, 1);
+});
+
+test('development usage honors a provider-specific cache-write rate', () => {
+  const events = [{ type: 'step_finish', part: { tokens: { cache: { write: 1_000_000 } }, cost: 0 } }];
+  const usage = summarizeOpenCodeUsage(events, DEVELOPMENT_PROVIDER_PROFILES.minimax.pricing);
+  assert.equal(usage.cacheWriteTokens, 1_000_000);
+  assert.equal(usage.costUsd, 0.375);
 });

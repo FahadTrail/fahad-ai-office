@@ -20,6 +20,8 @@ export class ModelGateway {
     sleepFn = defaultSleep,
     now = () => Date.now(),
     completedCacheSize = 1000,
+    providerFailureThreshold = 2,
+    providerCooldownMs = 60_000,
   } = {}) {
     this.adapters = new Map((adapters || []).map((adapter) => [adapter.name, adapter]));
     this.routingPolicy = routingPolicy;
@@ -27,6 +29,9 @@ export class ModelGateway {
     this.sleepFn = sleepFn;
     this.now = now;
     this.completedCacheSize = completedCacheSize;
+    this.providerFailureThreshold = providerFailureThreshold;
+    this.providerCooldownMs = providerCooldownMs;
+    this.providerHealth = new Map();
     this.executions = new Map();
   }
 
@@ -47,7 +52,10 @@ export class ModelGateway {
     const onCheckpoint = typeof hooks.onCheckpoint === 'function' ? hooks.onCheckpoint : async () => {};
     const onProviderSwitch = typeof hooks.onProviderSwitch === 'function' ? hooks.onProviderSwitch : async () => {};
     const onBudgetThreshold = typeof hooks.onBudgetThreshold === 'function' ? hooks.onBudgetThreshold : async () => {};
-    const descriptors = [...this.adapters.entries()].map(([name, adapter]) => providerDescriptor(name, adapter));
+    const descriptors = [...this.adapters.entries()].map(([name, adapter]) => ({
+      ...providerDescriptor(name, adapter),
+      health: this.providerHealthSnapshot(name),
+    }));
     const route = this.routingPolicy.route(request, descriptors);
     const attempts = [];
     let spentUsd = request.budget?.spentUsd || 0;
@@ -78,7 +86,15 @@ export class ModelGateway {
           stage: request.stage,
           idempotencyKey: request.idempotencyKey,
           context: request.context,
-          route: route.map(({ name, model }) => ({ provider: name, model })),
+          route: route.map(({ name, model, routingScore, selectionReason, health, costTier, qualityTier }) => ({
+            provider: name,
+            model,
+            routingScore,
+            selectionReason,
+            health: health?.status || 'healthy',
+            costTier,
+            qualityTier,
+          })),
           startedAt: new Date(startedAt).toISOString(),
         };
         await onAttempt({ ...attempt, status: 'started' });
@@ -87,6 +103,7 @@ export class ModelGateway {
           const raw = await adapter.complete({ ...request, model: attempt.model, clientRequestId: attempt.clientRequestId });
           const durationMs = Math.max(0, this.now() - startedAt);
           const result = normalizeGatewayResult(raw, { ...attempt, durationMs });
+          this.recordProviderSuccess(descriptor.name);
           spentUsd += result.usage.costUsd;
           const record = {
             ...attempt,
@@ -110,17 +127,28 @@ export class ModelGateway {
         } catch (caught) {
           const error = classifyProviderError(caught);
           const durationMs = Math.max(0, this.now() - startedAt);
+          const failureUsage = error.usage || null;
+          spentUsd += Number(failureUsage?.costUsd || 0);
           const record = {
             ...attempt,
             status: error.code === 'BUDGET_EXHAUSTED' ? 'blocked' : 'failed',
             endedAt: new Date(this.now()).toISOString(),
             durationMs,
             providerRequestId: error.providerRequestId || null,
+            usage: failureUsage,
             error: attemptErrorRecord(error),
           };
           if (!attempts.some((existing) => existing.id === attempt.id)) {
             attempts.push(record);
             await onAttempt(record);
+          }
+
+          if ([FAILURE_CLASS.RETRY, FAILURE_CLASS.FAILOVER].includes(error.failureClass)) {
+            this.recordProviderFailure(descriptor.name, error);
+          }
+          if (failureUsage) {
+            await this.emitBudgetThresholds(request.budget, spentUsd, emittedThresholds, onBudgetThreshold);
+            this.assertBudget(request.budget, spentUsd, failureUsage);
           }
 
           if (error.failureClass === FAILURE_CLASS.APPROVAL || error.code === 'BUDGET_EXHAUSTED') {
@@ -136,6 +164,7 @@ export class ModelGateway {
             error.attempts = attempts;
             throw error;
           }
+          if (error.failureClass === FAILURE_CLASS.FAILOVER) break;
           if (providerAttempt < this.maxAttemptsPerProvider) {
             await this.sleepFn(retryDelayMs(error, providerAttempt));
             continue;
@@ -152,6 +181,10 @@ export class ModelGateway {
           toProvider: next.name,
           context: request.context,
           attemptCount: attempts.length,
+          resume: {
+            sameTask: true,
+            nextAttemptNo: attempts.length + 1,
+          },
           lastError: attempts.at(-1)?.error || null,
           createdAt: new Date(this.now()).toISOString(),
         };
@@ -188,6 +221,37 @@ export class ModelGateway {
         await callback({ threshold, spentUsd, limitUsd: budget.limitUsd });
       }
     }
+  }
+
+  providerHealthSnapshot(provider) {
+    const state = this.providerHealth.get(provider);
+    if (!state) return Object.freeze({ status: 'healthy', consecutiveFailures: 0, cooldownUntil: null });
+    if (state.cooldownUntil && this.now() >= state.cooldownUntil) {
+      this.providerHealth.delete(provider);
+      return Object.freeze({ status: 'healthy', consecutiveFailures: 0, cooldownUntil: null });
+    }
+    return Object.freeze({
+      status: state.cooldownUntil ? 'unhealthy' : 'degraded',
+      consecutiveFailures: state.consecutiveFailures,
+      cooldownUntil: state.cooldownUntil ? new Date(state.cooldownUntil).toISOString() : null,
+      lastErrorCode: state.lastErrorCode,
+    });
+  }
+
+  recordProviderSuccess(provider) {
+    this.providerHealth.delete(provider);
+  }
+
+  recordProviderFailure(provider, error) {
+    const current = this.providerHealth.get(provider);
+    const consecutiveFailures = (current?.consecutiveFailures || 0) + 1;
+    this.providerHealth.set(provider, {
+      consecutiveFailures,
+      cooldownUntil: consecutiveFailures >= this.providerFailureThreshold
+        ? this.now() + this.providerCooldownMs
+        : null,
+      lastErrorCode: error.code || 'PROVIDER_ERROR',
+    });
   }
 
   evictCompletedEntries() {

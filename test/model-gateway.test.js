@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import { ModelGateway } from '../src/model-gateway/gateway.js';
 import { OpenAIResponsesAdapter } from '../src/model-gateway/adapters/openai.js';
 import { DeepSeekResponsesAdapter } from '../src/model-gateway/adapters/deepseek.js';
+import { QwenChatAdapter } from '../src/model-gateway/adapters/qwen.js';
+import { KimiChatAdapter } from '../src/model-gateway/adapters/kimi.js';
+import { ZhipuChatAdapter } from '../src/model-gateway/adapters/zhipu.js';
+import { MiniMaxChatAdapter } from '../src/model-gateway/adapters/minimax.js';
 import { ActionPolicyEngine, POLICY_DECISION, RoutingPolicy } from '../src/model-gateway/policy.js';
 import { CONFIRMED_TARGET_PROVIDERS, PROVIDER_CATALOG, PROVIDER_STATE } from '../src/model-gateway/provider-catalog.js';
 
@@ -134,11 +138,53 @@ test('merge and deployment are approval-gated now but policy can authorize safe 
   assert.equal(future.evaluate({ action: 'merge_main', risk: 'low', testsPassed: false, reversible: true }).decision, POLICY_DECISION.APPROVAL);
 });
 
-test('confirmed future providers remain explicit and only DeepSeek is in canary state', () => {
+test('confirmed providers remain explicit and Phase 2C.1 adapters are prepared without activation', () => {
   assert.deepEqual(CONFIRMED_TARGET_PROVIDERS, ['deepseek', 'kimi', 'zhipu', 'minimax', 'qwen']);
   for (const provider of CONFIRMED_TARGET_PROVIDERS) {
-    assert.equal(PROVIDER_CATALOG[provider].state, provider === 'deepseek' ? PROVIDER_STATE.CANARY : PROVIDER_STATE.TARGET);
+    assert.equal(PROVIDER_CATALOG[provider].state, provider === 'deepseek' ? PROVIDER_STATE.CANARY : PROVIDER_STATE.PREPARED);
   }
+  assert.equal(PROVIDER_CATALOG.minimax.privateDataEligible, false);
+});
+
+test('prepared Chat Completions adapters normalize usage without leaking gateway metadata', async () => {
+  const cases = [
+    [QwenChatAdapter, 'qwen', 'https://qwen.invalid/compatible-mode/v1/chat/completions'],
+    [KimiChatAdapter, 'kimi', 'https://api.moonshot.ai/v1/chat/completions'],
+    [ZhipuChatAdapter, 'zhipu', 'https://api.z.ai/api/paas/v4/chat/completions'],
+    [MiniMaxChatAdapter, 'minimax', 'https://api.minimax.io/v1/chat/completions'],
+  ];
+  for (const [Adapter, provider, expectedUrl] of cases) {
+    let received;
+    const adapter = new Adapter({ apiKey: `${provider}-test-key-123456`, fetchFn: async (url, init) => {
+      received = { url, body: JSON.parse(init.body), headers: init.headers };
+      return { ok: true, status: 200, headers: new Headers({ 'x-request-id': `${provider}-request` }), json: async () => ({
+        model: adapter.model,
+        choices: [{ message: { content: `${provider} ok` } }],
+        usage: { prompt_tokens: 100, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 10 } },
+      }) };
+    } });
+    const output = await adapter.complete({ prompt: 'safe', systemPrompt: 'safe', maxOutputTokens: 100,
+      allowedTools: [], context: { taskId: 'must-not-leak' }, clientRequestId: 'client-test' });
+    assert.equal(received.url, expectedUrl);
+    assert.equal(received.body.messages.length, 2);
+    assert.equal(JSON.stringify(received.body).includes('must-not-leak'), false);
+    assert.equal(received.headers.authorization, `Bearer ${provider}-test-key-123456`);
+    assert.equal(output.text, `${provider} ok`);
+    assert.ok(output.usage.costUsd > 0);
+  }
+});
+
+test('automatic routing considers privacy, health, context, quality and cost without changing ordered default', () => {
+  const descriptors = [
+    { name: 'anthropic', configured: true, capabilities: ['text'], privateDataEligible: true, contextWindow: 200000, qualityTier: 5, costTier: 4 },
+    { name: 'zhipu', configured: true, capabilities: ['text'], privateDataEligible: true, contextWindow: 200000, qualityTier: 4, costTier: 1 },
+    { name: 'minimax', configured: true, capabilities: ['text'], privateDataEligible: false, contextWindow: 1000000, qualityTier: 5, costTier: 1 },
+  ];
+  const ordered = new RoutingPolicy({ defaultProvider: 'anthropic', allowedProviders: ['anthropic', 'zhipu', 'minimax'], failoverEnabled: true });
+  assert.equal(ordered.route({ ...baseRequest, routingHints: { requiresPrivateData: true, estimatedContextTokens: 0, healthyProviders: null, preferQuality: false } }, descriptors)[0].name, 'anthropic');
+  const automatic = new RoutingPolicy({ defaultProvider: 'anthropic', allowedProviders: ['anthropic', 'zhipu', 'minimax'], failoverEnabled: true, autoSelectEnabled: true });
+  const route = automatic.route({ ...baseRequest, routingHints: { requiresPrivateData: true, estimatedContextTokens: 100000, healthyProviders: ['anthropic', 'zhipu', 'minimax'], preferQuality: false } }, descriptors);
+  assert.deepEqual(route.map(({ name }) => name), ['zhipu', 'anthropic']);
 });
 
 test('OpenAI adapter uses the Responses API without storing server-side state', async () => {

@@ -7,6 +7,7 @@ export async function planJob({ agent, goal, run = runModel, onActivity, executi
     model: CHIEF_MODEL,
     maxTurns: CHIEF_MAX_TURNS,
     allowedTools: [],
+    routingHints: { requiresPrivateData: true, preferQuality: true },
     systemPrompt: agent.system_prompt,
     onActivity,
     prompt: [
@@ -40,6 +41,7 @@ export async function reviewResearch({ agent, goal, reviewBrief, research, run =
     model: CHIEF_MODEL,
     maxTurns: CHIEF_MAX_TURNS,
     allowedTools: [],
+    routingHints: { requiresPrivateData: true, preferQuality: true },
     systemPrompt: agent.system_prompt,
     onActivity,
     prompt: [

@@ -10,6 +10,7 @@
     "healthcheck": "node src/healthcheck.js",
     "canary:deepseek": "node src/canary/deepseek-canary.js",
     "canary:tool-broker": "node src/tool-broker/canary.js",
+    "canary:qwen": "node src/canary/qwen-canary.js",
     "test": "node --test"
   },
   "engines": { "node": ">=22" },
