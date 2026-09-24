@@ -121,7 +121,7 @@ export function classifyProviderError(error) {
   } else if (status === 404 || status === 422 || /unsupported|model.?not.?found|not.?available/.test(type)) {
     failureClass = FAILURE_CLASS.FAILOVER;
     code = 'PROVIDER_UNSUITABLE';
-  } else if (networkCode || /network|timeout|econn|enotfound/.test(type) || status === 408 || status === 409 || status >= 500) {
+  } else if (networkCode || /network|timeout|timed.?out|fetch.?failed|econn|enotfound|socket|connection|aborted/.test(type) || /network|timeout|timed.?out|fetch.?failed|socket|connection|aborted/.test(String(error?.message || '').toLowerCase()) || status === 408 || status === 409 || status >= 500) {
     failureClass = FAILURE_CLASS.RETRY;
     code = networkCode ? 'PROVIDER_NETWORK' : 'PROVIDER_TRANSIENT';
   } else if (status === 400 || /invalid/.test(type)) {
