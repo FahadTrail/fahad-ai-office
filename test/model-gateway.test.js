@@ -269,6 +269,27 @@ test('DeepSeek canary uses the stateless Responses endpoint with conservative co
   assert.ok(Math.abs(output.usage.costUsd - 0.0008412) < 1e-12);
 });
 
+test('Responses adapter accepts DeepSeek message text output blocks', async () => {
+  const adapter = new DeepSeekResponsesAdapter({
+    apiKey: 'test-deepseek-key',
+    fetchFn: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({
+        model: 'deepseek-flash',
+        output: [{ type: 'message', content: [{ type: 'text', text: 'message text' }] }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    }),
+  });
+  const output = await adapter.complete({
+    prompt: 'safe', systemPrompt: 'safe', model: 'deepseek-flash', maxOutputTokens: 16,
+    allowedTools: [], context: {}, stage: 'canary', clientRequestId: 'client-text-block',
+  });
+  assert.equal(output.text, 'message text');
+});
+
 test('an explicit DeepSeek canary route uses its own model and checkpoints before Anthropic fallback', async () => {
   const calls = [];
   const deepseek = adapter('deepseek', 'deepseek-flash', async ({ model }) => {
