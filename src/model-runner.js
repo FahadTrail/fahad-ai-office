@@ -23,6 +23,7 @@ export async function runModel({
   onProviderSwitch,
   onBudgetThreshold,
   workspacePolicyStore,
+  routingHints,
 }) {
   let selectedGateway = gateway;
   if (!selectedGateway && queryFn) selectedGateway = createDefaultModelGateway({ queryFn, workspacePolicyStore });
@@ -47,6 +48,7 @@ export async function runModel({
     idempotencyKey: idempotencyKey || `ephemeral:${randomUUID()}`,
     capabilities: allowedTools.length ? ['text', 'host_tools'] : ['text'],
     budget,
+    routingHints,
   }, { onAttempt, onCheckpoint, onProviderSwitch, onBudgetThreshold });
 }
 

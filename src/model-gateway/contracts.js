@@ -104,20 +104,27 @@ export function classifyProviderError(error) {
   const networkCode = optionalString(error?.networkCode || error?.cause?.code);
   let failureClass = FAILURE_CLASS.FATAL;
   let code = 'PROVIDER_ERROR';
+  let usage = null;
+  try { if (error?.usage) usage = normalizeUsage(error.usage); } catch {}
 
   if (status === 401 || status === 403 || /auth|api.?key|permission/.test(type)) {
     failureClass = FAILURE_CLASS.APPROVAL;
     code = 'PROVIDER_AUTH';
-  } else if (status === 402 || /billing|credit|quota_exhausted/.test(type)) {
-    failureClass = FAILURE_CLASS.APPROVAL;
-    code = 'PROVIDER_BILLING';
+  } else if (status === 402 || /billing|credit|quota_exhausted|capacity_exhausted/.test(type)) {
+    // Provider-specific credit or capacity exhaustion is safe to route around.
+    // Workspace budget exhaustion remains a separate approval-class error.
+    failureClass = FAILURE_CLASS.FAILOVER;
+    code = 'PROVIDER_CAPACITY';
   } else if (status === 429 || /rate.?limit|overloaded/.test(type)) {
     failureClass = FAILURE_CLASS.RETRY;
     code = 'PROVIDER_RATE_LIMIT';
+  } else if (status === 404 || status === 422 || /unsupported|model.?not.?found|not.?available/.test(type)) {
+    failureClass = FAILURE_CLASS.FAILOVER;
+    code = 'PROVIDER_UNSUITABLE';
   } else if (networkCode || /network|timeout|econn|enotfound/.test(type) || status === 408 || status === 409 || status >= 500) {
     failureClass = FAILURE_CLASS.RETRY;
     code = networkCode ? 'PROVIDER_NETWORK' : 'PROVIDER_TRANSIENT';
-  } else if (status === 400 || status === 404 || status === 422 || /invalid|unsupported/.test(type)) {
+  } else if (status === 400 || /invalid/.test(type)) {
     code = 'PROVIDER_INVALID_REQUEST';
   }
 
@@ -130,6 +137,7 @@ export function classifyProviderError(error) {
     networkCode,
     retryAfter: optionalString(error?.retryAfter),
     providerRequestId: optionalString(error?.providerRequestId || error?.requestId),
+    usage,
   });
 }
 

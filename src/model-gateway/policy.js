@@ -58,6 +58,7 @@ export class RoutingPolicy {
       .map((name) => descriptors.find((descriptor) => descriptor.name === name))
       .filter(Boolean)
       .filter((descriptor) => descriptor.configured)
+      .filter((descriptor) => request.provider || descriptor.health?.status !== 'unhealthy')
       .filter((descriptor) => request.capabilities.every((capability) => descriptor.capabilities.includes(capability)))
       .filter((descriptor) => !request.routingHints.requiresPrivateData || descriptor.privateDataEligible)
       .filter((descriptor) => !request.routingHints.estimatedContextTokens || descriptor.contextWindow >= request.routingHints.estimatedContextTokens)
@@ -73,7 +74,13 @@ export class RoutingPolicy {
         failureClass: 'fatal',
       });
     }
-    return candidates;
+    return candidates.map((descriptor) => Object.freeze({
+      ...descriptor,
+      routingScore: candidateScore(descriptor, request.routingHints),
+      selectionReason: this.autoSelectEnabled && !request.provider
+        ? 'automatic-capability-cost-health-policy'
+        : request.provider ? 'explicit-provider' : 'ordered-default',
+    }));
   }
 }
 

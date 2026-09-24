@@ -7,6 +7,7 @@ export async function performResearch({ agent, goal, brief, run = runModel, onAc
     model: RESEARCH_MODEL,
     maxTurns: RESEARCH_MAX_TURNS,
     allowedTools: ['WebSearch', 'WebFetch'],
+    routingHints: { requiresPrivateData: true, preferQuality: true },
     systemPrompt: agent.system_prompt,
     onActivity,
     prompt: [

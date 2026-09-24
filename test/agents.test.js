@@ -20,6 +20,7 @@ test('Chief planning is tool-free and requires a real Research delegation', asyn
     },
   });
   assert.deepEqual(options.allowedTools, []);
+  assert.deepEqual(options.routingHints, { requiresPrivateData: true, preferQuality: true });
   assert.equal(options.idempotencyKey, 'run:plan');
   assert.equal(options.onAttempt, onAttempt);
   assert.equal(result.plan.research_required, true);
@@ -34,6 +35,7 @@ test('Research receives only the authorized web tools', async () => {
     run: async (received) => { options = received; return { text: 'findings', ...metrics }; },
   });
   assert.deepEqual(options.allowedTools, ['WebSearch', 'WebFetch']);
+  assert.deepEqual(options.routingHints, { requiresPrivateData: true, preferQuality: true });
 });
 
 test('Chief review is tool-free and consumes the persisted result', async () => {
@@ -46,6 +48,7 @@ test('Chief review is tool-free and consumes the persisted result', async () => 
     run: async (received) => { options = received; return { text: 'final', ...metrics }; },
   });
   assert.deepEqual(options.allowedTools, []);
+  assert.deepEqual(options.routingHints, { requiresPrivateData: true, preferQuality: true });
   assert.match(options.prompt, /Persisted research evidence/);
 });
 
