@@ -54,3 +54,29 @@ test('Hub API lists workspaces and creates a workspace-scoped job', async () => 
   assert.equal(jobs[0].projectId, workspaceId);
   await new Promise((resolve) => server.close(resolve));
 });
+
+test('owner OTP session gates the Hub API without exposing the service key', async () => {
+  const db = fakeDb();
+  const calls = [];
+  db.auth = {
+    signInWithOtp: async (input) => { calls.push(['send', input]); return { error: null }; },
+    verifyOtp: async () => ({ error: null, data: { user: { email: 'owner@example.com' }, session: { access_token: 'session-token' } } }),
+    getUser: async (token) => token === 'session-token' ? { error: null, data: { user: { email: 'owner@example.com' } } } : { error: new Error('invalid'), data: null },
+  };
+  const store = { createJob: async () => ({ id: jobId, title: 'Task', goal: 'Task', status: 'planning' }) };
+  const server = createHubServer({ db, store, port: 0, authEnabled: true, ownerEmail: 'owner@example.com' });
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const denied = await fetch(`${base}/api/workspaces`).then((response) => response.json());
+  assert.equal(denied.error, 'HUB_UNAUTHORIZED');
+  const sent = await fetch(`${base}/api/auth/request-otp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.com' }) }).then((response) => response.json());
+  assert.equal(sent.ok, true);
+  assert.equal(calls[0][1].options.shouldCreateUser, false);
+  const verified = await fetch(`${base}/api/auth/verify-otp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.com', token: '123456' }) });
+  assert.equal(verified.status, 200);
+  const cookie = verified.headers.get('set-cookie');
+  assert.match(cookie, /HttpOnly/);
+  const workspaces = await fetch(`${base}/api/workspaces`, { headers: { cookie: cookie.split(';')[0] } }).then((response) => response.json());
+  assert.equal(workspaces.workspaces[0].name, 'Fahad AI Office');
+  await new Promise((resolve) => server.close(resolve));
+});

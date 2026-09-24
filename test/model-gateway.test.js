@@ -10,6 +10,7 @@ import { MiniMaxChatAdapter } from '../src/model-gateway/adapters/minimax.js';
 import { ActionPolicyEngine, POLICY_DECISION, RoutingPolicy } from '../src/model-gateway/policy.js';
 import { CONFIRMED_TARGET_PROVIDERS, PROVIDER_CATALOG, PROVIDER_STATE } from '../src/model-gateway/provider-catalog.js';
 import { resolveGatewayRoutingScope } from '../src/model-gateway/factory.js';
+import { classifyProviderError } from '../src/model-gateway/contracts.js';
 
 const baseRequest = Object.freeze({
   prompt: 'Return a safe result.',
@@ -66,6 +67,12 @@ test('retryable primary failure checkpoints before the same task continues on ba
   assert.equal(checkpoints[0].context.runId, 'run-1');
   assert.deepEqual(output.attempts.map((attempt) => attempt.status), ['failed', 'succeeded']);
   assert.ok(attempts.every((attempt) => !('prompt' in attempt)));
+});
+
+test('untyped provider connection failures are retryable and eligible for fallback', () => {
+  const error = classifyProviderError(new Error('fetch failed after provider connection timeout'));
+  assert.equal(error.code, 'PROVIDER_TRANSIENT');
+  assert.equal(error.failureClass, 'retry');
 });
 
 test('authentication failures require approval and never call a backup provider', async () => {
