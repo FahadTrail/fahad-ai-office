@@ -46,18 +46,30 @@ export function createDefaultModelGateway({
     new ZhipuChatAdapter({ apiKey: env.ZHIPU_API_KEY, model: ZHIPU_MODEL, fetchFn }),
     new MiniMaxChatAdapter({ apiKey: env.MINIMAX_API_KEY, model: MINIMAX_MODEL, fetchFn }),
   ];
+  const routing = resolveGatewayRoutingScope({ workspacePolicyStore });
   const gateway = new ModelGateway({
     adapters,
-    routingPolicy: new RoutingPolicy({
-      defaultProvider: MODEL_PROVIDER,
-      allowedProviders: MODEL_GATEWAY_ALLOWED_PROVIDERS,
-      failoverEnabled: MODEL_GATEWAY_FAILOVER_ENABLED,
-      autoSelectEnabled: MODEL_GATEWAY_AUTO_SELECT_ENABLED,
-    }),
+    routingPolicy: new RoutingPolicy(routing),
     maxAttemptsPerProvider: MODEL_GATEWAY_MAX_ATTEMPTS,
     sleepFn,
   });
   return workspacePolicyStore
     ? new WorkspacePolicyGateway({ gateway, policyStore: workspacePolicyStore, providerSecretRefs })
     : gateway;
+}
+
+export function resolveGatewayRoutingScope({
+  workspacePolicyStore,
+  defaultProvider = MODEL_PROVIDER,
+  allowedProviders = MODEL_GATEWAY_ALLOWED_PROVIDERS,
+  failoverEnabled = MODEL_GATEWAY_FAILOVER_ENABLED,
+  autoSelectEnabled = MODEL_GATEWAY_AUTO_SELECT_ENABLED,
+} = {}) {
+  const workspaceScoped = Boolean(workspacePolicyStore);
+  return Object.freeze({
+    defaultProvider,
+    allowedProviders: workspaceScoped ? allowedProviders : [defaultProvider],
+    failoverEnabled: workspaceScoped && failoverEnabled,
+    autoSelectEnabled: workspaceScoped && autoSelectEnabled,
+  });
 }

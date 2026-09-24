@@ -9,6 +9,7 @@ import { ZhipuChatAdapter } from '../src/model-gateway/adapters/zhipu.js';
 import { MiniMaxChatAdapter } from '../src/model-gateway/adapters/minimax.js';
 import { ActionPolicyEngine, POLICY_DECISION, RoutingPolicy } from '../src/model-gateway/policy.js';
 import { CONFIRMED_TARGET_PROVIDERS, PROVIDER_CATALOG, PROVIDER_STATE } from '../src/model-gateway/provider-catalog.js';
+import { resolveGatewayRoutingScope } from '../src/model-gateway/factory.js';
 
 const baseRequest = Object.freeze({
   prompt: 'Return a safe result.',
@@ -19,6 +20,22 @@ const baseRequest = Object.freeze({
   idempotencyKey: 'run-1:unit-test',
   capabilities: ['text'],
   context: { jobId: 'job-1', taskId: 'task-1', runId: 'run-1' },
+});
+
+test('automatic fallback configuration is scoped to workspace-enforced gateways', () => {
+  const configured = {
+    defaultProvider: 'anthropic',
+    allowedProviders: ['anthropic', 'deepseek'],
+    failoverEnabled: true,
+    autoSelectEnabled: false,
+  };
+  assert.deepEqual(resolveGatewayRoutingScope(configured), {
+    defaultProvider: 'anthropic',
+    allowedProviders: ['anthropic'],
+    failoverEnabled: false,
+    autoSelectEnabled: false,
+  });
+  assert.deepEqual(resolveGatewayRoutingScope({ ...configured, workspacePolicyStore: {} }), configured);
 });
 
 test('retryable primary failure checkpoints before the same task continues on backup', async () => {
