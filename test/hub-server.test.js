@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createHubServer, readJobSnapshot } from '../src/hub-server.js';
+import { createHubServer, modelCatalog, readJobSnapshot, usageSnapshot } from '../src/hub-server.js';
 
 const workspaceId = '2ae856da-00cb-4594-a7e6-710f2011d0c3';
 const jobId = 'fdd024d0-8f3f-4b85-9900-1c1b55dc620a';
@@ -16,7 +16,7 @@ function fakeDb() {
     events: [{ id: 'event-1', job_id: jobId, type: 'status_changed', level: 'info', message: 'Chief started', payload: { provider: 'anthropic', token: 'do-not-return' }, task_id: null, run_id: null, agent_id: null, created_at: '2026-09-24T00:00:01.000Z' }],
     model_attempts: [], tool_executions: [], runs: [], results: [],
   };
-  return { from(name) { return new Query(tables[name] || []); } };
+  return { _tables: tables, from(name) { return new Query(tables[name] || []); } };
 }
 
 class Query {
@@ -53,6 +53,25 @@ test('Hub API lists workspaces and creates a workspace-scoped job', async () => 
   assert.equal(created.job.workspaceId, workspaceId);
   assert.equal(jobs[0].projectId, workspaceId);
   await new Promise((resolve) => server.close(resolve));
+});
+
+test('Hub model catalog keeps inactive providers non-selectable', () => {
+  const catalog = modelCatalog();
+  assert.equal(catalog.find((entry) => entry.provider === 'anthropic').default, true);
+  assert.equal(catalog.find((entry) => entry.provider === 'qwen').selectable, false);
+  assert.equal(catalog.find((entry) => entry.provider === 'qwen').state, 'not_connected');
+});
+
+test('Hub usage snapshot aggregates attempts and workspace budget without sensitive payloads', async () => {
+  const db = fakeDb();
+  db._tables.model_attempts.push(
+    { workspace_id: workspaceId, provider: 'anthropic', model: 'claude-sonnet-5', status: 'succeeded', input_tokens: 10, output_tokens: 20, reasoning_tokens: 0, cached_input_tokens: 0, cost_usd: .02, started_at: '2026-09-24T00:00:00.000Z' },
+    { workspace_id: workspaceId, provider: 'deepseek', model: 'deepseek-flash', status: 'failed', input_tokens: 5, output_tokens: 0, reasoning_tokens: 0, cached_input_tokens: 0, cost_usd: .01, started_at: '2026-09-24T00:00:00.000Z' },
+  );
+  const usage = await usageSnapshot(db, workspaceId, new Date('2026-09-24T12:00:00.000Z'));
+  assert.equal(usage.totals.tokens, 35);
+  assert.equal(usage.totals.monthUsd, .03);
+  assert.equal(usage.budget.remainingUsd, 1.8);
 });
 
 test('owner OTP session gates the Hub API without exposing the service key', async () => {
