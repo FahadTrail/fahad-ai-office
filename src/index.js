@@ -2,7 +2,7 @@
 // It opens no ports and performs no AI work while idle.
 
 import { writeFileSync } from 'node:fs';
-import { db, store, log } from './db.js';
+import { db, hubAuth, store, log } from './db.js';
 import { OfficeWorkflow } from './workflow.js';
 import { checkHealth } from './healthcheck.js';
 import { CHIEF_MODEL, RESEARCH_MODEL, WORKSPACE_POLICY_ENFORCEMENT_ENABLED } from './config.js';
@@ -62,7 +62,7 @@ async function main() {
   if (!Number.isFinite(IDLE_MS) || IDLE_MS < 1000 || IDLE_MS > 60000) throw new Error('Invalid POLL_INTERVAL_MS');
   await checkHealth();
   if (process.env.HUB_ENABLED !== 'false') {
-    hubServer = createHubServer({ db, store });
+    hubServer = createHubServer({ db, authClient: hubAuth, store });
     log('Fahad AI Hub listening on the protected loopback port 2132.');
   }
   const toolCanary = await runProductionToolBrokerCanary({
