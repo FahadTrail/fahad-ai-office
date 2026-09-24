@@ -71,5 +71,8 @@ begin
 end;
 $$;
 
-revoke execute on function private.claim_next_task(text) from public, anon, authenticated;
-grant execute on function private.claim_next_task(text) to service_role;
+-- The service role reaches this implementation only through the existing
+-- public.claim_next_task wrapper. Keep the private function uncallable
+-- directly so the production privilege boundary does not widen.
+revoke execute on function private.claim_next_task(text)
+from public, anon, authenticated, service_role;

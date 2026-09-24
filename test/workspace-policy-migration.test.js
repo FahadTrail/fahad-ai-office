@@ -55,5 +55,6 @@ test('task claims propagate project lineage into every model request', () => {
   assert.match(lineageSql, /'project_id', v_workspace/);
   assert.match(lineageSql, /for update of t skip locked/);
   assert.match(lineageSql, /set search_path = ''/);
-  assert.match(lineageSql, /revoke execute on function private\.claim_next_task\(text\) from public, anon, authenticated/);
+  assert.match(lineageSql, /revoke execute on function private\.claim_next_task\(text\)\s+from public, anon, authenticated, service_role/);
+  assert.doesNotMatch(lineageSql, /grant execute on function private\.claim_next_task\(text\) to service_role/);
 });
