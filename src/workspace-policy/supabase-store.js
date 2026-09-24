@@ -19,7 +19,7 @@ export class SupabaseWorkspacePolicyStore {
       this.db.from('workspace_provider_permissions')
         .select('provider,models,secret_ref,enabled').eq('workspace_id', workspaceId),
       this.db.from('workspace_tool_grants')
-        .select('broker,tool_name,action,scopes,risk,decision,enabled').eq('workspace_id', workspaceId),
+        .select('broker,tool_name,action,scopes,risk,decision,secret_ref,enabled').eq('workspace_id', workspaceId),
     ]);
     if (providerError) throw storeError('WORKSPACE_PROVIDER_POLICY_READ_FAILED', providerError);
     if (toolError) throw storeError('WORKSPACE_TOOL_POLICY_READ_FAILED', toolError);
@@ -48,6 +48,7 @@ export class SupabaseWorkspacePolicyStore {
         scopes: row.scopes,
         risk: row.risk,
         decision: row.decision,
+        secretRef: row.secret_ref,
         enabled: row.enabled,
       })),
     };

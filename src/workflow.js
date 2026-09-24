@@ -7,6 +7,7 @@ import {
   STALE_TASK_MINUTES,
   TASK_MAX_ATTEMPTS,
 } from './config.js';
+import { ScopedToolBrokerSession } from './tool-broker/session.js';
 
 export const WORKFLOW = 'chief-research-chief';
 export const WORKFLOW_VERSION = 1;
@@ -25,6 +26,7 @@ export class OfficeWorkflow {
     now = () => Date.now(),
     workspacePolicyStore = null,
     enforceLegacyWorkspacePolicy = false,
+    toolBroker = null,
   }) {
     this.store = store;
     this.executors = { plan, research, review };
@@ -35,6 +37,7 @@ export class OfficeWorkflow {
     this.lastRecoveryAt = 0;
     this.workspacePolicyStore = workspacePolicyStore;
     this.enforceLegacyWorkspacePolicy = enforceLegacyWorkspacePolicy;
+    this.toolBroker = toolBroker;
   }
 
   async runOnce() {
@@ -118,6 +121,7 @@ export class OfficeWorkflow {
       goal: task.goal,
       onActivity,
       execution: this.modelExecution(task, STAGES.PLAN),
+      toolBroker: this.toolSession(task, STAGES.PLAN),
     }));
 
     const researchTask = await this.store.ensureTask({
@@ -176,6 +180,7 @@ export class OfficeWorkflow {
       brief: brief.researchBrief,
       onActivity,
       execution: this.modelExecution(task, STAGES.RESEARCH),
+      toolBroker: this.toolSession(task, STAGES.RESEARCH),
     }));
     await this.recordOutcome(task, outcome, 'Research result is ready to save.');
     await this.store.completeTask(task, outcome, summarize(outcome.text));
@@ -196,6 +201,7 @@ export class OfficeWorkflow {
       research: upstream[0],
       onActivity,
       execution: this.modelExecution(task, STAGES.REVIEW),
+      toolBroker: this.toolSession(task, STAGES.REVIEW),
     }));
     await this.recordOutcome(task, outcome, 'Chief final result is ready to save.');
     await this.store.completeTask(task, outcome, summarize(outcome.text));
@@ -291,6 +297,21 @@ export class OfficeWorkflow {
         payload: threshold,
       }),
     };
+  }
+
+  toolSession(task, stage) {
+    if (!this.toolBroker || !task.project_id) return null;
+    return new ScopedToolBrokerSession({
+      broker: this.toolBroker,
+      context: {
+        workspaceId: task.project_id,
+        jobId: task.job_id,
+        taskId: task.task_id,
+        runId: task.run_id,
+        agentId: task.agent_id,
+      },
+      idempotencyPrefix: `${task.run_id}:${stage}:tool`,
+    });
   }
 
   async withHeartbeat(task, operation) {

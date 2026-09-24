@@ -85,6 +85,26 @@ and a model-attempt trigger rejects job/task/run lineage from another workspace.
 Production activation, migration application, merge and deployment remain
 separately approval-gated.
 
+## Tool Broker and MCP foundation
+
+Phase 2E adds a central, deny-by-default Tool Broker and a provider-neutral MCP
+client layer. Chief orchestration can receive a workspace/job/task/run/agent-
+bound broker session without changing existing model routing. Discovery is
+intersected with a controller-owned catalog, exact workspace grants and active
+agent permissions; MCP server annotations never grant authority.
+
+The policy model supports `AUTO`, `APPROVAL` and `DENY`. High-risk tools cannot
+become less restrictive than approval, and critical tools are denied. Secret
+values resolve only inside the broker-owned transport. Costed tools use the
+existing workspace reservation and settlement path. Every attempt records
+lineage, authorization, timing, retry/idempotency, hashes and cost in a
+service-role-only ledger without storing arguments, results, prompts or secret
+values.
+
+The initial zero-network canary contains only a bounded echo and local clock.
+It proves the complete Agent → Broker → Policy → MCP → Result → Audit path but
+is not enabled in production. See `docs/phase-2e-tool-broker-mcp.md`.
+
 ## Runtime
 
 The runtime claims a job, asks Chief to create a constrained plan, persists a
@@ -136,6 +156,8 @@ Their historical contents remain recoverable from Git history.
 `npm test` runs isolated tests without live credentials or AI calls, including
 the normal workflow, dependency and handoff integrity, retry exhaustion,
 stale recovery, duplicate claims, and usage/event attribution.
+`npm run canary:tool-broker` runs the zero-network, zero-secret Phase 2E MCP
+canary and performs no external calls or database writes.
 `npm run healthcheck` and `npm run selftest` perform the same read-only
 production readiness check: settings, JavaScript syntax, SDK imports, Chief
 and Research configuration, database access and workflow RPC visibility. They never claim a

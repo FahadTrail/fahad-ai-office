@@ -19,6 +19,7 @@ function fixture(overrides = {}) {
     const rpcNames = [
       'claim_next_job', 'claim_next_task', 'create_task', 'complete_task', 'fail_task', 'requeue_stale_tasks',
       'assert_workspace_execution_context', 'reserve_workspace_budget', 'settle_workspace_budget',
+      'begin_tool_execution', 'finish_tool_execution',
     ];
     const body = url.pathname === '/rest/v1/agents' ? [
       { id: 'chief', slug: 'chief-of-staff', system_prompt: 'x'.repeat(120), allowed_tools: [] },
@@ -31,7 +32,7 @@ function fixture(overrides = {}) {
 test('readiness uses GET only and never invokes the claim RPC or an AI endpoint', async () => {
   const f = fixture();
   assert.equal(await checkHealth({ env, fetchFn: f.fetchFn, verifyCode: false }), true);
-  assert.equal(f.requests.length, 8);
+  assert.equal(f.requests.length, 9);
   for (const { url, options } of f.requests) {
     assert.equal(options.method, 'GET');
     assert.equal(url.origin, env.SUPABASE_URL);
@@ -58,9 +59,10 @@ test('missing credentials fail before network access', async () => {
 test('workspace policy readiness is always verified for selectively enforced jobs', async () => {
   const f = fixture();
   assert.equal(await checkHealth({ env, fetchFn: f.fetchFn, verifyCode: false }), true);
-  assert.equal(f.requests.length, 8);
+  assert.equal(f.requests.length, 9);
   assert.ok(f.requests.some(({ url }) => url.pathname === '/rest/v1/workspace_policies'));
   assert.ok(f.requests.some(({ url }) => url.pathname === '/rest/v1/workspace_budget_reservations'));
+  assert.ok(f.requests.some(({ url }) => url.pathname === '/rest/v1/tool_executions'));
   assert.ok(f.requests.every(({ options }) => options.method === 'GET'));
 });
 test('database errors fail readiness without exposing response text', async () => {
