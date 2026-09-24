@@ -59,6 +59,7 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
   const spec = await get('/rest/v1/', 'application/openapi+json');
   const requiredRpcs = ['claim_next_job', 'claim_next_task', 'create_task', 'complete_task', 'fail_task', 'requeue_stale_tasks'];
   requiredRpcs.push('assert_workspace_execution_context', 'reserve_workspace_budget', 'settle_workspace_budget');
+  requiredRpcs.push('begin_tool_execution', 'finish_tool_execution');
   for (const name of requiredRpcs) {
     if (!spec.paths?.['/rpc/' + name]?.post) throw new Error(`Public ${name} RPC is not exposed to the runtime`);
   }
@@ -66,6 +67,7 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
   await get('/rest/v1/model_attempts?select=id&limit=0');
   for (const table of [
     'workspace_policies', 'workspace_provider_permissions', 'workspace_tool_grants', 'workspace_budget_reservations',
+    'tool_executions',
   ]) await get(`/rest/v1/${table}?select=workspace_id&limit=0`);
   return true;
 }

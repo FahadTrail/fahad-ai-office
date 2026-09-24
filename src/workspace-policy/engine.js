@@ -53,19 +53,32 @@ export class WorkspacePolicyEngine {
   }
 
   authorizeTool(policy, input) {
+    const { grant, decision, request } = this.evaluateTool(policy, input);
+    if (decision === WORKSPACE_POLICY_DECISION.APPROVAL) {
+      throw denied('WORKSPACE_TOOL_APPROVAL_REQUIRED', `Tool ${request.tool} requires explicit approval`);
+    }
+    if (decision !== WORKSPACE_POLICY_DECISION.AUTO) {
+      throw denied('WORKSPACE_TOOL_DENIED', `Tool ${request.tool} is not automatically authorized for this workspace`);
+    }
+    return grant;
+  }
+
+  evaluateTool(inputPolicy, input) {
+    const policy = normalizeWorkspacePolicy(inputPolicy);
     const request = normalizeToolBrokerRequest(input);
     const grant = policy.tools.find((candidate) => candidate.enabled &&
       candidate.broker === request.broker && candidate.tool === request.tool && candidate.action === request.action);
-    if (!grant || grant.decision !== WORKSPACE_POLICY_DECISION.AUTO) {
-      throw denied('WORKSPACE_TOOL_DENIED', `Tool ${request.tool} is not automatically authorized for this workspace`);
-    }
+    if (!grant) throw denied('WORKSPACE_TOOL_DENIED', `Tool ${request.tool} has no enabled workspace grant`);
     if (request.scopes.some((scope) => !grant.scopes.includes(scope))) {
       throw denied('WORKSPACE_TOOL_SCOPE_DENIED', `Tool ${request.tool} requested an unauthorized scope`);
     }
     if (RISK_ORDER[request.risk] > RISK_ORDER[grant.risk]) {
       throw denied('WORKSPACE_TOOL_RISK_DENIED', `Tool ${request.tool} exceeds its authorized risk boundary`);
     }
-    return grant;
+    if (request.secretRef !== grant.secretRef) {
+      throw denied('WORKSPACE_TOOL_SECRET_REFERENCE_DENIED', `Tool ${request.tool} has no matching secret reference`);
+    }
+    return Object.freeze({ grant, decision: grant.decision, request });
   }
 }
 

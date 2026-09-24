@@ -7,15 +7,29 @@ import { OfficeWorkflow } from './workflow.js';
 import { checkHealth } from './healthcheck.js';
 import { CHIEF_MODEL, RESEARCH_MODEL, WORKSPACE_POLICY_ENFORCEMENT_ENABLED } from './config.js';
 import { SupabaseWorkspacePolicyStore } from './workspace-policy/supabase-store.js';
+import { ToolBroker } from './tool-broker/broker.js';
+import { SAFE_CANARY_TOOL_DEFINITIONS, createSafeCanaryMcpClient } from './tool-broker/canary-tools.js';
+import { runProductionToolBrokerCanary } from './tool-broker/production-canary.js';
+import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
 // flag remains the explicit switch for legacy jobs that have no workspace.
 const workspacePolicyStore = new SupabaseWorkspacePolicyStore(db);
+const toolBrokerStore = new SupabaseToolBrokerStore(db);
+const { client: safeCanaryClient, transport: safeCanaryTransport } = createSafeCanaryMcpClient();
+const toolBroker = new ToolBroker({
+  policyStore: workspacePolicyStore,
+  auditStore: toolBrokerStore,
+  agentStore: toolBrokerStore,
+  clients: [safeCanaryClient],
+  definitions: SAFE_CANARY_TOOL_DEFINITIONS,
+});
 const workflow = new OfficeWorkflow({
   store,
   workspacePolicyStore,
   enforceLegacyWorkspacePolicy: WORKSPACE_POLICY_ENFORCEMENT_ENABLED,
+  toolBroker,
 });
 let running = true;
 let busy = false;
@@ -44,6 +58,23 @@ function sleep(ms) {
 async function main() {
   if (!Number.isFinite(IDLE_MS) || IDLE_MS < 1000 || IDLE_MS > 60000) throw new Error('Invalid POLL_INTERVAL_MS');
   await checkHealth();
+  const toolCanary = await runProductionToolBrokerCanary({
+    db,
+    broker: toolBroker,
+    policyStore: workspacePolicyStore,
+    transport: safeCanaryTransport,
+  });
+  log('Tool Broker production canary verified:', JSON.stringify({
+    workspaceId: toolCanary.workspaceId,
+    discovered: toolCanary.discovered,
+    replayVerified: toolCanary.replayVerified,
+    rejectionTests: {
+      agentDenied: toolCanary.agentDenied,
+      missingGrantDenied: toolCanary.missingGrantDenied,
+      crossWorkspaceDenied: toolCanary.crossWorkspaceDenied,
+    },
+    budgetDeltaUsd: toolCanary.budgetDeltaUsd,
+  }));
   heartbeatTimer = setInterval(heartbeat, 5000);
   log('------------------------------------------------------------');
   log('Fahad AI Office - Runtime v2 (Chief -> Research -> Chief)');

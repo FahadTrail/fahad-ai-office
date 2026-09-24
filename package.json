@@ -9,6 +9,7 @@
     "selftest": "node src/selftest.js",
     "healthcheck": "node src/healthcheck.js",
     "canary:deepseek": "node src/canary/deepseek-canary.js",
+    "canary:tool-broker": "node src/tool-broker/canary.js",
     "test": "node --test"
   },
   "engines": { "node": ">=22" },

@@ -62,6 +62,7 @@ export function normalizeToolBrokerRequest(input = {}) {
     action: requiredString(input.action || 'invoke', 'action'),
     scopes: Object.freeze(normalizeStringList(input.scopes || [])),
     risk,
+    secretRef: input.secretRef == null ? null : normalizeSecretReference(input.secretRef),
   });
 }
 
