@@ -6,6 +6,18 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      HUB_BIND: ${HUB_BIND:-127.0.0.1}
+      HUB_PORT: ${HUB_PORT:-2132}
+      HUB_AUTH_ENABLED: ${HUB_AUTH_ENABLED:-false}
+      HUB_OWNER_EMAIL: ${HUB_OWNER_EMAIL:-}
+      HUB_ENABLED: ${HUB_ENABLED:-true}
+    labels:
+      - traefik.enable=${HUB_TRAEFIK_ENABLED:-false}
+      - traefik.http.routers.fahad-office.entrypoints=websecure
+      - traefik.http.routers.fahad-office.rule=Host(`${HUB_PUBLIC_HOST:-fahad-ai-office.srv1964598.hstgr.cloud}`)
+      - traefik.http.routers.fahad-office.tls.certresolver=letsencrypt
+      - traefik.http.services.fahad-office.loadbalancer.server.port=2132
     ports:
       - "127.0.0.1:2132:2132"
     networks:

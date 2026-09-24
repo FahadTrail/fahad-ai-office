@@ -3,12 +3,16 @@ import { URL } from 'node:url';
 
 const DEFAULT_PORT = 2132;
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_HISTORY_ROWS = 50;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const OTP_RE = /^\d{6}$/;
 
-export function createHubServer({ db, store, host = process.env.HUB_BIND || '127.0.0.1', port = Number(process.env.HUB_PORT || DEFAULT_PORT), accessToken = process.env.HUB_ACCESS_TOKEN || '' } = {}) {
+export function createHubServer({ db, store, host = process.env.HUB_BIND || '127.0.0.1', port = Number(process.env.HUB_PORT || DEFAULT_PORT), accessToken = process.env.HUB_ACCESS_TOKEN || '', authEnabled = process.env.HUB_AUTH_ENABLED === 'true', ownerEmail = process.env.HUB_OWNER_EMAIL || '' } = {}) {
   if (!db || !store) throw new TypeError('Hub server requires the existing database and store');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new TypeError('HUB_PORT must be a valid TCP port');
-  const authRequired = Boolean(accessToken) || !isLoopback(host);
+  if (authEnabled && !EMAIL_RE.test(ownerEmail)) throw new TypeError('HUB_OWNER_EMAIL must be configured when HUB_AUTH_ENABLED=true');
+  const authRequired = Boolean(accessToken) || !isLoopback(host) || authEnabled;
 
   return createServer(async (request, response) => {
     try {
@@ -20,14 +24,41 @@ export function createHubServer({ db, store, host = process.env.HUB_BIND || '127
       if (request.method === 'GET' && (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html')) {
         return send(response, 200, HUB_HTML, 'text/html; charset=utf-8');
       }
+      if (request.method === 'GET' && requestUrl.pathname === '/api/auth/config') {
+        return sendJson(response, 200, { ok: true, enabled: authEnabled, emailHint: authEnabled ? maskEmail(ownerEmail) : null });
+      }
+      if (request.method === 'POST' && requestUrl.pathname === '/api/auth/request-otp') {
+        return requestOtp({ db, request, response, authEnabled, ownerEmail });
+      }
+      if (request.method === 'POST' && requestUrl.pathname === '/api/auth/verify-otp') {
+        return verifyOtp({ db, request, response, authEnabled, ownerEmail });
+      }
+      if (request.method === 'POST' && requestUrl.pathname === '/api/auth/logout') {
+        response.setHeader('set-cookie', clearSessionCookie());
+        return sendJson(response, 200, { ok: true });
+      }
       if (!requestUrl.pathname.startsWith('/api/')) return sendJson(response, 404, { ok: false, error: 'NOT_FOUND' });
-      if (authRequired && !authorized(request, accessToken)) {
-        return sendJson(response, accessToken ? 401 : 503, { ok: false, error: accessToken ? 'HUB_UNAUTHORIZED' : 'HUB_AUTH_NOT_CONFIGURED' });
+      if (authRequired && !(await authorized(request, accessToken, { db, authEnabled, ownerEmail }))) {
+        return sendJson(response, 401, { ok: false, error: authEnabled ? 'HUB_UNAUTHORIZED' : 'HUB_AUTH_NOT_CONFIGURED' });
       }
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/workspaces') {
         const workspaces = await listWorkspaces(db);
         return sendJson(response, 200, { ok: true, workspaces });
+      }
+      if (request.method === 'POST' && requestUrl.pathname === '/api/workspaces') {
+        const body = await readJson(request);
+        const name = normalizeWorkspaceName(body.name);
+        const workspace = await createWorkspace(db, name);
+        return sendJson(response, 201, { ok: true, workspace });
+      }
+      if (request.method === 'GET' && requestUrl.pathname === '/api/jobs') {
+        const workspaceId = requireUuid(requestUrl.searchParams.get('workspaceId'), 'workspaceId');
+        const workspace = await readWorkspace(db, workspaceId);
+        if (!workspace) return sendJson(response, 404, { ok: false, error: 'WORKSPACE_NOT_FOUND' });
+        const limit = Math.min(MAX_HISTORY_ROWS, Math.max(1, Number(requestUrl.searchParams.get('limit') || 30)));
+        const jobs = await listJobs(db, workspaceId, limit);
+        return sendJson(response, 200, { ok: true, jobs });
       }
       if (request.method === 'POST' && requestUrl.pathname === '/api/jobs') {
         const body = await readJson(request);
@@ -59,6 +90,22 @@ export async function listWorkspaces(db) {
   const { data, error } = await db.from('projects').select('id,name').order('name');
   if (error) throw new Error(`Could not load workspaces: ${error.message}`);
   return (data || []).map((workspace) => ({ id: workspace.id, name: workspace.name }));
+}
+
+export async function listJobs(db, workspaceId, limit = 30) {
+  const { data, error } = await db.from('jobs')
+    .select('id,title,status,progress,tokens_used,cost_usd,created_at,completed_at')
+    .eq('project_id', workspaceId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Could not load conversation history: ${error.message}`);
+  return data || [];
+}
+
+async function createWorkspace(db, name) {
+  const { data, error } = await db.from('projects').insert({ name }).select('id,name').single();
+  if (error) throw new Error(`Could not create workspace: ${error.message}`);
+  return data;
 }
 
 export async function readJobSnapshot(db, jobId) {
@@ -128,9 +175,78 @@ async function one(query, label) {
   return data;
 }
 
-function authorized(request, token) {
-  const value = request.headers.authorization || '';
-  return value.startsWith('Bearer ') && value.slice(7) === token;
+async function authorized(request, token, { db, authEnabled, ownerEmail }) {
+  if (token) {
+    const value = request.headers.authorization || '';
+    return value.startsWith('Bearer ') && value.slice(7) === token;
+  }
+  if (!authEnabled) return true;
+  const sessionToken = readCookie(request, 'hub_session');
+  if (!sessionToken) return false;
+  try {
+    const { data, error } = await db.auth.getUser(sessionToken);
+    return !error && data?.user?.email?.toLowerCase() === ownerEmail.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+async function requestOtp({ db, request, response, authEnabled, ownerEmail }) {
+  if (!authEnabled) return sendJson(response, 404, { ok: false, error: 'AUTH_DISABLED' });
+  const body = await readJson(request);
+  const email = normalizeEmail(body.email);
+  if (email !== ownerEmail.toLowerCase()) return sendJson(response, 403, { ok: false, error: 'EMAIL_NOT_ALLOWED' });
+  const { error } = await db.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+  if (error) throw new Error(`Could not send verification code: ${error.message}`);
+  return sendJson(response, 200, { ok: true, message: 'Verification code sent' });
+}
+
+async function verifyOtp({ db, request, response, authEnabled, ownerEmail }) {
+  if (!authEnabled) return sendJson(response, 404, { ok: false, error: 'AUTH_DISABLED' });
+  const body = await readJson(request);
+  const email = normalizeEmail(body.email);
+  const token = typeof body.token === 'string' ? body.token.trim() : '';
+  if (email !== ownerEmail.toLowerCase()) return sendJson(response, 403, { ok: false, error: 'EMAIL_NOT_ALLOWED' });
+  if (!OTP_RE.test(token)) throw inputError('Verification code must contain 6 digits');
+  const { data, error } = await db.auth.verifyOtp({ email, token, type: 'email' });
+  const userEmail = data?.user?.email?.toLowerCase();
+  if (error || !data?.session?.access_token || userEmail !== ownerEmail.toLowerCase()) {
+    return sendJson(response, 401, { ok: false, error: 'INVALID_OTP' });
+  }
+  response.setHeader('set-cookie', sessionCookie(data.session.access_token));
+  return sendJson(response, 200, { ok: true, user: { email: userEmail } });
+}
+
+function normalizeEmail(value) {
+  const email = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!EMAIL_RE.test(email) || email.length > 254) throw inputError('Enter a valid email address');
+  return email;
+}
+
+function normalizeWorkspaceName(value) {
+  const name = typeof value === 'string' ? value.trim() : '';
+  if (name.length < 2 || name.length > 80) throw inputError('Workspace name must contain 2 to 80 characters');
+  if (/\0/.test(name)) throw inputError('Workspace name contains an invalid character');
+  return name;
+}
+
+function maskEmail(email) {
+  const [local, domain] = email.split('@');
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
+function readCookie(request, name) {
+  const header = request.headers.cookie || '';
+  const entry = header.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+  return entry ? decodeURIComponent(entry.slice(name.length + 1)) : '';
+}
+
+function sessionCookie(value) {
+  return `hub_session=${encodeURIComponent(value)}; HttpOnly; Path=/; Max-Age=604800; SameSite=Lax; Secure`;
+}
+
+function clearSessionCookie() {
+  return 'hub_session=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax; Secure';
 }
 
 async function readJson(request) {
@@ -185,18 +301,33 @@ function send(response, status, body, contentType = 'text/plain; charset=utf-8')
 function sendJson(response, status, body) { send(response, status, JSON.stringify(body), 'application/json; charset=utf-8'); }
 function isLoopback(host) { return host === '127.0.0.1' || host === '::1' || host === 'localhost'; }
 
-export const HUB_HTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fahad AI Hub</title>
-<style>body{margin:0;background:#f5f7fb;color:#162033;font:15px system-ui,-apple-system,Segoe UI,sans-serif}main{max-width:1100px;margin:0 auto;padding:28px 18px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}h1{font-size:25px;margin:0}.muted{color:#6b7280}.card{background:#fff;border:1px solid #dfe5ef;border-radius:14px;padding:18px;box-shadow:0 5px 18px #20304a0b;margin-bottom:16px}label{display:block;font-weight:600;margin:10px 0 6px}select,textarea,button{font:inherit}select,textarea{width:100%;box-sizing:border-box;border:1px solid #cdd6e3;border-radius:9px;padding:10px;background:#fff}textarea{min-height:110px;resize:vertical}button{border:0;border-radius:9px;padding:10px 16px;background:#1f5eff;color:#fff;font-weight:650;cursor:pointer;margin-top:12px}button:disabled{opacity:.55;cursor:wait}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.metric{background:#f7f9fc;border-radius:10px;padding:11px}.metric strong{display:block;font-size:19px;margin-top:3px}.pill{display:inline-block;border-radius:999px;padding:4px 9px;background:#eaf0ff;color:#2451b5;font-size:12px;font-weight:650}.error{color:#b42318;background:#fff1f0;border-radius:9px;padding:10px;margin-top:10px}.task{border-left:3px solid #c8d4ec;padding:8px 12px;margin:8px 0}.event{padding:7px 0;border-bottom:1px solid #eef1f5;font-size:13px}.event:last-child{border-bottom:0}.result{white-space:pre-wrap;line-height:1.5}.hidden{display:none}@media(max-width:600px){main{padding:18px 12px}header{align-items:flex-start;gap:10px;flex-direction:column}}</style></head>
-<body><main><header><div><h1>Fahad AI Hub</h1><div class="muted">One place for goals, progress, routing and results</div></div><span id="health" class="pill">Connecting…</span></header>
-<section class="card"><h2>Start a task</h2><label for="workspace">Project / workspace</label><select id="workspace"></select><label for="goal">What should the Chief handle?</label><textarea id="goal" placeholder="Describe the goal, constraints and desired result…"></textarea><button id="submit">Send to Chief</button><div id="formError" class="error hidden"></div></section>
-<section id="dashboard" class="card hidden"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><h2 style="margin:0">Task progress</h2><span id="jobStatus" class="pill"></span></div><p id="jobGoal" class="muted"></p><div class="grid"><div class="metric">Agent<strong id="agent">—</strong></div><div class="metric">Provider / model<strong id="model">—</strong></div><div class="metric">Budget used<strong id="cost">—</strong></div><div class="metric">Fallbacks<strong id="fallbacks">0</strong></div><div class="metric">Tools<strong id="tools">0</strong></div></div><h3>Agents and handoffs</h3><div id="tasks"></div><h3>Latest result</h3><div id="result" class="result muted">Waiting for the Chief…</div><h3>Activity</h3><div id="events"></div></section></main>
+export const HUB_HTML = String.raw`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>Fahad AI Office</title>
+<style>
+:root{--ink:#e8edf7;--muted:#8c98ad;--panel:#121a29;--panel2:#172235;--line:#26334a;--accent:#7c9cff;--accent2:#4f6fe8;--good:#6ee7b7;--danger:#ff9a9a}*{box-sizing:border-box}body{margin:0;background:#0a1020;color:var(--ink);font:14px Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}button,input,textarea,select{font:inherit}button{cursor:pointer;border:0}.shell{min-height:100vh;display:grid;grid-template-columns:270px 1fr;background:radial-gradient(900px 500px at 75% -10%,#21356955,transparent 65%),#0a1020}.sidebar{border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:16px;background:#0d1525cc}.brand{display:flex;align-items:center;gap:10px;padding:4px 8px}.brandmark{width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,#9fb4ff,#536ee8);display:grid;place-items:center;font-weight:800;color:#091126}.brand strong{display:block;font-size:15px}.brand small{color:var(--muted);font-size:11px}.newchat,.send{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border-radius:11px;padding:11px 14px;font-weight:700}.side-title{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.12em;padding:0 8px}.workspace-list,.history{display:flex;flex-direction:column;gap:5px;overflow:auto}.workspace-item,.history-item{padding:9px 10px;border-radius:9px;color:#bdc7d8;text-align:left;background:transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workspace-item:hover,.workspace-item.active,.history-item:hover,.history-item.active{background:#1b2943;color:#fff}.history-item small{display:block;color:var(--muted);margin-top:3px}.side-bottom{margin-top:auto;display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:12px;padding:8px}.link{color:var(--muted);background:none;padding:0}.main{min-width:0;display:flex;flex-direction:column;height:100vh}.topbar{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 30px}.topbar .context{display:flex;align-items:center;gap:9px}.dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 4px #6ee7b71c}.status{font-size:12px;color:var(--muted)}.content{width:min(980px,100%);margin:0 auto;padding:34px 30px 36px;display:flex;flex-direction:column;gap:20px;flex:1;overflow:auto}.welcome{margin:auto 0 0;text-align:center}.welcome h1{font-size:32px;letter-spacing:-.03em;margin:0 0 8px}.welcome p{color:var(--muted);margin:0}.composer{background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:14px;box-shadow:0 16px 50px #0003}.composer textarea{width:100%;min-height:78px;resize:vertical;border:0;outline:0;background:transparent;color:var(--ink);line-height:1.55}.composer-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted);font-size:12px}.send{padding:9px 15px}.send:disabled{opacity:.55;cursor:wait}.conversation{display:flex;flex-direction:column;gap:14px}.bubble{max-width:85%;padding:13px 15px;border-radius:15px;line-height:1.55;white-space:pre-wrap}.bubble.user{align-self:flex-end;background:#26375e}.bubble.office{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}.progress{border:1px solid var(--line);background:var(--panel);border-radius:14px;padding:14px}.progress-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;background:#26375e;color:#cbd6ff;padding:5px 9px;font-size:11px;font-weight:700}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}.metric{background:#0d1525;border-radius:10px;padding:9px;color:var(--muted);font-size:11px}.metric strong{display:block;color:var(--ink);font-size:13px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.taskline{padding:9px 0;border-bottom:1px solid var(--line)}.taskline:last-child{border:0}.taskline small{display:block;color:var(--muted);margin-top:3px}.details{margin-top:10px}.details summary{color:var(--muted);cursor:pointer;font-size:12px}.event{padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}.event small{display:block;color:var(--muted);margin-top:2px}.error{color:var(--danger);background:#4a2027;border:1px solid #7f3542;padding:10px;border-radius:10px;margin-top:10px}.modal{position:fixed;inset:0;background:#050914aa;display:grid;place-items:center;padding:20px;z-index:10}.modal-card{width:min(430px,100%);background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px;box-shadow:0 24px 80px #0008}.modal-card h2{margin:0 0 8px}.modal-card p{color:var(--muted);line-height:1.5}.field{width:100%;border:1px solid var(--line);background:#0c1424;color:var(--ink);border-radius:10px;padding:11px 12px;outline:0;margin-top:12px}.field:focus{border-color:var(--accent)}.modal-card button{width:100%;margin-top:12px}.hidden{display:none!important}@media(max-width:820px){.shell{grid-template-columns:1fr}.sidebar{display:none}.topbar{padding:0 18px}.content{padding:22px 16px}.metrics{grid-template-columns:repeat(2,1fr)}.welcome h1{font-size:27px}}
+</style></head><body>
+<div id="login" class="modal hidden"><div class="modal-card"><div class="brand"><div class="brandmark">F</div><div><strong>Fahad AI Office</strong><small>Private workspace</small></div></div><h2 id="loginTitle">Welcome back</h2><p id="loginHint">Sign in with your email. We will send a one-time verification code.</p><input id="email" class="field" type="email" autocomplete="email" placeholder="you@example.com"><input id="otp" class="field hidden" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="6-digit code"><button id="authButton" class="newchat">Send verification code</button><div id="authError" class="error hidden"></div></div></div>
+<div id="app" class="shell hidden"><aside class="sidebar"><div class="brand"><div class="brandmark">F</div><div><strong>Fahad AI Office</strong><small>Chief-led workspace</small></div></div><button id="newChat" class="newchat">＋ New chat</button><div class="side-title">Projects</div><div id="workspaces" class="workspace-list"></div><button id="newWorkspace" class="link">＋ Create project</button><div class="side-title">Chat history</div><input id="search" class="field" style="margin:0" placeholder="Search conversations"><div id="history" class="history"></div><div class="side-bottom"><span id="userLabel">Private owner</span><button id="logout" class="link">Sign out</button></div></aside><main class="main"><header class="topbar"><div class="context"><span class="dot"></span><span id="workspaceLabel">Choose a project</span></div><span id="health" class="status">Connecting…</span></header><section class="content"><div id="welcome" class="welcome"><h1>What should we work on?</h1><p>Give the Chief a goal. Your agents, tools and model routing stay behind the scenes.</p></div><div id="conversation" class="conversation"></div><div id="progress" class="progress hidden"><div class="progress-head"><strong>Live execution</strong><span id="jobStatus" class="badge">Preparing</span></div><div id="route" class="status" style="margin-top:8px">Chief is preparing your task…</div><div class="metrics"><div class="metric">Agent<strong id="agent">—</strong></div><div class="metric">Model<strong id="model">—</strong></div><div class="metric">Cost<strong id="cost">$0.0000</strong></div><div class="metric">Tools<strong id="tools">0</strong></div></div><details class="details"><summary>Show handoffs, checkpoints and routing</summary><div id="tasks"></div><div id="events"></div></details></div><div id="formError" class="error hidden"></div><div class="composer"><textarea id="goal" placeholder="Tell the Chief what you want to accomplish…"></textarea><div class="composer-footer"><span>Auto by default · approval for high-risk actions</span><button id="submit" class="send">Send to Chief&nbsp; ↑</button></div></div></section></main></div>
 <script>
-const $=id=>document.getElementById(id);let jobId=null,poll=null;
-async function api(path,options={}){const r=await fetch(path,options);const d=await r.json();if(!r.ok)throw new Error(d.error||'Request failed');return d}
-async function loadWorkspaces(){try{const d=await api('./api/workspaces');$('workspace').innerHTML=d.workspaces.map(w=>'<option value="'+w.id+'">'+esc(w.name)+'</option>').join('');$('health').textContent='Ready'}catch(e){$('health').textContent='Unavailable';showError(e.message)}}
-async function submit(){const b=$('submit');b.disabled=true;hideError();try{const d=await api('./api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({workspaceId:$('workspace').value,goal:$('goal').value})});jobId=d.job.id;$('dashboard').classList.remove('hidden');$('jobGoal').textContent=d.job.goal;await refresh();clearInterval(poll);poll=setInterval(refresh,4000)}catch(e){showError(e.message)}finally{b.disabled=false}}
-async function refresh(){if(!jobId)return;try{const d=await api('./api/jobs/'+jobId);render(d.snapshot)}catch(e){showError(e.message);clearInterval(poll)}}
-function render(s){$('jobStatus').textContent=s.job.status.toUpperCase();const attempts=s.attempts||[];const latest=attempts[attempts.length-1];$('agent').textContent=(s.tasks.find(t=>t.status==='running')||s.tasks[s.tasks.length-1])?.agent?.name||'—';$('model').textContent=latest?(latest.provider+' / '+latest.model):'—';$('cost').textContent='$'+Number(s.job.cost_usd||0).toFixed(6)+' / $'+Number(s.policy?.monthlyBudgetUsd||0).toFixed(2);$('fallbacks').textContent=String((s.events||[]).filter(e=>e.type==='provider_switch'||e.payload?.event==='provider_switch').length);$('tools').textContent=String((s.toolExecutions||[]).length);$('tasks').innerHTML=(s.tasks||[]).map(t=>'<div class="task"><strong>'+esc(t.title)+'</strong> <span class="pill">'+esc(t.status)+'</span><div class="muted">'+esc(t.agent?.name||'Agent')+' · '+(t.progress||0)+'%</div></div>').join('');const done=s.tasks.find(t=>t.status==='done'&&t.result);$('result').textContent=done?.result?.content||'Waiting for the Chief…';$('result').className=done?.result?.content?'result':'result muted';$('events').innerHTML=(s.events||[]).slice(0,30).map(e=>'<div class="event"><strong>'+esc(e.message)+'</strong><div class="muted">'+new Date(e.createdAt).toLocaleString()+'</div></div>').join('')||'<div class="muted">No activity yet.</div>'}
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function showError(v){$('formError').textContent=v;$('formError').classList.remove('hidden')}function hideError(){$('formError').classList.add('hidden')}$('submit').onclick=submit;loadWorkspaces();fetch('./healthz').catch(()=>{});
+const $=id=>document.getElementById(id);let authEnabled=false,email='',workspaceId='',jobId='',poll=null,historyRows=[];
+async function api(path,options={}){const r=await fetch(path,{credentials:'same-origin',...options});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.error||'Request failed');return d}
+async function boot(){try{const config=await api('./api/auth/config');authEnabled=Boolean(config.enabled);if(authEnabled){$('login').classList.remove('hidden');$('email').focus()}else{enterApp()}}catch(e){showAuthError(e.message)}}
+async function sendOtp(){email=$('email').value.trim();if(!email){return showAuthError('Enter your email address.')}setAuthBusy(true);try{await api('./api/auth/request-otp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email})});$('otp').classList.remove('hidden');$('otp').focus();$('loginTitle').textContent='Check your email';$('loginHint').textContent='Enter the six-digit code we sent to '+email;$('authButton').textContent='Enter workspace';hideAuthError()}catch(e){showAuthError(e.message)}finally{setAuthBusy(false)}}
+async function verifyOtp(){const token=$('otp').value.trim();if(!/^\d{6}$/.test(token)){return showAuthError('Enter the six-digit verification code.')}setAuthBusy(true);try{await api('./api/auth/verify-otp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,token})});$('login').classList.add('hidden');enterApp()}catch(e){showAuthError(e.message)}finally{setAuthBusy(false)}}
+function setAuthBusy(v){$('authButton').disabled=v;$('authButton').textContent=v?'Working…':($('otp').classList.contains('hidden')?'Send verification code':'Enter workspace')}
+function enterApp(){$('app').classList.remove('hidden');loadWorkspaces()}
+async function loadWorkspaces(){try{const d=await api('./api/workspaces');$('workspaces').innerHTML=(d.workspaces||[]).map(w=>'<button class="workspace-item '+(w.id===workspaceId?'active':'')+'" data-id="'+w.id+'">'+esc(w.name)+'</button>').join('')||'<div class="status">No projects yet.</div>';document.querySelectorAll('.workspace-item').forEach(b=>b.onclick=()=>selectWorkspace(b.dataset.id));if(!workspaceId&&d.workspaces?.[0])selectWorkspace(d.workspaces[0].id);$('health').textContent='Ready'}catch(e){if(authEnabled){$('app').classList.add('hidden');$('login').classList.remove('hidden')}showError(e.message)}}
+async function selectWorkspace(id){workspaceId=id;const b=document.querySelector('[data-id="'+id+'"]');$('workspaceLabel').textContent=b?.textContent||'Project';document.querySelectorAll('.workspace-item').forEach(x=>x.classList.toggle('active',x.dataset.id===id));await loadHistory();newChat()}
+async function loadHistory(){try{const d=await api('./api/jobs?workspaceId='+encodeURIComponent(workspaceId));historyRows=d.jobs||[];renderHistory()}catch(e){showError(e.message)}}
+function renderHistory(){const q=$('search').value.trim().toLowerCase();$('history').innerHTML=historyRows.filter(j=>!q||j.title.toLowerCase().includes(q)).map(j=>'<button class="history-item '+(j.id===jobId?'active':'')+'" data-job="'+j.id+'">'+esc(j.title)+'<small>'+esc(j.status)+' · '+new Date(j.created_at).toLocaleDateString()+'</small></button>').join('')||'<div class="status">No conversations yet.</div>';document.querySelectorAll('[data-job]').forEach(b=>b.onclick=()=>openJob(b.dataset.job))}
+function newChat(){jobId='';clearInterval(poll);$('welcome').classList.remove('hidden');$('conversation').innerHTML='';$('progress').classList.add('hidden');$('goal').value='';renderHistory()}
+async function createWorkspace(){const name=window.prompt('Project name');if(!name)return;try{const d=await api('./api/workspaces',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name})});await loadWorkspaces();selectWorkspace(d.workspace.id)}catch(e){showError(e.message)}}
+async function submit(){if(!workspaceId)return showError('Choose or create a project first.');const goal=$('goal').value.trim();if(goal.length<3)return showError('Tell the Chief what you want to accomplish.');$('submit').disabled=true;hideError();$('welcome').classList.add('hidden');addBubble(goal,'user');try{const d=await api('./api/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({workspaceId,goal})});jobId=d.job.id;$('goal').value='';$('progress').classList.remove('hidden');await refresh();clearInterval(poll);poll=setInterval(refresh,4000);await loadHistory()}catch(e){showError(e.message)}finally{$('submit').disabled=false}}
+async function openJob(id){jobId=id;$('welcome').classList.add('hidden');$('progress').classList.remove('hidden');try{await refresh();clearInterval(poll);poll=setInterval(refresh,4000)}catch(e){showError(e.message)}}
+async function refresh(){if(!jobId)return;try{const d=await api('./api/jobs/'+jobId);render(d.snapshot);if(['completed','failed','cancelled'].includes(d.snapshot.job.status)){clearInterval(poll);await loadHistory()}}catch(e){clearInterval(poll);showError(e.message)}}
+function render(s){const attempts=s.attempts||[],latest=attempts[attempts.length-1],running=(s.tasks||[]).find(t=>t.status==='running'),done=(s.tasks||[]).find(t=>t.status==='done'&&t.result);$('jobStatus').textContent=(s.job.status||'working').toUpperCase();$('route').textContent=running?((running.agent?.name||'Agent')+' is working'):(s.job.status==='completed'?'Final result ready':'Chief is coordinating your task…');$('agent').textContent=running?.agent?.name||latest?.stage||'Chief';$('model').textContent=latest?(latest.provider+' / '+latest.model):'—';$('cost').textContent='$'+Number(s.job.cost_usd||0).toFixed(4);$('tools').textContent=String((s.toolExecutions||[]).length);$('tasks').innerHTML=(s.tasks||[]).map(t=>'<div class="taskline"><strong>'+esc(t.title)+'</strong> <span class="badge">'+esc(t.status)+'</span><small>'+esc(t.agent?.name||'Agent')+' · '+(t.progress||0)+'%</small></div>').join('');$('events').innerHTML=(s.events||[]).slice(0,24).map(e=>'<div class="event"><strong>'+esc(e.message)+'</strong><small>'+new Date(e.createdAt).toLocaleString()+'</small></div>').join('');if(done?.result?.content){addBubble(done.result.content,'office');$('progress').classList.add('hidden')}}
+function addBubble(text,kind){const key=kind+':'+text;if([...$('conversation').children].some(x=>x.dataset.key===key))return;const d=document.createElement('div');d.className='bubble '+kind;d.dataset.key=key;d.textContent=text;$('conversation').appendChild(d);d.scrollIntoView({block:'end',behavior:'smooth'})}
+async function logout(){await api('./api/auth/logout',{method:'POST'}).catch(()=>{});location.reload()}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function showError(v){$('formError').textContent=v;$('formError').classList.remove('hidden')}function hideError(){$('formError').classList.add('hidden')}function showAuthError(v){$('authError').textContent=v;$('authError').classList.remove('hidden')}function hideAuthError(){$('authError').classList.add('hidden')}
+$('authButton').onclick=()=> $('otp').classList.contains('hidden')?sendOtp():verifyOtp();$('email').onkeydown=e=>{if(e.key==='Enter')sendOtp()};$('otp').onkeydown=e=>{if(e.key==='Enter')verifyOtp()};$('submit').onclick=submit;$('newChat').onclick=newChat;$('newWorkspace').onclick=createWorkspace;$('search').oninput=renderHistory;$('logout').onclick=logout;boot();
 </script></body></html>`;

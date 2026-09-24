@@ -108,11 +108,21 @@ is not enabled in production. See `docs/phase-2e-tool-broker-mcp.md`.
 ## Fahad AI Hub MVP
 
 The runtime now serves one small, same-origin Hub interface on the loopback
-port `2132` (set `HUB_ENABLED=false` to disable it). The interface lists
-projects, submits a workspace-scoped goal to the existing `jobs` queue, and
-polls the durable Supabase state for task status, agent handoffs, provider and
-model attempts, fallback events, Tool Broker activity, budget and the final
-result. It does not implement a second orchestration path.
+port `2132` (set `HUB_ENABLED=false` to disable it). The interface lists and
+creates projects, keeps conversation history, submits a workspace-scoped goal
+to the existing `jobs` queue, and polls the durable Supabase state for task
+status, agent handoffs, provider and model attempts, fallback events, Tool
+Broker activity, budget and the final result. It does not implement a second
+orchestration path.
+
+For the private daily-use deployment, set `HUB_BIND=0.0.0.0`,
+`HUB_AUTH_ENABLED=true`, and `HUB_OWNER_EMAIL=<the single owner email>` in the
+root-owned production `.env`. The Hub sends the one-time code through the
+existing Supabase Auth email provider and stores only a short-lived,
+HttpOnly, Secure session cookie. It never exposes the service-role key to the
+browser, and `shouldCreateUser=false` keeps public signup disabled. Keep the
+runtime behind the existing HTTPS reverse proxy; do not publish port `2132`
+on the VPS host.
 
 The container publishes the port only on the VPS loopback interface so the
 existing protected reverse-proxy/tunnel remains the access boundary. If the
