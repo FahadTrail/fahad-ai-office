@@ -10,7 +10,6 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
     }
   }
   const failoverEnabled = /^(1|true|yes)$/i.test(env.MODEL_GATEWAY_FAILOVER_ENABLED || '');
-  const workspacePolicyEnabled = /^(1|true|yes)$/i.test(env.WORKSPACE_POLICY_ENFORCEMENT_ENABLED || '');
   const allowedProviders = String(env.MODEL_GATEWAY_ALLOWED_PROVIDERS || 'anthropic')
     .split(',').map((value) => value.trim()).filter(Boolean);
   if (failoverEnabled && allowedProviders.includes('openai') &&
@@ -59,19 +58,15 @@ export async function checkHealth({ env = process.env, fetchFn = fetch, verifyCo
   // Read the service-role API schema instead of calling the mutating claim RPC.
   const spec = await get('/rest/v1/', 'application/openapi+json');
   const requiredRpcs = ['claim_next_job', 'claim_next_task', 'create_task', 'complete_task', 'fail_task', 'requeue_stale_tasks'];
-  if (workspacePolicyEnabled) requiredRpcs.push(
-    'assert_workspace_execution_context', 'reserve_workspace_budget', 'settle_workspace_budget',
-  );
+  requiredRpcs.push('assert_workspace_execution_context', 'reserve_workspace_budget', 'settle_workspace_budget');
   for (const name of requiredRpcs) {
     if (!spec.paths?.['/rpc/' + name]?.post) throw new Error(`Public ${name} RPC is not exposed to the runtime`);
   }
   await get('/rest/v1/jobs?select=id&limit=0');
   await get('/rest/v1/model_attempts?select=id&limit=0');
-  if (workspacePolicyEnabled) {
-    for (const table of [
-      'workspace_policies', 'workspace_provider_permissions', 'workspace_tool_grants', 'workspace_budget_reservations',
-    ]) await get(`/rest/v1/${table}?select=workspace_id&limit=0`);
-  }
+  for (const table of [
+    'workspace_policies', 'workspace_provider_permissions', 'workspace_tool_grants', 'workspace_budget_reservations',
+  ]) await get(`/rest/v1/${table}?select=workspace_id&limit=0`);
   return true;
 }
 

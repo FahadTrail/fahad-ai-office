@@ -1,7 +1,9 @@
 # Phase 2D workspace policy operations
 
 Phase 2D is a controller-side guard around the existing provider-neutral Model
-Gateway. It is disabled by default and makes no production traffic change.
+Gateway. Jobs with a non-null workspace are enforced selectively and fail
+closed. Legacy jobs without a workspace remain unchanged while
+`WORKSPACE_POLICY_ENFORCEMENT_ENABLED=false`.
 
 ## Enforced boundary
 
@@ -27,17 +29,18 @@ Gateway. It is disabled by default and makes no production traffic change.
    server-side service role. Add exact Anthropic/DeepSeek model permissions and
    only the minimum tool grants needed by that workspace.
 4. Set a current budget period, monthly limit and smaller per-request limit.
-5. Run the read-only health check with
-   `WORKSPACE_POLICY_ENFORCEMENT_ENABLED=true`; it verifies the new tables and
-   RPC visibility without making a model call or database write.
-6. Enable the policy row, run an isolated canary, then enable the runtime flag.
+5. Run the read-only health check. It always verifies the policy tables and RPC
+   visibility without making a model call or database write.
+6. Enable the policy row and run an isolated workspace canary. The global
+   runtime flag is not required for workspace-scoped jobs and stays disabled
+   until legacy jobs have been migrated deliberately.
 7. Keep Anthropic as the default route. DeepSeek remains available only where
    both the global route and the workspace policy explicitly allow it.
 
 ## Rollback
 
-Set `WORKSPACE_POLICY_ENFORCEMENT_ENABLED=false` and restart the Office runtime
-through the protected deployment process. The runtime immediately returns to
-the pre-Phase-2D gateway path; policy tables and audit records remain inert and
-do not need to be deleted. Database objects can remain for forensic evidence
-and a later corrected rollout.
+Disable the affected workspace policy row to stop new model calls for that
+workspace. To restore the pre-canary runtime behavior, deploy the protected
+baseline SHA. `WORKSPACE_POLICY_ENFORCEMENT_ENABLED=false` continues to keep
+legacy jobs outside enforcement. Policy tables and audit records can remain for
+forensic evidence and a later corrected rollout.

@@ -24,6 +24,7 @@ export class OfficeWorkflow {
     recoveryIntervalMs = 60_000,
     now = () => Date.now(),
     workspacePolicyStore = null,
+    enforceLegacyWorkspacePolicy = false,
   }) {
     this.store = store;
     this.executors = { plan, research, review };
@@ -33,6 +34,7 @@ export class OfficeWorkflow {
     this.now = now;
     this.lastRecoveryAt = 0;
     this.workspacePolicyStore = workspacePolicyStore;
+    this.enforceLegacyWorkspacePolicy = enforceLegacyWorkspacePolicy;
   }
 
   async runOnce() {
@@ -251,7 +253,11 @@ export class OfficeWorkflow {
     };
     return {
       gatewayContext: context,
-      workspacePolicyStore: this.workspacePolicyStore,
+      workspacePolicyStore: selectWorkspacePolicyStore({
+        policyStore: this.workspacePolicyStore,
+        workspaceId: task.project_id,
+        enforceLegacy: this.enforceLegacyWorkspacePolicy,
+      }),
       idempotencyKey: `${task.run_id}:${stage}`,
       onAttempt: (attempt) => this.store.recordModelAttempt(attempt),
       onCheckpoint: (checkpoint) => this.store.emit({
@@ -302,6 +308,13 @@ export class OfficeWorkflow {
       clearInterval(heartbeat);
     }
   }
+}
+
+export function selectWorkspacePolicyStore({ policyStore, workspaceId, enforceLegacy = false }) {
+  if (!policyStore) return null;
+  // A non-null workspace is an explicit policy boundary and must never bypass
+  // enforcement. Legacy jobs remain unchanged unless the global flag is set.
+  return workspaceId || enforceLegacy ? policyStore : null;
 }
 
 export function encodeBrief(stage, values = {}) {

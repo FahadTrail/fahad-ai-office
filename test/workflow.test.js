@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OfficeWorkflow, SEQUENCES, safeError } from '../src/workflow.js';
+import { OfficeWorkflow, SEQUENCES, safeError, selectWorkspacePolicyStore } from '../src/workflow.js';
 
 const outcome = (text, extra = {}) => ({
   text, tokensIn: 10, tokensOut: 5, costUsd: 0.01, durationMs: 25, turns: 1, ...extra,
@@ -149,6 +149,14 @@ test('H. cost, model and operational events stay attached to the correct records
 test('errors redact credential-shaped values before persistence', () => {
   const credentialShapedFixture = 'sk-' + 'example123456789';
   assert.equal(safeError(new Error('Bearer secret-value ' + credentialShapedFixture)), 'Bearer [REDACTED] [REDACTED]');
+});
+
+test('workspace-scoped jobs enforce policy while legacy jobs remain unchanged', () => {
+  const policyStore = { marker: 'policy-store' };
+  assert.equal(selectWorkspacePolicyStore({ policyStore, workspaceId: 'workspace-1' }), policyStore);
+  assert.equal(selectWorkspacePolicyStore({ policyStore, workspaceId: null }), null);
+  assert.equal(selectWorkspacePolicyStore({ policyStore, workspaceId: null, enforceLegacy: true }), policyStore);
+  assert.equal(selectWorkspacePolicyStore({ policyStore: null, workspaceId: 'workspace-1' }), null);
 });
 
 class MemoryStore {
