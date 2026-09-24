@@ -105,6 +105,21 @@ The initial zero-network canary contains only a bounded echo and local clock.
 It proves the complete Agent → Broker → Policy → MCP → Result → Audit path but
 is not enabled in production. See `docs/phase-2e-tool-broker-mcp.md`.
 
+## Fahad AI Hub MVP
+
+The runtime now serves one small, same-origin Hub interface on the loopback
+port `2132` (set `HUB_ENABLED=false` to disable it). The interface lists
+projects, submits a workspace-scoped goal to the existing `jobs` queue, and
+polls the durable Supabase state for task status, agent handoffs, provider and
+model attempts, fallback events, Tool Broker activity, budget and the final
+result. It does not implement a second orchestration path.
+
+The container publishes the port only on the VPS loopback interface so the
+existing protected reverse-proxy/tunnel remains the access boundary. If the
+Hub is ever bound to a non-loopback address, configure `HUB_ACCESS_TOKEN`; the
+API then requires `Authorization: Bearer <token>` and never accepts a token in
+the URL.
+
 ## Runtime
 
 The runtime claims a job, asks Chief to create a constrained plan, persists a

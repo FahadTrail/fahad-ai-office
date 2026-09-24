@@ -11,6 +11,7 @@ import { ToolBroker } from './tool-broker/broker.js';
 import { SAFE_CANARY_TOOL_DEFINITIONS, createSafeCanaryMcpClient } from './tool-broker/canary-tools.js';
 import { runProductionToolBrokerCanary } from './tool-broker/production-canary.js';
 import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
+import { createHubServer } from './hub-server.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
@@ -35,6 +36,7 @@ let running = true;
 let busy = false;
 let lastPollAt = 0;
 let heartbeatTimer;
+let hubServer;
 
 function heartbeat() {
   writeFileSync('/tmp/fahad-office-health.json', JSON.stringify({
@@ -48,6 +50,7 @@ process.on('SIGINT', shutdown);
 function shutdown() {
   if (!running) return;
   running = false;
+  hubServer?.close();
   log('Shutdown signal received. Finishing current task, then stopping.');
 }
 
@@ -58,6 +61,10 @@ function sleep(ms) {
 async function main() {
   if (!Number.isFinite(IDLE_MS) || IDLE_MS < 1000 || IDLE_MS > 60000) throw new Error('Invalid POLL_INTERVAL_MS');
   await checkHealth();
+  if (process.env.HUB_ENABLED !== 'false') {
+    hubServer = createHubServer({ db, store });
+    log('Fahad AI Hub listening on the protected loopback port 2132.');
+  }
   const toolCanary = await runProductionToolBrokerCanary({
     db,
     broker: toolBroker,
@@ -80,7 +87,7 @@ async function main() {
   log('Fahad AI Office - Runtime v2 (Chief -> Research -> Chief)');
   log('Agents online: Chief of Staff, Research & Strategy');
   log('Models: Chief=' + CHIEF_MODEL + ', Research=' + RESEARCH_MODEL);
-  log('Idle check every ' + IDLE_MS + 'ms. No ports exposed.');
+  log('Idle check every ' + IDLE_MS + 'ms. Hub provides the protected task interface.');
   log('------------------------------------------------------------');
 
   while (running) {

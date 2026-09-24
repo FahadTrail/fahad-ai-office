@@ -175,10 +175,12 @@ export class SupabaseStore {
     if (error) throw new Error('Could not update task heartbeat: ' + error.message);
   }
 
-  async createJob({ title, goal, priority = 'normal' }) {
+  async createJob({ title, goal, priority = 'normal', projectId = null }) {
+    const values = { title, goal, priority, status: 'planning' };
+    if (projectId) values.project_id = projectId;
     const { data, error } = await this.db
       .from('jobs')
-      .insert({ title, goal, priority, status: 'planning' })
+      .insert(values)
       .select('id,title,goal,status,priority')
       .single();
     if (error) throw new Error('Could not create job: ' + error.message);
