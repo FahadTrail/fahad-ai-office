@@ -1,5 +1,14 @@
 import { createServer } from 'node:http';
 import { URL } from 'node:url';
+import {
+  CHIEF_MODEL,
+  DEEPSEEK_MODEL,
+  KIMI_MODEL,
+  MINIMAX_MODEL,
+  MODEL_GATEWAY_ALLOWED_PROVIDERS,
+  QWEN_MODEL,
+  ZHIPU_MODEL,
+} from './config.js';
 
 const DEFAULT_PORT = 2132;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -45,6 +54,15 @@ export function createHubServer({ db, store, host = process.env.HUB_BIND || '127
       if (request.method === 'GET' && requestUrl.pathname === '/api/workspaces') {
         const workspaces = await listWorkspaces(db);
         return sendJson(response, 200, { ok: true, workspaces });
+      }
+      if (request.method === 'GET' && requestUrl.pathname === '/api/model-catalog') {
+        return sendJson(response, 200, { ok: true, models: modelCatalog() });
+      }
+      if (request.method === 'GET' && requestUrl.pathname === '/api/usage') {
+        const workspaceId = requireUuid(requestUrl.searchParams.get('workspaceId'), 'workspaceId');
+        const workspace = await readWorkspace(db, workspaceId);
+        if (!workspace) return sendJson(response, 404, { ok: false, error: 'WORKSPACE_NOT_FOUND' });
+        return sendJson(response, 200, { ok: true, usage: await usageSnapshot(db, workspaceId) });
       }
       if (request.method === 'POST' && requestUrl.pathname === '/api/workspaces') {
         const body = await readJson(request);
@@ -100,6 +118,81 @@ export async function listJobs(db, workspaceId, limit = 30) {
     .limit(limit);
   if (error) throw new Error(`Could not load conversation history: ${error.message}`);
   return data || [];
+}
+
+export function modelCatalog() {
+  const configured = new Set(MODEL_GATEWAY_ALLOWED_PROVIDERS);
+  const provider = (name, model, label) => ({
+    provider: name,
+    model,
+    label,
+    state: configured.has(name) ? 'active' : 'not_connected',
+    selectable: configured.has(name),
+    default: name === 'anthropic',
+  });
+  return [
+    provider('anthropic', CHIEF_MODEL, 'Claude / Anthropic'),
+    provider('deepseek', DEEPSEEK_MODEL, 'DeepSeek'),
+    provider('qwen', QWEN_MODEL, 'Qwen'),
+    provider('kimi', KIMI_MODEL, 'Kimi'),
+    provider('zhipu', ZHIPU_MODEL, 'GLM / Zhipu'),
+    provider('minimax', MINIMAX_MODEL, 'MiniMax'),
+  ];
+}
+
+export async function usageSnapshot(db, workspaceId, now = new Date()) {
+  const [attempts, policy, jobs] = await Promise.all([
+    rows(db.from('model_attempts').select('provider,model,status,input_tokens,output_tokens,reasoning_tokens,cached_input_tokens,cost_usd,started_at').eq('workspace_id', workspaceId).order('started_at', { ascending: false }).limit(5000)),
+    readPolicy(db, workspaceId),
+    rows(db.from('jobs').select('id').eq('project_id', workspaceId).limit(5000)),
+  ]);
+  const jobIds = (jobs || []).map((job) => job.id);
+  const events = jobIds.length
+    ? await rows(db.from('events').select('type').in('job_id', jobIds).limit(5000))
+    : [];
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const totals = { tokens: 0, costUsd: 0, todayUsd: 0, monthUsd: 0, requests: 0, successful: 0, failed: 0 };
+  const byProvider = new Map();
+  for (const attempt of attempts || []) {
+    const input = Number(attempt.input_tokens || 0);
+    const output = Number(attempt.output_tokens || 0);
+    const reasoning = Number(attempt.reasoning_tokens || 0);
+    const cached = Number(attempt.cached_input_tokens || 0);
+    const cost = Number(attempt.cost_usd || 0);
+    const started = attempt.started_at ? new Date(attempt.started_at) : null;
+    const name = String(attempt.provider || 'unknown');
+    const current = byProvider.get(name) || { provider: name, tokens: 0, costUsd: 0, requests: 0, successful: 0, failed: 0, models: {} };
+    current.tokens += input + output + reasoning;
+    current.costUsd += cost;
+    current.requests += 1;
+    if (attempt.status === 'succeeded') current.successful += 1;
+    if (attempt.status === 'failed') current.failed += 1;
+    current.models[attempt.model || 'unknown'] = (current.models[attempt.model || 'unknown'] || 0) + 1;
+    byProvider.set(name, current);
+    totals.tokens += input + output + reasoning;
+    totals.costUsd += cost;
+    totals.requests += 1;
+    if (attempt.status === 'succeeded') totals.successful += 1;
+    if (attempt.status === 'failed') totals.failed += 1;
+    if (started && started >= monthStart) totals.monthUsd += cost;
+    if (started && started >= dayStart) totals.todayUsd += cost;
+    void cached;
+  }
+  totals.remainingUsd = policy ? Math.max(0, Number(policy.monthly_budget_usd || 0) - Number(policy.spent_usd || 0) - Number(policy.reserved_usd || 0)) : null;
+  return {
+    totals,
+    providers: [...byProvider.values()].map((entry) => ({ ...entry, models: Object.entries(entry.models).map(([model, requests]) => ({ model, requests })) })),
+    fallbacks: (events || []).filter((event) => event.type === 'provider_switch').length,
+    budget: policy ? {
+      monthlyBudgetUsd: Number(policy.monthly_budget_usd),
+      maxRequestBudgetUsd: Number(policy.max_request_budget_usd),
+      spentUsd: Number(policy.spent_usd),
+      reservedUsd: Number(policy.reserved_usd),
+      remainingUsd: totals.remainingUsd,
+      periodEnd: policy.budget_period_end,
+    } : null,
+  };
 }
 
 async function createWorkspace(db, name) {
@@ -301,7 +394,7 @@ function send(response, status, body, contentType = 'text/plain; charset=utf-8')
 function sendJson(response, status, body) { send(response, status, JSON.stringify(body), 'application/json; charset=utf-8'); }
 function isLoopback(host) { return host === '127.0.0.1' || host === '::1' || host === 'localhost'; }
 
-export const HUB_HTML = String.raw`<!doctype html>
+const BASE_HUB_HTML = String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>Fahad AI Office</title>
 <style>
 :root{--ink:#e8edf7;--muted:#8c98ad;--panel:#121a29;--panel2:#172235;--line:#26334a;--accent:#7c9cff;--accent2:#4f6fe8;--good:#6ee7b7;--danger:#ff9a9a}*{box-sizing:border-box}body{margin:0;background:#0a1020;color:var(--ink);font:14px Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}button,input,textarea,select{font:inherit}button{cursor:pointer;border:0}.shell{min-height:100vh;display:grid;grid-template-columns:270px 1fr;background:radial-gradient(900px 500px at 75% -10%,#21356955,transparent 65%),#0a1020}.sidebar{border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:16px;background:#0d1525cc}.brand{display:flex;align-items:center;gap:10px;padding:4px 8px}.brandmark{width:30px;height:30px;border-radius:10px;background:linear-gradient(135deg,#9fb4ff,#536ee8);display:grid;place-items:center;font-weight:800;color:#091126}.brand strong{display:block;font-size:15px}.brand small{color:var(--muted);font-size:11px}.newchat,.send{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border-radius:11px;padding:11px 14px;font-weight:700}.side-title{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.12em;padding:0 8px}.workspace-list,.history{display:flex;flex-direction:column;gap:5px;overflow:auto}.workspace-item,.history-item{padding:9px 10px;border-radius:9px;color:#bdc7d8;text-align:left;background:transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workspace-item:hover,.workspace-item.active,.history-item:hover,.history-item.active{background:#1b2943;color:#fff}.history-item small{display:block;color:var(--muted);margin-top:3px}.side-bottom{margin-top:auto;display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:12px;padding:8px}.link{color:var(--muted);background:none;padding:0}.main{min-width:0;display:flex;flex-direction:column;height:100vh}.topbar{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 30px}.topbar .context{display:flex;align-items:center;gap:9px}.dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 4px #6ee7b71c}.status{font-size:12px;color:var(--muted)}.content{width:min(980px,100%);margin:0 auto;padding:34px 30px 36px;display:flex;flex-direction:column;gap:20px;flex:1;overflow:auto}.welcome{margin:auto 0 0;text-align:center}.welcome h1{font-size:32px;letter-spacing:-.03em;margin:0 0 8px}.welcome p{color:var(--muted);margin:0}.composer{background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:14px;box-shadow:0 16px 50px #0003}.composer textarea{width:100%;min-height:78px;resize:vertical;border:0;outline:0;background:transparent;color:var(--ink);line-height:1.55}.composer-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted);font-size:12px}.send{padding:9px 15px}.send:disabled{opacity:.55;cursor:wait}.conversation{display:flex;flex-direction:column;gap:14px}.bubble{max-width:85%;padding:13px 15px;border-radius:15px;line-height:1.55;white-space:pre-wrap}.bubble.user{align-self:flex-end;background:#26375e}.bubble.office{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}.progress{border:1px solid var(--line);background:var(--panel);border-radius:14px;padding:14px}.progress-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;background:#26375e;color:#cbd6ff;padding:5px 9px;font-size:11px;font-weight:700}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}.metric{background:#0d1525;border-radius:10px;padding:9px;color:var(--muted);font-size:11px}.metric strong{display:block;color:var(--ink);font-size:13px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.taskline{padding:9px 0;border-bottom:1px solid var(--line)}.taskline:last-child{border:0}.taskline small{display:block;color:var(--muted);margin-top:3px}.details{margin-top:10px}.details summary{color:var(--muted);cursor:pointer;font-size:12px}.event{padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}.event small{display:block;color:var(--muted);margin-top:2px}.error{color:var(--danger);background:#4a2027;border:1px solid #7f3542;padding:10px;border-radius:10px;margin-top:10px}.modal{position:fixed;inset:0;background:#050914aa;display:grid;place-items:center;padding:20px;z-index:10}.modal-card{width:min(430px,100%);background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px;box-shadow:0 24px 80px #0008}.modal-card h2{margin:0 0 8px}.modal-card p{color:var(--muted);line-height:1.5}.field{width:100%;border:1px solid var(--line);background:#0c1424;color:var(--ink);border-radius:10px;padding:11px 12px;outline:0;margin-top:12px}.field:focus{border-color:var(--accent)}.modal-card button{width:100%;margin-top:12px}.hidden{display:none!important}@media(max-width:820px){.shell{grid-template-columns:1fr}.sidebar{display:none}.topbar{padding:0 18px}.content{padding:22px 16px}.metrics{grid-template-columns:repeat(2,1fr)}.welcome h1{font-size:27px}}
@@ -311,10 +404,11 @@ export const HUB_HTML = String.raw`<!doctype html>
 <script>
 const $=id=>document.getElementById(id);let authEnabled=false,email='',workspaceId='',jobId='',poll=null,historyRows=[];
 async function api(path,options={}){const r=await fetch(path,{credentials:'same-origin',...options});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.error||'Request failed');return d}
-async function boot(){try{const config=await api('./api/auth/config');authEnabled=Boolean(config.enabled);if(authEnabled){$('login').classList.remove('hidden');$('email').focus()}else{enterApp()}}catch(e){showAuthError(authErrorMessage(e))}}
+async function boot(){try{const config=await api('./api/auth/config');authEnabled=Boolean(config.enabled);if(authEnabled){$('login').classList.remove('hidden');$('email').focus()}else{enterApp()}}catch(e){showAuthError(e.message)}}
+function authErrorMessage(error){const message=String(error?.message||'');if(/email rate limit|rate limit exceeded/i.test(message)){return 'Email delivery is temporarily rate-limited. Please wait before requesting another code.'}if(/signups not allowed/i.test(message)){return 'Email sign-in is temporarily unavailable for this workspace.'}return message||'Could not complete sign-in.'}
 async function sendOtp(){email=$('email').value.trim();if(!email){return showAuthError('Enter your email address.')}setAuthBusy(true);try{await api('./api/auth/request-otp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email})});$('otp').classList.remove('hidden');$('otp').focus();$('loginTitle').textContent='Check your email';$('loginHint').textContent='Enter the six-digit code we sent to '+email;$('authButton').textContent='Enter workspace';hideAuthError()}catch(e){showAuthError(authErrorMessage(e))}finally{setAuthBusy(false)}}
 async function verifyOtp(){const token=$('otp').value.trim();if(!/^\d{6}$/.test(token)){return showAuthError('Enter the six-digit verification code.')}setAuthBusy(true);try{await api('./api/auth/verify-otp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,token})});$('login').classList.add('hidden');enterApp()}catch(e){showAuthError(authErrorMessage(e))}finally{setAuthBusy(false)}}
-function authErrorMessage(error){const message=String(error?.message||'');if(/email rate limit|rate limit exceeded/i.test(message)){return 'Email delivery is temporarily rate-limited. Please wait before requesting another code.'}if(/signups not allowed/i.test(message)){return 'Email sign-in is temporarily unavailable for this workspace.'}return message||'Could not complete sign-in.'}function setAuthBusy(v){$('authButton').disabled=v;$('authButton').textContent=v?'Working…':($('otp').classList.contains('hidden')?'Send verification code':'Enter workspace')}
+function setAuthBusy(v){$('authButton').disabled=v;$('authButton').textContent=v?'Working…':($('otp').classList.contains('hidden')?'Send verification code':'Enter workspace')}
 function enterApp(){$('app').classList.remove('hidden');loadWorkspaces()}
 async function loadWorkspaces(){try{const d=await api('./api/workspaces');$('workspaces').innerHTML=(d.workspaces||[]).map(w=>'<button class="workspace-item '+(w.id===workspaceId?'active':'')+'" data-id="'+w.id+'">'+esc(w.name)+'</button>').join('')||'<div class="status">No projects yet.</div>';document.querySelectorAll('.workspace-item').forEach(b=>b.onclick=()=>selectWorkspace(b.dataset.id));if(!workspaceId&&d.workspaces?.[0])selectWorkspace(d.workspaces[0].id);$('health').textContent='Ready'}catch(e){if(authEnabled){$('app').classList.add('hidden');$('login').classList.remove('hidden')}showError(e.message)}}
 async function selectWorkspace(id){workspaceId=id;const b=document.querySelector('[data-id="'+id+'"]');$('workspaceLabel').textContent=b?.textContent||'Project';document.querySelectorAll('.workspace-item').forEach(x=>x.classList.toggle('active',x.dataset.id===id));await loadHistory();newChat()}
@@ -331,3 +425,23 @@ async function logout(){await api('./api/auth/logout',{method:'POST'}).catch(()=
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function showError(v){$('formError').textContent=v;$('formError').classList.remove('hidden')}function hideError(){$('formError').classList.add('hidden')}function showAuthError(v){$('authError').textContent=v;$('authError').classList.remove('hidden')}function hideAuthError(){$('authError').classList.add('hidden')}
 $('authButton').onclick=()=> $('otp').classList.contains('hidden')?sendOtp():verifyOtp();$('email').onkeydown=e=>{if(e.key==='Enter')sendOtp()};$('otp').onkeydown=e=>{if(e.key==='Enter')verifyOtp()};$('submit').onclick=submit;$('newChat').onclick=newChat;$('newWorkspace').onclick=createWorkspace;$('search').oninput=renderHistory;$('logout').onclick=logout;boot();
 </script></body></html>`;
+
+export const HUB_HTML = BASE_HUB_HTML
+  .replace("if(!workspaceId&&d.workspaces?.[0])selectWorkspace(d.workspaces[0].id);", "const saved=localStorage.getItem('hub-workspace-id');const preferred=d.workspaces?.find(w=>w.id===saved);if(!workspaceId&&preferred)selectWorkspace(preferred.id);else if(!workspaceId&&d.workspaces?.[0])selectWorkspace(d.workspaces[0].id);")
+  .replace("async function selectWorkspace(id){workspaceId=id;", "async function selectWorkspace(id){workspaceId=id;localStorage.setItem('hub-workspace-id',id);")
+  .replace('</head>', '<style>.top-controls{display:flex;align-items:center;gap:10px}.model-select{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);padding:7px 12px}.usage-button{border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:7px 11px}.usage-panel{position:fixed;right:24px;top:74px;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;z-index:5;box-shadow:0 18px 60px #0008}.usage-panel h3{margin:0 0 10px}.provider-row{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}.provider-row small{display:block;color:var(--muted);margin-top:3px}.provider-state{font-size:11px;color:var(--good)}.provider-state.off{color:var(--muted)}.usage-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0}.usage-grid .metric{background:#0d1525}.fallback-note{color:#f5c97a;font-size:12px;margin-top:8px}</style></head>')
+  .replace('<div class="context"><span class="dot"></span><span id="workspaceLabel">Choose a project</span></div><span id="health" class="status">Connecting…</span>', '<div class="context"><span class="dot"></span><span id="workspaceLabel">Choose a project</span></div><div class="top-controls"><select id="modelSelect" class="model-select" aria-label="Model routing"><option value="auto">AUTO</option></select><button id="usageButton" class="usage-button">AI usage</button><span id="health" class="status">Connecting…</span></div>')
+  .replace('</main></div></body>', '<div id="usagePanel" class="usage-panel hidden"></div></main></div></body>')
+  .replace('</body>', () => `<script>
+  const modelSelect=document.getElementById('modelSelect');
+  const usageButton=document.getElementById('usageButton');
+  const usagePanel=document.getElementById('usagePanel');
+  const workspaceIdFromUi=()=>document.querySelector('.workspace-item.active')?.dataset.id||'';
+  const money=value=>'$'+Number(value||0).toFixed(2);
+  async function loadModelCatalog(){try{const data=await api('./api/model-catalog');modelSelect.innerHTML='<option value="auto">AUTO · policy routed</option>'+(data.models||[]).map(m=>'<option value="'+esc(m.provider)+'" '+(m.selectable?'':'disabled')+'>'+esc(m.label)+' · '+(m.state==='active'?'Ready':'Not connected')+'</option>').join('');}catch{modelSelect.innerHTML='<option value="auto">AUTO · policy routed</option>'}}
+  async function loadUsagePanel(){const workspaceId=workspaceIdFromUi();if(!workspaceId){usagePanel.innerHTML='<h3>AI usage</h3><p class="status">Choose a project to view usage.</p>';return}try{const data=await api('./api/usage?workspaceId='+encodeURIComponent(workspaceId));const u=data.usage||{};const t=u.totals||{};const rows=(u.providers||[]).map(p=>'<div class="provider-row"><div><strong>'+esc(p.provider)+'</strong><small>'+p.tokens.toLocaleString()+' tokens · '+p.requests+' requests</small></div><div><span>'+money(p.costUsd)+'</span><small class="provider-state">'+p.successful+' succeeded · '+p.failed+' failed</small></div></div>').join('');usagePanel.innerHTML='<h3>AI usage</h3><div class="usage-grid"><div class="metric">Today<strong>'+money(t.todayUsd)+'</strong></div><div class="metric">This month<strong>'+money(t.monthUsd)+'</strong></div><div class="metric">Requests<strong>'+t.requests+'</strong></div><div class="metric">Fallbacks<strong>'+u.fallbacks+'</strong></div></div><p class="status">Workspace budget: '+(u.budget?money(u.budget.spentUsd)+' / '+money(u.budget.monthlyBudgetUsd)+' · '+money(u.budget.remainingUsd)+' remaining':'not configured')+'</p>'+(rows||'<p class="status">No model attempts yet.</p>')+(u.fallbacks?'<p class="fallback-note">Automatic fallback events are recorded in the execution details.</p>':'');}catch(e){usagePanel.innerHTML='<h3>AI usage</h3><p class="error">'+esc(e.message)+'</p>'}}
+  usageButton.onclick=async()=>{usagePanel.classList.toggle('hidden');if(!usagePanel.classList.contains('hidden'))await loadUsagePanel()};
+  document.addEventListener('click',event=>{if(event.target.closest('.workspace-item')&&!usagePanel.classList.contains('hidden'))loadUsagePanel()});
+  document.addEventListener('click',event=>{if(!event.target.closest('.usage-panel')&&!event.target.closest('#usageButton'))usagePanel.classList.add('hidden')});
+  loadModelCatalog();
+  </script></body>`);
