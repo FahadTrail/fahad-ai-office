@@ -17,7 +17,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OTP_RE = /^\d{6}$/;
 
-export function createHubServer({ db, store, host = process.env.HUB_BIND || '127.0.0.1', port = Number(process.env.HUB_PORT || DEFAULT_PORT), accessToken = process.env.HUB_ACCESS_TOKEN || '', authEnabled = process.env.HUB_AUTH_ENABLED === 'true', ownerEmail = process.env.HUB_OWNER_EMAIL || '' } = {}) {
+export function createHubServer({ db, authClient = db?.auth, store, host = process.env.HUB_BIND || '127.0.0.1', port = Number(process.env.HUB_PORT || DEFAULT_PORT), accessToken = process.env.HUB_ACCESS_TOKEN || '', authEnabled = process.env.HUB_AUTH_ENABLED === 'true', ownerEmail = process.env.HUB_OWNER_EMAIL || '' } = {}) {
   if (!db || !store) throw new TypeError('Hub server requires the existing database and store');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new TypeError('HUB_PORT must be a valid TCP port');
   if (authEnabled && !EMAIL_RE.test(ownerEmail)) throw new TypeError('HUB_OWNER_EMAIL must be configured when HUB_AUTH_ENABLED=true');
@@ -37,17 +37,17 @@ export function createHubServer({ db, store, host = process.env.HUB_BIND || '127
         return sendJson(response, 200, { ok: true, enabled: authEnabled, emailHint: authEnabled ? maskEmail(ownerEmail) : null });
       }
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/request-otp') {
-        return requestOtp({ db, request, response, authEnabled, ownerEmail });
+        return requestOtp({ authClient, request, response, authEnabled, ownerEmail });
       }
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/verify-otp') {
-        return verifyOtp({ db, request, response, authEnabled, ownerEmail });
+        return verifyOtp({ authClient, request, response, authEnabled, ownerEmail });
       }
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/logout') {
         response.setHeader('set-cookie', clearSessionCookie());
         return sendJson(response, 200, { ok: true });
       }
       if (!requestUrl.pathname.startsWith('/api/')) return sendJson(response, 404, { ok: false, error: 'NOT_FOUND' });
-      if (authRequired && !(await authorized(request, accessToken, { db, authEnabled, ownerEmail }))) {
+      if (authRequired && !(await authorized(request, accessToken, { authClient, authEnabled, ownerEmail }))) {
         return sendJson(response, 401, { ok: false, error: authEnabled ? 'HUB_UNAUTHORIZED' : 'HUB_AUTH_NOT_CONFIGURED' });
       }
 
@@ -268,7 +268,7 @@ async function one(query, label) {
   return data;
 }
 
-async function authorized(request, token, { db, authEnabled, ownerEmail }) {
+async function authorized(request, token, { authClient, authEnabled, ownerEmail }) {
   if (token) {
     const value = request.headers.authorization || '';
     return value.startsWith('Bearer ') && value.slice(7) === token;
@@ -277,31 +277,31 @@ async function authorized(request, token, { db, authEnabled, ownerEmail }) {
   const sessionToken = readCookie(request, 'hub_session');
   if (!sessionToken) return false;
   try {
-    const { data, error } = await db.auth.getUser(sessionToken);
+    const { data, error } = await authClient.getUser(sessionToken);
     return !error && data?.user?.email?.toLowerCase() === ownerEmail.toLowerCase();
   } catch {
     return false;
   }
 }
 
-async function requestOtp({ db, request, response, authEnabled, ownerEmail }) {
+async function requestOtp({ authClient, request, response, authEnabled, ownerEmail }) {
   if (!authEnabled) return sendJson(response, 404, { ok: false, error: 'AUTH_DISABLED' });
   const body = await readJson(request);
   const email = normalizeEmail(body.email);
   if (email !== ownerEmail.toLowerCase()) return sendJson(response, 403, { ok: false, error: 'EMAIL_NOT_ALLOWED' });
-  const { error } = await db.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+  const { error } = await authClient.signInWithOtp({ email, options: { shouldCreateUser: false } });
   if (error) throw new Error(`Could not send verification code: ${error.message}`);
   return sendJson(response, 200, { ok: true, message: 'Verification code sent' });
 }
 
-async function verifyOtp({ db, request, response, authEnabled, ownerEmail }) {
+async function verifyOtp({ authClient, request, response, authEnabled, ownerEmail }) {
   if (!authEnabled) return sendJson(response, 404, { ok: false, error: 'AUTH_DISABLED' });
   const body = await readJson(request);
   const email = normalizeEmail(body.email);
   const token = typeof body.token === 'string' ? body.token.trim() : '';
   if (email !== ownerEmail.toLowerCase()) return sendJson(response, 403, { ok: false, error: 'EMAIL_NOT_ALLOWED' });
   if (!OTP_RE.test(token)) throw inputError('Verification code must contain 6 digits');
-  const { data, error } = await db.auth.verifyOtp({ email, token, type: 'email' });
+  const { data, error } = await authClient.verifyOtp({ email, token, type: 'email' });
   const userEmail = data?.user?.email?.toLowerCase();
   if (error || !data?.session?.access_token || userEmail !== ownerEmail.toLowerCase()) {
     return sendJson(response, 401, { ok: false, error: 'INVALID_OTP' });
