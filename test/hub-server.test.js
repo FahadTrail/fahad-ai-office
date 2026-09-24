@@ -99,3 +99,19 @@ test('owner OTP session gates the Hub API without exposing the service key', asy
   assert.equal(workspaces.workspaces[0].name, 'Fahad AI Office');
   await new Promise((resolve) => server.close(resolve));
 });
+
+
+test('Hub shows the complete Chief result before the short job summary', async () => {
+  const db = fakeDb();
+  db._tables.jobs[0].status = 'completed';
+  db._tables.jobs[0].final_summary = 'Short summary';
+  db._tables.tasks[0].status = 'done';
+  db._tables.results.push({ task_id: db._tables.tasks[0].id, summary: 'Short summary', content: 'Full final answer with source link' });
+  const snapshot = await readJobSnapshot(db, jobId);
+  assert.equal(snapshot.tasks[0].result.content, 'Full final answer with source link');
+  const server = createHubServer({ db, store: { createJob: async () => ({}) }, port: 0 });
+  await once(server, 'listening');
+  const html = await fetch(`http://127.0.0.1:${server.address().port}/`).then((response) => response.text());
+  assert.match(html, /done\?\.result\?\.content\|\|s\.job\.final_summary/);
+  await new Promise((resolve) => server.close(resolve));
+});
