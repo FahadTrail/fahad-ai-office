@@ -27,7 +27,7 @@ export async function runProductionToolBrokerCanary({
     .eq('status', 'succeeded')
     .order('started_at', { ascending: false })
     .limit(50), 'runs');
-  const jobIds = [...new Set(runs.map((run) => run.job_id).filter(Bolean))];
+  const jobIds = [...new Set(runs.map((run) => run.job_id).filter(Boolean))];
   const jobs = jobIds.length
     ? await rows(db.from('jobs').select('id,project_id').in('id', jobIds), 'jobs')
     : [];
