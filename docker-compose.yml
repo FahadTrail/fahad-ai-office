@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    ports:
+      - "127.0.0.1:2132:2132"
     networks:
       - fahad-office-net
     volumes:
