@@ -80,7 +80,7 @@ export function calculateCost(usage, pricing) {
 function extractOutputText(body) {
   if (typeof body.output_text === 'string') return body.output_text;
   return (body.output || []).flatMap((item) => item.content || [])
-    .filter((item) => item.type === 'output_text' && typeof item.text === 'string')
+    .filter((item) => ['output_text', 'text'].includes(item.type) && typeof item.text === 'string')
     .map((item) => item.text).join('');
 }
 
