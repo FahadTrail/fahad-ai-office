@@ -8,6 +8,9 @@ const sql = file ? readFileSync(new URL(`../supabase/migrations/${file}`, import
 const fixFile = readdirSync(new URL('../supabase/migrations/', import.meta.url))
   .find((name) => name.endsWith('_fix_workspace_budget_reservation_ambiguity.sql'));
 const fixSql = fixFile ? readFileSync(new URL(`../supabase/migrations/${fixFile}`, import.meta.url), 'utf8').toLowerCase() : '';
+const lineageFile = readdirSync(new URL('../supabase/migrations/', import.meta.url))
+  .find((name) => name.endsWith('_propagate_workspace_lineage_to_task_claim.sql'));
+const lineageSql = lineageFile ? readFileSync(new URL(`../supabase/migrations/${lineageFile}`, import.meta.url), 'utf8').toLowerCase() : '';
 
 test('workspace policy migration is service-only and stores opaque secret references', () => {
   assert.ok(file);
@@ -42,4 +45,15 @@ test('model-attempt lineage trigger prevents cross-workspace records', () => {
   assert.match(sql, /j\.project_id = p_workspace/);
   assert.match(sql, /create trigger model_attempts_workspace_guard/);
   assert.match(sql, /cross_workspace_access_denied/);
+});
+
+test('task claims propagate project lineage into every model request', () => {
+  assert.ok(lineageFile);
+  assert.match(lineageSql, /create or replace function private\.claim_next_task/);
+  assert.match(lineageSql, /select t\.\* into v_task/);
+  assert.match(lineageSql, /select j\.project_id into v_workspace/);
+  assert.match(lineageSql, /'project_id', v_workspace/);
+  assert.match(lineageSql, /for update of t skip locked/);
+  assert.match(lineageSql, /set search_path = ''/);
+  assert.match(lineageSql, /revoke execute on function private\.claim_next_task\(text\) from public, anon, authenticated/);
 });

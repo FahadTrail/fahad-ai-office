@@ -31,7 +31,7 @@ function fixture(overrides = {}) {
 test('readiness uses GET only and never invokes the claim RPC or an AI endpoint', async () => {
   const f = fixture();
   assert.equal(await checkHealth({ env, fetchFn: f.fetchFn, verifyCode: false }), true);
-  assert.equal(f.requests.length, 4);
+  assert.equal(f.requests.length, 8);
   for (const { url, options } of f.requests) {
     assert.equal(options.method, 'GET');
     assert.equal(url.origin, env.SUPABASE_URL);
@@ -55,11 +55,9 @@ test('missing credentials fail before network access', async () => {
     verifyCode: false,
   }), /DEEPSEEK_API_KEY/);
 });
-test('workspace policy readiness verifies policy tables and RPCs without writes', async () => {
+test('workspace policy readiness is always verified for selectively enforced jobs', async () => {
   const f = fixture();
-  assert.equal(await checkHealth({
-    env: { ...env, WORKSPACE_POLICY_ENFORCEMENT_ENABLED: 'true' }, fetchFn: f.fetchFn, verifyCode: false,
-  }), true);
+  assert.equal(await checkHealth({ env, fetchFn: f.fetchFn, verifyCode: false }), true);
   assert.equal(f.requests.length, 8);
   assert.ok(f.requests.some(({ url }) => url.pathname === '/rest/v1/workspace_policies'));
   assert.ok(f.requests.some(({ url }) => url.pathname === '/rest/v1/workspace_budget_reservations'));

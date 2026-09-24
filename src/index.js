@@ -9,10 +9,14 @@ import { CHIEF_MODEL, RESEARCH_MODEL, WORKSPACE_POLICY_ENFORCEMENT_ENABLED } fro
 import { SupabaseWorkspacePolicyStore } from './workspace-policy/supabase-store.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
-const workspacePolicyStore = WORKSPACE_POLICY_ENFORCEMENT_ENABLED
-  ? new SupabaseWorkspacePolicyStore(db)
-  : null;
-const workflow = new OfficeWorkflow({ store, workspacePolicyStore });
+// Workspace-scoped jobs always use the fail-closed policy gateway. The global
+// flag remains the explicit switch for legacy jobs that have no workspace.
+const workspacePolicyStore = new SupabaseWorkspacePolicyStore(db);
+const workflow = new OfficeWorkflow({
+  store,
+  workspacePolicyStore,
+  enforceLegacyWorkspacePolicy: WORKSPACE_POLICY_ENFORCEMENT_ENABLED,
+});
 let running = true;
 let busy = false;
 let lastPollAt = 0;
