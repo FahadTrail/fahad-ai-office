@@ -19,7 +19,9 @@ export class OpenAIResponsesProtocol {
     return Boolean(this.apiKey);
   }
 
-  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, clientRequestId }) {
+  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, clientRequestId, effort = null }) {
+    // Responses reasoning effort tops out at "high"; stronger requests map to it.
+    const reasoning = effort ? ({ low: 'low', medium: 'medium' }[effort] || 'high') : this.reasoningEffort;
     if (!this.apiKey) throw providerError(`${provider} credential is unavailable`, { status: 401, type: 'authentication_error' });
     const startedAt = Date.now();
     const { body, requestId, rateLimit } = await postJson({
@@ -37,7 +39,7 @@ export class OpenAIResponsesProtocol {
         })),
         store: false,
         max_output_tokens: maxOutputTokens,
-        ...(this.reasoningEffort ? { reasoning: { effort: this.reasoningEffort } } : {}),
+        ...(reasoning ? { reasoning: { effort: reasoning } } : {}),
       },
     });
     const usage = {

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { withIsolatedSandboxLock } from '../testing/fixtures/uid-lock.js';
 import assert from 'node:assert/strict';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -101,7 +102,7 @@ test('isolated mode is refused without root and unisolated mode is refused in pr
   assert.throws(() => resolveSandboxMode({ CODING_AGENT_SANDBOX: 'unisolated', NODE_ENV: 'production' }), (error) => error.code === 'SANDBOX_UNSAFE');
 });
 
-test('isolated mode runs agent commands as an unprivileged uid that cannot read controller secrets', { skip: !isRoot && 'requires container root on Linux' }, async () => {
+test('isolated mode runs agent commands as an unprivileged uid that cannot read controller secrets', { skip: !isRoot && 'requires container root on Linux' }, () => withIsolatedSandboxLock(async () => {
   const { root, sandbox } = await preparedSandbox('isolated');
   try {
     const secret = join(root, 'controller-secret');
@@ -134,4 +135,4 @@ test('isolated mode runs agent commands as an unprivileged uid that cannot read 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}));

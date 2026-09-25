@@ -10,9 +10,13 @@
 //   allowPaid       — false keeps the task on free/included/promo routes
 //   excludedRoutes  — route ids never used
 //   routeMonthlyBudgetUsd — { routeId: usd } cap per route per budget period
+//   effort          — reasoning effort for models that support it (cost lever)
 
 export const BILLING_CLASSES = Object.freeze(['free', 'included', 'promo', 'paid']);
 export const STRATEGIES = Object.freeze(['economy', 'balanced', 'quality']);
+// Reasoning effort for models that support it (Anthropic output_config.effort,
+// OpenAI reasoning.effort). Unset = the route's configured default.
+export const EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 export const DEFAULT_ROUTING = Object.freeze({
   strategy: 'economy',
   billingPriority: BILLING_CLASSES,
@@ -29,6 +33,7 @@ export function normalizeRouting(input = {}) {
   const value = input && typeof input === 'object' ? input : {};
   const out = {};
   if (STRATEGIES.includes(value.strategy)) out.strategy = value.strategy;
+  if (EFFORTS.includes(value.effort)) out.effort = value.effort;
   const priority = Array.isArray(value.billingPriority ?? value.billing_priority) ? (value.billingPriority ?? value.billing_priority) : null;
   if (priority) {
     const unique = [...new Set(priority.filter((entry) => BILLING_CLASSES.includes(entry)))];

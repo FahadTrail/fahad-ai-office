@@ -37,6 +37,11 @@ export const DEFAULT_LIMITS = Object.freeze({
   verifyAttempts: 6,
   verifyDelayMs: 20_000,
   leaseRenewMs: 60_000,
+  // When every otherwise-eligible model is only cooling down (rate limit or
+  // outage with a known reset), wait for the earliest reset instead of
+  // blocking the owner; longer waits block with the per-route reasons.
+  maxProviderWaitMs: 20 * 60 * 1000,
+  providerWaitSliceMs: 60_000,
 });
 
 class Stop extends Error {
@@ -63,8 +68,10 @@ export class CodingAgentController {
     now = () => Date.now(),
     sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     env = process.env,
+    build = null,
   }) {
     this.store = store;
+    this.build = build;
     this.gateway = gateway;
     this.createSandbox = createSandbox;
     this.createBroker = createBroker;
@@ -163,12 +170,17 @@ class SessionRun {
       };
       this.state = normalizeState(checkpoint.state || this.state);
       this.plan = checkpoint.plan || this.plan;
-      await this.event('session', `Resumed from checkpoint ${checkpoint.sequence} (${checkpoint.reason}).`, { sequence: checkpoint.sequence });
+      await this.event('session', `Resumed from checkpoint ${checkpoint.sequence} (${checkpoint.reason}) by worker ${this.session.leaseOwner || 'unknown'}.`,
+        { sequence: checkpoint.sequence, phase: checkpoint.phase || this.session.phase, iteration: this.session.iteration, ...this.workerInfo() });
     } else {
       this.transcript.messages = [userText(initialMessage(this.session))];
-      await this.event('session', 'Coding Agent session started.', { repository: this.session.repository });
+      await this.event('session', `Coding Agent session started by worker ${this.session.leaseOwner || 'unknown'}.`, { repository: this.session.repository, ...this.workerInfo() });
     }
     this.state.resumes = (this.state.resumes || 0) + (checkpoint ? 1 : 0);
+  }
+
+  workerInfo() {
+    return { worker: this.session.leaseOwner || null, ...(this.c.build ? { build: this.c.build } : {}) };
   }
 
   async prepareSandbox() {
@@ -296,52 +308,61 @@ class SessionRun {
     if (transcriptChars(this.transcript.messages) > this.c.limits.compactAtChars) await this.compact();
     const estimatedInputTokens = estimateTokens(system, this.transcript.messages, tools);
     const policy = await this.c.routingFor(this.session, this.config.routing) || {};
+    const routing = {
+      requiresPrivateData: this.config.privateData,
+      estimatedInputTokens,
+      remainingBudgetUsd: Math.max(0, this.session.budgetUsd - this.session.spentUsd),
+      authorizedRouteIds: policy.authorizedRouteIds || this.c.authorizedRouteIds,
+      allowPaid: this.config.allowPaid && policy.allowPaid !== false,
+      billingPriority: policy.billingPriority,
+      strategy: policy.strategy,
+      effort: policy.effort,
+      policyExcludedRouteIds: policy.excludedRoutes || [],
+      budgetExhaustedRouteIds: policy.exhaustedRoutes || [],
+    };
     let prepared = null;
-    const response = await this.c.gateway.turn({
-      tools,
-      preferredRouteId: this.transcript.segmentRoute || this.session.currentRoute || null,
-      maxOutputTokens: this.c.limits.maxOutputTokens,
-      routing: {
-        requiresPrivateData: this.config.privateData,
-        estimatedInputTokens,
-        remainingBudgetUsd: Math.max(0, this.session.budgetUsd - this.session.spentUsd),
-        authorizedRouteIds: this.c.authorizedRouteIds,
-        allowPaid: this.config.allowPaid && policy.allowPaid !== false,
-        billingPriority: policy.billingPriority,
-        strategy: policy.strategy,
-        policyExcludedRouteIds: policy.excludedRoutes || [],
-        budgetExhaustedRouteIds: policy.exhaustedRoutes || [],
-      },
-      prepare: async (route) => {
-        if (this.transcript.segmentRoute === route.id || (!this.transcript.segmentRoute && !this.transcript.handedOff)) {
-          prepared = { messages: this.transcript.messages, handoff: false };
-        } else {
-          prepared = {
-            handoff: true,
-            messages: [userText(continuationMessage({
-              session: this.session, state: this.state, plan: this.plan, nextAction: this.session.nextAction,
-              recentMessages: this.transcript.messages.slice(-24), reason: 'model handoff',
-              fromRoute: this.transcript.segmentRoute, toRoute: route.id,
-            }))],
-          };
-        }
-        return { system, messages: prepared.messages };
-      },
-      hooks: {
-        authorize: (route) => this.c.authorizeRoute(route, this.session),
-        reserve: (request) => this.c.budget.reserve(this.session, request),
-        settle: (reservation, actualUsd) => this.c.budget.settle(this.session, reservation, actualUsd),
-        onSwitch: async ({ from, to, reason }) => {
-          this.session.previousRoute = from;
-          this.session.providerSwitches += 1;
-          this.state.switches.push({ from, to, reason: reason.code, at: new Date(this.c.now()).toISOString(), iteration: this.session.iteration });
-          await this.checkpoint('provider_switch');
-          await this.event('provider_switch', `Model switch ${from || 'none'} → ${to} (${reason.code}). Checkpoint saved; the new model continues the same task.`,
-            { from, to, reason }, 'warning');
+    let response;
+    try {
+      response = await this.c.gateway.turn({
+        tools,
+        preferredRouteId: this.transcript.segmentRoute || this.session.currentRoute || null,
+        maxOutputTokens: this.c.limits.maxOutputTokens,
+        routing,
+        prepare: async (route) => {
+          if (this.transcript.segmentRoute === route.id || (!this.transcript.segmentRoute && !this.transcript.handedOff)) {
+            prepared = { messages: this.transcript.messages, handoff: false };
+          } else {
+            prepared = {
+              handoff: true,
+              messages: [userText(continuationMessage({
+                session: this.session, state: this.state, plan: this.plan, nextAction: this.session.nextAction,
+                recentMessages: this.transcript.messages.slice(-24), reason: 'model handoff',
+                fromRoute: this.transcript.segmentRoute, toRoute: route.id,
+              }))],
+            };
+          }
+          return { system, messages: prepared.messages };
         },
-        onAttempt: (attempt) => this.c.recordModelAttempt(this.session, attempt),
-      },
-    });
+        hooks: {
+          authorize: (route) => this.c.authorizeRoute(route, this.session),
+          reserve: (request) => this.c.budget.reserve(this.session, request),
+          settle: (reservation, actualUsd) => this.c.budget.settle(this.session, reservation, actualUsd),
+          onSwitch: async ({ from, to, reason }) => {
+            this.session.previousRoute = from;
+            this.session.providerSwitches += 1;
+            this.state.switches.push({ from, to, reason: reason.code, at: new Date(this.c.now()).toISOString(), iteration: this.session.iteration });
+            await this.checkpoint('provider_switch');
+            await this.event('provider_switch', `Model switch ${from || 'none'} → ${to} (${reason.code}). Checkpoint saved; the new model continues the same task.`,
+              { from, to, reason }, 'warning');
+          },
+          onAttempt: (attempt) => this.c.recordModelAttempt(this.session, attempt),
+          beforeCall: ({ route }) => this.maybeInjectDrill(route),
+        },
+      });
+    } catch (error) {
+      if (!['NO_ELIGIBLE_PROVIDER', 'ALL_PROVIDERS_UNAVAILABLE'].includes(error?.code)) throw error;
+      return this.noEligibleModel(error, routing);
+    }
 
     // Adopt the route and, after a handoff, the rendered continuation.
     if (prepared?.handoff) {
@@ -381,6 +402,54 @@ class SessionRun {
     }
     this.textOnlyTurns = 0;
     return this.executeToolCalls(calls, []);
+  }
+
+  // Controlled failover drill (session config `drill.failoverAfterIteration`):
+  // once the task has made that many model turns, the next call to the model
+  // that owns the task fails ONCE with a labelled, recoverable rate limit at
+  // the routing boundary. The gateway then checkpoints and hands the SAME task
+  // to the next eligible model. The drill never touches provider health.
+  async maybeInjectDrill(route) {
+    const drill = this.config.drill;
+    if (!drill || this.state.drill?.fired) return;
+    if (this.session.iteration < drill.failoverAfterIteration) return;
+    if (!this.transcript.segmentRoute || route.id !== this.transcript.segmentRoute) return;
+    this.state.drill = { fired: true, route: route.id, iteration: this.session.iteration, at: new Date(this.c.now()).toISOString() };
+    await this.event('drill', `Controlled failover drill: injected ONE recoverable rate-limit failure for ${route.id} after ${this.session.iteration} model turns (not a real provider error).`,
+      { route: route.id, iteration: this.session.iteration, injected: true }, 'warning');
+    throw Object.assign(new Error('Controlled failover drill: injected rate limit'), {
+      status: 429, type: 'rate_limit_error', retryAfter: '600', injected: true, code: 'DRILL_INJECTED_RATE_LIMIT',
+    });
+  }
+
+  // No model can take the next turn. If the only obstacle is cooldowns with a
+  // known reset, wait for the earliest one (checkpointed, lease kept alive);
+  // otherwise block with the reason for every route.
+  async noEligibleModel(error, routing) {
+    const evaluations = await this.c.gateway.evaluate({ ...routing, maxOutputTokens: this.c.limits.maxOutputTokens }).catch(() => []);
+    const nowMs = this.c.now();
+    const waitable = evaluations.filter((entry) => entry.reasons.length && entry.reasons.every((reason) => reason.startsWith('COOLDOWN_')));
+    const resets = waitable.map((entry) => Date.parse(entry.state?.cooldownUntil || '')).filter((value) => Number.isFinite(value) && value > nowMs);
+    const summary = evaluations.length
+      ? evaluations.map((entry) => `${entry.route.id}: ${entry.reasons.join(', ') || 'eligible'}`).join('; ')
+      : (error.evaluations || []).map((entry) => `${entry.id}: ${entry.reasons.join(', ')}`).join('; ');
+    if (resets.length) {
+      const waitMs = Math.min(...resets) - nowMs + 1000;
+      if (waitMs <= this.c.limits.maxProviderWaitMs) {
+        await this.event('waiting', `All eligible models are cooling down; waiting ${Math.ceil(waitMs / 1000)}s for the earliest reset, then continuing the same task.`,
+          { waitMs, routes: waitable.map((entry) => ({ id: entry.route.id, until: entry.state?.cooldownUntil || null })) }, 'warning');
+        await this.checkpoint('waiting');
+        const until = nowMs + waitMs;
+        while (this.c.now() < until) {
+          this.guard();
+          await this.c.sleepFn(Math.min(this.c.limits.providerWaitSliceMs, until - this.c.now()));
+        }
+        return false;
+      }
+    }
+    const lastFailure = (error.attempts || []).filter((attempt) => attempt.status === 'failed').at(-1);
+    const detail = lastFailure ? ` Last failure: ${lastFailure.route.id} ${lastFailure.error?.code || 'error'}.` : '';
+    throw new Stop('blocked', `No model can take the next turn (${error.code}).${detail} Per route: ${truncate(summary, 1500)}`, { code: error.code });
   }
 
   async executeToolCalls(calls, doneResults) {
@@ -741,6 +810,8 @@ function normalizeConfig(config) {
     privateData: config.privateData !== false,
     allowPaid: config.allowPaid !== false && config.routing?.allowPaid !== false,
     routing: normalizeRouting(config.routing || {}),
+    drill: Number.isInteger(config.drill?.failoverAfterIteration) && config.drill.failoverAfterIteration >= 1 && config.drill.failoverAfterIteration <= 100
+      ? { failoverAfterIteration: config.drill.failoverAfterIteration } : null,
     allowProtectedPaths: config.allowProtectedPaths === true,
     fetchUrl: typeof config.fetchUrl === 'string' ? config.fetchUrl : null,
     deploy: { mode: deploy.mode === 'merge' ? 'merge' : 'none', workflow: typeof deploy.workflow === 'string' ? deploy.workflow : null },

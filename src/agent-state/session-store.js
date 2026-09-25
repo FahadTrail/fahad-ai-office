@@ -316,6 +316,7 @@ export function fromSessionRow(row) {
     tokensOut: Number(row.tokens_out || 0),
     result: row.result,
     blocker: row.blocker,
+    errorCode: row.error_code || null,
     cancelRequested: Boolean(row.cancel_requested),
     leaseOwner: row.lease_owner,
     leaseToken: row.lease_token,

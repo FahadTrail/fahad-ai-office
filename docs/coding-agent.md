@@ -71,9 +71,26 @@ There is exactly one continuity architecture (`src/agent-state/` +
   (5 minutes) and any worker resumes the session from its latest checkpoint;
   the working tree is re-created from the pushed branch plus the stored patch
   if the sandbox volume was lost.
+* If every otherwise-eligible model is only cooling down (rate limit or outage
+  with a known reset), the controller checkpoints, records a `waiting` event and
+  waits up to 20 minutes for the earliest reset, then continues the same task.
 * The user is only interrupted when no eligible route remains
   (`NO_ELIGIBLE_PROVIDER` / `ALL_PROVIDERS_UNAVAILABLE` → session `blocked`
-  with the per-route reasons) or an action needs approval.
+  with the reason for every route, e.g. `BUDGET_INSUFFICIENT`,
+  `WORKSPACE_NOT_AUTHORIZED`, `COOLDOWN_RATE_LIMITED`) or an action needs approval.
+* Only routes the workspace authorizes (`workspace_provider_permissions`:
+  provider enabled, model listed, matching secret reference) are routable.
+* **Failover drill** (validation only): session config
+  `{"drill": {"failoverAfterIteration": N}}` makes the next call to the model
+  that owns the task fail ONCE with a labelled rate limit
+  (`DRILL_INJECTED_RATE_LIMIT`) after N model turns. The normal checkpointed
+  handoff follows; real provider health is never marked. The Hub does not
+  expose this setting.
+* Each route may declare `maxOutputTokens` (DeepSeek: 8192,
+  `DEEPSEEK_MAX_OUTPUT_TOKENS`); requests are clamped to it.
+* Session events carry the worker id (`host:pid`) and the worker's code
+  fingerprint (`node src/build-info.js` prints the same value for a checkout),
+  so resumes by a different worker and the running code version are visible.
 
 ## Routing policy (Model Pool)
 
