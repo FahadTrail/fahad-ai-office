@@ -81,6 +81,10 @@ test('every Hub browser script parses and sends the selected authorized provider
   for (const [, body] of scripts) new Script(body);
   assert.match(HUB_HTML, /provider:document\.getElementById\('modelSelect'\)\?\.value\|\|'auto'/);
   assert.match(HUB_HTML, /hub-workspace-changed/);
+  assert.match(HUB_HTML, /id="projectPrompt"/);
+  assert.match(HUB_HTML, /id="projectName"/);
+  assert.doesNotMatch(HUB_HTML, /window\.prompt\(/);
+  assert.match(HUB_HTML, /if\(final\)addBubble\(final,'office'\)/);
 });
 
 test('Hub usage snapshot aggregates attempts and workspace budget without sensitive payloads', async () => {
