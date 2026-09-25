@@ -226,6 +226,45 @@ canary passed. Remaining (root on the VPS, once):
 Undo: `sudo docker compose -f /opt/fahad-ai-office/docker-compose.yml stop coding-worker`
 and remove the `COMPOSE_PROFILES`/`CODING_GITHUB_TOKEN` lines from `.env`.
 
+## Troubleshooting (production)
+
+Everything a session does is in Supabase; no server access is needed.
+
+| Question | Where to look |
+| --- | --- |
+| Is the worker alive / which code does it run? | Create a probe session with `budget_usd = 0.0001`: the worker claims it within seconds, its first `session` event carries `worker` (`container:pid`) and `build.codeFingerprint`; compare with `node src/build-info.js` on a checkout. It then blocks with `NO_ELIGIBLE_PROVIDER` without calling a model. |
+| Why is a session blocked? | `agent_sessions.blocker` / `error_code` (per-route reasons for `NO_ELIGIBLE_PROVIDER`) and the last `guard` event. |
+| What did it do? | `agent_events` (plan, model turns, tool results, tests, git, ci, deploy, verify), `tool_executions` (every tool call with policy decision), `model_attempts` (every model call, cost, error code). |
+| Did it switch models? | `provider_switch` events and `agent_sessions.state.switches`; a drill switch has `payload.drill` / `reason.injected`. |
+| Worker restarted mid-task? | The session keeps `status = running` until the 5-minute lease expires, then a new worker logs `Resumed from checkpoint N … by worker <new id>`. Every deployment recreates the worker container. |
+| Waiting for me? | `agent_approvals` with `status = 'pending'` (Hub → Coding Agent → Approve / Reject). |
+| Provider health / cost | `provider_status`, `model_usage_summary()`, Hub → Model pool. |
+
+## Live validation (production, 2026-09-25)
+
+Session `c2e43e40-b4e5-482f-b265-64d675417498` ran on the production worker with
+real models and real tools:
+
+* Objective: add `src/model-gateway/agentic/route-id.js` test-first, use it in
+  `src/canary/canary-requests.js`, document it. Routing economy, effort low,
+  budget $0.45, drill after 7 turns.
+* DeepSeek `deepseek-flash` ran the security self-check (sandbox uid 1000, no
+  credential variables), inspected the repository, planned, wrote the failing
+  test first and ran it. The drill injected one labelled rate limit; the
+  controller checkpointed and Claude `claude-sonnet-5` continued from the
+  checkpoint (implementation, refactor, docs, tests) without repeating work.
+* Test gate passed; the agent committed, pushed its branch with its own token,
+  opened pull request #32 and followed its CI to green.
+* The merge waited for approval (`github.pr_merge` = APPROVAL), was approved
+  once and consumed once; the agent merged, then watched the deployment.
+* The worker was restarted twice by deployments while the session held its
+  lease; each time a new worker resumed it from the latest checkpoint.
+
+Defects found by this run and fixed in production: CI/deploy polls replayed by
+the Tool Broker instead of re-executing; masked test failures
+(`…; echo "exit=$?"`); drill/wait events rejected by the `agent_events`
+constraint; unhelpful "no eligible model" blockers.
+
 ## Verification in this repository
 
 * `node --test` — protocol translations, routing/failover, provider health,

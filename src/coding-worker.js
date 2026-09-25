@@ -29,7 +29,9 @@ export function modelAttemptRow(session, attempt) {
     model: attempt.route.model,
     stage: 'coding',
     status: attempt.status === 'blocked' ? 'blocked' : attempt.status,
-    idempotency_key: `${session.id}:turn:${session.iteration + 1}`,
+    // One row per provider attempt: a turn that fails over or retries has
+    // several attempts, which must not collide on (run_id, key, attempt_no).
+    idempotency_key: `${session.id}:turn:${session.iteration + 1}:${attempt.route.id}:${Math.max(1, attempt.attempt || 1)}`,
     client_request_id: attempt.id,
     provider_request_id: attempt.requestId || null,
     route: [{ provider: attempt.route.provider, model: attempt.route.model, billingClass: attempt.route.billingClass }],
