@@ -1,4 +1,4 @@
-import { GatewayError } from '../contracts.js';
+import { FAILURE_CLASS, GatewayError } from '../contracts.js';
 
 export class AnthropicModelAdapter {
   constructor({ model = 'claude-sonnet-5', queryFn, env = process.env } = {}) {
@@ -43,7 +43,7 @@ export class AnthropicModelAdapter {
         const blocks = message.message?.content || [];
         for (const block of blocks.filter((item) => item.type === 'tool_use')) {
           if (!authorizedTools.includes(block.name)) {
-            throw new GatewayError('Model requested an unauthorized host tool', { code: 'UNAUTHORIZED_HOST_TOOL' });
+            throw new GatewayError('Model requested an unauthorized host tool', { code: 'UNAUTHORIZED_HOST_TOOL', failureClass: FAILURE_CLASS.FATAL });
           }
           if (!toolUses.has(block.id)) {
             toolUses.set(block.id, { name: block.name, startedAt: Date.now() });
@@ -95,6 +95,8 @@ export class AnthropicModelAdapter {
     if (authorizedTools.length && successfulTools === 0) {
       throw new GatewayError('Research completed without a verified host tool result', {
         code: 'HOST_TOOL_REQUIRED',
+        // A policy outcome, not a provider fault: keep the code in the audit.
+        failureClass: FAILURE_CLASS.FATAL,
         usage: { inputTokens, outputTokens, costUsd },
       });
     }

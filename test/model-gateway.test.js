@@ -58,7 +58,12 @@ test('Research cannot claim verified web use when the provider made no host-tool
   const adapter = new AnthropicModelAdapter({ queryFn: () => (async function* () {
     yield { type: 'result', subtype: 'success', result: 'I used WebFetch', usage: { input_tokens: 2, output_tokens: 3 }, total_cost_usd: 0.001 };
   })() });
-  await assert.rejects(adapter.complete({ prompt: 'Research', systemPrompt: 'Verify', model: 'claude-test', maxTurns: 3, allowedTools: ['WebFetch'], onActivity: async () => {} }), { code: 'HOST_TOOL_REQUIRED' });
+  await assert.rejects(adapter.complete({ prompt: 'Research', systemPrompt: 'Verify', model: 'claude-test', maxTurns: 3, allowedTools: ['WebFetch'], onActivity: async () => {} }), (error) => {
+    assert.equal(error.code, 'HOST_TOOL_REQUIRED');
+    // The gateway keeps the policy code instead of recording a generic PROVIDER_ERROR.
+    assert.equal(classifyProviderError(error).code, 'HOST_TOOL_REQUIRED');
+    return true;
+  });
 });
 
 test('automatic fallback configuration is scoped to workspace-enforced gateways', () => {
