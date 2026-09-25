@@ -105,7 +105,7 @@ task (`agent_sessions.config.routing`, Hub → new task → Model routing).
 | Anthropic (`claude-opus-5`, `claude-sonnet-5`) | Messages API (official SDK) | `ANTHROPIC_API_KEY` | approved | production provider |
 | OpenAI (`gpt-5.3-codex`) | Responses (`store:false`) | `OPENAI_API_KEY` | approved | list price built in; other models need `OPENAI_PRICING_JSON` |
 | DeepSeek (`deepseek-flash`) | Chat Completions | `DEEPSEEK_API_KEY` | `DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED` | |
-| Qwen (`qwen3.8-flash`) | Chat Completions | `QWEN_API_KEY` + `QWEN_API_ENDPOINT` | `QWEN_API_PRIVATE_DATA_APPROVED` | Singapore workspace endpoint |
+| Qwen (`qwen3.8-flash`) | Chat Completions | `QWEN_API_KEY` + `QWEN_API_ENDPOINT` | `QWEN_API_PRIVATE_DATA_APPROVED` | Singapore workspace endpoint; `AccessDenied.Unpurchased` = activate the model in Model Studio |
 | Kimi (`kimi-k2.7-code`) | Chat Completions | `KIMI_API_KEY` | `KIMI_API_PRIVATE_DATA_APPROVED` | |
 | GLM / Zhipu (`glm-5.3-flash`) | Chat Completions | `ZHIPU_API_KEY` | `ZHIPU_API_PRIVATE_DATA_APPROVED` | |
 | MiniMax (`MiniMax-M2.7`) | Chat Completions | `MINIMAX_API_KEY` | blocked in code | pending API data-use confirmation |

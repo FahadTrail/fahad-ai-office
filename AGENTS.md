@@ -71,8 +71,11 @@ inside the built runtime image as root.
   fingerprint equals `supabase/verify/schema-fingerprint.txt`.
 * Live provider canary (Hub → Model pool → *Run live canary*, executed by the
   Office runtime) verified real tool-calling on Anthropic `claude-opus-5`,
-  `claude-sonnet-5` and DeepSeek `deepseek-flash`, and a real cross-provider
-  failover drill (DeepSeek → Sonnet from a database-persisted checkpoint).
+  `claude-sonnet-5`, OpenAI `gpt-5.3-codex` and DeepSeek `deepseek-flash`, and
+  a real cross-provider failover drill (DeepSeek → Sonnet from a
+  database-persisted checkpoint). Qwen has a key but the provider answers
+  `AccessDenied.Unpurchased` (model not activated in Alibaba Model Studio).
+  Kimi, GLM, MiniMax, Gemini, OpenRouter, Groq: no credentials configured.
   Results live in `provider_canary_runs` and `provider_status`.
 * The Coding Agent worker is NOT running yet: it needs one root step on the VPS
   (`ops/enable-coding-worker.sh`, see `docs/coding-agent.md` → *Activation
