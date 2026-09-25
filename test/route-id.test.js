@@ -13,6 +13,10 @@ test('parseRouteId keeps colons inside the model part', () => {
   assert.deepEqual(parseRouteId('openrouter:qwen/qwen3-coder:free'), { provider: 'openrouter', model: 'qwen/qwen3-coder:free' });
 });
 
+test('parseRouteId keeps slashes inside a groq model part', () => {
+  assert.deepEqual(parseRouteId('groq:openai/gpt-oss-120b'), { provider: 'groq', model: 'openai/gpt-oss-120b' });
+});
+
 test('formatRouteId joins provider and model', () => {
   assert.equal(formatRouteId('openrouter', 'qwen/qwen3-coder:free'), 'openrouter:qwen/qwen3-coder:free');
 });
