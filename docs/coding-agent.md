@@ -94,6 +94,10 @@ There is exactly one continuity architecture (`src/agent-state/` +
 
 ## Routing policy (Model Pool)
 
+A route id has the form `provider:model` (the model part may itself contain
+colons, e.g. `openrouter:qwen/qwen3-coder:free`); parse and format it with
+`src/model-gateway/agentic/route-id.js` rather than splitting strings by hand.
+
 `src/model-gateway/agentic/model-pool.js` declares every route with protocol,
 credential variable, billing class (`free`, `included`, `promo`, `paid`),
 quality/cost tier, context window, pricing and privacy review. A route is
