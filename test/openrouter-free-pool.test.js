@@ -32,7 +32,7 @@ function catalogFetch({ userStatus = 200, calls = [] } = {}) {
 
 test('discovery admits only zero-priced, tool-capable, large-context :free models the key can use', async () => {
   const calls = [];
-  const catalog = await fetchOpenRouterCatalog({ apiKey: KEY, fetchFn: catalogFetch({ calls }), rank: (left, right) => rankFreeModels(left, right) });
+  const catalog = await fetchOpenRouterCatalog({ apiKey: KEY, fetchFn: catalogFetch({ calls }), maxAdmitted: 8, rank: (left, right) => rankFreeModels(left, right) });
   assert.equal(calls.find((call) => call.url.endsWith('/api/v1/models')).auth, null, 'the public catalog is fetched without the key');
   assert.equal(calls.find((call) => call.url.endsWith('/models/user')).auth, `Bearer ${KEY}`);
   assert.doesNotMatch(JSON.stringify(catalog), new RegExp(KEY), 'the key never appears in the stored catalog');
@@ -198,4 +198,17 @@ test('canary skips routes in cooldown, samples discovered OpenRouter models and 
   assert.equal(probedOpenRouter.length, 2, 'only a sample of the shared OpenRouter allowance is used');
   assert.ok(!probedOpenRouter.includes('openrouter:a/m:free'), 'never-verified models are probed first');
   assert.equal(report.skipped.filter((entry) => entry.reason === 'NOT_SAMPLED_THIS_RUN').length, 3);
+
+  const paidCalls = [];
+  const paidPool = [
+    { ...route('deepseek:deepseek-flash', { billingClass: 'paid' }), protocolClient: { turn: async (input) => { paidCalls.push('fresh'); return client('x').turn(input); } }, contextWindow: 131072 },
+    { ...route('anthropic:claude-sonnet-5', { billingClass: 'paid' }), protocolClient: { turn: async (input) => { paidCalls.push('stale'); return client('y').turn(input); } }, contextWindow: 131072 },
+  ];
+  const paidState = new MemoryProviderStateStore();
+  paidState.rows.set('deepseek:deepseek-flash', { health: 'healthy', lastSuccessAt: new Date(Date.now() - 3600_000).toISOString() });
+  paidState.rows.set('anthropic:claude-sonnet-5', { health: 'healthy', lastSuccessAt: new Date(Date.now() - 48 * 3600_000).toISOString() });
+  const paidReport = await runAgenticCanary({ pool: paidPool, stateStore: paidState, log: () => {}, env: {} });
+  assert.ok(!paidCalls.includes('fresh'), 'a paid route verified within 24 h is not re-probed');
+  assert.ok(paidCalls.includes('stale'));
+  assert.equal(paidReport.skipped.find((entry) => entry.id === 'deepseek:deepseek-flash').reason, 'PAID_RECENTLY_VERIFIED');
 });

@@ -128,10 +128,17 @@ export async function runAgenticCanary({
   const discovered = pool.filter((route) => route.discovered && !route.unavailableReasons.length)
     .toSorted((left, right) => String(state.get(left.id)?.lastSuccessAt || '').localeCompare(String(state.get(right.id)?.lastSuccessAt || '')));
   const sampled = new Set(discovered.slice(0, sampleSize).map((route) => route.id));
+  // Paid routes that succeeded recently are not re-probed (keeps canary
+  // spend near zero); CANARY_INCLUDE_PAID=true forces a full paid check.
+  const includePaid = /^(1|true|yes)$/i.test(String(env.CANARY_INCLUDE_PAID || ''));
+  const paidFreshMs = Number(env.CANARY_PAID_REVERIFY_HOURS ?? 24) * 3600_000;
   const routable = [];
   for (const route of pool.filter((candidate) => !candidate.unavailableReasons.length)) {
     const routeState = state.get(route.id);
-    if (!ignoreCooldown && isCoolingDown(routeState, Date.now())) {
+    const lastSuccess = Date.parse(routeState?.lastSuccessAt || '');
+    if (!includePaid && route.billingClass === 'paid' && Number.isFinite(lastSuccess) && Date.now() - lastSuccess < paidFreshMs) {
+      report.skipped.push({ id: route.id, reason: 'PAID_RECENTLY_VERIFIED', lastSuccessAt: routeState.lastSuccessAt });
+    } else if (!ignoreCooldown && isCoolingDown(routeState, Date.now())) {
       report.skipped.push({ id: route.id, reason: 'COOLDOWN', until: routeState.cooldownUntil, health: routeState.health || null });
     } else if (route.discovered && !sampled.has(route.id)) {
       report.skipped.push({ id: route.id, reason: 'NOT_SAMPLED_THIS_RUN' });

@@ -16,7 +16,7 @@
 
 const API = 'https://openrouter.ai/api/v1';
 export const MIN_CONTEXT = 16_000;
-export const DEFAULT_MAX_ADMITTED = 8;
+export const DEFAULT_MAX_ADMITTED = 12;
 
 let cache = null;
 
