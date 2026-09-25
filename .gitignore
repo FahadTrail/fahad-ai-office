@@ -33,3 +33,6 @@ desktop.ini
 .idea/
 *.swp
 *~
+
+# Migration names legitimately mention roles such as service_role.
+!supabase/migrations/*.sql

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 test('Hub project creation is atomic and service-role-only with conservative policy cloning', async () => {
-  const sql = await readFile(new URL('../supabase/migrations/20260925125200_hub_daily_use.sql', import.meta.url), 'utf8');
+  const sql = await readFile(new URL('../supabase/migrations/20260925131956_hub_daily_use.sql', import.meta.url), 'utf8');
   assert.match(sql, /create function public\.create_hub_project\(p_name text\)/i);
   assert.match(sql, /security invoker/i);
   assert.match(sql, /revoke all on function public\.create_hub_project\(text\) from public, anon, authenticated/i);

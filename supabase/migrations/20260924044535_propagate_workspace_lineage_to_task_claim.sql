@@ -76,3 +76,4 @@ $$;
 -- directly so the production privilege boundary does not widen.
 revoke execute on function private.claim_next_task(text)
 from public, anon, authenticated, service_role;
+
