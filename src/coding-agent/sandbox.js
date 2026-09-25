@@ -293,10 +293,14 @@ export class Sandbox {
     }
   }
 
+  // ripgrep is preferred; git is the fallback so repositories remain
+  // explorable on hosts without rg.
   async listFiles(path = '.', { max = 400 } = {}) {
     const { relativePath } = await this.resolveInside(path);
-    const result = await this.run('rg', ['--files', '--hidden', '--glob', '!.git', ...(relativePath === '.' ? [] : [relativePath])], { timeoutMs: 60_000 });
-    const files = result.stdout.split('\n').filter(Boolean).sort();
+    const scope = relativePath === '.' ? [] : [relativePath];
+    let result = await this.runOptional('rg', ['--files', '--hidden', '--glob', '!.git', ...scope], { timeoutMs: 60_000 });
+    if (!result) result = await this.git(['ls-files', '--cached', '--others', '--exclude-standard', '--', ...scope], { timeoutMs: 60_000 });
+    const files = [...new Set(result.stdout.split('\n').filter(Boolean))].sort();
     return { path: relativePath, total: files.length, files: files.slice(0, max), truncated: files.length > max };
   }
 
@@ -306,9 +310,22 @@ export class Sandbox {
     const args = ['--line-number', '--no-heading', '--color', 'never', '--max-count', '50', '--hidden', '--glob', '!.git'];
     if (glob) args.push('--glob', String(glob));
     args.push('--', String(pattern), relativePath);
-    const result = await this.run('rg', args, { timeoutMs: 60_000 });
+    let result = await this.runOptional('rg', args, { timeoutMs: 60_000 });
+    if (!result) {
+      const pathspec = glob ? `${relativePath === '.' ? '' : `${relativePath}/`}**/${glob}` : relativePath;
+      result = await this.git(['grep', '--untracked', '-n', '-I', '-E', '--max-count', '50', '-e', String(pattern), '--', pathspec], { timeoutMs: 60_000 });
+    }
     const lines = result.stdout.split('\n').filter(Boolean);
     return { matches: lines.slice(0, max).map((line) => redact(line.slice(0, 400), this.env)), total: lines.length, truncated: lines.length > max };
+  }
+
+  async runOptional(command, args, options) {
+    try {
+      return await this.run(command, args, options);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------- git state
