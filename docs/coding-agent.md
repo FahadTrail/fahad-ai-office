@@ -239,6 +239,7 @@ Everything a session does is in Supabase; no server access is needed.
 | Worker restarted mid-task? | The session keeps `status = running` until the 5-minute lease expires, then a new worker logs `Resumed from checkpoint N … by worker <new id>`. Every deployment recreates the worker container. |
 | Waiting for me? | `agent_approvals` with `status = 'pending'` (Hub → Coding Agent → Approve / Reject). |
 | Provider health / cost | `provider_status`, `model_usage_summary()`, Hub → Model pool. |
+| How are route ids parsed? | With `parseRouteId` / `formatRouteId` from `src/model-gateway/agentic/route-id.js`; never split route ids on ":" by hand. |
 
 ## Live validation (production, 2026-09-25)
 
