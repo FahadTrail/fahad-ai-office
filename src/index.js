@@ -15,12 +15,15 @@ import { createHubServer } from './hub-server.js';
 import { runStartupCanary } from './startup-canary.js';
 import { configureSharedProviderHealth } from './model-runner.js';
 import { SupabaseProviderStateStore } from './model-gateway/agentic/provider-state.js';
+import { CanaryRequestRunner } from './canary/canary-requests.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
 // flag remains the explicit switch for legacy jobs that have no workspace.
 const workspacePolicyStore = new SupabaseWorkspacePolicyStore(db);
-configureSharedProviderHealth(new SupabaseProviderStateStore(db));
+const providerStateStore = new SupabaseProviderStateStore(db);
+configureSharedProviderHealth(providerStateStore);
+const canaryRequests = new CanaryRequestRunner({ db, stateStore: providerStateStore, log });
 const toolBrokerStore = new SupabaseToolBrokerStore(db);
 const { client: safeCanaryClient, transport: safeCanaryTransport } = createSafeCanaryMcpClient();
 const toolBroker = new ToolBroker({
@@ -92,6 +95,8 @@ async function main() {
     try {
       busy = true;
       const progressed = await workflow.runOnce();
+      // Owner-requested live provider canaries (no-op unless one is queued).
+      if (!progressed) await canaryRequests.maybeRun().catch((error) => log('WARN  canary runner:', error.message));
       lastPollAt = Date.now();
       busy = false;
       heartbeat();
