@@ -415,8 +415,8 @@ class SessionRun {
     if (this.session.iteration < drill.failoverAfterIteration) return;
     if (!this.transcript.segmentRoute || route.id !== this.transcript.segmentRoute) return;
     this.state.drill = { fired: true, route: route.id, iteration: this.session.iteration, at: new Date(this.c.now()).toISOString() };
-    await this.event('drill', `Controlled failover drill: injected ONE recoverable rate-limit failure for ${route.id} after ${this.session.iteration} model turns (not a real provider error).`,
-      { route: route.id, iteration: this.session.iteration, injected: true }, 'warning');
+    await this.event('provider_switch', `Controlled failover drill: injected ONE recoverable rate-limit failure for ${route.id} after ${this.session.iteration} model turns (not a real provider error).`,
+      { drill: true, route: route.id, iteration: this.session.iteration, injected: true }, 'warning');
     throw Object.assign(new Error('Controlled failover drill: injected rate limit'), {
       status: 429, type: 'rate_limit_error', retryAfter: '600', injected: true, code: 'DRILL_INJECTED_RATE_LIMIT',
     });
@@ -436,8 +436,8 @@ class SessionRun {
     if (resets.length) {
       const waitMs = Math.min(...resets) - nowMs + 1000;
       if (waitMs <= this.c.limits.maxProviderWaitMs) {
-        await this.event('waiting', `All eligible models are cooling down; waiting ${Math.ceil(waitMs / 1000)}s for the earliest reset, then continuing the same task.`,
-          { waitMs, routes: waitable.map((entry) => ({ id: entry.route.id, until: entry.state?.cooldownUntil || null })) }, 'warning');
+        await this.event('guard', `All eligible models are cooling down; waiting ${Math.ceil(waitMs / 1000)}s for the earliest reset, then continuing the same task.`,
+          { waiting: true, waitMs, routes: waitable.map((entry) => ({ id: entry.route.id, until: entry.state?.cooldownUntil || null })) }, 'warning');
         await this.checkpoint('waiting');
         const until = nowMs + waitMs;
         while (this.c.now() < until) {
@@ -574,10 +574,16 @@ class SessionRun {
     if (tool === 'shell.run') {
       const command = String(args.command || '');
       if (looksLikeTest(command, this.testCommand)) {
-        this.state.lastTest = { command, exitCode: outcome.structured.exitCode, at: new Date(this.c.now()).toISOString(), output: truncate(outcome.text, 4000) };
-        await this.event('test', `${command} → exit ${outcome.structured.exitCode}`, { exitCode: outcome.structured.exitCode }, outcome.structured.exitCode === 0 ? 'success' : 'warning');
-        if (outcome.structured.exitCode !== 0 && ['implement', 'test'].includes(this.session.phase)) await this.setPhase('debug');
-        else if (outcome.structured.exitCode === 0 && this.session.phase === 'implement') await this.setPhase('test');
+        // A wrapper such as `; echo "exit=$?"` masks the test runner's exit
+        // code; the runner's own failure summary still counts as a failure.
+        const reported = reportedTestFailures(outcome.text);
+        const exitCode = outcome.structured.exitCode === 0 && reported > 0 ? 1 : outcome.structured.exitCode;
+        const masked = exitCode !== outcome.structured.exitCode;
+        this.state.lastTest = { command, exitCode, at: new Date(this.c.now()).toISOString(), output: truncate(outcome.text, 4000), ...(masked ? { failures: reported } : {}) };
+        await this.event('test', `${command} → ${masked ? `${reported} failing (shell exit 0 masked the failure)` : `exit ${exitCode}`}`,
+          { exitCode, ...(masked ? { failures: reported, shellExitCode: 0 } : {}) }, exitCode === 0 ? 'success' : 'warning');
+        if (exitCode !== 0 && ['implement', 'test'].includes(this.session.phase)) await this.setPhase('debug');
+        else if (exitCode === 0 && this.session.phase === 'implement') await this.setPhase('test');
       }
     }
   }
@@ -797,6 +803,18 @@ class SessionRun {
     await this.checkpoint('compaction');
     await this.event('checkpoint', 'Transcript compacted into a durable continuation summary.', {});
   }
+}
+
+// Failure counts printed by common test runners (node:test TAP and spec
+// reporters, mocha, jest/vitest). Returns 0 when none is reported.
+export function reportedTestFailures(output) {
+  const text = String(output || '');
+  const counts = [
+    ...text.matchAll(/^(?:#|ℹ)\s*fail(?:ed)?\s+(\d+)\s*$/gim),
+    ...text.matchAll(/^\s*(\d+)\s+failing\b/gim),
+    ...text.matchAll(/^Tests?:\s.*?\b(\d+)\s+failed\b/gim),
+  ].map((match) => Number(match[1]));
+  return counts.length ? Math.max(...counts) : 0;
 }
 
 function normalizeConfig(config) {

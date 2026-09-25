@@ -41,9 +41,9 @@ test('a controlled failover drill hands the same task to the next model without 
     assert.ok(!attempts.some((attempt) => attempt.error === 'PROVIDER_RATE_LIMIT'), 'the drill replaced the scripted rate limit');
     assert.notEqual((await providerStateStore.snapshot()).get('anthropic:claude-opus-5')?.health, 'rate_limited', 'a drill never marks real provider health');
     const events = await sessionStore.listEvents(created.id);
-    const drill = events.find((event) => event.type === 'drill');
+    const drill = events.find((event) => event.type === 'provider_switch' && event.payload.drill);
     assert.match(drill.message, /injected ONE recoverable rate-limit failure for anthropic:claude-opus-5 after 6 model turns/);
-    const switched = events.find((event) => event.type === 'provider_switch');
+    const switched = events.find((event) => event.type === 'provider_switch' && !event.payload.drill);
     assert.equal(switched.payload.reason.code, 'DRILL_INJECTED_RATE_LIMIT');
     assert.equal(switched.payload.reason.injected, true);
     assert.ok(events.indexOf(drill) < events.indexOf(switched));
@@ -85,7 +85,7 @@ test('when every eligible model is only cooling down, the session waits for the 
     const outcome = await worker.runOnce();
     assert.notEqual(outcome.status, 'blocked', outcome.blocker);
     const events = await sessionStore.listEvents(created.id);
-    const waiting = events.findIndex((event) => event.type === 'waiting');
+    const waiting = events.findIndex((event) => event.type === 'guard' && event.payload.waiting);
     assert.ok(waiting >= 0, 'the controller waited instead of blocking');
     assert.ok(events.slice(waiting).some((event) => event.type === 'model_turn'), 'and then continued the same task');
     assert.ok(clock.t - Date.parse(until) >= 0);
@@ -121,4 +121,25 @@ test('a failing routing hook is not recorded as a provider failure and releases 
   }), /event store down/);
   assert.deepEqual(settled, [['r1', 0]]);
   assert.equal((await stateStore.snapshot()).size, 0, 'no provider outcome was recorded');
+});
+
+test('every event type the controller emits is accepted by the agent_events table', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { AGENT_EVENT_TYPES } = await import('../src/agent-state/session-store.js');
+  const migration = readFileSync(new URL('../supabase/migrations/20260925160000_coding_agent_foundation.sql', import.meta.url), 'utf8');
+  const check = migration.match(/create table public\.agent_events[\s\S]*?type text not null check \(type in \(([\s\S]*?)\)\)/)[1];
+  const allowed = [...check.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+  assert.deepEqual([...AGENT_EVENT_TYPES].sort(), allowed.sort(), 'the store mirrors the database constraint');
+  const controller = readFileSync(new URL('../src/coding-agent/controller.js', import.meta.url), 'utf8');
+  const emitted = new Set([...controller.matchAll(/this\.event\('([a-z_]+)'/g)].map((match) => match[1]));
+  for (const literal of controller.matchAll(/this\.event\([^,]*\?\s*'([a-z_]+)'\s*:\s*'([a-z_]+)'/g)) { emitted.add(literal[1]); emitted.add(literal[2]); }
+  for (const type of emitted) assert.ok(allowed.includes(type), `controller emits '${type}', which agent_events rejects`);
+});
+
+test('a test run whose failure is masked by the shell still counts as failing', async () => {
+  const { reportedTestFailures } = await import('../src/coding-agent/controller.js');
+  assert.equal(reportedTestFailures('TAP version 13\nnot ok 1 - x\n# tests 1\n# pass 0\n# fail 1\nexit=1\n'), 1);
+  assert.equal(reportedTestFailures('\u2139 tests 3\n\u2139 pass 3\n\u2139 fail 0\n'), 0);
+  assert.equal(reportedTestFailures('  2 passing\n  1 failing\n'), 1);
+  assert.equal(reportedTestFailures('Tests:       2 failed, 3 passed, 5 total'), 2);
 });
