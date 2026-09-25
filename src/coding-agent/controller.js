@@ -548,7 +548,9 @@ class SessionRun {
     try {
       const result = await this.broker.execute({ context, broker: CODING_BROKER, tool, action, arguments: args, idempotencyKey, approval });
       const text = (result.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
-      return { text: redact(text, this.c.env, 60_000), structured: result.structuredContent || {} };
+      // A replay (same idempotency key, already succeeded) proves the call
+      // happened but carries no result; callers re-read state when needed.
+      return { text: redact(text, this.c.env, 60_000), structured: result.structuredContent || {}, replayed: Boolean(result.replayed) };
     } catch (error) {
       if (error?.code === 'TOOL_APPROVAL_REQUIRED' && allowApproval) {
         const summary = approvalSummary(tool, args);
@@ -656,16 +658,22 @@ class SessionRun {
         `Test gate: \`${this.testCommand || 'none'}\` → ${this.state.lastTest ? `exit ${this.state.lastTest.exitCode}` : 'not run'}`,
         `Models: ${this.state.routesUsed.join(', ')} · Switches: ${this.session.providerSwitches}`,
       ].join('\n');
-      const pr = await this.required('github.pr_create', 'publish', {
-        branch: this.session.workBranch, base: this.session.baseBranch, title: this.session.title.slice(0, 200), body,
-      }, 'pull request');
+      const prArgs = { branch: this.session.workBranch, base: this.session.baseBranch, title: this.session.title.slice(0, 200), body };
+      let pr = await this.required('github.pr_create', 'publish', prArgs, 'pull request');
+      // After a restart the create call is replayed without its result; asking
+      // again is safe because an open PR for the branch is reused, not duplicated.
+      if (!pr.structured.number) pr = await this.required('github.pr_create', 'publish', prArgs, 'pull request', { fresh: true });
       this.state.pr = { number: pr.structured.number, url: pr.structured.url };
       await this.event('github', `${pr.structured.reused ? 'Updated' : 'Opened'} pull request #${pr.structured.number}.`, this.state.pr, 'success');
     }
   }
 
-  async required(tool, action, args, label) {
-    const outcome = await this.invoke(tool, action, args, { callId: `${tool}-${this.session.iteration}-${createHash('sha256').update(JSON.stringify(args)).digest('hex').slice(0, 12)}` });
+  // Controller-owned tool call that must succeed. Writes use a deterministic
+  // idempotency key (exactly once, even across restarts); polls pass
+  // `fresh: true` so every poll really executes instead of replaying.
+  async required(tool, action, args, label, { fresh = false } = {}) {
+    const base = `${tool}-${this.session.iteration}-${createHash('sha256').update(JSON.stringify(args)).digest('hex').slice(0, 12)}`;
+    const outcome = await this.invoke(tool, action, args, { callId: fresh ? `${base}-${randomUUID().slice(0, 8)}` : base });
     if (outcome.approvalRejected) throw new Stop('blocked', `The owner rejected the ${label}.`, { code: 'APPROVAL_REJECTED' });
     if (outcome.error || outcome.structured?.error) {
       const code = outcome.code || outcome.structured.error;
@@ -680,7 +688,7 @@ class SessionRun {
     const started = this.c.now();
     for (;;) {
       this.guard();
-      const status = await this.required('github.ci_status', 'read', { sha }, 'CI status check');
+      const status = await this.required('github.ci_status', 'read', { sha }, 'CI status check', { fresh: true });
       const ci = status.structured;
       this.state.ci = { sha, state: ci.state, failing: ci.failing, total: ci.total, checkedAt: new Date(this.c.now()).toISOString() };
       if (ci.state === 'success') {
@@ -700,7 +708,7 @@ class SessionRun {
         }
         const logs = [];
         for (const run of ci.runs.filter((entry) => entry.status === 'completed' && !['success', 'neutral', 'skipped'].includes(entry.conclusion)).slice(0, 2)) {
-          const log = await this.invoke('github.ci_logs', 'read', { job_id: run.id }, { callId: `ci-log-${run.id}` });
+          const log = await this.invoke('github.ci_logs', 'read', { job_id: run.id }, { callId: `ci-log-${run.id}-${randomUUID().slice(0, 8)}` });
           logs.push(`### ${run.name} (${run.conclusion})\n${log.error ? `(log unavailable: ${log.error})` : truncate(log.text, 12_000)}`);
         }
         this.state.lastGateFailure = `CI failed: ${ci.failing.join(', ')}`;
@@ -726,7 +734,16 @@ class SessionRun {
     if (!this.state.pr) throw new Stop('blocked', 'Deployment requires a pull request.', { code: 'DEPLOY_NO_PR' });
     if (!this.state.deploy?.mergeSha) {
       const merged = await this.required('github.pr_merge', 'merge', { number: this.state.pr.number, sha: this.state.git.pushedHead }, 'merge');
-      this.state.deploy = { status: 'merged', mergeSha: merged.structured.sha };
+      let mergeSha = merged.structured.sha || null;
+      if (!mergeSha) {
+        // Replayed after a restart: the merge happened; read its commit back.
+        const pull = await this.required('github.pr_status', 'read', { number: this.state.pr.number }, 'pull request status', { fresh: true });
+        if (!pull.structured.merged || !pull.structured.mergeCommitSha) {
+          throw new Stop('blocked', `Pull request #${this.state.pr.number} is not merged after an approved merge; check it on GitHub and resume.`, { code: 'MERGE_NOT_CONFIRMED' });
+        }
+        mergeSha = pull.structured.mergeCommitSha;
+      }
+      this.state.deploy = { status: 'merged', mergeSha };
       await this.event('deploy', `Merged pull request #${this.state.pr.number} as ${String(merged.structured.sha).slice(0, 7)}.`, this.state.deploy, 'success');
       await this.checkpoint('phase');
     }
@@ -737,7 +754,7 @@ class SessionRun {
     const started = this.c.now();
     for (;;) {
       this.guard();
-      const status = await this.required('deploy.status', 'read', { workflow: this.config.deploy.workflow, sha: this.state.deploy.mergeSha }, 'deployment status check');
+      const status = await this.required('deploy.status', 'read', { workflow: this.config.deploy.workflow, sha: this.state.deploy.mergeSha }, 'deployment status check', { fresh: true });
       const run = status.structured.runs?.[0];
       if (run?.status === 'completed') {
         this.state.deploy = { ...this.state.deploy, status: run.conclusion, url: run.url };
@@ -759,7 +776,7 @@ class SessionRun {
     const expected = this.config.verify.expectShaField && this.state.deploy?.mergeSha ? this.state.deploy.mergeSha : null;
     let detail = 'not run';
     for (let attempt = 1; attempt <= this.c.limits.verifyAttempts; attempt += 1) {
-      const outcome = await this.invoke('verify.http', 'read', { url: this.config.verify.url }, { callId: `verify-${attempt}-${this.session.iteration}` });
+      const outcome = await this.invoke('verify.http', 'read', { url: this.config.verify.url }, { callId: `verify-${attempt}-${this.session.iteration}-${randomUUID().slice(0, 8)}` });
       if (!outcome.error && !outcome.structured.error) {
         const response = outcome.structured;
         const reported = expected ? String(response.json?.[this.config.verify.expectShaField] || '') : null;

@@ -9,14 +9,14 @@ import {
   REPOSITORY, SESSION_CONFIG, WORKSPACE_ID, createFixtureRepo, fakeApis, localRuntime, scriptedPool,
 } from '../testing/fixtures/coding-agent-harness.js';
 
-async function withRuntime(options, fn) {
+async function withRuntime(options, fn, { pendingPolls = 0 } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'fahad-coding-live-'));
   try {
     const { bare } = createFixtureRepo(root);
-    const apis = fakeApis({ bare });
+    const apis = fakeApis({ bare, pendingPolls });
     const log = [];
     const env = localRuntime({ root, storePath: join(root, 'state.json'), pool: scriptedPool({ log }), fetchFn: apis.fetchFn, ...options });
-    await fn({ ...env, bare, log, worker: new CodingWorker({ runtime: env.runtime, sessionStore: env.sessionStore }) });
+    await fn({ ...env, apis, bare, log, worker: new CodingWorker({ runtime: env.runtime, sessionStore: env.sessionStore }) });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -142,4 +142,27 @@ test('a test run whose failure is masked by the shell still counts as failing', 
   assert.equal(reportedTestFailures('\u2139 tests 3\n\u2139 pass 3\n\u2139 fail 0\n'), 0);
   assert.equal(reportedTestFailures('  2 passing\n  1 failing\n'), 1);
   assert.equal(reportedTestFailures('Tests:       2 failed, 3 passed, 5 total'), 2);
+});
+
+test('CI and deployment polls really re-execute while checks are still running (no idempotent replay)', { timeout: 120_000 }, async () => {
+  await withRuntime({}, async ({ sessionStore, auditStore, apis, bare, worker }) => {
+    const created = await sessionStore.createSession({
+      workspaceId: WORKSPACE_ID, title: 'Fix add() bug', repository: REPOSITORY, objective,
+      config: { ...SESSION_CONFIG, fetchUrl: bare, pushUrl: bare },
+    });
+    const first = await worker.runOnce();
+    assert.equal(first.status, 'awaiting_approval', first.blocker);
+    const approval = Object.values(sessionStore.data.approvals).find((row) => row.tool === 'github.pr_merge');
+    await sessionStore.decideApproval(approval.id, 'approved');
+    const second = await worker.runOnce();
+    assert.equal(second.status, 'completed', second.blocker);
+    const ciPolls = auditStore.rows().filter((row) => row.tool === 'github.ci_status' && row.status === 'succeeded');
+    assert.ok(ciPolls.length >= 6, `each pending poll executed (${ciPolls.length})`);
+    assert.equal(new Set(ciPolls.map((row) => row.key)).size, ciPolls.length, 'every poll has its own idempotency key');
+    const deployPolls = auditStore.rows().filter((row) => row.tool === 'deploy.status' && row.status === 'succeeded');
+    assert.ok(deployPolls.length >= 3);
+    const session = await sessionStore.getSession(created.id);
+    assert.equal(session.result.verify.ok, true);
+    assert.equal(apis.state.merged.number, 1);
+  }, { pendingPolls: 2 });
 });

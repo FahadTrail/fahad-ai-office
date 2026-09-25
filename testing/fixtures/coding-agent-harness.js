@@ -129,8 +129,14 @@ export function scriptedPool({ pauseFile = null, log = [] } = {}) {
 }
 
 // In-process fake of the GitHub, Supabase Management and health APIs.
-export function fakeApis({ bare }) {
-  const state = { pulls: [], ciSeen: [], merged: null, requests: [] };
+export function fakeApis({ bare, pendingPolls = 0 }) {
+  // pendingPolls: how many polls a commit's checks (and the deploy run) stay
+  // in progress before completing, like real CI.
+  const state = { pulls: [], ciSeen: [], merged: null, requests: [], polls: {} };
+  const stillPending = (key) => {
+    state.polls[key] = (state.polls[key] || 0) + 1;
+    return state.polls[key] <= pendingPolls;
+  };
   const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   const fetchFn = async (input, init = {}) => {
     const url = new URL(String(input));
@@ -149,6 +155,9 @@ export function fakeApis({ bare }) {
       const checkRuns = path.match(/^\/commits\/([0-9a-f]{40})\/check-runs$/);
       if (checkRuns) {
         const sha = checkRuns[1];
+        if (stillPending(`ci:${sha}`)) {
+          return json({ check_runs: [{ id: 100, name: 'unit-tests', status: 'in_progress', conclusion: null, html_url: 'https://github.test/run/100' }] });
+        }
         if (!state.ciSeen.includes(sha)) state.ciSeen.push(sha);
         const failing = state.ciSeen.indexOf(sha) === 0;
         return json({ check_runs: [
@@ -158,6 +167,13 @@ export function fakeApis({ bare }) {
       }
       if (/^\/commits\/[0-9a-f]{40}\/status$/.test(path)) return json({ statuses: [] });
       if (path === '/actions/jobs/202/logs') return new Response('2026-09-25T00:00:00.000Z docs-check: ERROR docs/math.md is missing; every public module needs documentation\n', { status: 200 });
+      const pullStatus = path.match(/^\/pulls\/(\d+)$/);
+      if (pullStatus && method === 'GET') {
+        const pull = state.pulls.find((entry) => entry.number === Number(pullStatus[1]));
+        if (!pull) return json({ message: 'Not Found' }, 404);
+        const merged = state.merged?.number === pull.number;
+        return json({ ...pull, merged, merged_at: merged ? new Date().toISOString() : null, merge_commit_sha: merged ? state.merged.sha : null });
+      }
       const merge = path.match(/^\/pulls\/(\d+)\/merge$/);
       if (merge && method === 'PUT') {
         const body = JSON.parse(init.body);
@@ -165,6 +181,9 @@ export function fakeApis({ bare }) {
         return json({ merged: true, sha: body.sha });
       }
       if (/^\/actions\/workflows\/deploy\.yml\/runs$/.test(path)) {
+        if (state.merged && stillPending(`deploy:${state.merged.sha}`)) {
+          return json({ workflow_runs: [{ id: 9, status: 'in_progress', conclusion: null, html_url: 'https://github.test/deploy/9', created_at: new Date().toISOString() }] });
+        }
         return json({ workflow_runs: state.merged ? [{ id: 9, status: 'completed', conclusion: 'success', html_url: 'https://github.test/deploy/9', created_at: new Date().toISOString() }] : [] });
       }
       return json({ message: `Not Found ${path}` }, 404);
