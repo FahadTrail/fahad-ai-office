@@ -189,6 +189,9 @@ export const SESSION_CONFIG = {
   supabase: { projects: [SUPABASE_REF] },
   githubApiBase: 'https://api.github.test',
   supabaseApiBase: 'https://api.supabase.test',
+  // The scripted scenario starts on the premium route and fails over to the
+  // economy route; the workspace default (economy) would start on the latter.
+  routing: { strategy: 'balanced' },
 };
 
 export const FAST_LIMITS = { ciPollMs: 1, deployPollMs: 1, verifyDelayMs: 1, leaseRenewMs: 60_000 };

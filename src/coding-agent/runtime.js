@@ -8,7 +8,8 @@ import { ToolBroker } from '../tool-broker/broker.js';
 import { EnvironmentSecretResolver } from '../tool-broker/secret-resolver.js';
 import { WorkspacePolicyEngine } from '../workspace-policy/engine.js';
 import { AgentTurnGateway } from '../model-gateway/agentic/turn-gateway.js';
-import { createModelPool, DEFAULT_BILLING_PRIORITY } from '../model-gateway/agentic/model-pool.js';
+import { createModelPool } from '../model-gateway/agentic/model-pool.js';
+import { exhaustedRoutes, resolveRouting } from '../model-gateway/agentic/routing-policy.js';
 import { CodingAgentController } from './controller.js';
 import { CODING_SECRET_REFERENCES, CODING_TOOL_DEFINITIONS, createCodingToolServer } from './tools.js';
 import { GitHubClient } from './github.js';
@@ -16,8 +17,7 @@ import { SupabaseManagementClient } from './supabase.js';
 import { Sandbox, resolveSandboxMode } from './sandbox.js';
 
 export function billingPriority(env = process.env) {
-  const values = String(env.CODING_BILLING_PRIORITY || '').split(',').map((value) => value.trim()).filter(Boolean);
-  return values.length ? values : [...DEFAULT_BILLING_PRIORITY];
+  return [...resolveRouting({ env }).billingPriority];
 }
 
 export function createCodingRuntime({
@@ -25,6 +25,7 @@ export function createCodingRuntime({
   sessionStore,
   providerStateStore,
   policyStore,
+  routingStore = null,
   auditStore,
   modelAttemptSink = async () => {},
   pool = null,
@@ -42,6 +43,7 @@ export function createCodingRuntime({
     pool: modelPool,
     stateStore: providerStateStore,
     billingPriority: billingPriority(env),
+    strategy: resolveRouting({ env }).strategy,
     minQualityTier: Number(env.CODING_MIN_QUALITY_TIER || 4),
     sleepFn,
     now,
@@ -73,6 +75,17 @@ export function createCodingRuntime({
       .authorizeProvider(policy, route.provider, route.model);
   };
 
+  // Routing policy for the next turn: defaults < env < workspace < task. Per
+  // route monthly caps exclude a route once its audited spend reaches the cap.
+  const routingFor = async (session, taskRouting) => {
+    const workspace = routingStore ? await routingStore.getRoutingPolicy(session.workspaceId) : null;
+    const routing = resolveRouting({ env, workspace, task: taskRouting });
+    const capped = routingStore && Object.keys(routing.routeMonthlyBudgetUsd).length
+      ? exhaustedRoutes(routing, await routingStore.routeSpend(session.workspaceId))
+      : [];
+    return { ...routing, exhaustedRoutes: capped };
+  };
+
   // Paid model turns reserve their worst-case cost against the workspace's
   // monthly budget before the provider is called and settle afterwards.
   const budget = {
@@ -100,6 +113,7 @@ export function createCodingRuntime({
     createSandbox,
     createBroker,
     authorizeRoute,
+    routingFor,
     recordModelAttempt: modelAttemptSink,
     limits,
     log,

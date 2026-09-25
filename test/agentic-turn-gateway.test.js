@@ -123,7 +123,10 @@ test('model pool marks missing credentials, unknown pricing and privacy truthful
   const pool = createModelPool({ env: { ANTHROPIC_API_KEY: 'sk-ant-test-key-1234', OPENAI_API_KEY: 'sk-test-key-123456', DEEPSEEK_API_KEY: 'deepseek-key-1234' } });
   const byId = Object.fromEntries(pool.map((entry) => [entry.id, entry]));
   assert.deepEqual(byId['anthropic:claude-opus-5'].unavailableReasons, []);
-  assert.deepEqual(byId['openai:gpt-5.3-codex'].unavailableReasons, ['PRICING_UNKNOWN']);
+  assert.deepEqual(byId['openai:gpt-5.3-codex'].unavailableReasons, [], 'published list price is known');
+  const unpriced = createModelPool({ env: { OPENAI_API_KEY: 'sk-test-key-123456', OPENAI_MODEL: 'gpt-unpriced-test' } })
+    .find((entry) => entry.provider === 'openai');
+  assert.deepEqual(unpriced.unavailableReasons, ['PRICING_UNKNOWN'], 'a paid model without a known price is never routed');
   assert.equal(byId['deepseek:deepseek-flash'].privacyApproved, false);
   assert.ok(byId['gemini:gemini-2.5-flash'].unavailableReasons.includes('CREDENTIAL_MISSING'));
   assert.ok(pool.find((entry) => entry.provider === 'minimax').privacyApproved === false);

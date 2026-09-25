@@ -114,8 +114,15 @@ export async function runAgenticCanary({
 } = {}) {
   const routable = pool.filter((route) => !route.unavailableReasons.length);
   const report = { startedAt: new Date().toISOString(), kind: 'REAL provider calls; failover drill uses ONE injected routing failure', pool: poolStatus(pool), routes: [], failover: null };
+  // A canary is an explicit probe: it ignores cooldowns but still records the
+  // real outcome, so a recovered provider becomes routable again.
+  const probeStore = {
+    snapshot: async () => new Map(),
+    recordSuccess: (...args) => stateStore.recordSuccess(...args),
+    recordFailure: (...args) => stateStore.recordFailure(...args),
+  };
   for (const route of routable) {
-    const gateway = new AgentTurnGateway({ pool: [route], stateStore, minQualityTier: 1 });
+    const gateway = new AgentTurnGateway({ pool: [route], stateStore: probeStore, minQualityTier: 1 });
     const startedAt = Date.now();
     try {
       const { text, messages, usage, rateLimit, servedModel } = await converse(gateway, [userText('Use add_numbers to add 17 and 25. Reply with only the result.')]);
@@ -126,6 +133,8 @@ export async function runAgenticCanary({
       report.routes.push({
         id: route.id, ok: false, error: error.code || 'PROVIDER_ERROR', status: error.status || error.cause?.status || null,
         failureClass: error.cause?.failureClass || error.failureClass || null,
+        // Provider error type string only (e.g. "invalid_api_key"); never the message body.
+        providerType: String(error.cause?.type || error.cause?.cause?.type || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80) || null,
         attempts: (error.attempts || []).map((attempt) => ({ code: attempt.error?.code || null, status: attempt.error?.status || null, failureClass: attempt.error?.failureClass || null })),
         durationMs: Date.now() - startedAt,
       });

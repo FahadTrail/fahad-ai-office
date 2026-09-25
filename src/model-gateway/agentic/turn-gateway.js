@@ -18,6 +18,7 @@ export class AgentTurnGateway {
     pool,
     stateStore,
     billingPriority = DEFAULT_BILLING_PRIORITY,
+    strategy = 'balanced',
     minQualityTier = 4,
     maxAttemptsPerRoute = 2,
     maxInlineRetryMs = 20_000,
@@ -29,6 +30,7 @@ export class AgentTurnGateway {
     this.pool = pool;
     this.stateStore = stateStore;
     this.billingPriority = [...billingPriority];
+    this.strategy = strategy;
     this.minQualityTier = minQualityTier;
     this.maxAttemptsPerRoute = maxAttemptsPerRoute;
     this.maxInlineRetryMs = maxInlineRetryMs;
@@ -46,6 +48,8 @@ export class AgentTurnGateway {
     allowPaid = true,
     authorizedRouteIds = null,
     excludedRouteIds = [],
+    policyExcludedRouteIds = [],
+    budgetExhaustedRouteIds = [],
     minQualityTier = this.minQualityTier,
   } = {}) {
     const state = await this.stateStore.snapshot();
@@ -59,6 +63,8 @@ export class AgentTurnGateway {
       if (estimatedInputTokens + maxOutputTokens > route.contextWindow) reasons.push('CONTEXT_TOO_LARGE');
       if (isCoolingDown(routeState, now)) reasons.push(`COOLDOWN_${String(routeState.health || 'unavailable').toUpperCase()}`);
       if (excludedRouteIds.includes(route.id)) reasons.push('FAILED_THIS_TURN');
+      if (policyExcludedRouteIds.includes(route.id)) reasons.push('EXCLUDED_BY_ROUTING_POLICY');
+      if (budgetExhaustedRouteIds.includes(route.id)) reasons.push('ROUTE_BUDGET_EXHAUSTED');
       const estimateUsd = estimateTurnCost(route, estimatedInputTokens, maxOutputTokens);
       if (route.billingClass === 'paid' && !allowPaid) reasons.push('PAID_ROUTE_NOT_ALLOWED');
       if (route.billingClass === 'paid' && estimateUsd > remainingBudgetUsd) reasons.push('BUDGET_INSUFFICIENT');
@@ -66,17 +72,25 @@ export class AgentTurnGateway {
     });
   }
 
-  order(evaluations, { preferredRouteId = null } = {}) {
+  // Billing class first (free → included → promo → paid by default), then the
+  // strategy: economy = cheapest first, balanced/quality = best first. A
+  // preferred route (the task's current model) keeps ownership while eligible.
+  order(evaluations, { preferredRouteId = null, billingPriority = this.billingPriority, strategy = this.strategy } = {}) {
     const rank = (route) => {
-      const index = this.billingPriority.indexOf(route.billingClass);
-      return index < 0 ? this.billingPriority.length : index;
+      const index = billingPriority.indexOf(route.billingClass);
+      return index < 0 ? billingPriority.length : index;
     };
+    const within = strategy === 'economy'
+      ? (left, right) => left.costTier - right.costTier || right.qualityTier - left.qualityTier
+      : strategy === 'quality'
+        ? (left, right) => right.qualityTier - left.qualityTier || right.contextWindow - left.contextWindow || left.costTier - right.costTier
+        : (left, right) => right.qualityTier - left.qualityTier || left.costTier - right.costTier;
     return evaluations.filter((entry) => entry.eligible)
       .map((entry) => entry.route)
       .toSorted((left, right) => {
         if (left.id === preferredRouteId) return -1;
         if (right.id === preferredRouteId) return 1;
-        return rank(left) - rank(right) || right.qualityTier - left.qualityTier || left.costTier - right.costTier;
+        return rank(left) - rank(right) || within(left, right);
       });
   }
 
@@ -103,7 +117,11 @@ export class AgentTurnGateway {
 
     for (let hop = 0; hop < this.pool.length; hop += 1) {
       const evaluations = await this.evaluate({ ...routing, maxOutputTokens, excludedRouteIds: failed });
-      const [route] = this.order(evaluations, { preferredRouteId });
+      const [route] = this.order(evaluations, {
+        preferredRouteId,
+        billingPriority: routing.billingPriority || this.billingPriority,
+        strategy: routing.strategy || this.strategy,
+      });
       if (!route) {
         throw new GatewayError(lastError ? 'All eligible model routes are unavailable' : 'No model route satisfies the task policy', {
           code: lastError ? 'ALL_PROVIDERS_UNAVAILABLE' : 'NO_ELIGIBLE_PROVIDER',

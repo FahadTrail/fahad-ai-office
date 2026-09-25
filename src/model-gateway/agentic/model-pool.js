@@ -17,7 +17,7 @@ export const BILLING_CLASS = Object.freeze({
   PAID: 'paid',
 });
 
-export const DEFAULT_BILLING_PRIORITY = Object.freeze(['included', 'free', 'promo', 'paid']);
+export const DEFAULT_BILLING_PRIORITY = Object.freeze(['free', 'included', 'promo', 'paid']);
 
 const truthy = (value) => /^(1|true|yes)$/i.test(String(value || ''));
 
@@ -26,6 +26,8 @@ const truthy = (value) => /^(1|true|yes)$/i.test(String(value || ''));
 export const PRICING = Object.freeze({
   'claude-opus-5': { inputPerMillion: 5, cachedInputPerMillion: 0.5, cacheWritePerMillion: 6.25, outputPerMillion: 25 },
   'claude-sonnet-5': { inputPerMillion: 2, cachedInputPerMillion: 0.2, cacheWritePerMillion: 2.5, outputPerMillion: 10 },
+  // OpenAI API pricing page, standard tier (not "fast" mode), 2026-09.
+  'gpt-5.3-codex': { inputPerMillion: 1.75, cachedInputPerMillion: 0.175, outputPerMillion: 14 },
   'deepseek-flash': { inputPerMillion: 0.30, cachedInputPerMillion: 0.006, outputPerMillion: 1.20 },
   'qwen3.8-flash': { inputPerMillion: 0.20, cachedInputPerMillion: 0.03, outputPerMillion: 0.60 },
   'kimi-k2.7-code': { inputPerMillion: 0.95, cachedInputPerMillion: 0.19, outputPerMillion: 4 },
