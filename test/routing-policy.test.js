@@ -78,3 +78,21 @@ test('the runtime resolves workspace routing and per-route caps for each turn', 
   assert.equal(routing.strategy, 'quality');
   assert.deepEqual(routing.exhaustedRoutes, ['anthropic:claude-opus-5']);
 });
+
+test('a task can lower reasoning effort, which reaches the provider request', async () => {
+  assert.equal(resolveRouting({ env: {}, task: { effort: 'low' } }).effort, 'low');
+  assert.equal(normalizeRouting({ effort: 'extreme' }).effort, undefined);
+  const { AnthropicMessagesProtocol } = await import('../src/model-gateway/agentic/anthropic-messages.js');
+  const { OpenAIResponsesProtocol } = await import('../src/model-gateway/agentic/openai-responses.js');
+  let anthropicParams = null;
+  const client = { messages: { create: (params) => { anthropicParams = params; return { withResponse: async () => ({ data: { id: 'm', model: 'claude-sonnet-5', stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1 } }, response: { headers: new Headers() } }) }; } } };
+  const anthropic = new AnthropicMessagesProtocol({ client, pricing: null, effort: 'high' });
+  await anthropic.turn({ provider: 'anthropic', model: 'claude-sonnet-5', system: 'S', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], tools: [], effort: 'low' });
+  assert.deepEqual(anthropicParams.output_config, { effort: 'low' });
+  await anthropic.turn({ provider: 'anthropic', model: 'claude-sonnet-5', system: 'S', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], tools: [] });
+  assert.deepEqual(anthropicParams.output_config, { effort: 'high' }, 'route default when the task sets none');
+  let openaiBody = null;
+  const openai = new OpenAIResponsesProtocol({ apiKey: 'sk-test-123456789', fetchFn: async (url, init) => { openaiBody = JSON.parse(init.body); return new Response(JSON.stringify({ id: 'r', status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'ok' }] }], usage: { input_tokens: 1, output_tokens: 1 } }), { headers: { 'content-type': 'application/json' } }); } });
+  await openai.turn({ provider: 'openai', model: 'gpt', system: 'S', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], tools: [], effort: 'max' });
+  assert.deepEqual(openaiBody.reasoning, { effort: 'high' });
+});

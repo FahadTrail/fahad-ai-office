@@ -316,6 +316,7 @@ class SessionRun {
       allowPaid: this.config.allowPaid && policy.allowPaid !== false,
       billingPriority: policy.billingPriority,
       strategy: policy.strategy,
+      effort: policy.effort,
       policyExcludedRouteIds: policy.excludedRoutes || [],
       budgetExhaustedRouteIds: policy.exhaustedRoutes || [],
     };

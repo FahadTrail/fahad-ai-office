@@ -19,7 +19,7 @@ export class AnthropicMessagesProtocol {
     return Boolean(this.client);
   }
 
-  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000 }) {
+  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, effort = null }) {
     if (!this.client) throw providerError(`${provider} credential is unavailable`, { status: 401, type: 'authentication_error' });
     const startedAt = Date.now();
     const params = {
@@ -31,7 +31,7 @@ export class AnthropicMessagesProtocol {
       // Automatic prompt caching keeps the stable system/tool prefix and the
       // growing transcript cheap across the many turns of one task.
       cache_control: { type: 'ephemeral' },
-      ...(this.effort ? { output_config: { effort: this.effort } } : {}),
+      ...((effort || this.effort) ? { output_config: { effort: effort || this.effort } } : {}),
     };
     let data;
     let response;

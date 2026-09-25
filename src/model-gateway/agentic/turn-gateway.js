@@ -178,6 +178,7 @@ export class AgentTurnGateway {
             tools,
             maxOutputTokens: outputTokens,
             clientRequestId: attemptId,
+            ...(routing.effort ? { effort: routing.effort } : {}),
           });
           await settle(reservation, result.usage.costUsd || 0);
           await this.stateStore.recordSuccess(route, result);
