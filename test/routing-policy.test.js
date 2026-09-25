@@ -72,7 +72,7 @@ test('the runtime resolves workspace routing and per-route caps for each turn', 
     spend: { w1: { 'anthropic:claude-opus-5': 0.51 } },
   });
   const runtime = createCodingRuntime({
-    env: {}, pool, sessionStore: {}, providerStateStore: new MemoryProviderStateStore(), policyStore: {}, auditStore: {}, routingStore,
+    env: {}, pool, sessionStore: {}, providerStateStore: new MemoryProviderStateStore(), policyStore: {}, auditStore: {}, routingStore, sandboxMode: 'unisolated',
   });
   const routing = await runtime.controller.routingFor({ workspaceId: 'w1' }, { allowPaid: true });
   assert.equal(routing.strategy, 'quality');
