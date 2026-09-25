@@ -17,6 +17,10 @@ export class AnthropicModelAdapter {
     let costUsd = 0;
     let sawResult = false;
     let turns = 0;
+    const toolUses = new Map();
+    const finishedTools = new Set();
+    let successfulTools = 0;
+    const authorizedTools = [...new Set(allowedTools || [])];
     const invoke = this.queryFn || (await import('@anthropic-ai/claude-agent-sdk')).query;
     const stream = invoke({
       prompt,
@@ -24,29 +28,60 @@ export class AnthropicModelAdapter {
         model: model || this.model,
         systemPrompt,
         maxTurns,
-        allowedTools,
+        // allowedTools only skips prompts; tools is the actual availability boundary.
+        tools: authorizedTools,
+        allowedTools: authorizedTools,
         env: buildModelEnvironment(this.env),
         settingSources: [],
-        permissionMode: 'bypassPermissions',
+        permissionMode: 'dontAsk',
       },
     });
 
     for await (const message of stream) {
       if (message.type === 'assistant') {
         turns += 1;
-        const chunk = (message.message?.content || [])
+        const blocks = message.message?.content || [];
+        for (const block of blocks.filter((item) => item.type === 'tool_use')) {
+          if (!authorizedTools.includes(block.name)) {
+            throw new GatewayError('Model requested an unauthorized host tool', { code: 'UNAUTHORIZED_HOST_TOOL' });
+          }
+          if (!toolUses.has(block.id)) {
+            toolUses.set(block.id, { name: block.name, startedAt: Date.now() });
+            await onActivity({ turns, hostTool: { id: block.id, name: block.name, status: 'started' } });
+          }
+        }
+        const chunk = blocks
           .filter((block) => block.type === 'text')
           .map((block) => block.text)
           .join('');
         if (chunk.trim()) text = chunk;
         await onActivity({ turns });
       }
+      if (message.type === 'user' && Array.isArray(message.message?.content)) {
+        for (const block of message.message.content.filter((item) => item.type === 'tool_result')) {
+          const tool = toolUses.get(block.tool_use_id);
+          if (!tool || finishedTools.has(block.tool_use_id)) continue;
+          finishedTools.add(block.tool_use_id);
+          if (!block.is_error) successfulTools += 1;
+          await onActivity({ turns, hostTool: {
+            id: block.tool_use_id,
+            name: tool.name,
+            status: block.is_error ? 'failed' : 'succeeded',
+            durationMs: Math.max(0, Date.now() - tool.startedAt),
+          } });
+        }
+      }
       if (message.type === 'result') {
         sawResult = true;
-        if (message.subtype !== 'success' && !text.trim()) {
-          throw new GatewayError(`Model returned ${message.subtype || 'an unsuccessful result'} with no output`, {
+        if (message.subtype !== 'success') {
+          throw new GatewayError(`Model returned ${message.subtype || 'an unsuccessful result'}`, {
             code: 'PROVIDER_RESULT_FAILED',
             type: message.subtype || null,
+            usage: {
+              inputTokens: Number(message.usage?.input_tokens || 0),
+              outputTokens: Number(message.usage?.output_tokens || 0),
+              costUsd: Number(message.total_cost_usd || 0),
+            },
           });
         }
         if (typeof message.result === 'string' && message.result.trim()) text = message.result;
@@ -57,6 +92,12 @@ export class AnthropicModelAdapter {
     }
 
     if (!sawResult) throw new GatewayError('Model stream ended without a result message', { code: 'PROVIDER_RESULT_MISSING' });
+    if (authorizedTools.length && successfulTools === 0) {
+      throw new GatewayError('Research completed without a verified host tool result', {
+        code: 'HOST_TOOL_REQUIRED',
+        usage: { inputTokens, outputTokens, costUsd },
+      });
+    }
     if (!text.trim()) throw new GatewayError('Model returned an empty response', { code: 'PROVIDER_EMPTY_RESPONSE' });
     return {
       text: text.trim(),
