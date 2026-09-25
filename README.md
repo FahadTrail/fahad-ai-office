@@ -48,6 +48,10 @@ Anthropic, OpenAI-style Responses, Chat Completions providers (DeepSeek, Qwen,
 Kimi, GLM, MiniMax, OpenRouter, Groq) and Gemini. Routine sandbox work is AUTO;
 merges and database writes require approval by workspace policy.
 
+It runs in production since 2026-09-25; the live end-to-end validation
+(real models, failover, CI repair, merge, deployment, worker restarts) is
+recorded in `docs/coding-agent.md`.
+
 It replaces the Phase 1 `continuity/` POC and the OpenCode `development/`
 escape route. Architecture, routing policy, security boundaries and the
 production activation runbook: `docs/coding-agent.md`. Agent instructions:

@@ -86,10 +86,12 @@ export class GitHubClient {
     };
   }
 
-  // Tail of the log of a failed Actions job, redacted, for debugging.
+  // Excerpt of a failed Actions job's log, redacted, for debugging: the
+  // failure lines with context (test runners print them long before the end
+  // of the log) followed by the tail.
   async jobLogTail(jobId, lines = 150) {
     const text = await this.request(this.repoPath(`/actions/jobs/${Number(jobId)}/logs`), { raw: true });
-    return redact(String(text).split('\n').slice(-lines).map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s/, '')).join('\n'), this.env, 30_000);
+    return redact(ciLogExcerpt(text, { tailLines: lines }), this.env, 30_000);
   }
 
   async mergePullRequest({ number, sha, method = 'merge' }) {
@@ -105,6 +107,30 @@ export class GitHubClient {
       id: run.id, status: run.status, conclusion: run.conclusion, url: run.html_url, createdAt: run.created_at,
     }));
   }
+}
+
+const FAILURE_LINE = /^\s*not ok\b|\bAssertionError\b|^\s*(?:Error|TypeError|ReferenceError|SyntaxError):|##\[error\]|\bFAIL\b|^\s*✖|\bfailing\b|^# fail [1-9]/;
+
+export function ciLogExcerpt(text, { tailLines = 150, context = 12, maxFailureLines = 160 } = {}) {
+  const lines = String(text || '').split('\n').map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s/, ''));
+  const keep = new Set();
+  for (let index = 0; index < lines.length && keep.size < maxFailureLines; index += 1) {
+    if (!FAILURE_LINE.test(lines[index])) continue;
+    for (let offset = -2; offset <= context; offset += 1) {
+      const target = index + offset;
+      if (target >= 0 && target < lines.length - tailLines) keep.add(target);
+    }
+  }
+  const failures = [...keep].sort((left, right) => left - right).slice(0, maxFailureLines);
+  const excerpt = [];
+  let previous = -1;
+  for (const index of failures) {
+    if (index !== previous + 1) excerpt.push('…');
+    excerpt.push(lines[index]);
+    previous = index;
+  }
+  const tail = lines.slice(-tailLines);
+  return (excerpt.length ? ['--- failure lines ---', ...excerpt, '--- end of log ---'] : []).concat(tail).join('\n');
 }
 
 function summarizePull(pull) {

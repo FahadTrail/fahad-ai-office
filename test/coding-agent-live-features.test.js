@@ -179,3 +179,22 @@ test('every provider attempt of one turn gets its own model_attempts row key', a
   const started = modelAttemptRow(session, { id: 'a2', route: route('anthropic:claude-sonnet-5'), attempt: 1, status: 'started' });
   assert.equal(unique(started), unique(backup), 'the started and finished records of one attempt stay one row');
 });
+
+test('CI log excerpts include failures printed long before the end of the log', async () => {
+  const { ciLogExcerpt } = await import('../src/coding-agent/github.js');
+  const log = [
+    '2026-09-25T20:49:40.000Z TAP version 13',
+    '2026-09-25T20:49:40.100Z not ok 7 - route ids format for the CI runner report',
+    '2026-09-25T20:49:40.101Z   error: |-',
+    "2026-09-25T20:49:40.102Z     Expected values to be strictly equal: 'groq:openai/gpt-oss-120b' !== 'groq/openai/gpt-oss-120b'",
+    ...Array.from({ length: 400 }, (_, index) => `2026-09-25T20:49:41.000Z ok ${index + 8} - passing test ${index}`),
+    '2026-09-25T20:49:50.000Z # fail 1',
+  ].join('\n');
+  const excerpt = ciLogExcerpt(log, { tailLines: 50 });
+  assert.match(excerpt, /--- failure lines ---\nTAP version 13\nnot ok 7 - route ids format for the CI runner report/);
+  assert.match(excerpt, /groq\/openai\/gpt-oss-120b/);
+  assert.match(excerpt, /# fail 1$/);
+  assert.ok(excerpt.split('\n').length < 80, 'bounded');
+  assert.doesNotMatch(excerpt, /^2026-09-25T/m, 'timestamps stripped');
+  assert.equal(ciLogExcerpt('ok 1 - a\n# pass 1', { tailLines: 50 }), 'ok 1 - a\n# pass 1', 'a clean log is just its tail');
+});
