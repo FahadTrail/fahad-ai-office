@@ -22,6 +22,7 @@ export class ModelGateway {
     completedCacheSize = 1000,
     providerFailureThreshold = 2,
     providerCooldownMs = 60_000,
+    healthStore = null,
   } = {}) {
     this.adapters = new Map((adapters || []).map((adapter) => [adapter.name, adapter]));
     this.routingPolicy = routingPolicy;
@@ -32,6 +33,9 @@ export class ModelGateway {
     this.providerFailureThreshold = providerFailureThreshold;
     this.providerCooldownMs = providerCooldownMs;
     this.providerHealth = new Map();
+    // Optional shared durable provider state (provider_status). Recording is
+    // best-effort so Office execution never depends on dashboard bookkeeping.
+    this.healthStore = healthStore;
     this.executions = new Map();
   }
 
@@ -104,6 +108,7 @@ export class ModelGateway {
           const durationMs = Math.max(0, this.now() - startedAt);
           const result = normalizeGatewayResult(raw, { ...attempt, durationMs });
           this.recordProviderSuccess(descriptor.name);
+          this.shareOutcome(descriptor, attempt.model, 'success', result);
           spentUsd += result.usage.costUsd;
           const record = {
             ...attempt,
@@ -146,6 +151,7 @@ export class ModelGateway {
           if ([FAILURE_CLASS.RETRY, FAILURE_CLASS.FAILOVER].includes(error.failureClass)) {
             this.recordProviderFailure(descriptor.name, error);
           }
+          this.shareOutcome(descriptor, attempt.model, 'failure', error);
           if (failureUsage) {
             await this.emitBudgetThresholds(request.budget, spentUsd, emittedThresholds, onBudgetThreshold);
             this.assertBudget(request.budget, spentUsd, failureUsage);
@@ -236,6 +242,15 @@ export class ModelGateway {
       cooldownUntil: state.cooldownUntil ? new Date(state.cooldownUntil).toISOString() : null,
       lastErrorCode: state.lastErrorCode,
     });
+  }
+
+  shareOutcome(descriptor, model, outcome, value) {
+    if (!this.healthStore) return;
+    const route = { id: `${descriptor.name}:${model}`, provider: descriptor.name, model, billingClass: 'paid' };
+    const write = outcome === 'success'
+      ? this.healthStore.recordSuccess(route, { usage: value.usage || {}, rateLimit: null })
+      : this.healthStore.recordFailure(route, value);
+    Promise.resolve(write).catch(() => {});
   }
 
   recordProviderSuccess(provider) {

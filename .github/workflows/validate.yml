@@ -24,12 +24,19 @@ jobs:
       - name: Test readiness and rollback without live credentials
         run: |
           set -euo pipefail
-          find src continuity/src development -name '*.js' -print0 | xargs -0 -n1 node --check
+          npm ci --no-audit --no-fund
+          find src testing -name '*.js' -print0 | xargs -0 -n1 node --check
           node --test
           bash -n setup.sh deploy-setup.sh ops/deploy.sh ops/install-deploy.sh
+          # The migration replay must not be skipped silently in CI.
+          ls /usr/lib/postgresql/*/bin/initdb
+          bash supabase/verify/replay.sh > /dev/null
       - name: Build locked runtime image
         run: docker build --tag fahad-office-validation:${{ github.sha }} .
-      - name: Build isolated development image
-        run: docker build --file development/Dockerfile --tag fahad-office-development:${{ github.sha }} .
-      - name: Verify development privilege separation
-        run: docker run --rm --entrypoint node fahad-office-development:${{ github.sha }} development/verify-isolation.js
+      - name: Verify Coding Agent sandbox privilege separation in the runtime image
+        run: docker run --rm --user 0 --entrypoint node fahad-office-validation:${{ github.sha }} src/coding-agent/verify-isolation.js
+      - name: Run isolated-sandbox tests as container root inside the runtime image
+        run: >-
+          docker run --rm --user 0 -v "$PWD":/work -w /work --entrypoint node
+          fahad-office-validation:${{ github.sha }}
+          --test test/coding-agent-security.test.js test/coding-agent-e2e.test.js

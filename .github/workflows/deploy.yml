@@ -9,6 +9,8 @@ on:
       - 'package-lock.json'
       - 'test/**'
       - 'ops/**'
+      - 'supabase/**'
+      - 'testing/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -35,11 +37,17 @@ jobs:
       - name: Validate code and zero-cost health-check behavior
         run: |
           set -euo pipefail
-          find src continuity/src development -name '*.js' -print0 | xargs -0 -n1 node --check
+          npm ci --no-audit --no-fund
+          find src testing -name '*.js' -print0 | xargs -0 -n1 node --check
           node --test
           bash -n setup.sh deploy-setup.sh ops/deploy.sh ops/install-deploy.sh
+          # The migration replay must not be skipped silently in CI.
+          ls /usr/lib/postgresql/*/bin/initdb
+          bash supabase/verify/replay.sh > /dev/null
       - name: Verify the application image builds before contacting production
         run: docker build --tag fahad-office-ci:${{ github.sha }} .
+      - name: Verify Coding Agent sandbox privilege separation in the built image
+        run: docker run --rm --user 0 --entrypoint node fahad-office-ci:${{ github.sha }} src/coding-agent/verify-isolation.js
       - name: Deploy through the restricted VPS command
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}

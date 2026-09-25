@@ -32,6 +32,45 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # Fahad Coding Agent worker. Opt-in: set COMPOSE_PROFILES=coding in the
+  # root-owned .env after reviewing docs/coding-agent.md. Runs as container
+  # root only so sandboxed commands can drop to uid 1000, which cannot read
+  # this process's credentials. It never shares a network or volume with Hermes.
+  coding-worker:
+    profiles: ["coding"]
+    image: fahad-ai-office/runtime:0.1.0
+    container_name: fahad-office-coding-worker
+    restart: unless-stopped
+    user: "0:0"
+    command: ["node", "src/coding-worker.js"]
+    env_file:
+      - .env
+    environment:
+      CODING_AGENT_SANDBOX: isolated
+      CODING_AGENT_WORKSPACE_ROOT: /app/workspace/coding
+      HUB_ENABLED: "false"
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "node", "-e", "const s=require('fs').statSync('/tmp/fahad-coding-worker-health.json');process.exit(Date.now()-s.mtimeMs<120000?0:1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    networks:
+      - fahad-office-net
+    volumes:
+      - coding-workspace:/app/workspace/coding
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
 networks:
   fahad-office-net:
     name: fahad-office-net
@@ -42,3 +81,5 @@ volumes:
     name: fahad-office-workspace
   office-claude-home:
     name: fahad-office-claude-home
+  coding-workspace:
+    name: fahad-office-coding-workspace

@@ -9,6 +9,7 @@ import {
   QWEN_MODEL,
   ZHIPU_MODEL,
 } from './config.js';
+import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi, readDeployedVersion } from './hub-coding.js';
 
 const DEFAULT_PORT = 2132;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -28,7 +29,7 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
       const requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
       if (request.method === 'OPTIONS') return send(response, 204, '');
       if (request.method === 'GET' && requestUrl.pathname === '/healthz') {
-        return sendJson(response, 200, { ok: true, service: 'fahad-ai-hub', now: new Date().toISOString() });
+        return sendJson(response, 200, { ok: true, service: 'fahad-ai-hub', version: readDeployedVersion(), now: new Date().toISOString() });
       }
       if (request.method === 'GET' && (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html')) {
         return send(response, 200, HUB_HTML, 'text/html; charset=utf-8');
@@ -50,6 +51,7 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
       if (authRequired && !(await authorized(request, accessToken, { authClient, authEnabled, ownerEmail }))) {
         return sendJson(response, 401, { ok: false, error: authEnabled ? 'HUB_UNAUTHORIZED' : 'HUB_AUTH_NOT_CONFIGURED' });
       }
+      if (await handleCodingApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/workspaces') {
         const workspaces = await listWorkspaces(db);
@@ -505,4 +507,7 @@ export const HUB_HTML = BASE_HUB_HTML
   document.addEventListener('click',event=>{if(!event.target.closest('.usage-panel')&&!event.target.closest('#usageButton'))usagePanel.classList.add('hidden')});
   window.addEventListener('hub-workspace-changed',loadModelCatalog);
   loadModelCatalog();
-  </script></body>`);
+  ${CODING_SCRIPT}
+  </script></body>`)
+  .replace('</head>', `${CODING_STYLE}</head>`)
+  .replace('<div id="login" class="modal hidden">', `${CODING_MARKUP}<div id="login" class="modal hidden">`);
