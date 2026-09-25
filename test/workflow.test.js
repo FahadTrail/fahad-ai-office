@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OfficeWorkflow, SEQUENCES, safeError, selectWorkspacePolicyStore } from '../src/workflow.js';
+import { OfficeWorkflow, SEQUENCES, STAGES, safeError, selectWorkspacePolicyStore } from '../src/workflow.js';
 
 const outcome = (text, extra = {}) => ({
   text, tokensIn: 10, tokensOut: 5, costUsd: 0.01, durationMs: 25, turns: 1, ...extra,
@@ -52,6 +52,16 @@ test('A. normal workflow runs Chief -> Research -> Chief and completes', async (
   assert.equal(store.runs.length, 3);
   assert.equal(store.handoffs.length, 2);
   assert.equal(store.results.filter((result) => result.kind === 'final').length, 1);
+});
+
+test('manual DeepSeek preference applies only to tool-free Chief stages', async () => {
+  const { store, workflow } = fixture();
+  store.jobs[0].requested_provider = 'deepseek';
+  const task = { job_id: 'job-1', task_id: 'task-1', run_id: 'run-1', agent_id: 'chief', project_id: 'workspace-1' };
+  assert.equal(await workflow.providerPreference(task, STAGES.PLAN), 'deepseek');
+  assert.equal(await workflow.providerPreference(task, STAGES.RESEARCH), 'anthropic');
+  assert.equal(workflow.modelExecution(task, STAGES.PLAN, 'deepseek', 'deepseek-flash').gatewayContext.provider, 'deepseek');
+  assert.equal(workflow.modelExecution(task, STAGES.RESEARCH).gatewayContext.provider, null);
 });
 
 test('B. final review remains blocked until Research completes', async () => {
@@ -179,6 +189,7 @@ class MemoryStore {
   id(prefix) { this.serial += 1; return `${prefix}-${this.serial}`; }
   async emit(event) { this.events.push(structuredClone(event)); }
   async getAgent(slug) { return structuredClone(this.agents[slug]); }
+  async getJob(id) { return structuredClone(this.jobs.find((job) => job.id === id)); }
 
   async claimNextJob() {
     const job = this.jobs.find((candidate) => candidate.status === 'planning');

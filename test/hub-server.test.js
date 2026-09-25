@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createHubServer, modelCatalog, readJobSnapshot, usageSnapshot } from '../src/hub-server.js';
+import { Script } from 'node:vm';
+import { createHubServer, HUB_HTML, modelCatalog, readJobSnapshot, usageSnapshot } from '../src/hub-server.js';
 
 const workspaceId = '2ae856da-00cb-4594-a7e6-710f2011d0c3';
 const jobId = 'fdd024d0-8f3f-4b85-9900-1c1b55dc620a';
@@ -15,6 +16,10 @@ function fakeDb() {
     agents: [{ id: '22222222-2222-4222-8222-222222222222', slug: 'chief-of-staff', name: 'Chief of Staff' }],
     events: [{ id: 'event-1', job_id: jobId, type: 'status_changed', level: 'info', message: 'Chief started', payload: { provider: 'anthropic', token: 'do-not-return' }, task_id: null, run_id: null, agent_id: null, created_at: '2026-09-24T00:00:01.000Z' }],
     model_attempts: [], tool_executions: [], runs: [], results: [],
+    workspace_provider_permissions: [
+      { workspace_id: workspaceId, provider: 'anthropic', models: ['claude-sonnet-5'], enabled: true },
+      { workspace_id: workspaceId, provider: 'deepseek', models: ['deepseek-flash'], enabled: true },
+    ],
   };
   return { _tables: tables, from(name) { return new Query(tables[name] || []); } };
 }
@@ -52,6 +57,13 @@ test('Hub API lists workspaces and creates a workspace-scoped job', async () => 
   const created = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, goal: 'Build the Hub MVP' }) }).then((response) => response.json());
   assert.equal(created.job.workspaceId, workspaceId);
   assert.equal(jobs[0].projectId, workspaceId);
+  assert.equal(jobs[0].requestedProvider, 'auto');
+  const preferred = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, goal: 'Plan an answer', provider: 'anthropic' }) }).then((response) => response.json());
+  assert.equal(preferred.ok, true);
+  assert.equal(jobs[1].requestedProvider, 'anthropic');
+  const denied = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, goal: 'Plan an answer', provider: 'qwen' }) });
+  assert.equal(denied.status, 403);
+  assert.equal(jobs.length, 2);
   await new Promise((resolve) => server.close(resolve));
 });
 
@@ -60,6 +72,15 @@ test('Hub model catalog keeps inactive providers non-selectable', () => {
   assert.equal(catalog.find((entry) => entry.provider === 'anthropic').default, true);
   assert.equal(catalog.find((entry) => entry.provider === 'qwen').selectable, false);
   assert.equal(catalog.find((entry) => entry.provider === 'qwen').state, 'not_connected');
+  assert.equal(modelCatalog([{ provider: 'anthropic', models: ['claude-sonnet-5'], enabled: true }]).find((entry) => entry.provider === 'deepseek').selectable, false);
+});
+
+test('every Hub browser script parses and sends the selected authorized provider', () => {
+  const scripts = [...HUB_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  assert.equal(scripts.length, 2);
+  for (const [, body] of scripts) new Script(body);
+  assert.match(HUB_HTML, /provider:document\.getElementById\('modelSelect'\)\?\.value\|\|'auto'/);
+  assert.match(HUB_HTML, /hub-workspace-changed/);
 });
 
 test('Hub usage snapshot aggregates attempts and workspace budget without sensitive payloads', async () => {
@@ -72,6 +93,30 @@ test('Hub usage snapshot aggregates attempts and workspace budget without sensit
   assert.equal(usage.totals.tokens, 35);
   assert.equal(usage.totals.monthUsd, .03);
   assert.equal(usage.budget.remainingUsd, 1.8);
+});
+
+test('usage reconstructs historical fallback from model attempts without double counting audited switches', async () => {
+  const db = fakeDb();
+  const runId = '33333333-3333-4333-8333-333333333333';
+  db._tables.model_attempts.push(
+    { workspace_id: workspaceId, run_id: runId, provider: 'anthropic', status: 'failed', cost_usd: 0, started_at: '2026-09-24T00:00:00.000Z' },
+    { workspace_id: workspaceId, run_id: runId, provider: 'deepseek', status: 'succeeded', cost_usd: 0.001, started_at: '2026-09-24T00:00:01.000Z' },
+  );
+  db._tables.events.push({ job_id: jobId, run_id: runId, type: 'activity', payload: { kind: 'provider_switch' } });
+  const usage = await usageSnapshot(db, workspaceId);
+  assert.equal(usage.fallbacks, 1);
+});
+
+test('Hub counts only completed provider-native tool executions', async () => {
+  const db = fakeDb();
+  db._tables.events.push(
+    { id: 'tool-start', job_id: jobId, type: 'activity', payload: { kind: 'host_tool', tool: 'WebFetch', status: 'started' }, created_at: '2026-09-24T00:00:02.000Z' },
+    { id: 'tool-done', job_id: jobId, type: 'activity', payload: { kind: 'host_tool', tool: 'WebFetch', status: 'succeeded', duration_ms: 25 }, created_at: '2026-09-24T00:00:03.000Z' },
+  );
+  const snapshot = await readJobSnapshot(db, jobId);
+  assert.equal(snapshot.toolExecutions.length, 1);
+  assert.equal(snapshot.toolExecutions[0].tool_name, 'WebFetch');
+  assert.equal(snapshot.toolExecutions[0].status, 'succeeded');
 });
 
 test('owner OTP session gates the Hub API without exposing the service key', async () => {

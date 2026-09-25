@@ -2,6 +2,7 @@ import { planJob, reviewResearch } from './chief.js';
 import { performResearch } from './research.js';
 import {
   CHIEF_MODEL,
+  DEEPSEEK_MODEL,
   MODEL_PROVIDER,
   RESEARCH_MODEL,
   STALE_TASK_MINUTES,
@@ -115,12 +116,14 @@ export class OfficeWorkflow {
   async executePlan(task) {
     assertAgent(task, 'chief-of-staff');
     const agent = await this.store.getAgent('chief-of-staff');
-    await this.startStage(task, agent, 'CHIEF_PLANNING', CHIEF_MODEL, 'Chief of Staff is planning.');
+    const preference = await this.providerPreference(task, STAGES.PLAN);
+    const model = preference === 'deepseek' ? DEEPSEEK_MODEL : CHIEF_MODEL;
+    await this.startStage(task, agent, 'CHIEF_PLANNING', model, 'Chief of Staff is planning.', preference);
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.plan({
       agent,
       goal: task.goal,
       onActivity,
-      execution: this.modelExecution(task, STAGES.PLAN),
+      execution: this.modelExecution(task, STAGES.PLAN, preference, model),
       toolBroker: this.toolSession(task, STAGES.PLAN),
     }));
 
@@ -193,21 +196,23 @@ export class OfficeWorkflow {
       throw new Error('Chief review received an invalid Research handoff');
     }
     const agent = await this.store.getAgent('chief-of-staff');
-    await this.startStage(task, agent, 'CHIEF_REVIEW_STARTED', CHIEF_MODEL, 'Chief is reviewing Research.');
+    const preference = await this.providerPreference(task, STAGES.REVIEW);
+    const model = preference === 'deepseek' ? DEEPSEEK_MODEL : CHIEF_MODEL;
+    await this.startStage(task, agent, 'CHIEF_REVIEW_STARTED', model, 'Chief is reviewing Research.', preference);
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.review({
       agent,
       goal: task.goal,
       reviewBrief: brief.reviewBrief,
       research: upstream[0],
       onActivity,
-      execution: this.modelExecution(task, STAGES.REVIEW),
+      execution: this.modelExecution(task, STAGES.REVIEW, preference, model),
       toolBroker: this.toolSession(task, STAGES.REVIEW),
     }));
     await this.recordOutcome(task, outcome, 'Chief final result is ready to save.');
     await this.store.completeTask(task, outcome, summarize(outcome.text));
   }
 
-  async startStage(task, agent, stage, model, message) {
+  async startStage(task, agent, stage, model, message, provider = MODEL_PROVIDER) {
     await this.store.setRunModel(task.run_id, model);
     await this.store.emit({
       jobId: task.job_id,
@@ -217,7 +222,7 @@ export class OfficeWorkflow {
       type: 'status_changed',
       message,
       payload: {
-        status: 'WORKING', stage, provider: MODEL_PROVIDER, model,
+        status: 'WORKING', stage, provider, model,
         attempt: task.attempt_no, max_attempts: task.max_attempts,
       },
     });
@@ -248,7 +253,15 @@ export class OfficeWorkflow {
     });
   }
 
-  modelExecution(task, stage) {
+  async providerPreference(task, stage) {
+    if (stage === STAGES.RESEARCH) return MODEL_PROVIDER;
+    const job = await this.store.getJob(task.job_id);
+    const requested = job.requested_provider || 'auto';
+    if (!['auto', 'anthropic', 'deepseek'].includes(requested)) throw new Error('Unsupported job provider preference');
+    return requested === 'auto' ? MODEL_PROVIDER : requested;
+  }
+
+  modelExecution(task, stage, provider = MODEL_PROVIDER, model = null) {
     const context = {
       workspaceId: task.project_id || null,
       jobId: task.job_id,
@@ -256,8 +269,10 @@ export class OfficeWorkflow {
       runId: task.run_id,
       agentId: task.agent_id,
       stage,
+      provider: provider === MODEL_PROVIDER ? null : provider,
     };
     return {
+      ...(model ? { model } : {}),
       gatewayContext: context,
       workspacePolicyStore: selectWorkspacePolicyStore({
         policyStore: this.workspacePolicyStore,
@@ -271,30 +286,32 @@ export class OfficeWorkflow {
         taskId: task.task_id,
         runId: task.run_id,
         agentId: task.agent_id,
-        type: 'model_checkpoint',
+        type: 'activity',
+        required: true,
         level: 'warning',
         message: 'Provider-neutral checkpoint saved before model ownership changed.',
-        payload: checkpoint,
+        payload: { ...checkpoint, kind: 'model_checkpoint' },
       }),
       onProviderSwitch: (checkpoint) => this.store.emit({
         jobId: task.job_id,
         taskId: task.task_id,
         runId: task.run_id,
         agentId: task.agent_id,
-        type: 'provider_switch',
+        type: 'activity',
+        required: true,
         level: 'warning',
         message: `Model ownership changed from ${checkpoint.fromProvider} to ${checkpoint.toProvider}.`,
-        payload: checkpoint,
+        payload: { ...checkpoint, kind: 'provider_switch' },
       }),
       onBudgetThreshold: (threshold) => this.store.emit({
         jobId: task.job_id,
         taskId: task.task_id,
         runId: task.run_id,
         agentId: task.agent_id,
-        type: 'cost_threshold',
+        type: 'activity',
         level: threshold.threshold >= 0.9 ? 'warning' : 'info',
         message: `Model budget reached ${threshold.threshold * 100}%.`,
-        payload: threshold,
+        payload: { ...threshold, kind: 'cost_threshold' },
       }),
     };
   }
@@ -321,7 +338,23 @@ export class OfficeWorkflow {
     }, 30_000);
     heartbeat.unref?.();
     try {
-      return await operation(async ({ turns = 0 } = {}) => {
+      return await operation(async ({ turns = 0, hostTool } = {}) => {
+        if (hostTool) {
+          await this.store.emit({
+            jobId: task.job_id,
+            taskId: task.task_id,
+            runId: task.run_id,
+            agentId: task.agent_id,
+            type: 'activity',
+            required: true,
+            level: hostTool.status === 'failed' ? 'warning' : 'info',
+            message: `${hostTool.name} ${hostTool.status}.`,
+            payload: {
+              kind: 'host_tool', tool: hostTool.name, status: hostTool.status,
+              tool_use_id: hostTool.id, duration_ms: hostTool.durationMs ?? null,
+            },
+          });
+        }
         progress = Math.min(90, 20 + turns * 10);
         await this.store.touchTask(task.task_id, progress);
       });

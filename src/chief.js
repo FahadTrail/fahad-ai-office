@@ -4,7 +4,7 @@ import { runModel } from './model-runner.js';
 export async function planJob({ agent, goal, run = runModel, onActivity, execution = {} }) {
   const outcome = await run({
     ...execution,
-    model: CHIEF_MODEL,
+    model: execution.model || CHIEF_MODEL,
     maxTurns: CHIEF_MAX_TURNS,
     allowedTools: [],
     routingHints: { requiresPrivateData: true, preferQuality: true },
@@ -38,7 +38,7 @@ export async function reviewResearch({ agent, goal, reviewBrief, research, run =
   if (!research?.content?.trim()) throw new Error('Chief review requires a durable Research result');
   return run({
     ...execution,
-    model: CHIEF_MODEL,
+    model: execution.model || CHIEF_MODEL,
     maxTurns: CHIEF_MAX_TURNS,
     allowedTools: [],
     routingHints: { requiresPrivateData: true, preferQuality: true },
