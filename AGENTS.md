@@ -66,27 +66,32 @@ inside the built runtime image as root.
 
 ## Current status (2026-09-25)
 
-* Production runs `main` (Office + Hub). Migrations through
-  `20260925190000_routing_policy_and_usage` are applied; the production schema
-  fingerprint equals `supabase/verify/schema-fingerprint.txt`.
-* Live provider canary (Hub → Model pool → *Run live canary*, executed by the
-  Office runtime) verified real tool-calling on Anthropic `claude-opus-5`,
-  `claude-sonnet-5`, OpenAI `gpt-5.3-codex` and DeepSeek `deepseek-flash`, and
-  a real cross-provider failover drill (DeepSeek → Sonnet from a
-  database-persisted checkpoint). Qwen has a key but the provider answers
-  `AccessDenied.Unpurchased` (model not activated in Alibaba Model Studio).
-  Kimi, GLM, MiniMax, Gemini, OpenRouter, Groq: no credentials configured.
-  Results live in `provider_canary_runs` and `provider_status`.
-* The Coding Agent worker is NOT running yet: it needs one root step on the VPS
-  (`ops/enable-coding-worker.sh`, see `docs/coding-agent.md` → *Activation
-  runbook*) and a fine-grained `CODING_GITHUB_TOKEN`.
-* Verified only with scripted models: the full Coding Agent lifecycle over real
-  tools, git, sandbox isolation, crash/restart resume (`node --test`).
+* **Coding Agent V1 is operational in production.** Production runs `main`
+  (Office + Hub + the `fahad-office-coding-worker` container, enabled with
+  `ops/enable-coding-worker.sh`). Every deployment recreates the worker; the
+  worker's code fingerprint (`src/build-info.js`) is logged in each session's
+  first event.
+* Live-validated end to end (see `docs/coding-agent.md` → *Live validation*):
+  a real task went objective → plan → test-first failure → fix → checkpoints →
+  DeepSeek → controlled failover drill → Claude Sonnet continuation → gate →
+  branch push → pull request → CI → merge approval → merge → deployment →
+  `/healthz` verification, surviving two worker restarts; a second task
+  repaired a real CI failure from the Actions logs.
+* Model pool (live canary + real sessions): Anthropic `claude-opus-5`,
+  `claude-sonnet-5`, OpenAI `gpt-5.3-codex`, DeepSeek `deepseek-flash` LIVE.
+  Workspace authorization: DeepSeek and Anthropic (OpenAI not authorized for
+  the project). Qwen: key present, provider answers `AccessDenied.Unpurchased`.
+  Kimi, GLM, MiniMax, Gemini, OpenRouter, Groq: no credentials.
+* Migrations through `20260925190000_routing_policy_and_usage` are applied; the
+  production schema fingerprint equals `supabase/verify/schema-fingerprint.txt`.
+* Not configured: `CODING_SUPABASE_ACCESS_TOKEN` (the agent's Supabase tools
+  fail closed until it is added); the workspace budget is $2/month.
 
 ## Next actions
 
-1. Owner: run the activation runbook (token + one root command).
-2. First low-risk Coding Agent task from the Hub; then more providers (keys +
-   privacy flags), each followed by a live canary.
+1. Use it: Hub → Coding Agent → project, repository, detailed objective,
+   budget, routing → Start; approve merges in the Hub.
+2. Optional: Supabase access token for the agent, more providers (keys,
+   privacy flags, workspace authorization), each followed by a live canary.
 3. Office specialties can reuse the agentic gateway, routing policy and Tool
    Broker when prioritized.

@@ -261,10 +261,28 @@ real models and real tools:
 * The worker was restarted twice by deployments while the session held its
   lease; each time a new worker resumed it from the latest checkpoint.
 
-Defects found by this run and fixed in production: CI/deploy polls replayed by
-the Tool Broker instead of re-executing; masked test failures
+Follow-up sessions on the same worker (DeepSeek only, $0.007–0.027 each):
+
+* `8e10f499` (PR #35, merged): the objective contained a deliberately wrong
+  module path; the agent noticed it did not exist, used the real path and
+  explained the deviation in the pull request.
+* `ddd54d04` (drill branch `ci-drill/canary-model-filter`, PR #36, closed): a
+  planted regression that only the full suite catches; the agent found it with
+  the full suite, traced it to the planted commit and fixed it.
+* `37685993` (drill branch `ci-drill/actions-only-assertion`, PR #37, closed):
+  a planted assertion that runs only on GitHub Actions. CI failed, the
+  controller fetched the Actions log with the agent's own token, the agent
+  reproduced it with `GITHUB_ACTIONS=true`, fixed it, pushed again, updated the
+  same pull request and CI passed.
+
+Defects found by these runs and fixed in production: CI/deploy polls replayed
+by the Tool Broker instead of re-executing; masked test failures
 (`…; echo "exit=$?"`); drill/wait events rejected by the `agent_events`
-constraint; unhelpful "no eligible model" blockers.
+constraint; unhelpful "no eligible model" blockers; model-attempt audit rows
+colliding on failover turns; CI log excerpts that showed only the tail (now
+failure lines + tail). Tool-level errors a handler returns to the model (for
+example `EDIT_NOT_FOUND`) appear as warning events; their broker row stays
+`succeeded` because the tool itself ran.
 
 ## Verification in this repository
 
