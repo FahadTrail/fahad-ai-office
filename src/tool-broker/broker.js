@@ -19,6 +19,7 @@ export class ToolBroker {
     clients = [],
     definitions = [],
     secretResolver = null,
+    approvalStore = null,
     policyEngine = new WorkspacePolicyEngine(),
     now = () => Date.now(),
   } = {}) {
@@ -33,6 +34,7 @@ export class ToolBroker {
     this.auditStore = auditStore;
     this.agentStore = agentStore;
     this.secretResolver = secretResolver;
+    this.approvalStore = approvalStore;
     this.policyEngine = policyEngine;
     this.now = now;
     this.clients = new Map(clients.map((client) => [client.name, client]));
@@ -91,8 +93,22 @@ export class ToolBroker {
       await this.#recordBlocked(request, definition, TOOL_DECISION.DENY, error.code || 'WORKSPACE_TOOL_DENIED');
       throw error;
     }
-    const decision = effectiveDecision(grant.decision, definition.minimumDecision);
-    const lease = await this.#begin(request, definition, decision);
+    let decision = effectiveDecision(grant.decision, definition.minimumDecision);
+    let effectiveRequest = request;
+    // An owner-approved request executes exactly once, for exactly the
+    // arguments that were shown to the approver. DENY is never overridable.
+    if (decision === TOOL_DECISION.APPROVAL && input.approval?.id && this.approvalStore) {
+      const consumed = await this.approvalStore.consumeApproval({
+        approvalId: input.approval.id,
+        callId: input.approval.callId,
+        sessionId: input.approval.sessionId,
+        argumentsSha256: argumentsSha256(request.arguments),
+      });
+      if (!consumed) throw new ToolBrokerError('The approval is missing, already used, or does not match these arguments', { code: 'TOOL_APPROVAL_INVALID' });
+      decision = TOOL_DECISION.AUTO;
+      effectiveRequest = Object.freeze({ ...request, idempotencyKey: `${request.idempotencyKey}:approved` });
+    }
+    const lease = await this.#begin(effectiveRequest, definition, decision);
     if (decision === TOOL_DECISION.APPROVAL) {
       throw new ToolBrokerError('Tool execution requires explicit approval', { code: 'TOOL_APPROVAL_REQUIRED' });
     }
@@ -125,7 +141,7 @@ export class ToolBroker {
       if (definition.estimatedCostUsd > 0) {
         reservation = await this.policyStore.reserveBudget({
           workspaceId: request.context.workspaceId,
-          idempotencyKey: `tool:${request.idempotencyKey}`,
+          idempotencyKey: `tool:${effectiveRequest.idempotencyKey}`,
           amountUsd: definition.estimatedCostUsd,
         });
       }
@@ -190,7 +206,7 @@ export class ToolBroker {
         await this.policyStore.settleBudget({
           workspaceId: request.context.workspaceId,
           reservationId: reservation.reservationId,
-          idempotencyKey: `tool:${request.idempotencyKey}`,
+          idempotencyKey: `tool:${effectiveRequest.idempotencyKey}`,
           actualUsd: actualCostUsd,
         });
       }
@@ -219,6 +235,10 @@ export class ToolBroker {
   async #recordBlocked(request, definition, decision, errorCode) {
     await this.#begin(request, definition, decision, errorCode);
   }
+}
+
+export function argumentsSha256(args) {
+  return createHash('sha256').update(stableJson(args || {})).digest('hex');
 }
 
 function policyRequest(definition) {

@@ -31,7 +31,8 @@ export function normalizeToolDefinition(input = {}) {
   const broker = requiredName(input.broker, 'broker', 80);
   const name = requiredName(input.name, 'name', 128);
   const action = requiredName(input.action || 'invoke', 'action', 80);
-  const timeoutMs = integerInRange(input.timeoutMs ?? 15_000, 100, 120_000, 'timeoutMs');
+  // Sandboxed builds and test suites can legitimately run for many minutes.
+  const timeoutMs = integerInRange(input.timeoutMs ?? 15_000, 100, 1_800_000, 'timeoutMs');
   const maxRetries = integerInRange(input.maxRetries ?? 0, 0, 3, 'maxRetries');
   const estimatedCostUsd = nonNegativeNumber(input.estimatedCostUsd || 0, 'estimatedCostUsd');
   if (estimatedCostUsd > 0.1) throw invalid('estimatedCostUsd exceeds the Phase 2E per-call safety ceiling');

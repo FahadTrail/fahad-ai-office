@@ -1,6 +1,8 @@
 column|00d02eecda4d1376836ca1ef2a76194c|public.continuity_handoffs.status text null=NO default='accepted'::text
 column|020da0312d4778ba25a9e78be16b1eda|public.tool_executions.ended_at timestamp with time zone null=YES default=
+column|03ce5a635d0400c4df68c498b0dc5e68|public.agent_checkpoints.route text null=YES default=
 column|04b6cfcd09e704b6508e029da6a04cc8|public.projects.id uuid null=NO default=gen_random_uuid()
+column|04d08cfdd636110aa40e0fdd0e228baa|public.agent_checkpoints.git_head text null=YES default=
 column|058e70c2c1c2adfe7170e3a1e8efdcd3|public.results.content text null=NO default=''::text
 column|06459790f46ce774663f724bc1d0f5c8|public.workspace_budget_reservations.created_at timestamp with time zone null=NO default=now()
 column|0706a9ffc7803e8036816d0975e2ccd4|public.office_owners.user_id uuid null=NO default=
@@ -12,28 +14,40 @@ column|0bec6bc53087ed60af9cb06a638b4e68|public.handoffs.from_task_id uuid null=Y
 column|0cecf40549050ba375b197a685121194|public.agents.desk_x numeric null=NO default=0
 column|0f32ee7b3b918c1581f05bf961481cda|public.jobs.status text null=NO default='planning'::text
 column|0f9a394be54d5f3da960047af13bebf4|public.projects.status text null=NO default='active'::text
+column|10e641edf979ce6fb3b55faf649d085e|public.agent_sessions.title text null=NO default=
 column|10ea4f08caf86b96cab92d52122be467|public.tasks.max_attempts integer null=NO default=3
 column|1109cecd1db56b05925e3fdd516cb951|public.model_attempts.cost_usd numeric null=NO default=0
+column|11620c4391174c02c2f7e69d2102cacd|public.provider_status.health text null=NO default='unknown'::text
+column|119ea476eceb2d7eba46d863f2f40714|public.agent_sessions.created_by text null=YES default=
 column|11d007814f3f26eb621b709aebe2ddd9|public.tool_executions.idempotency_key text null=NO default=
 column|11f87013f52a23ce4f9d28bc71022146|public.approvals.decided_note text null=YES default=
 column|131427af7b66c27a180c4977d8dfcf92|public.tool_executions.retry_count smallint null=NO default=0
+column|158e7ce61393ae85eafb994ae8cc2c67|public.provider_status.cooldown_until timestamp with time zone null=YES default=
 column|16bfb1ade73c4e57d79e130eceb44ab4|public.model_attempts.workspace_id uuid null=YES default=
 column|16d8ea94aa7e8c93b6e0952d33d3643f|public.workspace_provider_permissions.secret_ref text null=NO default=
 column|17960d7a3fe2e655957dab53065a6dfd|public.tool_executions.error_code text null=YES default=
 column|17c581f7e656249182502fb52b92a984|public.agents.role text null=NO default=
 column|18bd0f9595c134d4e63fecb07619e19d|public.continuity_checkpoints.task_id uuid null=NO default=
 column|1941c7326defea27415346ce6ac7a030|public.tasks.started_at timestamp with time zone null=YES default=
+column|1bcddfd952d189d5fcb5c5a1783ecc35|public.agent_sessions.created_at timestamp with time zone null=NO default=now()
 column|1c3d82153f709bc213c7483525d1fdd5|public.jobs.cost_usd numeric null=NO default=0
 column|1c9932971f42cd527c1d614f778c1bd2|public.continuity_usage.agent text null=NO default='continuity-controller'::text
 column|1d0711bf1bd6415bc6865f66d7fed991|public.handoffs.summary text null=NO default=''::text
 column|1df384b0fa04f5530c7db3fe99a77446|public.model_attempts.attempt_no integer null=NO default=
+column|1e4c05f0a7cff515bf9d18652167fde4|public.agent_sessions.run_id uuid null=NO default=
 column|1f573bad724b03a8e0901a83d7f06180|public.workspace_tool_grants.action text null=NO default='invoke'::text
+column|201df08b8591cf979383d4ae1dd7c07d|public.agent_checkpoints.state jsonb null=NO default='{}'::jsonb
 column|2084e3cfaddbbaa36f76c9fdbb711348|public.office_owners.email text null=NO default=
+column|2270668a44d349829843389d00f26106|public.agent_approvals.arguments_sha256 text null=NO default=
+column|228d61ccaaf34595a30123969f4771d4|public.agent_approvals.summary text null=NO default=
+column|24735a790a9d0b8f698228d8012bec60|public.agent_sessions.current_route text null=YES default=
 column|24decf33d893175f58cb99b5fc3fe539|public.continuity_handoffs.verification jsonb null=NO default=
+column|2529f4a03d549c5720cbfd8128b0b736|public.agent_approvals.workspace_id uuid null=NO default=
 column|2533e1ff6fd83059b467ffdfb97319f8|public.memory.key text null=NO default=
 column|267326ce8d72e92db846f1943dc53213|public.events.from_agent_id uuid null=YES default=
 column|27f3731e8d293f3db0f894c1e3fc44ff|public.tool_executions.run_id uuid null=NO default=
 column|281ad23accabe2569c7e78a68b25e209|public.tool_executions.agent_id uuid null=NO default=
+column|288caf14d93424604d7b6b682b5c58ae|public.agent_events.level text null=NO default='info'::text
 column|294a6bd2b0b159915c96d39142d53a5c|public.model_attempts.model text null=NO default=
 column|29b88a815af7a36ec7e68e471674ac5f|public.workspace_budget_reservations.actual_usd numeric null=YES default=
 column|2a836f5924556164c961cd8b4b8e372e|public.workspace_provider_permissions.updated_at timestamp with time zone null=NO default=now()
@@ -43,6 +57,7 @@ column|2caaea19dda5f42505020e2a7391e720|public.model_attempts.output_tokens bigi
 column|2cbc9cb3cdfdcb0ba4f0a0e0933b200c|public.continuity_events.created_at timestamp with time zone null=NO default=now()
 column|2d0f6eb233aad4826fb53e9b4da1d0c6|public.model_attempts.input_tokens bigint null=NO default=0
 column|2d5bc04e9c09b8b77d71dd7b1538d10a|public.agents.system_prompt text null=NO default=''::text
+column|2e28f194a734dfa1c4ad1e11f3006793|public.agent_sessions.task_id uuid null=NO default=
 column|2e55fe989d3b1ae59f92d824e4935c3c|public.runs.attempt_no integer null=NO default=1
 column|2ee2affe3f3378855531c5353f9db3c5|public.agents.id uuid null=NO default=gen_random_uuid()
 column|3100680246d136edade75dd89705489b|public.results.job_id uuid null=NO default=
@@ -58,29 +73,40 @@ column|362fa29e7e57ce50179fa2b39981a90e|public.agents.created_at timestamp with 
 column|37164527276b08f0c5cbe7d09ddb16ff|public.results.agent_id uuid null=YES default=
 column|3772e4d14be75d46623e8e57b06bf9d5|public.model_attempts.updated_at timestamp with time zone null=NO default=now()
 column|3773ddefb9d0869552a863fff12e727a|public.jobs.title text null=YES default=
+column|394e4d518b2001ef56e9354b60d34fbf|public.agent_events.payload jsonb null=NO default='{}'::jsonb
 column|3aa3d29664dd826ce828b9a1203dc9c7|public.tool_executions.duration_ms integer null=YES default=
 column|3ad814ccc6c749b94f5b92c3138b6841|public.memory.updated_at timestamp with time zone null=NO default=now()
 column|3f2705ae7392f81581ae3cb05ae73f16|public.continuity_checkpoints.stage text null=NO default=
+column|40085e742f6a591635115051e83d8bb5|public.agent_sessions.spent_usd numeric null=NO default=0
+column|40c78ed3df615eb036c9ad9c9aace726|public.agent_approvals.status text null=NO default='pending'::text
+column|4254f40b1ea3243d3e88821af92dc043|public.provider_status.rate_limit jsonb null=YES default=
 column|428484d6c1501c5726e0d4a360a2477f|public.approvals.task_id uuid null=YES default=
 column|430154c09eb69a4e120a2e206e660a81|public.approvals.title text null=NO default=
+column|44eda94cfcad2d25aa624075b7fa32c7|public.agent_sessions.agent_id uuid null=NO default=
 column|45d8a565db7174c5624af98aae6f81b0|public.continuity_tasks.idempotency_key text null=NO default=
 column|46189cb94d3bc732537e3b77b97cc561|public.tool_executions.workspace_id uuid null=NO default=
+column|461d8da9d40ea1d575eb457a98a1fa82|public.agent_events.session_id uuid null=NO default=
 column|4642ed69effd62611b1db95269dfb2f4|public.runs.id uuid null=NO default=gen_random_uuid()
 column|46fea45a18b381a57517ed142f4acd96|public.tool_executions.task_id uuid null=NO default=
 column|47261fbbf7865daf16e1f855248cab0d|public.tool_executions.tool_name text null=NO default=
 column|483f28f47f7a5565a660c026da391768|public.events.message text null=NO default=
+column|492d86a7d0b0277a446657bbcacce022|public.agent_sessions.objective text null=NO default=
 column|4956459c427ca4089f1a9dfcbeb73f06|public.continuity_checkpoints.progress_hash text null=NO default=
 column|4a6414dd4445089c6170cbb5b06f1250|public.continuity_usage.task_id uuid null=NO default=
 column|4b65d4ceb2d8795bcd031208b39efcf4|public.workspace_tool_grants.enabled boolean null=NO default=false
 column|4bd2dbfe533859404cf4f762f3032ae5|public.model_attempts.ended_at timestamp with time zone null=YES default=
 column|4c1f46e594e46d70278d49ee23b8e0c5|public.tool_executions.result_sha256 text null=YES default=
 column|4c80ed86cf67cf852e935c2694ddca61|public.runs.model text null=YES default=
+column|4d7fd34862f8fcd6101ade8c64b0e6a5|public.agent_sessions.error_code text null=YES default=
 column|4debaab13ca17e6cfa59a3d40f5d78de|public.tool_executions.id uuid null=NO default=gen_random_uuid()
 column|4edfa1b06c8e1444880066749996ae76|public.workspace_policies.updated_at timestamp with time zone null=NO default=now()
 column|4f28c60d8c6648cedb7fa24a05e8a757|public.model_attempts.job_id uuid null=NO default=
+column|4fa20f4dbc12c2bc7329135df7eb255e|public.agent_checkpoints.id uuid null=NO default=gen_random_uuid()
+column|50e15cee2ac5a5940d8aad0225b7bc61|public.agent_sessions.tokens_out bigint null=NO default=0
 column|518a2355d8a61fdc10fe4c1c0b288d87|public.model_attempts.duration_ms bigint null=NO default=0
 column|51ab74a253e3da39d8a9521844a473f5|public.continuity_usage.id bigint null=NO default=
 column|5348f5c9ae7dea3bd68806f019c2e401|public.runs.status text null=NO default='running'::text
+column|53897c6696cb0f896f0372a133837c81|public.agent_sessions.checkpoint_seq integer null=NO default=0
 column|5436fbac0668e1457dccd1e1231cf497|public.agents.allowed_tools ARRAY null=NO default='{}'::text[]
 column|552e80c7e4ead74b53ddb615a13b5555|public.results.created_at timestamp with time zone null=NO default=clock_timestamp()
 column|555939fa972d64032cae9fa795e77c2c|public.model_attempts.started_at timestamp with time zone null=NO default=
@@ -92,14 +118,21 @@ column|575a4d8a1f9d66d9ec9c22533f1530cd|public.tool_executions.job_id uuid null=
 column|5805380ca5a224c8b076af20d6334a08|public.tool_executions.secret_ref text null=YES default=
 column|5a089d8f99f758f61660845056264c85|public.results.format text null=NO default='markdown'::text
 column|5ab8683e7528b9ce09b35e7c18d9eff4|public.files.id uuid null=NO default=gen_random_uuid()
+column|5b36e7207a88e4218a8c0b098a2452f2|public.agent_sessions.tokens_in bigint null=NO default=0
 column|5bef840c3f2bc2dbfbe70f00fc7a9d5a|public.handoffs.id uuid null=NO default=gen_random_uuid()
 column|5c70fc78fd3b176b851bfd48f5835021|public.jobs.priority text null=NO default='normal'::text
 column|5c7590a6b43890033b3fc4f07358af59|public.continuity_events.type text null=NO default=
+column|5cf3be01f0ccb90fe5eb63563b9fcdbf|public.agent_sessions.lease_expires_at timestamp with time zone null=YES default=
 column|5d37deaf6af09e1e6b6910217c3d1bf6|public.continuity_tasks.budget_usd numeric null=NO default=
+column|5e990a704c9cbe670b68810b4ad554aa|public.agent_sessions.phase text null=NO default='understand'::text
 column|5fcaca012a7ea805b6d9de5bf355eb8c|public.workspace_policies.version bigint null=NO default=1
 column|615af1922fbb9ae689edd12a31036595|public.model_attempts.task_id uuid null=NO default=
 column|61d8c202a0afb24f8a52576043f31835|public.workspace_policies.monthly_budget_usd numeric null=NO default=
+column|6331c58af42663c7e9b708fafdf984e3|public.agent_sessions.blocker text null=YES default=
+column|644708c967a77d3225e4db6d325cfea0|public.agent_approvals.consumed_at timestamp with time zone null=YES default=
+column|647ce5ab13ede258d4729da959af9fb9|public.agent_sessions.completed_at timestamp with time zone null=YES default=
 column|652008743ce592eef5673c76f101a8b8|public.continuity_tasks.created_at timestamp with time zone null=NO default=now()
+column|65c24def2cdb6d90906af624c86eb237|public.agent_approvals.id uuid null=NO default=gen_random_uuid()
 column|6671db73c3cb40316929ec206c6f2042|public.tasks.progress integer null=NO default=0
 column|667fa183b2f62987bb3132072faf72d1|public.files.task_id uuid null=YES default=
 column|6767d8bd1038b152b322a6dfd6bd2d92|public.model_attempts.route jsonb null=NO default='[]'::jsonb
@@ -122,100 +155,146 @@ column|745bb85f26ddc0d4522beaf5082cf027|public.approvals.job_id uuid null=NO def
 column|74ebae4fcf1642163191d2b8808ea57e|public.handoffs.to_agent_id uuid null=NO default=
 column|76d2cdccf94a83a34fac3067c02916a7|public.tool_executions.attempt_count smallint null=NO default=0
 column|774ff8814dbcceebde5ce31d26abfb94|public.agents.slug text null=NO default=
+column|785c02073da91c21f650bfbe6c73e886|public.agent_sessions.budget_usd numeric null=NO default=5
 column|79832fa3a0a5b1283aff13b613f1f516|public.continuity_usage.cached_input_tokens bigint null=NO default=0
+column|7a33136284f26878ed39c592828dffab|public.agent_approvals.requested_at timestamp with time zone null=NO default=now()
+column|7a5de9a2596ab285a93a3806604285bc|public.agent_sessions.work_branch text null=YES default=
 column|7ab0df0fb1833e0607f8d593f09bb27f|public.agents.desk_z numeric null=NO default=0
+column|7aed2e9f69a0cd67b76982b4b0dc3b6f|public.provider_status.model text null=NO default=
 column|7b584633cac63467dc46ede74b27dd09|public.continuity_usage.input_tokens bigint null=NO default=0
 column|7bcc15783f78b74062d98f320dc5c39e|public.tasks.id uuid null=NO default=gen_random_uuid()
 column|7c06b5a66394acde757601405672e083|public.jobs.tokens_used integer null=NO default=0
+column|7cb6d77fd6ba542eda0a228d143c0c87|public.agent_approvals.session_id uuid null=NO default=
 column|7cd8467131c75a147812c15d4cd97640|public.continuity_checkpoints.repo_state jsonb null=NO default=
 column|7f3f7b5fc9b2e37a4ac202c69dd8e74f|public.model_attempts.error_code text null=YES default=
 column|7fd0ed38760ec2927d33c392b16addfe|public.workspace_tool_grants.updated_at timestamp with time zone null=NO default=now()
+column|80a7adc2ea8810859107ef5d6d39f610|public.provider_status.billing_class text null=NO default='paid'::text
 column|80e3d3d44054e0ff6652bf129485038a|public.continuity_tasks.id uuid null=NO default=
+column|80e58f128f7a3a75b61fa5ff1dba9298|public.agent_checkpoints.sequence integer null=NO default=
 column|83c20ef691e07082c4139e6f31e5d843|public.runs.tokens_in integer null=NO default=0
+column|844f46a25e1c7489675e6bf27e2f45c4|public.agent_approvals.decided_at timestamp with time zone null=YES default=
 column|8473a16130fbcc389f4a4b7800468ac4|public.results.kind text null=NO default='task'::text
+column|85f2ab96ab6261745319bfbf764aa34d|public.agent_sessions.cancel_requested boolean null=NO default=false
 column|86b412ef132fe8c06d371ee743a8695a|public.memory.tags ARRAY null=NO default='{}'::text[]
 column|87cad649aabf3541b3c4145608eceded|public.tasks.agent_id uuid null=NO default=
 column|88941285ac881f75aebaeef82b3c8602|public.results.task_id uuid null=YES default=
 column|88971883e732f3858ca3e73cb5c1f44f|public.continuity_tasks.result jsonb null=YES default=
+column|88d77f9765632813b63d9afb87ce471b|public.agent_sessions.repository text null=NO default=
+column|8913fb950266b5d57c14d72cfc0ae801|public.agent_sessions.kind text null=NO default='coding'::text
 column|8c6e2c50d100cf8f1c0faa592e520786|public.workspace_tool_grants.secret_ref text null=YES default=
+column|8d5c3701f1223dfd57998d338a3e3eeb|public.agent_sessions.job_id uuid null=NO default=
 column|8dfbbada327b320cc4568c756a92a07a|public.tasks.depends_on ARRAY null=NO default='{}'::uuid[]
 column|8e5f2140298baae84651bf69c3bbf27b|public.tool_executions.output_bytes integer null=YES default=
 column|8ec11622bd0c07000b067e182bcf8005|public.continuity_handoffs.from_provider text null=NO default=
 column|8ef810223c3b7e72a66c63c4ce119f00|public.tasks.sequence integer null=NO default=0
 column|8fe9a0433709ff738f81c07533c407fc|public.office_owners.label text null=NO default='Owner'::text
+column|9063cc19595e1d383643897abda43d47|public.agent_sessions.next_action text null=YES default=
 column|90ba2633060142428728053a538c7121|public.model_attempts.status text null=NO default=
+column|90de17e9f5e4d910795be1154b5db6bc|public.agent_events.message text null=NO default=
 column|90ea90aa58cfb88f5132c96b92c0a50b|public.jobs.progress integer null=NO default=0
 column|9166a68da3fe5e1d711adc345cdcf1fe|public.tool_executions.server_name text null=NO default=
+column|91ee05c78277a853401b62b98dc17c32|public.provider_status.requests_total bigint null=NO default=0
 column|92f403305f956d64851c800b3d3e96a1|public.approvals.risk text null=NO default='medium'::text
 column|93dadcea861364dd6530bbb8cee0cbda|public.projects.description text null=YES default=
 column|93f621c12491cb6409530e876310de33|public.model_attempts.cached_input_tokens bigint null=NO default=0
 column|9432287e91bf43306fa6fed24b426293|public.continuity_checkpoints.expected_sha text null=NO default=
+column|946f05f92bd80cd9ab4a04d79f300233|public.agent_checkpoints.created_at timestamp with time zone null=NO default=now()
 column|95bc311e16aae681e97d3fe6c489e158|public.model_attempts.idempotency_key text null=NO default=
 column|95ce799455ed75322b8a2da92b8484f1|public.handoffs.job_id uuid null=NO default=
+column|96ed5f0ef2ac5af8adaef9d46700f850|public.agent_checkpoints.phase text null=NO default=
 column|973c4a81dee74e37744cc738e97bdbb8|public.files.created_at timestamp with time zone null=NO default=now()
 column|97a2a8bd53ba287bc5a890ae8a9c5055|public.workspace_policies.spent_usd numeric null=NO default=0
+column|9883674504e770210f2f79e98ea42733|public.agent_sessions.iteration integer null=NO default=0
 column|988a602d4e9880ec9550e71a9c1d435c|public.runs.ended_at timestamp with time zone null=YES default=
 column|98c345806ffff6f7bda74a8c5a75ef80|public.handoffs.from_agent_id uuid null=YES default=
 column|999e1ef624389045d1fa09fc07499722|public.files.job_id uuid null=YES default=
+column|9a589959f279f205b77171c602722fca|public.agent_events.id bigint null=NO default=nextval('agent_events_id_seq'::regclass)
 column|9ae7ae43606af3cf8229d2a2bedc351e|public.continuity_usage.provider text null=NO default=
 column|9bf1c2c8456ad0b946dc64a8c788bd74|public.tasks.title text null=NO default=
 column|9c827a9650ae258dad58401003745224|public.jobs.project_id uuid null=YES default=
+column|9c9e72e020bc592429a0e95ab6298b98|public.agent_sessions.provider_switches integer null=NO default=0
 column|9cb3c8ac71fad0d1b2cb8b39c8132327|public.workspace_budget_reservations.workspace_id uuid null=NO default=
 column|9da6d0cc55c38b1e536abf33ca5bada0|public.jobs.final_summary text null=YES default=
+column|9f2bb14d3fb1c8414dff1dea8f234b4e|public.provider_status.updated_at timestamp with time zone null=NO default=now()
 column|9f6303fadd66724009f01d124319d2d0|public.continuity_checkpoints.owner_provider text null=NO default=
 column|a10233762d7835a57d5251acdd224502|public.memory.created_at timestamp with time zone null=NO default=now()
+column|a17d3691e05298c1daa62a161c3be228|public.agent_sessions.plan jsonb null=NO default='[]'::jsonb
 column|a303a704c489994b5cf5e1cdc593fb1f|public.tool_executions.started_at timestamp with time zone null=NO default=now()
 column|a32876bf9a119a79dc9ae6707da0f88d|public.continuity_checkpoints.created_at timestamp with time zone null=NO default=now()
 column|a39789d124a6c0d450e45173c9c5f377|public.continuity_tasks.lease_token uuid null=YES default=
 column|a482814135f9bc2de01a3ab71393cee0|public.model_attempts.provider text null=NO default=
+column|a4d60414d71a7e0e7d3fd094475556b3|public.provider_status.verified_at timestamp with time zone null=YES default=
 column|a64fc9d3446399800b5db6b9cd8f2a90|public.workspace_policies.max_request_budget_usd numeric null=NO default=
 column|a6d59ecf602258e90826e716434009b5|public.model_attempts.stage text null=NO default=
+column|a6ec6040a9b2a657b5b4141f6170037f|public.agent_sessions.started_at timestamp with time zone null=YES default=
 column|a7b7024fbb22891edc30a9225c7d3afc|public.memory.id uuid null=NO default=gen_random_uuid()
 column|a907b06515fe101991d26dd5a84cf4e1|public.workspace_budget_reservations.reserved_usd numeric null=NO default=
 column|a9f7b95023e000b405c28fa75f227d6f|public.tool_executions.action text null=NO default=
 column|aab736be33203875d6baf7cd9f5fb83e|public.continuity_tasks.spent_usd numeric null=NO default=0
 column|aad0fe3140c3ed6b0b74161e916a2445|public.memory.scope text null=NO default='global'::text
 column|aaedea0ea8bfdfee8e4fe972023325b1|public.runs.agent_id uuid null=NO default=
+column|ab2bfda4c52225d9f52c01da07dbba70|public.agent_approvals.decided_by text null=YES default=
 column|ab4c7a241cf67aa1d2d04f2b1e983859|public.model_attempts.id uuid null=NO default=gen_random_uuid()
+column|ac5ace02141f152cdc60c2916d6797a3|public.agent_events.created_at timestamp with time zone null=NO default=now()
 column|ad5fddf53a3704a3fdd2915d396c979b|public.tasks.attempts integer null=NO default=0
 column|ae1ef3cacbb11993fada12cc9dd3e888|public.workspace_budget_reservations.status text null=NO default='reserved'::text
 column|ae962966734c19c181eed418180faa1d|public.continuity_tasks.repository text null=NO default=
 column|ae9c293df78b9873f5a2ce39b1183b00|public.files.storage_path text null=NO default=
 column|aee8d8b54a9ff1a34e19212e78cfa9e8|public.continuity_handoffs.task_id uuid null=NO default=
+column|af0e93f70b73f90eda1357f2579b6d8c|public.agent_sessions.result jsonb null=YES default=
+column|b064b7c42af0a43a33e1237f2a68c5a5|public.provider_status.input_tokens_total bigint null=NO default=0
 column|b183faf38c638a216ab144202be2ae10|public.events.type text null=NO default=
 column|b239ffd5b5fa83f0e1db9271311d8197|public.runs.job_id uuid null=NO default=
+column|b240a4c73c3b33d70e54c8594e7bdbdd|public.provider_status.last_success_at timestamp with time zone null=YES default=
 column|b326caec566e900b816af3ba4ff1d162|public.files.mime_type text null=YES default=
 column|b36fb21b952772fd031463f557f42c0d|public.handoffs.to_task_id uuid null=YES default=
+column|b37267df5369ad8142c344e6626e1352|public.provider_status.cost_usd_total numeric null=NO default=0
+column|b3cb4c08ad091ab1c6d509107f001b3b|public.agent_checkpoints.session_id uuid null=NO default=
 column|b4b5ba8f3d747c1fcaf78d9b9652b53a|public.tasks.brief text null=NO default=''::text
+column|b65e2504e34bc02b7cbd4f9e542385c8|public.agent_sessions.previous_route text null=YES default=
+column|b801fad055bfac77ef02c3aeea127570|public.agent_approvals.note text null=YES default=
 column|b83ed8b621a2fc3849d26d10a814ad9e|public.continuity_usage.stage text null=NO default=
 column|b851d567d08707e1316051bfea17b8f5|public.agents.name_ar text null=YES default=
 column|b9013ee7caa861276978522676908918|public.model_attempts.run_id uuid null=NO default=
 column|b9892f7bacd7fb211a38debddc653109|public.tool_executions.max_retries smallint null=NO default=0
 column|ba5a11ed3278380fc8ed6a0dd4657c96|public.continuity_usage.request_id text null=YES default=
 column|baa029dc88960c25d5347f683a651ead|public.continuity_events.task_id uuid null=NO default=
+column|bab0d28cf0cf84e85b46edba9e9001e1|public.agent_approvals.action text null=NO default=
 column|bb7e2dabdc44a0a36a3a12be30acf565|public.continuity_tasks.base_branch text null=NO default=
 column|bb9c7c66107c73eabf163775bbcc6a85|public.tasks.job_id uuid null=NO default=
 column|be0c31372dc180cbcc7438d1b445a38f|public.continuity_checkpoints.sequence integer null=NO default=
 column|bec14ed8be8b5e340ad118aa88945d06|public.files.size_bytes bigint null=YES default=
 column|bf4a2145c912fcbbbfde80f50d5d261d|public.continuity_handoffs.checkpoint_id uuid null=NO default=
 column|bf8fcf18e652e4a6269971628b7e7b5a|public.approvals.id uuid null=NO default=gen_random_uuid()
+column|bfc2613e923dda5933dcfb4aab152b05|public.provider_status.last_error_code text null=YES default=
+column|c0a81547e2c2ba633ad651e00216cd8b|public.agent_approvals.tool_name text null=NO default=
 column|c0be50d80650e6aa18074e82d6671b40|public.workspace_tool_grants.risk text null=NO default='low'::text
+column|c0f1197ec89439d6444697c1a727d2db|public.agent_approvals.call_id text null=NO default=
 column|c34b4879224b556aeaff6a7460c32c19|public.events.run_id uuid null=YES default=
+column|c498ab6b47123292b31b5bdd711a8586|public.agent_approvals.risk text null=NO default=
+column|c4aad3904345aa1e1039bc40b6051e26|public.provider_status.provider text null=NO default=
 column|c530bc6b18c11f979cd3d8b11ac211b4|public.files.agent_id uuid null=YES default=
 column|c53c3a0316fc21fc2a48a372181f5628|public.approvals.status text null=NO default='pending'::text
 column|c66bb006060e3df6497f4744ed41b2ae|public.jobs.created_at timestamp with time zone null=NO default=now()
 column|c6c580b5c5d6edbf3070fe2519eea47c|public.memory.source_job_id uuid null=YES default=
 column|c8591c16ba0393c918e4a376cc7aebf6|public.office_owners.created_at timestamp with time zone null=NO default=now()
+column|c89b4bd0f2dad89515a5b41d393f0699|public.agent_sessions.state jsonb null=NO default='{}'::jsonb
 column|c8a6afb201f4c1dadd8de1cb2070fc80|public.jobs.id uuid null=NO default=gen_random_uuid()
 column|c8fe696fdee8103a460459ce27c224f4|public.events.level text null=NO default='info'::text
+column|c9f0f24a11555737bf3ca87225d30e42|public.agent_checkpoints.plan jsonb null=NO default='[]'::jsonb
+column|ca6db46b292116d501f4ac97e3ea196d|public.agent_sessions.lease_token uuid null=YES default=
 column|cb1e1e931ddd1083854cf01a232eee0f|public.tool_executions.protocol_version text null=NO default=
+column|cb2de1117ca6c7401da401cd7ad3faaf|public.agent_sessions.updated_at timestamp with time zone null=NO default=now()
 column|cb7a788ec3f01b3c2346fdcc86d4af14|public.approvals.action_type text null=NO default=
 column|cb7fb3d1d85d2db8a42c64f74b9779a8|public.continuity_usage.cost_usd numeric null=NO default=0
 column|cbab19756309ef940b45f6113d760cfd|public.continuity_tasks.working_branch text null=NO default=
 column|cbc1993df21d30111e54d9310c40b161|public.workspace_tool_grants.tool_name text null=NO default=
+column|cc4a39f7a86ff3fde4d2858c62ec1713|public.agent_sessions.status text null=NO default='queued'::text
+column|cccf9018c5c596d467cc0a812e69f019|public.agent_sessions.lease_owner text null=YES default=
 column|ce43e0d76d30421902d311485cec5d32|public.continuity_events.id bigint null=NO default=
 column|cf2026cdb94756498c552f52569852a8|public.approvals.description text null=NO default=''::text
 column|cf31db569db456a2f7b363e43480768a|public.workspace_provider_permissions.workspace_id uuid null=NO default=
+column|cf92463e261b3dfe90b651f3d70359d5|public.agent_sessions.id uuid null=NO default=gen_random_uuid()
 column|cfa97ad22e3bf93e58e897e84b95aa22|public.runs.started_at timestamp with time zone null=NO default=clock_timestamp()
 column|d000932036a9ef4065a6072ab8da14ad|public.workspace_budget_reservations.idempotency_key text null=NO default=
 column|d00c061dc7300f0bec72afcb9b2beff2|public.approvals.agent_id uuid null=YES default=
@@ -229,8 +308,10 @@ column|d4f506432a7679abfecf440a5667c4a9|public.continuity_usage.output_tokens bi
 column|d525fac15ddff2fed139f1f94b4b7471|public.approvals.payload jsonb null=NO default='{}'::jsonb
 column|d580dc0280b38190b5d9521bb78884db|public.continuity_tasks.owner_provider text null=NO default=
 column|d6450b0d59ebc33aefc3db3ece2e65fa|public.continuity_tasks.updated_at timestamp with time zone null=NO default=now()
+column|d6766e4528d24ae7876b0f138f4a6bdc|public.provider_status.consecutive_failures integer null=NO default=0
 column|d6ccbf6a5f487a29342781981da30cf4|public.files.name text null=NO default=
 column|d71fe898a53e39a154fc451db6217e2b|public.continuity_usage.attempt integer null=NO default=
+column|d93feffb7fb69b3eda3026d3361613fe|public.agent_approvals.arguments_preview jsonb null=NO default='{}'::jsonb
 column|d9444dc0a9f26531e521685808e40316|public.handoffs.payload jsonb null=NO default='{}'::jsonb
 column|d9b886d4f2cdd783137f22b9b5b0b983|public.continuity_handoffs.created_at timestamp with time zone null=NO default=now()
 column|d9ca884963918425d23c7c85f617e7e9|public.continuity_events.level text null=NO default='info'::text
@@ -244,11 +325,13 @@ column|e45f8c23af14d02c6c5b162e57b7c071|public.workspace_policies.enabled boolea
 column|e6019bc65f647a8da42842ee6bfbb8fd|public.continuity_events.message text null=NO default=
 column|e67328c418e817670f5f8ffc9653b523|public.results.id uuid null=NO default=gen_random_uuid()
 column|e6bfe7cb6d81cc0410db965ac20499ef|public.workspace_budget_reservations.settled_at timestamp with time zone null=YES default=
+column|e7bbd964c5cc194c5708e0d8ff896db6|public.agent_approvals.broker text null=NO default=
 column|e85811beb83b65a8d25020ab9b258ce0|public.workspace_policies.reserved_usd numeric null=NO default=0
 column|ea1963639e1e38fb8d2680153cf1173f|public.continuity_checkpoints.payload jsonb null=NO default=
 column|ea875c8db3405fbdebf4a3672c0bd4bc|public.workspace_tool_grants.decision text null=NO default='deny'::text
 column|ec3ac638dc4121950865a462e260a472|public.tool_executions.broker text null=NO default=
 column|eca2ae2843c1de17d47ab6115bd429a0|public.events.agent_id uuid null=YES default=
+column|ed02936ed3d5fb75ea3edb458d690456|public.provider_status.last_error_at timestamp with time zone null=YES default=
 column|ee00d5f8a3c2f9b1b08ea61a023dde13|public.continuity_tasks.completed_at timestamp with time zone null=YES default=
 column|ee7457b49ecd80a72201a08ab78a5657|public.runs.tokens_out integer null=NO default=0
 column|eefa251abd629035e94c0babbedbff7b|public.jobs.completed_at timestamp with time zone null=YES default=
@@ -256,42 +339,61 @@ column|ef5ff28f05c9ec5cba267290de0e703c|public.jobs.token_budget integer null=NO
 column|ef73fc6c7220846716a325ad70ee210e|public.continuity_tasks.status text null=NO default='running'::text
 column|f0eb1e0cdd993b07369d2f05bc86b7aa|public.continuity_usage.created_at timestamp with time zone null=NO default=now()
 column|f0ffac91349316334bd5236f34b3a652|public.model_attempts.provider_attempt integer null=NO default=
+column|f19cbe61e4606d202572c2d14d9625e4|public.provider_status.failures_total bigint null=NO default=0
 column|f1fabbac19f810e6bb4219f892d7ce7b|public.events.to_agent_id uuid null=YES default=
 column|f20e22542cc625eb32fa3b191fc4a2a3|public.jobs.goal text null=NO default=
 column|f259eb182d567e0ebd3027e0c5e2415b|public.projects.created_at timestamp with time zone null=NO default=now()
+column|f262beb17367170f8ae2da28af22c77b|public.provider_status.output_tokens_total bigint null=NO default=0
 column|f26ce812ecb17fc50ba22dcb7261d4c9|public.events.job_id uuid null=YES default=
 column|f2ff4de08406e36361e8993b0c875081|public.workspace_provider_permissions.enabled boolean null=NO default=false
+column|f410ce22bebc4622202747ea03f8af74|public.agent_sessions.workspace_id uuid null=NO default=
 column|f4daf82775ed911ae7318bec86ca13eb|public.tool_executions.risk text null=NO default=
 column|f53d5b2fadd23f0114817e833954c5f0|public.continuity_tasks.stage text null=NO default='prepare'::text
+column|f58afe0126fef72dc16ce980729d2423|public.agent_sessions.base_branch text null=NO default='main'::text
 column|f5cbaf5f7f2f95e6c97a74c23158f8f6|public.continuity_tasks.lease_expires_at timestamp with time zone null=YES default=
+column|f603f7e3d34cc0d04c04290088b204a9|public.agent_events.type text null=NO default=
 column|f65572ad08251ed2016d4cf4048c5abb|public.continuity_tasks.expected_sha text null=NO default=
 column|f6a0f00ec2e485da49a99d44b8a47ad9|public.workspace_provider_permissions.provider text null=NO default=
+column|f7131f1c2bda7ff6da9fcfca1d0eaeb9|public.agent_sessions.config jsonb null=NO default='{}'::jsonb
+column|f746e2446b17dfce9b5514d1769d7863|public.agent_checkpoints.reason text null=NO default=
 column|f8719f2bb870205fe5abe1846257a40d|public.events.id bigint null=NO default=nextval('events_id_seq'::regclass)
 column|f947e6da0736f575039ca3b601591d79|public.tool_executions.cost_usd numeric null=NO default=0
 column|f9ee6e62d8832dc84e1e03f4abf38755|public.results.summary text null=NO default=''::text
 column|fb4d8a411339edd7060b5fa2e11d2ff4|public.model_attempts.provider_request_id text null=YES default=
+column|fba413b0184806543b1b4755028ffbb5|public.agent_checkpoints.transcript jsonb null=YES default=
 column|fc32f1560bfa611310e36e9100c4c803|public.agents.tagline text null=YES default=
 column|fcad86a602b922ef225aeec695d4d2de|public.continuity_usage.model text null=NO default=
 column|fccc282769354fc9580e50bcb75bfdc2|public.workspace_provider_permissions.models ARRAY null=NO default=
 column|fd0926d6e30b3656d754aabf35f0bca8|public.approvals.created_at timestamp with time zone null=NO default=now()
 column|ffdc23288f7d4788a178770e2b06a306|public.agents.is_active boolean null=NO default=true
 constraint|00fcd9489b51adfb58a51e6a9ac5dbcf|public.workspace_tool_grants workspace_tool_grants_risk_check CHECK ((risk = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+constraint|022923acc643c39109c3a8f9029b2a1f|public.agent_events agent_events_message_check CHECK ((char_length(message) <= 2000))
+constraint|0237c6708bc3b29c9de33d58c18806d2|public.agent_sessions agent_sessions_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'awaiting_approval'::text, 'blocked'::text, 'comp
 constraint|03f1c2eadd25857e68f6972510220da9|public.tool_executions tool_executions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON DELETE RESTRICT
+constraint|05d80a52c0b39b34f64fd3bbbad723eb|public.agent_sessions agent_sessions_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE RESTRICT
 constraint|08f67702577cab0297136650b85b601b|public.continuity_tasks continuity_tasks_pkey PRIMARY KEY (id)
 constraint|09d5b943513d5bf70be5cdcfc6d45103|public.continuity_usage continuity_usage_duration_ms_check CHECK ((duration_ms >= 0))
+constraint|0a2a856ba902756e0fd75367c769dab3|public.agent_sessions agent_sessions_job_id_key UNIQUE (job_id)
 constraint|0a9ad872099cff53cab39601634409e0|public.tool_executions tool_executions_pkey PRIMARY KEY (id)
+constraint|0b1c77a036e4c44d87008f7944aa2186|public.agent_sessions agent_sessions_previous_route_check CHECK (((previous_route IS NULL) OR (char_length(previous_route) <= 200)))
 constraint|0bab189ee3c22b2ac769193f9c66f825|public.model_attempts model_attempts_client_request_id_check CHECK (((client_request_id IS NULL) OR (char_length(client_request_id) <= 512)))
 constraint|0c47788adbf3291b6a83aae2ae0528bf|public.model_attempts model_attempts_provider_attempt_check CHECK ((provider_attempt > 0))
 constraint|0d9c32312d5b477470f383cdf53740f5|public.handoffs handoffs_from_task_id_fkey FOREIGN KEY (from_task_id) REFERENCES tasks(id) ON DELETE SET NULL
 constraint|0f05f1d0e1b769c930a5da21e3928527|public.tool_executions tool_executions_server_name_check CHECK ((server_name ~ '^[A-Za-z0-9_.-]{1,80}$'::text))
 constraint|0f5572401066b3ade76bdc66a51b2c59|public.workspace_tool_grants workspace_tool_grants_broker_check CHECK (((char_length(broker) >= 1) AND (char_length(broker) <= 80)))
 constraint|0f76526a64d82a7acd2c9c1ef3ad409c|public.jobs jobs_pkey PRIMARY KEY (id)
+constraint|10766fefd24c6a23e34c00e0ef7861ed|public.agent_sessions agent_sessions_created_by_check CHECK (((created_by IS NULL) OR (char_length(created_by) <= 320)))
 constraint|124eb9d9abaefda5dddf11a2423a0998|public.model_attempts model_attempts_route_check CHECK ((jsonb_typeof(route) = 'array'::text))
 constraint|1353273510ee936b74699db5be845fef|public.tool_executions tool_executions_secret_ref_check CHECK (((secret_ref IS NULL) OR (secret_ref ~ '^(env://[A-Z][A-Z0-9_]{2,127}|vault://[A-Za-z0-9][A-Za-z0
 constraint|13caeb8c4d423a16b0664cd3809eaf01|public.model_attempts model_attempts_provider_check CHECK (((char_length(provider) >= 1) AND (char_length(provider) <= 64)))
+constraint|13f357b2c9cba8a8ad800c1cb2333ff0|public.agent_checkpoints agent_checkpoints_pkey PRIMARY KEY (id)
 constraint|15d1dd4ec457220cd33fc7f89b58d127|public.approvals approvals_risk_check CHECK ((risk = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text])))
 constraint|164cbf7a54ddaa187983b76b30450876|public.tool_executions tool_executions_broker_check CHECK ((broker ~ '^[A-Za-z0-9_.-]{1,80}$'::text))
+constraint|1cad7ad3a248618ae2f1bcafae6e9be1|public.provider_status provider_status_rate_limit_check CHECK (((rate_limit IS NULL) OR (jsonb_typeof(rate_limit) = 'object'::text)))
+constraint|1cfc7d14296d69ecda35e13e51500112|public.agent_sessions agent_sessions_state_check CHECK ((jsonb_typeof(state) = 'object'::text))
+constraint|1d49361c0331af01757326b38b308d07|public.agent_sessions agent_sessions_work_branch_check CHECK (((work_branch IS NULL) OR (work_branch ~ '^[A-Za-z0-9._/-]{1,200}$'::text)))
 constraint|1dcb942cb53d8415898cc46e91550bd7|public.handoffs handoffs_from_agent_id_fkey FOREIGN KEY (from_agent_id) REFERENCES agents(id)
+constraint|1de8ed851fc2b85dcac20b9ca590a4b7|public.agent_checkpoints agent_checkpoints_reason_check CHECK ((reason = ANY (ARRAY['turn'::text, 'provider_switch'::text, 'approval'::text, 'phase'::text, 'com
 constraint|2125aa97e3e30ea0e23ab9f82a2d8640|public.handoffs handoffs_pkey PRIMARY KEY (id)
 constraint|22220b88136166807a3e1b4552c285e7|public.continuity_tasks continuity_tasks_owner_provider_check CHECK ((owner_provider = ANY (ARRAY['openai'::text, 'anthropic'::text])))
 constraint|24d8ef1f4027df475f8328232d9037fa|public.tool_executions tool_executions_workspace_id_idempotency_key_key UNIQUE (workspace_id, idempotency_key)
@@ -308,18 +410,29 @@ constraint|2e261daffed5c5aabe45dc01eb1a9130|public.runs runs_task_id_fkey FOREIG
 constraint|2e75af937d48b4e4646e686d72711923|public.model_attempts model_attempts_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['retry'::text, 'failover'::text, 'approv
 constraint|3151acea72980f4cff49dd95f6b46f25|public.workspace_tool_grants workspace_tool_grants_tool_name_check CHECK (((char_length(tool_name) >= 1) AND (char_length(tool_name) <= 160)))
 constraint|31c6565ffe4d519a7fb48f80b186ba45|public.memory memory_source_job_id_fkey FOREIGN KEY (source_job_id) REFERENCES jobs(id) ON DELETE SET NULL
+constraint|329435aa32b900354949f4052143b4a4|public.agent_approvals agent_approvals_risk_check CHECK ((risk = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+constraint|3392756f17032110bc46a74ab954f874|public.provider_status provider_status_pkey PRIMARY KEY (provider, model)
 constraint|364951bd33e930b504b8d9470286993f|public.tasks tasks_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'assigned'::text, 'running'::text, 'handoff'::text, 'review'::text, 'waiting_approva
 constraint|36c6722ca89cfe37d7adaea23c990727|public.jobs jobs_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
 constraint|379936629ec2d975165e37c23b3ef260|public.memory memory_scope_check CHECK ((scope = ANY (ARRAY['global'::text, 'project'::text, 'agent'::text, 'job'::text])))
 constraint|39058aa211bf8893782bed3495566929|public.workspace_provider_permissions workspace_provider_permissions_models_check1 CHECK ((NOT (models @> ARRAY['*'::text])))
 constraint|39953ead7f9d83515ee245e010eb7d0c|public.model_attempts model_attempts_reasoning_tokens_check CHECK ((reasoning_tokens >= 0))
+constraint|3b3aed37edd3ad502d5e752e16872089|public.agent_approvals agent_approvals_arguments_preview_check CHECK ((jsonb_typeof(arguments_preview) = 'object'::text))
+constraint|3be7712d97b77a2e809e4682413a94b0|public.agent_approvals agent_approvals_session_id_call_id_key UNIQUE (session_id, call_id)
 constraint|3d898000dc70346b0800bd793fbbb9ca|public.continuity_tasks continuity_tasks_working_branch_key UNIQUE (working_branch)
+constraint|3e8f16cd486cd9f59ca76b2e0efe6624|public.agent_sessions agent_sessions_budget_usd_check CHECK (((budget_usd > (0)::numeric) AND (budget_usd <= (500)::numeric)))
+constraint|3f3c079f68f756436644b5920f4f0630|public.agent_sessions agent_sessions_config_check CHECK ((jsonb_typeof(config) = 'object'::text))
+constraint|4052b43f4c7413de24dba0e72c38a658|public.agent_sessions agent_sessions_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE RESTRICT
 constraint|40c29461da4b2cb24fc29a4d1e0de5ae|public.workspace_policies workspace_policies_check CHECK (((max_request_budget_usd > (0)::numeric) AND (max_request_budget_usd <= monthly_budget_usd)))
+constraint|40ce84d3dd83db6f87c3cc1fca08dc4a|public.agent_sessions agent_sessions_next_action_check CHECK (((next_action IS NULL) OR (char_length(next_action) <= 4000)))
 constraint|41ab19e72a69ee10ec5866331eb97e55|public.tool_executions tool_executions_action_check CHECK ((action ~ '^[A-Za-z0-9_.-]{1,80}$'::text))
 constraint|4406b2b4dab484c8e5171a585b3e60ad|public.approvals approvals_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'expired'::text])))
 constraint|4615001260e759cf8310426c0f6bc1f7|public.tool_executions tool_executions_protocol_version_check CHECK (((char_length(protocol_version) >= 1) AND (char_length(protocol_version) <= 32)))
 constraint|47e588980a348d8ef9dac81e1040f525|public.workspace_tool_grants workspace_tool_grants_secret_ref_format CHECK (((secret_ref IS NULL) OR (secret_ref ~ '^(env://[A-Z][A-Z0-9_]{2,127}|vault://[A-Za-
 constraint|48dcb54d8db249b05514ea6c2ad9447d|public.continuity_usage continuity_usage_pkey PRIMARY KEY (id)
+constraint|4c87d357d0a334ab9c895a4c485faa50|public.agent_sessions agent_sessions_kind_check CHECK ((kind = 'coding'::text))
+constraint|4d1d7ea933d052cc7b986f80974a5e42|public.agent_sessions agent_sessions_spent_usd_check CHECK ((spent_usd >= (0)::numeric))
+constraint|4d234e5b930cf29000c686c3deaa741f|public.agent_checkpoints agent_checkpoints_sequence_check CHECK ((sequence > 0))
 constraint|4e70ee45c22da4d7b1404c475558aa32|public.continuity_events continuity_events_task_id_fkey FOREIGN KEY (task_id) REFERENCES continuity_tasks(id) ON DELETE CASCADE
 constraint|4f403f7dd3364519d49213d2d96e6027|public.events events_type_check CHECK ((type = ANY (ARRAY['job_created'::text, 'plan_created'::text, 'task_created'::text, 'agent_assigned'::text, 'agent_starte
 constraint|4fde4adc5f37ee3c8b63e486f8ad3967|public.model_attempts model_attempts_input_tokens_check CHECK ((input_tokens >= 0))
@@ -328,22 +441,36 @@ constraint|51fa61a4150324b401d799f844b9c6d6|public.approvals approvals_action_ty
 constraint|534fdb62607198ee7552fafa08523968|public.workspace_budget_reservations workspace_budget_reservations_reserved_usd_check CHECK ((reserved_usd > (0)::numeric))
 constraint|544500ce6b4a6a4e02293c60a4675516|public.model_attempts model_attempts_attempt_no_check CHECK ((attempt_no > 0))
 constraint|5488fc98a187367134e93201f535b625|public.workspace_policies workspace_policies_pkey PRIMARY KEY (workspace_id)
+constraint|573bf6ea16fdcba17e7598a61be4bb46|public.agent_sessions agent_sessions_phase_check CHECK ((phase = ANY (ARRAY['understand'::text, 'plan'::text, 'implement'::text, 'test'::text, 'debug'::text, 'r
 constraint|58bc8ef2c580b5d9cebdf4726204d935|public.model_attempts model_attempts_pkey PRIMARY KEY (id)
+constraint|58fea06edf4850942ad899024440115c|public.agent_sessions agent_sessions_pkey PRIMARY KEY (id)
+constraint|59423ca702fc2937917ed0c00fc78440|public.agent_approvals agent_approvals_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'consumed'::text, 'expired'
 constraint|5b5be3966db3981e69b2318350ed6ae8|public.continuity_tasks continuity_tasks_spent_usd_check CHECK ((spent_usd >= (0)::numeric))
 constraint|5b910bf713e03f41eeec07b0622e6267|public.model_attempts model_attempts_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|5bb32c4e7035e89ecd658e2da87d4d59|public.files files_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id)
 constraint|5d52bcfa135b67499871cf019b069626|public.tool_executions tool_executions_retry_count_check CHECK (((retry_count >= 0) AND (retry_count <= 3)))
+constraint|5dd63f4b7f37c007ac5a10377e5975e6|public.agent_sessions agent_sessions_tokens_out_check CHECK ((tokens_out >= 0))
+constraint|5f683fda4f6e202a23597753239faa88|public.agent_events agent_events_session_id_fkey FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+constraint|5f9719dee665a6d57a7a94814dca2e04|public.agent_approvals agent_approvals_arguments_sha256_check CHECK ((arguments_sha256 ~ '^[a-f0-9]{64}$'::text))
 constraint|5fb183fbd7a7aba43c7b45feceb93965|public.model_attempts model_attempts_run_id_idempotency_key_attempt_no_key UNIQUE (run_id, idempotency_key, attempt_no)
+constraint|5fcde250463728f1bb125ddc63fc78cf|public.provider_status provider_status_provider_check CHECK ((provider ~ '^[a-z][a-z0-9_-]{1,63}$'::text))
 constraint|632aef4d0fd32932df3634b830ca9388|public.jobs jobs_progress_check CHECK (((progress >= 0) AND (progress <= 100)))
 constraint|653c462bd26ce3c5f4f09ed4398936b6|public.tool_executions tool_executions_error_code_check CHECK (((error_code IS NULL) OR (error_code ~ '^[A-Z][A-Z0-9_]{2,80}$'::text)))
+constraint|66aa198751162e92a2d9d7311f6b513b|public.agent_sessions agent_sessions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON DELETE RESTRICT
 constraint|66df908c1206d0b108eddfe1939c0c6d|public.tool_executions tool_executions_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE RESTRICT
 constraint|68f5b53ba8e5a5045223a6a35e8ca44b|public.tasks tasks_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|69c2ba92c26a32ea6d70eb6b61a189b2|public.workspace_policies workspace_policies_spent_usd_check CHECK ((spent_usd >= (0)::numeric))
+constraint|6a4b59b793589e3e65065151bd045395|public.provider_status provider_status_billing_class_check CHECK ((billing_class = ANY (ARRAY['included'::text, 'free'::text, 'promo'::text, 'paid'::text])))
 constraint|6ac28c739a3aed4931b742af1c07d723|public.workspace_policies workspace_policies_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES projects(id) ON DELETE CASCADE
+constraint|6e0c2e3bfa02adfe24b48e14c9b79687|public.agent_sessions agent_sessions_plan_check CHECK ((jsonb_typeof(plan) = 'array'::text))
+constraint|6f319b25a4b16dc3f91e26319b8f7956|public.agent_events agent_events_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text))
 constraint|75c76f4902a5c7545a6bab69a4055c97|public.handoffs handoffs_to_task_id_fkey FOREIGN KEY (to_task_id) REFERENCES tasks(id) ON DELETE SET NULL
+constraint|760aaba78bd9d65a4bbdca2a3bb793b2|public.agent_sessions agent_sessions_provider_switches_check CHECK ((provider_switches >= 0))
 constraint|77f523067680aee2638d2fea805e3146|public.workspace_provider_permissions workspace_provider_permissions_pkey PRIMARY KEY (workspace_id, provider)
 constraint|78cc4e189eb561c86046ba5b11f6052d|public.jobs jobs_status_check CHECK ((status = ANY (ARRAY['planning'::text, 'running'::text, 'waiting_approval'::text, 'blocked'::text, 'review'::text, 'complet
 constraint|79855e4a430d6f09d618472983590af1|public.tool_executions tool_executions_decision_check CHECK ((decision = ANY (ARRAY['auto'::text, 'approval'::text, 'deny'::text])))
+constraint|7b098cbfdbee8edf28ca8abd637af4fd|public.agent_sessions agent_sessions_base_branch_check CHECK ((base_branch ~ '^[A-Za-z0-9._/-]{1,200}$'::text))
+constraint|7b7ceb91d051101a851286c5482f751c|public.agent_approvals agent_approvals_action_check CHECK (((char_length(action) >= 1) AND (char_length(action) <= 80)))
 constraint|7cfe37acc203d5dc8c1438babf7f3e4f|public.tasks tasks_pkey PRIMARY KEY (id)
 constraint|7d916c912309c3aa317bffb27964f622|public.model_attempts model_attempts_provider_request_id_check CHECK (((provider_request_id IS NULL) OR (char_length(provider_request_id) <= 512)))
 constraint|7dc54f8ebae88823092e4043b46c4581|public.continuity_checkpoints continuity_checkpoints_pkey PRIMARY KEY (id)
@@ -353,30 +480,47 @@ constraint|8025a294af52babca0172d6b2f15ad40|public.model_attempts model_attempts
 constraint|80623e4f8eae56e440d0034cfcdcc267|public.workspace_policies workspace_policies_version_check CHECK ((version > 0))
 constraint|809c69886bf1bbe7ba889b1f3c71de12|public.tool_executions tool_executions_tool_name_check CHECK ((tool_name ~ '^[A-Za-z0-9_.-]{1,128}$'::text))
 constraint|809ed80896027d4969ae4bea3e6929c5|public.results results_format_check CHECK ((format = ANY (ARRAY['markdown'::text, 'json'::text, 'html'::text, 'text'::text])))
+constraint|80efc0469c590e8405b1434871f29901|public.agent_checkpoints agent_checkpoints_git_head_check CHECK (((git_head IS NULL) OR (git_head ~ '^[0-9a-f]{40}$'::text)))
 constraint|81eac6c9ac7e3c7595aa95875b4bba54|public.agents agents_model_tier_check CHECK ((model_tier = ANY (ARRAY['light'::text, 'standard'::text, 'deep'::text])))
 constraint|82714ac8abd12a7aec9112030984574f|public.events events_pkey PRIMARY KEY (id)
 constraint|84abce38ed3ce28b19ddf6d892d65069|public.tasks tasks_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id)
 constraint|84acda1bb558d63da11f7276fb78d0d2|public.model_attempts model_attempts_duration_ms_check CHECK ((duration_ms >= 0))
+constraint|84c3d59051892162d1a9f8ae0ca1a716|public.agent_sessions agent_sessions_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE RESTRICT
+constraint|8595943a3e49832a5da7d522fa568f77|public.agent_sessions agent_sessions_repository_check CHECK ((repository ~ '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$'::text))
+constraint|8a18dfed89ecd2934760f045084aa447|public.agent_sessions agent_sessions_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT
 constraint|8b0e6aec3edbcd8f92913e2b6cde52fe|public.workspace_tool_grants workspace_tool_grants_decision_check CHECK ((decision = ANY (ARRAY['auto'::text, 'approval'::text, 'deny'::text])))
 constraint|8c556950828dad15e9db3d8f535c3763|public.tool_executions tool_executions_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT
 constraint|8de73f66d314e16b7a040b8865c7c114|public.events events_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE SET NULL
+constraint|908a46f3c2df24e2d743809c119b1541|public.agent_sessions agent_sessions_blocker_check CHECK (((blocker IS NULL) OR (char_length(blocker) <= 4000)))
 constraint|93954ae89811bc1bfd5845bd3c409f36|public.approvals approvals_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|95f70fcd7586cf7372ba2fde87973669|public.results results_pkey PRIMARY KEY (id)
+constraint|97d758c353831b5edd4b6c1c14bb9188|public.agent_events agent_events_level_check CHECK ((level = ANY (ARRAY['info'::text, 'success'::text, 'warning'::text, 'error'::text])))
 constraint|98c55d2266bc54339a83299e47a02187|public.model_attempts model_attempts_stage_check CHECK (((char_length(stage) >= 1) AND (char_length(stage) <= 80)))
 constraint|99cc28f8caf76dfbf20ca2b788741afe|public.model_attempts model_attempts_cost_usd_check CHECK ((cost_usd >= (0)::numeric))
 constraint|99f2e61e645c603b710863029c2e76ed|public.workspace_provider_permissions workspace_provider_permissions_provider_check CHECK ((provider ~ '^[a-z][a-z0-9_-]{1,63}$'::text))
+constraint|9a106794d261158e15fa649ce2e87bac|public.agent_events agent_events_type_check CHECK ((type = ANY (ARRAY['session'::text, 'phase'::text, 'plan'::text, 'model_turn'::text, 'provider_switch'::text,
 constraint|9a301b063a038649a2ec0dc6c36dfec3|public.tool_executions tool_executions_idempotency_key_check CHECK (((char_length(idempotency_key) >= 1) AND (char_length(idempotency_key) <= 512)))
+constraint|9b379810fe45280b19bd50d4241973c0|public.agent_sessions agent_sessions_tokens_in_check CHECK ((tokens_in >= 0))
 constraint|9d63004ab93838049e7ce2b1af94d179|public.tool_executions tool_executions_output_bytes_check CHECK (((output_bytes IS NULL) OR (output_bytes >= 0)))
+constraint|9d6d0f94a1d9c0384aab57a04a295ff6|public.agent_sessions agent_sessions_result_check CHECK (((result IS NULL) OR (jsonb_typeof(result) = 'object'::text)))
 constraint|9d7f29ad2cac177883e9e3f7ff322d7f|public.events events_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|9da47d0551ce5c22e89abe0e5de845aa|public.workspace_budget_reservations workspace_budget_reservations_status_check CHECK ((status = ANY (ARRAY['reserved'::text, 'settled'::text])))
+constraint|9f041fe1f2d704fa4bb37b00fd39051d|public.agent_sessions agent_sessions_task_id_key UNIQUE (task_id)
 constraint|9f254cc95b8a8f1faa9a6f98ba2a8d71|public.tasks tasks_progress_check CHECK (((progress >= 0) AND (progress <= 100)))
+constraint|a1634833d713f6aec67aca043b8cce25|public.provider_status provider_status_health_check CHECK ((health = ANY (ARRAY['healthy'::text, 'degraded'::text, 'rate_limited'::text, 'quota_exhausted'::text
 constraint|a1757855f11137ff833ab8b57f5998ea|public.agents agents_pkey PRIMARY KEY (id)
+constraint|a3efbd14d1cbde6442c6cc9605e7d3d8|public.provider_status provider_status_consecutive_failures_check CHECK ((consecutive_failures >= 0))
 constraint|a4bdd9d948d9e7e6d24484929b8fda00|public.workspace_budget_reservations workspace_budget_reservations_check CHECK ((((status = 'reserved'::text) AND (settled_at IS NULL) AND (actual_usd IS NULL))
 constraint|a614f4548844dd7ece8a6a5757d562c4|public.results results_kind_check CHECK ((kind = ANY (ARRAY['task'::text, 'final'::text])))
 constraint|a695d6ca33d29a320a4a6e812f7bbcd0|public.runs runs_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id)
+constraint|a9be12ac713cfc1d56579345eb7e7e21|public.agent_sessions agent_sessions_checkpoint_seq_check CHECK ((checkpoint_seq >= 0))
 constraint|aa4f7ddbfa449cc489d2316100120818|public.tool_executions tool_executions_cost_usd_check CHECK (((cost_usd >= (0)::numeric) AND (cost_usd <= 0.1)))
 constraint|aa9dc2dfc296d551b17db72a774cd536|public.model_attempts model_attempts_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 constraint|ab1d8e56c14f70cd3deb5e9ab391861d|public.continuity_tasks continuity_tasks_status_check CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'needs_human'::text])))
+constraint|ab3d5e32c57d53e7b215acd2cec9176c|public.agent_approvals agent_approvals_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON DELETE RESTRICT
+constraint|acc21c05c1f744a1999450bfa88baf0a|public.agent_sessions agent_sessions_title_check CHECK (((char_length(title) >= 1) AND (char_length(title) <= 200)))
+constraint|ad471ca93fb07eabfeab1b6649b0f287|public.agent_approvals agent_approvals_summary_check CHECK (((char_length(summary) >= 1) AND (char_length(summary) <= 2000)))
+constraint|aea680e498f4f345225e75cb0fb7ba50|public.agent_approvals agent_approvals_tool_name_check CHECK (((char_length(tool_name) >= 1) AND (char_length(tool_name) <= 128)))
 constraint|b17a60392c728c9597e3d60368c9c8e3|public.continuity_tasks continuity_tasks_budget_usd_check CHECK ((budget_usd > (0)::numeric))
 constraint|b26686a383012655e62ff6092fa75428|public.approvals approvals_pkey PRIMARY KEY (id)
 constraint|b38bd2b2305cb6f3946ae3609276137f|public.office_owners office_owners_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE
@@ -387,9 +531,12 @@ constraint|b8b97787b3d7a5d9d48d3d93349ebe93|public.model_attempts model_attempts
 constraint|b976d5ff5c4b70062c97760d8ddc28ff|public.tool_executions tool_executions_max_retries_check CHECK (((max_retries >= 0) AND (max_retries <= 3)))
 constraint|ba099cfc41cf61845a17c9e10f3662be|public.approvals approvals_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id)
 constraint|ba1220e91289f0717bb6313819a76164|public.tool_executions tool_executions_result_sha256_check CHECK (((result_sha256 IS NULL) OR (result_sha256 ~ '^[a-f0-9]{64}$'::text)))
+constraint|bbf0f76631412b5a133767312bbcdef8|public.agent_approvals agent_approvals_call_id_check CHECK (((char_length(call_id) >= 1) AND (char_length(call_id) <= 200)))
 constraint|bca0545e29fd0ee174bd7f068d509a0c|public.runs runs_pkey PRIMARY KEY (id)
 constraint|bd96ef4c7146427035a4ba21ca8d2009|public.model_attempts model_attempts_output_tokens_check CHECK ((output_tokens >= 0))
+constraint|c06a2ee7ceda1f0d3b4d6f3dfcafab8c|public.agent_checkpoints agent_checkpoints_session_id_sequence_key UNIQUE (session_id, sequence)
 constraint|c23c2534a18d6c139e7757ee35a0833c|public.events events_to_agent_id_fkey FOREIGN KEY (to_agent_id) REFERENCES agents(id)
+constraint|c2931db28c3af3d0e184853e72f211b0|public.agent_approvals agent_approvals_note_check CHECK (((note IS NULL) OR (char_length(note) <= 2000)))
 constraint|c437565c32b1fcaee1a05977d4a418fa|public.tool_executions tool_executions_check CHECK ((((status = 'running'::text) AND (decision = 'auto'::text) AND (ended_at IS NULL)) OR ((status = ANY (ARRAY[
 constraint|c48480a8af79d224c08572085a9f7c2b|public.results results_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 constraint|c4f3ed2cea834c45d5dc3f72c2c65a42|public.continuity_checkpoints continuity_checkpoints_task_id_sequence_key UNIQUE (task_id, sequence)
@@ -403,76 +550,109 @@ constraint|cd06335536fb9dd4932ec2c663cadfa8|public.approvals approvals_task_id_f
 constraint|cf0b4f25994370c97bf04b7314febeed|public.results results_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|cf660fab1f89475e23642a3bd4b3ca4e|public.continuity_events continuity_events_pkey PRIMARY KEY (id)
 constraint|d09f8500c8d5d3ce2c358909c003d370|public.workspace_tool_grants workspace_tool_grants_action_check CHECK (((char_length(action) >= 1) AND (char_length(action) <= 80)))
+constraint|d0db26f7c33a6ab5f4689bebd25c8eeb|public.agent_approvals agent_approvals_pkey PRIMARY KEY (id)
+constraint|d2675e092304238093775a7b50a0f1cd|public.agent_sessions agent_sessions_iteration_check CHECK ((iteration >= 0))
 constraint|d28be016242fbadb1dcd56f75b01360c|public.continuity_usage continuity_usage_task_id_fkey FOREIGN KEY (task_id) REFERENCES continuity_tasks(id) ON DELETE CASCADE
 constraint|d2a7de7e38a00f65514ec67df5b6825b|public.continuity_checkpoints continuity_checkpoints_task_id_fkey FOREIGN KEY (task_id) REFERENCES continuity_tasks(id) ON DELETE CASCADE
 constraint|d2c65ac34bc59fa791b6a82d573fb5b3|public.continuity_handoffs continuity_handoffs_checkpoint_id_fkey FOREIGN KEY (checkpoint_id) REFERENCES continuity_checkpoints(id)
+constraint|d47149d273c521a738d4023d5cb6c31f|public.agent_approvals agent_approvals_session_id_fkey FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
 constraint|d4a90a30370d39c41d306aab45094a2a|public.continuity_usage continuity_usage_attempt_check CHECK ((attempt > 0))
+constraint|d4dde208f4db52d2a28cd9f254a48a12|public.agent_sessions agent_sessions_run_id_key UNIQUE (run_id)
+constraint|d6ddcfc270c269070915d2ee40686c7b|public.agent_events agent_events_pkey PRIMARY KEY (id)
 constraint|d807c8d37e14721f98dcb81948aae7d4|public.events events_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+constraint|d8228a4f66a54f0bb14ec4a70f9ce14d|public.agent_sessions agent_sessions_current_route_check CHECK (((current_route IS NULL) OR (char_length(current_route) <= 200)))
 constraint|da11687395ca45a39f524310223bb9a4|public.handoffs handoffs_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|dc5900356c8f53eab8bdbe6ad22dd026|public.workspace_tool_grants workspace_tool_grants_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON DELETE CASCADE
 constraint|dc7d6bddf7668d7f0dd9e04a6d61726a|public.projects projects_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'archived'::text])))
 constraint|dedf29aa57bad71502275fa44a1b0673|public.workspace_budget_reservations workspace_budget_reservations_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON D
 constraint|deed3d12c01ae0c6cb8c4c9805bf229c|public.workspace_policies workspace_policies_reserved_usd_check CHECK ((reserved_usd >= (0)::numeric))
+constraint|df029010550df865643f50aa22403535|public.agent_sessions agent_sessions_objective_check CHECK (((char_length(objective) >= 12) AND (char_length(objective) <= 40000)))
 constraint|dfa8880d8f52055e1a500d137e8cde93|public.tool_executions tool_executions_status_check CHECK ((status = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text, 'approval_required'::text, '
+constraint|dfe8ae313921548d61c8f1aa9feed6b9|public.provider_status provider_status_model_check CHECK (((char_length(model) >= 1) AND (char_length(model) <= 200)))
 constraint|e059799815fa5d73890a5d2a4dbf125a|public.workspace_budget_reservations workspace_budget_reservations_idempotency_key_check CHECK (((char_length(idempotency_key) >= 1) AND (char_length(idempotenc
 constraint|e09761f213d509fc3ed7e2327a137205|public.files files_pkey PRIMARY KEY (id)
 constraint|e1bffd1c021454672908da58e9a8fcf5|public.continuity_checkpoints continuity_checkpoints_owner_provider_check CHECK ((owner_provider = ANY (ARRAY['openai'::text, 'anthropic'::text])))
 constraint|e21c0467730494759603759219c3aad3|public.office_owners office_owners_pkey PRIMARY KEY (user_id)
+constraint|e2461ed4090f4ec9e12e42c2bc7f73ae|public.agent_checkpoints agent_checkpoints_route_check CHECK (((route IS NULL) OR (char_length(route) <= 200)))
 constraint|e2859cb8043ea2b8339e21fd1be859b4|public.model_attempts model_attempts_model_check CHECK (((char_length(model) >= 1) AND (char_length(model) <= 160)))
+constraint|e5af2d53a80aa8ba1dd8216dbd670b26|public.agent_approvals agent_approvals_decided_by_check CHECK (((decided_by IS NULL) OR (char_length(decided_by) <= 320)))
 constraint|e7c0c80f288d1d0c5815a01543dcb336|public.workspace_provider_permissions workspace_provider_permissions_models_check CHECK ((cardinality(models) > 0))
 constraint|ea09cd252e48a78614a66b86a491c43d|public.handoffs handoffs_to_agent_id_fkey FOREIGN KEY (to_agent_id) REFERENCES agents(id)
 constraint|ea62d8c7e68128bf998c6c683f299832|public.model_attempts model_attempts_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+constraint|eb3a88ec00ca82b4c2f519ea6ee78f86|public.agent_checkpoints agent_checkpoints_session_id_fkey FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
 constraint|eb628489422331c5f70c7536e554fce8|public.workspace_provider_permissions workspace_provider_permissions_secret_ref_check CHECK ((secret_ref ~ '^(env://[A-Z][A-Z0-9_]{2,127}|vault://[A-Za-z0-9][A-
 constraint|ed7117a1ba65e364119b6ae289f2a5f3|public.events events_level_check CHECK ((level = ANY (ARRAY['info'::text, 'success'::text, 'warning'::text, 'error'::text])))
 constraint|ef2bc3b9afaf8a4a2ab649b28447e594|public.model_attempts model_attempts_status_check CHECK ((status = ANY (ARRAY['started'::text, 'succeeded'::text, 'failed'::text, 'blocked'::text])))
 constraint|efe9a4669c7af75ff560cc007a60866d|public.continuity_tasks continuity_tasks_idempotency_key_key UNIQUE (idempotency_key)
+constraint|eff46743af90a16587f6fb84b9b26155|public.agent_approvals agent_approvals_broker_check CHECK (((char_length(broker) >= 1) AND (char_length(broker) <= 80)))
 constraint|f0bc89db13647bd2e63272808dc16e72|public.agents agents_slug_key UNIQUE (slug)
 constraint|f126d3f79c0b71ad210614ab4836996d|public.files files_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
 constraint|f15c342658ef79cc4fd9e21b98d494a5|public.runs runs_status_check CHECK ((status = ANY (ARRAY['running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'timeout'::text])))
 constraint|f18a07544263c1a99360d4bfa30e4753|public.results results_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id)
 constraint|f205291476fdc058e33fbdc87745045d|public.workspace_provider_permissions workspace_provider_permissions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON
+constraint|f4223225eec18da23613a10987b70f2b|public.agent_sessions agent_sessions_error_code_check CHECK (((error_code IS NULL) OR (error_code ~ '^[A-Z][A-Z0-9_]{2,80}$'::text)))
 constraint|f5865c3bf4f5e857019f74c2e9423d69|public.continuity_handoffs continuity_handoffs_pkey PRIMARY KEY (id)
+constraint|f6153ebb1df8664276d6b13b5e2c4178|public.provider_status provider_status_last_error_code_check CHECK (((last_error_code IS NULL) OR (last_error_code ~ '^[A-Z][A-Z0-9_]{2,80}$'::text)))
+constraint|f63799ec0161bfbc27ef4bd9f7621566|public.agent_sessions agent_sessions_lease_owner_check CHECK (((lease_owner IS NULL) OR (char_length(lease_owner) <= 200)))
 constraint|f6693c47cab7144cfe40c33777b6a921|public.events events_from_agent_id_fkey FOREIGN KEY (from_agent_id) REFERENCES agents(id)
+constraint|f8e1c2a66cf461b63a11a9ee5204d543|public.agent_checkpoints agent_checkpoints_transcript_check CHECK (((transcript IS NULL) OR (jsonb_typeof(transcript) = 'object'::text)))
 constraint|faf73ee26dcd53928bb199a54f54a666|public.continuity_handoffs continuity_handoffs_task_id_fkey FOREIGN KEY (task_id) REFERENCES continuity_tasks(id) ON DELETE CASCADE
 constraint|fe33638322266c01bfd0692abcad6f57|public.projects projects_pkey PRIMARY KEY (id)
 constraint|ffac797d7e8ef9377a5f61575c329dbb|public.model_attempts model_attempts_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES projects(id) ON DELETE SET NULL
 function_acl|08351eeadab527d0d1b6a92ac48763c4|public.assert_workspace_execution_context(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid) service_role=X/postgres
 function_acl|08525a5b3ad97b20a3021cd9cc69fd37|private.requeue_stale_tasks(p_older_than interval) default
+function_acl|0d9e5376703b006def7abb32c4293aa7|public.finish_agent_session(p_session uuid, p_token uuid, p_status text, p_result jsonb, p_blocker text, p_error_code text) service_role=X/postgres
+function_acl|0fac705f52806f8158eb5127e11f0852|public.request_agent_session_cancel(p_session uuid) service_role=X/postgres
 function_acl|1b23bbdcb2281ac16c5b94a2c1b07b93|public.requeue_stale_tasks(p_older_than interval) service_role=X/postgres
 function_acl|33e1bb065e59414dfb21430b4f53420f|public.create_task(p_job uuid, p_agent_slug text, p_title text, p_brief text, p_sequence integer, p_depends_on uuid[], p_max_attempts integer) service_role=X/po
 function_acl|36d4bea7af21e3ccdc0a48f7658942c8|private.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) default
 function_acl|36f94ecba5cd0f4cb5b34c81fcf8654a|public.enforce_tool_execution_workspace() service_role=X/postgres
 function_acl|47b88979a08c25b63e7e882bb5711078|public.claim_next_task(p_agent_slug text) service_role=X/postgres
 function_acl|4864452345124bec40cbf0daa3548ba5|public.continuity_acquire_lease(p_task_id uuid, p_owner text, p_token uuid, p_seconds integer) service_role=X/postgres
+function_acl|4c37559da0c824589be4bed1ef5e2cf3|public.save_agent_checkpoint(p_session uuid, p_token uuid, p_reason text, p_patch jsonb, p_transcript jsonb, p_git_head text) service_role=X/postgres
+function_acl|4ce9f66af07dd34101d8612f676ace8a|public.decide_agent_approval(p_approval uuid, p_decision text, p_decided_by text, p_note text) service_role=X/postgres
 function_acl|4fcec53300cd3b44d398cff09adb0c2c|public.claim_next_job() service_role=X/postgres
 function_acl|54170f434a753b516167f50ee75b8a8b|public.continuity_transfer_owner(p_task_id uuid, p_from_owner text, p_to_owner text, p_token uuid, p_checkpoint_id uuid, p_verification jsonb) service_role=X/po
 function_acl|5726aff344b026eb393d3c596109ab4a|public.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) service_
+function_acl|5a3c9a3eeaef8c2afa1c9b8802024b60|public.claim_agent_session(p_worker text, p_lease_seconds integer) service_role=X/postgres
 function_acl|63efd34ce1d95605512dae26969e5ecd|public.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) service_role=X/postgres
+function_acl|66e6b5c85e807c2f4730de6e62f5a2dc|public.resume_agent_session(p_session uuid) service_role=X/postgres
+function_acl|7230f33ba2d21c058cbabb353409d8e0|public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_arguments_sha256 text) service_role=X/postgres
 function_acl|75171a64b6ac8c3b288a132517a62957|private.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) default
+function_acl|7de3b42b24dd17ce950030665a89c48a|public.request_agent_approval(p_session uuid, p_token uuid, p_call_id text, p_broker text, p_tool text, p_action text, p_risk text, p_summary text, p_arguments_
+function_acl|84f9f1e52133a727e6af3a17db606113|public.record_provider_outcome(p_provider text, p_model text, p_billing_class text, p_success boolean, p_health text, p_cooldown_until timestamp with time zone,
 function_acl|8acf5e0cf16c2f167738552fd27202d1|private.is_owner() authenticated=X/postgres
 function_acl|908a0161b6f1ab331a4c714f4f061c4a|public.finish_tool_execution(p_execution uuid, p_status text, p_duration_ms integer, p_cost_usd numeric, p_result_sha256 text, p_output_bytes integer, p_attempt
 function_acl|979be7ec00d955c976ca74bb31e194d0|public.enforce_model_attempt_workspace() service_role=X/postgres
 function_acl|990c256b6bbd218b83b8a4fb2d9ef111|private.create_task(p_job uuid, p_agent_slug text, p_title text, p_brief text, p_sequence integer, p_depends_on uuid[], p_max_attempts integer) default
+function_acl|a50ce8504309d8a599f872f944439db8|public.create_coding_session(p_workspace uuid, p_title text, p_objective text, p_repository text, p_base_branch text, p_budget_usd numeric, p_config jsonb, p_cr
 function_acl|a7492340813ecbd24fc33921cf4a1b8f|public.settle_workspace_budget(p_workspace uuid, p_reservation uuid, p_idempotency_key text, p_actual_usd numeric) service_role=X/postgres
 function_acl|ae1641f3b1d5668e92f222c6f367da7c|private.fail_task(p_task uuid, p_run uuid, p_error text) default
 function_acl|c36fcaa6f000027a77239dce03201055|public.begin_tool_execution(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid, p_agent uuid, p_broker text, p_tool text, p_action text, p_scopes text[], p_r
 function_acl|cf6f0427f71ead7bf0f2993d203fa86d|private.claim_next_job() service_role=X/postgres
 function_acl|d4095bf957857b1275a691716c66abd0|public.reserve_workspace_budget(p_workspace uuid, p_idempotency_key text, p_requested_usd numeric) service_role=X/postgres
+function_acl|d4b7718e34171be613b71b54e64e2c19|public.renew_agent_session_lease(p_session uuid, p_token uuid, p_lease_seconds integer) service_role=X/postgres
 function_acl|e3690fbd43137b7cf242c184bc42b6b2|private.emit(p_type text, p_message text, p_job uuid, p_task uuid, p_run uuid, p_agent uuid, p_from uuid, p_to uuid, p_level text, p_payload jsonb) default
 function_acl|ecb88226ed9cf35395c322927b0705b4|public.create_hub_project(p_name text) service_role=X/postgres
 function_acl|f24e5684a43ad817900596a0791ad6c1|public.fail_task(p_task uuid, p_run uuid, p_error text) service_role=X/postgres
 function_acl|fd9cdfccbfd95bd0fd6b903b57345c91|private.claim_next_task(p_agent_slug text) default
 function|006e800564bfe00a5e5d7336d5341a63|public.claim_next_job() md5=7e179046bacf3a0152134ef2be8f5669
+function|05be6b59e4f6498fc6bba0e506a82309|public.claim_agent_session(p_worker text, p_lease_seconds integer) md5=a3c00cd22e7f3e65305dcea220e2b467
 function|0e824d2033bf30c6979798a62610ade9|public.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) md5=e51624d920c5b460293081aa15554781
 function|1421d9797f86aac015a4b3811bb8fe23|public.fail_task(p_task uuid, p_run uuid, p_error text) md5=ad422bbe6faefb3d39ba55cc79b9e9da
 function|171ecaef2926a4275e495a1dae20188d|private.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) md5=9eb
 function|1770ba0455197b7af99127f0c88e4661|private.is_owner() md5=0aea3466243e35070ae97e94bdf7b8a8
+function|1776797e78ed506f729ea5cbb011fa2b|public.create_coding_session(p_workspace uuid, p_title text, p_objective text, p_repository text, p_base_branch text, p_budget_usd numeric, p_config jsonb, p_cr
 function|1f8f61edc42757d9ae90770e50719d87|private.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) md5=5efc8a1a3c3926a495155a7c4f497b95
 function|2300f1c17f90377775c8128b332178cd|public.create_task(p_job uuid, p_agent_slug text, p_title text, p_brief text, p_sequence integer, p_depends_on uuid[], p_max_attempts integer) md5=cde1db2ce0ae1
+function|2e1057dc862ddfc6a7aa098e5d3caa42|public.renew_agent_session_lease(p_session uuid, p_token uuid, p_lease_seconds integer) md5=94409818ea2241f4f5232c722e969b26
 function|3e5861969d8d882a7ab85c1187d0632c|public.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) md5=9e2c
+function|4beaa33fb75df0f6d9691236b069a72f|public.finish_agent_session(p_session uuid, p_token uuid, p_status text, p_result jsonb, p_blocker text, p_error_code text) md5=8bd7dfc0f3a9812979a37f00ef3ae640
 function|4f69243f5f03dc194baa50687724afb8|private.claim_next_task(p_agent_slug text) md5=0c51c98d857afa4fef22894d9eb57b69
+function|4f862778a4046031ed7da20ea28dccaf|public.request_agent_session_cancel(p_session uuid) md5=64ae64690186fd4b7aff2763458bdee1
 function|538ae5626f359a32bb7cd1eda9f3bd90|public.assert_workspace_execution_context(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid) md5=76883ccfa400f22b561bdb50a17f2d1f
 function|53ecf9efd95051393091250b05af26d3|public.claim_next_task(p_agent_slug text) md5=69ebe747e6f5841e3b0fe001485f0148
+function|6ccea8dc4a2d0ad62cd554dd946af5c4|public.decide_agent_approval(p_approval uuid, p_decision text, p_decided_by text, p_note text) md5=da13f87e9c7a05e5fb51d05c48ba4fc6
 function|77480f84e37af3c314f45edf2d30c203|public.finish_tool_execution(p_execution uuid, p_status text, p_duration_ms integer, p_cost_usd numeric, p_result_sha256 text, p_output_bytes integer, p_attempt
 function|856015072a3365f20c2c025a7aef9328|public.begin_tool_execution(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid, p_agent uuid, p_broker text, p_tool text, p_action text, p_scopes text[], p_r
 function|942f34772c6a1321ed9f69126b4cc221|public.continuity_transfer_owner(p_task_id uuid, p_from_owner text, p_to_owner text, p_token uuid, p_checkpoint_id uuid, p_verification jsonb) md5=1c91a3fc2c333
@@ -482,12 +662,17 @@ function|a19bb4a34040e68f75da53460b62aef9|private.emit(p_type text, p_message te
 function|a8529a0e3bcfc993e69dde9e44ffc11b|private.requeue_stale_tasks(p_older_than interval) md5=1fccc08d077818b9cad86ddd850a1ed1
 function|acccb14fced6b73ccfbcf9c90e9b803f|public.reserve_workspace_budget(p_workspace uuid, p_idempotency_key text, p_requested_usd numeric) md5=c4feb8eea2400022bbd7672802afddd5
 function|adae47c8ab36845ca18c3b6a07b29962|public.settle_workspace_budget(p_workspace uuid, p_reservation uuid, p_idempotency_key text, p_actual_usd numeric) md5=3f68bb3dfcd54c772e93e2f1433e73d1
-function|c702fd29baa4e8d072ee5d590c5b54db|public.create_hub_project(p_name text) md5=d01774e00b737eb2007bb31a6cd87376
+function|b17eb7edb59bcfcb49ce406673f74e32|public.resume_agent_session(p_session uuid) md5=fe891cfdb670ebcc1eec2bcb486e9e0f
+function|b8e4ac3efbb29be12245f8d078ba6cc3|public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_arguments_sha256 text) md5=b29846fbdcda655dd378b380c7107ffd
+function|b93f9174def89154e0cfd87761d602be|public.request_agent_approval(p_session uuid, p_token uuid, p_call_id text, p_broker text, p_tool text, p_action text, p_risk text, p_summary text, p_arguments_
 function|c8049f4cf72ae52ca6abb4c24ffd0275|public.enforce_model_attempt_workspace() md5=984efbd3b908b96ee1818f21b3f20c2f
 function|ce1217e2ced868e848a27dc5f4a91735|private.fail_task(p_task uuid, p_run uuid, p_error text) md5=d31bad1c8f4208537383a81a6ab2764e
 function|dcffc4fba40ac45136330aed9e1f1048|private.create_task(p_job uuid, p_agent_slug text, p_title text, p_brief text, p_sequence integer, p_depends_on uuid[], p_max_attempts integer) md5=ccb99185bf58
 function|df75c5a4afe73d6044c21cd585934b88|public.requeue_stale_tasks(p_older_than interval) md5=78e45404184454d399177ac4f5277939
+function|e733ea6402affa287e6946af688c19bb|public.save_agent_checkpoint(p_session uuid, p_token uuid, p_reason text, p_patch jsonb, p_transcript jsonb, p_git_head text) md5=a3d42aa25e9a88f7d059468a6d3466
 function|e8ed34ca5353a7a7926279d1835f35d7|private.claim_next_job() md5=3179b94d2c693957d89e648a515113e8
+function|f3887d934509814c95872439cb0fe0d2|public.record_provider_outcome(p_provider text, p_model text, p_billing_class text, p_success boolean, p_health text, p_cooldown_until timestamp with time zone,
+function|fc8f08ae150e8d9d56eb44da58ff058c|public.create_hub_project(p_name text) md5=723a201f96e53bf5da234deaf1686350
 index|0039e40c313b7ebfa7fb6097b182f183|public CREATE INDEX idx_memory_scope ON public.memory USING btree (scope, scope_ref)
 index|018de8b643ae85b75d60aabef70a918b|public CREATE INDEX model_attempts_workspace_started_idx ON public.model_attempts USING btree (workspace_id, started_at DESC) WHERE (workspace_id IS NOT NULL)
 index|07075db4c66e5606ad5b7946bfe7b9dc|public CREATE INDEX model_attempts_run_idx ON public.model_attempts USING btree (run_id, attempt_no)
@@ -495,6 +680,7 @@ index|0aa7ca9ba29e24bc29b5e719b0694ba1|public CREATE INDEX continuity_usage_task
 index|0f00cd903a8dc11ea91e64722d2bbf35|public CREATE UNIQUE INDEX workspace_policies_pkey ON public.workspace_policies USING btree (workspace_id)
 index|0f80f836d8a9352fc5430929b14e5516|public CREATE INDEX workspace_budget_reservations_open_idx ON public.workspace_budget_reservations USING btree (workspace_id, created_at) WHERE (status = 'reser
 index|144d2ede49df72d81b234fe1443caae4|public CREATE UNIQUE INDEX events_pkey ON public.events USING btree (id)
+index|1d038256d016cc966bc3d1b3c2b6c6b8|public CREATE UNIQUE INDEX agent_approvals_pkey ON public.agent_approvals USING btree (id)
 index|1f8a2afe644827d11af5a33217c071cd|public CREATE INDEX idx_runs_task ON public.runs USING btree (task_id)
 index|2114a7a1363d9639b8a6408e4e586c88|public CREATE INDEX idx_tasks_ready ON public.tasks USING btree (job_id, status, sequence)
 index|22c79ba85f42c20afc682869764ee11a|public CREATE INDEX tool_executions_task_run_idx ON public.tool_executions USING btree (task_id, run_id)
@@ -507,14 +693,17 @@ index|3c487f7755c7d3e819afc42e83f37ddd|public CREATE UNIQUE INDEX projects_pkey 
 index|411a2183790d7c86721eb6898f53cbeb|public CREATE INDEX idx_approvals_status ON public.approvals USING btree (status, created_at DESC)
 index|4a7e4319951f3c9bc8b9055213e6dc4b|public CREATE UNIQUE INDEX handoffs_pkey ON public.handoffs USING btree (id)
 index|4b906ddbe87d52adf4397d1e4907d29a|public CREATE UNIQUE INDEX tool_executions_pkey ON public.tool_executions USING btree (id)
+index|4c600bf31353b56ae7081c5b8b0ac784|public CREATE UNIQUE INDEX agent_sessions_job_id_key ON public.agent_sessions USING btree (job_id)
 index|4ffeed990ead7cd6f6872371e519dcaa|public CREATE UNIQUE INDEX files_pkey ON public.files USING btree (id)
 index|50e3ff1290432d0cdd4c22dc60193612|public CREATE UNIQUE INDEX approvals_pkey ON public.approvals USING btree (id)
 index|539cc8f39409d9c0c5a4c2f653f491e5|public CREATE INDEX model_attempts_job_started_idx ON public.model_attempts USING btree (job_id, started_at DESC)
 index|53ed930b19563f0759350fbae84885a7|public CREATE UNIQUE INDEX tool_executions_workspace_id_idempotency_key_key ON public.tool_executions USING btree (workspace_id, idempotency_key)
+index|5a92831d96fb344e0c343fe4661be4aa|public CREATE UNIQUE INDEX agent_sessions_pkey ON public.agent_sessions USING btree (id)
 index|639db264742367f8a7b24391b25b7b85|public CREATE INDEX idx_runs_job ON public.runs USING btree (job_id)
 index|6489efde52166b8d89dd3535719a61a3|public CREATE UNIQUE INDEX continuity_events_pkey ON public.continuity_events USING btree (id)
 index|67f70ea4cb2a46e82446017ae5d2d657|public CREATE INDEX idx_approvals_job ON public.approvals USING btree (job_id)
 index|6a0d0ad34855b983718be48543caa975|public CREATE INDEX continuity_events_task_id_idx ON public.continuity_events USING btree (task_id)
+index|6ba521aec376f7b3c3921880ddbe501a|public CREATE UNIQUE INDEX agent_sessions_run_id_key ON public.agent_sessions USING btree (run_id)
 index|6c713ba976032d90ada5739312ca75e6|public CREATE INDEX idx_events_agent ON public.events USING btree (agent_id)
 index|6fab48d52af3bfdfd4560998aac0e84e|public CREATE INDEX idx_memory_key ON public.memory USING btree (key)
 index|70e688a95b3db953584d520dfe3b0be2|public CREATE UNIQUE INDEX agents_pkey ON public.agents USING btree (id)
@@ -528,25 +717,33 @@ index|7c6f844c5fc31dad1275f90580946295|public CREATE INDEX idx_events_id_desc ON
 index|7d0895be4ca9493ddc8811390fbc2b32|public CREATE UNIQUE INDEX continuity_handoffs_pkey ON public.continuity_handoffs USING btree (id)
 index|845a70d88db8ea9b8ca83b91a4cf14df|public CREATE UNIQUE INDEX continuity_tasks_idempotency_key_key ON public.continuity_tasks USING btree (idempotency_key)
 index|8544ee4439029736067365ef7c5b6205|public CREATE INDEX idx_results_job ON public.results USING btree (job_id)
+index|85667a48aa548f8720c850d04787bbdf|public CREATE UNIQUE INDEX agent_sessions_task_id_key ON public.agent_sessions USING btree (task_id)
 index|87944e8e7dde744a45f8ab151d8df75e|public CREATE INDEX workspace_tool_grants_lookup_idx ON public.workspace_tool_grants USING btree (workspace_id, broker, tool_name, action) WHERE enabled
 index|8914b93e098a350a2a4c070a944f5fcb|public CREATE UNIQUE INDEX jobs_pkey ON public.jobs USING btree (id)
 index|89d518a6e278d8a3efcddedc61c584a5|public CREATE INDEX idx_jobs_status ON public.jobs USING btree (status, created_at DESC)
+index|944a8570ea8d214e572b1e9089b29138|public CREATE UNIQUE INDEX agent_events_pkey ON public.agent_events USING btree (id)
 index|9a6e9a0faa6ece9b8ad1887caf82fd8f|public CREATE UNIQUE INDEX memory_pkey ON public.memory USING btree (id)
+index|9b32f702b03d901e7eec4ca98e5b9472|public CREATE INDEX agent_sessions_workspace_idx ON public.agent_sessions USING btree (workspace_id, created_at DESC)
 index|a033d5cba255f97ed942ddd086f5ee1e|public CREATE INDEX idx_tasks_job ON public.tasks USING btree (job_id)
 index|a3f7dcc51711ad1c9997d78139ed9c99|public CREATE UNIQUE INDEX continuity_tasks_working_branch_key ON public.continuity_tasks USING btree (working_branch)
+index|a7c11dd797d23f17c1206fd3e4c9c6b5|public CREATE UNIQUE INDEX agent_checkpoints_session_id_sequence_key ON public.agent_checkpoints USING btree (session_id, sequence)
 index|a90b51d84afa4d59f5bd606edabf983c|public CREATE INDEX idx_tasks_queued ON public.tasks USING btree (status, sequence, created_at) WHERE (status = 'queued'::text)
 index|a917ac09235e0b82985a9ad6003af84a|public CREATE UNIQUE INDEX workspace_budget_reservations_pkey ON public.workspace_budget_reservations USING btree (id)
 index|b1483fb7a3734a7d09a07f01041417c2|public CREATE UNIQUE INDEX workspace_budget_reservations_workspace_id_idempotency_key_key ON public.workspace_budget_reservations USING btree (workspace_id, ide
 index|b15c9079fa6f7b6f7d1e08f79634ada6|public CREATE UNIQUE INDEX model_attempts_run_id_idempotency_key_attempt_no_key ON public.model_attempts USING btree (run_id, idempotency_key, attempt_no)
+index|b3bd4d9ce2078ebfa9b0c54be1d84bfb|public CREATE INDEX agent_approvals_pending_idx ON public.agent_approvals USING btree (status, requested_at) WHERE (status = 'pending'::text)
 index|b4042f6770b5570249a8bbe7821d6726|public CREATE UNIQUE INDEX continuity_usage_request_id_key ON public.continuity_usage USING btree (request_id)
 index|b5d0aa143e8c4da60fa4a132d8736e17|public CREATE UNIQUE INDEX results_pkey ON public.results USING btree (id)
 index|ba8d3891f82b580d5cf161ee24f42335|public CREATE INDEX idx_events_type ON public.events USING btree (type)
+index|bbf1443ad9566abb142af5778e06df13|public CREATE UNIQUE INDEX provider_status_pkey ON public.provider_status USING btree (provider, model)
 index|bcecad99357c383aedc51d1cc709958e|public CREATE INDEX tool_executions_job_idx ON public.tool_executions USING btree (job_id, started_at DESC)
 index|c272e399574463918404866bfd52b108|public CREATE INDEX idx_results_task ON public.results USING btree (task_id)
 index|c40ef84e2a6eac51e7448c8ec52024fa|public CREATE INDEX idx_handoffs_job ON public.handoffs USING btree (job_id, created_at DESC)
 index|c5268b9648ac60aef37491ef8976c3bd|public CREATE UNIQUE INDEX office_owners_pkey ON public.office_owners USING btree (user_id)
 index|c7297f052c99ac034e87d312796fcfdd|public CREATE INDEX continuity_handoffs_checkpoint_id_idx ON public.continuity_handoffs USING btree (checkpoint_id)
+index|c8cade0959900ea053b6fa6d48d1ff8a|public CREATE UNIQUE INDEX agent_checkpoints_pkey ON public.agent_checkpoints USING btree (id)
 index|ce437a0cd7cf63b7b1601099dc21d69b|public CREATE UNIQUE INDEX tasks_pkey ON public.tasks USING btree (id)
+index|ced0a3909feb38304d1d9279bdc5fb5c|public CREATE UNIQUE INDEX agent_approvals_session_id_call_id_key ON public.agent_approvals USING btree (session_id, call_id)
 index|cf7b6e4d90f430f69edf8bf9503b0be6|public CREATE UNIQUE INDEX model_attempts_pkey ON public.model_attempts USING btree (id)
 index|d11474a7386bdadda040ad7f7ad1d11f|public CREATE UNIQUE INDEX workspace_tool_grants_pkey ON public.workspace_tool_grants USING btree (workspace_id, broker, tool_name, action)
 index|d269fc86bc463617135bc4e56626fe35|public CREATE INDEX idx_events_job_time ON public.events USING btree (job_id, created_at DESC)
@@ -554,8 +751,10 @@ index|d419aaf20dc9a9818bf6e4d321e3ede6|public CREATE UNIQUE INDEX continuity_usa
 index|d7dce5d518cb513312c909d5ceaaf9fb|public CREATE INDEX idx_files_job ON public.files USING btree (job_id)
 index|e1c574ba38fb4c419563b21cc2a1c85d|public CREATE INDEX model_attempts_task_started_idx ON public.model_attempts USING btree (task_id, started_at DESC)
 index|eb796366aafde1dbf6d7ae90ee41aa45|public CREATE UNIQUE INDEX workspace_provider_permissions_pkey ON public.workspace_provider_permissions USING btree (workspace_id, provider)
+index|ec62132b698406cb86217b41ade1c9c0|public CREATE INDEX agent_sessions_queue_idx ON public.agent_sessions USING btree (status, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'running'::tex
 index|f1edfbe2cc80b20ea2c2232bc19d578b|public CREATE INDEX idx_tasks_agent ON public.tasks USING btree (agent_id)
 index|f791eb950a74f0e9a5dfeee104ee5fae|public CREATE INDEX tool_executions_open_idx ON public.tool_executions USING btree (status, started_at) WHERE (status = 'running'::text)
+index|f8f766db67da90d3ee5372e8ca0bccc3|public CREATE INDEX agent_events_session_idx ON public.agent_events USING btree (session_id, id)
 policy|011cda4c782aea155c3a0e7898816442|public.handoffs owner_only_handoffs ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
 policy|09c5ff129b2856b67dded62f70187e32|public.projects owner_only_projects ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
 policy|0b444f462ec0bb5dc514d8f820bdda7b|public.runs owner_only_runs ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
@@ -582,14 +781,19 @@ table_acl|15755150580ab0fe4fc3e949157cdd0c|public.files rls=t authenticated=arwd
 table_acl|1738651ed5dd0abe9fa1cf13d2ebbbc3|public.continuity_handoffs rls=t service_role=arwdDxt/postgres
 table_acl|18bedf646cc9f3330874b56f0cf9cb99|public.workspace_provider_permissions rls=t service_role=arw/postgres
 table_acl|1e053135d64a6b6ca5f488192f4d3c68|public.runs rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
+table_acl|2f7441673cedb61414de32ac37abc085|public.agent_approvals rls=t service_role=arw/postgres
+table_acl|311c747fabc9ead724bf1397f14e673b|public.provider_status rls=t service_role=arw/postgres
 table_acl|3cc1b37a9ced01a084e4de4b61c5b00c|public.events rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
+table_acl|47f395d980a3d9374d349e1c4b9869d2|public.agent_checkpoints rls=t service_role=arw/postgres
 table_acl|533525108b61261fbd33f38d012c77c7|public.workspace_tool_grants rls=t service_role=arw/postgres
 table_acl|53da44dc88aa9a91a659699882216abf|public.workspace_policies rls=t service_role=arw/postgres
 table_acl|56b53520e11a5b3b7f864ccc3598b585|public.office_owners rls=t anon=arwdDxt/postgres,authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
+table_acl|60aac2d902b5898c547cb4453d9fe712|public.agent_events rls=t service_role=arw/postgres
 table_acl|64f13d11737d5a7405ffa89f8223496b|public.workspace_budget_reservations rls=t service_role=arw/postgres
 table_acl|6d13e4e5ccadb5fbdec7bf60508b8a5a|public.tool_executions rls=t service_role=arw/postgres
 table_acl|7c9d0ec48b1c27f590e9037c6b8494a2|public.continuity_events rls=t service_role=arwdDxt/postgres
 table_acl|7f5894db995227a1835a1640cca79c53|public.agents rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
+table_acl|8456eea104b7f210707964ea283be0c5|public.agent_sessions rls=t service_role=arw/postgres
 table_acl|9ad7d15f5778b2a7acc00ea9cc3787cd|public.handoffs rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|b91aab968efbca65f241adaad37c6ba5|public.jobs rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|c2a159b528b9cc3ad068fc7da2756410|public.model_attempts rls=t service_role=arw/postgres

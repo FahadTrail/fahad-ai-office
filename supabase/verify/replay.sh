@@ -19,6 +19,11 @@ PSQL=("${RUN[@]}" "$PGBIN/psql" -h "$WORK" -U postgres -d postgres -X -q -v ON_E
 for file in "$ROOT"/supabase/migrations/*.sql; do
   "${PSQL[@]}" -1 -f "$file" >/dev/null 2>"$WORK/err" || { echo "FAILED: $(basename "$file")" >&2; cat "$WORK/err" >&2; exit 1; }
 done
+for file in "$ROOT"/supabase/verify/scenarios/*.sql; do
+  [[ -e "$file" ]] || continue
+  { echo 'begin;'; cat "$file"; echo 'rollback;'; } > "$WORK/scenario.sql"
+  "${PSQL[@]}" -f "$WORK/scenario.sql" >/dev/null 2>"$WORK/err" || { echo "SCENARIO FAILED: $(basename "$file")" >&2; cat "$WORK/err" >&2; exit 1; }
+done
 OUT=${1:-/dev/stdout}
 "${PSQL[@]}" -A -t -F '|' -f "$ROOT/supabase/verify/fingerprint.sql" > "$WORK/fp"
 cat "$WORK/fp" > "$OUT"
