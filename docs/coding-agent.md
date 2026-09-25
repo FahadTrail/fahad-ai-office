@@ -78,19 +78,32 @@ There is exactly one continuity architecture (`src/agent-state/` +
 ## Routing policy (Model Pool)
 
 `src/model-gateway/agentic/model-pool.js` declares every route with protocol,
-credential variable, billing class (`included`, `free`, `promo`, `paid`),
+credential variable, billing class (`free`, `included`, `promo`, `paid`),
 quality/cost tier, context window, pricing and privacy review. A route is
 routable only when its credential exists, its paid pricing is known, and
-(for private repositories) its privacy flag is set. The order is
-`CODING_BILLING_PRIORITY` (default `included,free,promo,paid`), then quality,
-then cost. Paid routes are excluded when their worst-case turn cost exceeds the
-remaining session budget, and each paid turn reserves budget against the
-workspace policy before the provider is called.
+(for private repositories) its privacy flag is set.
+
+`src/model-gateway/agentic/routing-policy.js` decides the order. Precedence:
+defaults < environment (`CODING_ROUTING_STRATEGY`, `CODING_BILLING_PRIORITY`) <
+workspace (`workspace_routing_policies`, Hub → Model pool → Project routing) <
+task (`agent_sessions.config.routing`, Hub → new task → Model routing).
+
+* Billing class order, default `free → included → promo → paid`.
+* Strategy: `economy` (default — cheapest route that meets the coding quality
+  floor `CODING_MIN_QUALITY_TIER`, default 4), `balanced` (best, then cheaper),
+  `quality` (strongest first).
+* `allowPaid=false` keeps a task on free/included/promo routes.
+* `excludedRoutes` and `routeMonthlyBudgetUsd` (per route, per workspace budget
+  period, measured from the `model_attempts` audit via `model_usage_summary`).
+* The model that currently owns a task keeps it while eligible; the order is
+  only consulted when it cannot continue.
+* Budgets: per task (`budget_usd`), per project/workspace (monthly policy with a
+  per-request maximum, reserved before each paid call), per route (caps above).
 
 | Provider | Protocol | Credential | Private-code flag | Notes |
 | --- | --- | --- | --- | --- |
 | Anthropic (`claude-opus-5`, `claude-sonnet-5`) | Messages API (official SDK) | `ANTHROPIC_API_KEY` | approved | production provider |
-| OpenAI (`CODING_OPENAI_MODEL`) | Responses (`store:false`) | `OPENAI_API_KEY` | approved | needs `OPENAI_PRICING_JSON` |
+| OpenAI (`gpt-5.3-codex`) | Responses (`store:false`) | `OPENAI_API_KEY` | approved | list price built in; other models need `OPENAI_PRICING_JSON` |
 | DeepSeek (`deepseek-flash`) | Chat Completions | `DEEPSEEK_API_KEY` | `DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED` | |
 | Qwen (`qwen3.8-flash`) | Chat Completions | `QWEN_API_KEY` + `QWEN_API_ENDPOINT` | `QWEN_API_PRIVATE_DATA_APPROVED` | Singapore workspace endpoint |
 | Kimi (`kimi-k2.7-code`) | Chat Completions | `KIMI_API_KEY` | `KIMI_API_PRIVATE_DATA_APPROVED` | |
@@ -105,12 +118,28 @@ credentials and are not used. `included` is reserved for providers whose terms
 explicitly allow programmatic use of an included allowance with a supported
 credential.
 
-The Hub **Model pool** view shows, per route: routing rank, class, availability
-(`AVAILABLE — EXACT QUOTA UNKNOWN`, `RATE LIMITED — RETRY AFTER hh:mm:ss`,
-`NOT CONFIGURED — …`, `… PRIVACY REVIEW PENDING`), provider-reported request
-windows (only when the provider sends rate-limit headers), usage and
-**estimated** cost, last success/error, tool and context capability, and privacy
-status. Nothing is estimated as quota.
+The Hub **Model pool** view (`GET /api/model-pool?workspaceId=`) shows, per
+route: status (`LIVE` after a real canary or real traffic, `CONFIGURED — NOT YET
+VERIFIED`, `RATE LIMITED`, `OFFLINE`, `DEGRADED`, `NOT CONFIGURED`), integration
+readiness (`READY`, `READY — CREDENTIAL REQUIRED`, `READY — ENDPOINT REQUIRED`,
+`READY — PRICING REQUIRED`), routing rank, billing class, tools/context and
+coding suitability, today's requests/tokens/**estimated** cost (UTC day, from
+`model_attempts`), lifetime totals (from `provider_status`, includes canaries),
+provider-reported rate-limit windows or `EXACT QUOTA NOT AVAILABLE`,
+cooldown/reset time, last success/error and active tasks. Nothing is estimated
+as quota.
+
+**Live canary**: Hub → Model pool → *Run live canary* (or insert a row into
+`provider_canary_runs`). The Office runtime, which holds the provider keys,
+claims it within a minute when idle and, with synthetic prompts only, runs a
+tool-calling round trip on every configured route, then a failover drill: the
+cheapest verified route starts the task, ONE labelled failure is injected
+before its second call, the checkpoint is written to the run row and read back,
+and the cheapest verified route of a different provider continues from it. The
+metadata-only report (per-route result, latency, tokens, estimated cost,
+rate-limit headers, provider error type, the attempt trace) is stored on the
+run; passing routes get `provider_status.verified_at`. A full run costs about
+$0.02.
 
 ## Policy: AUTO by default, APPROVAL by exception
 
@@ -145,26 +174,36 @@ consumed exactly once for exactly the approved arguments.
 
 ## Activation runbook (production)
 
-1. **Review and merge** the Coding Agent pull request (deploys the Hub UI and
-   the shared provider-health recording; nothing runs until steps 2–4).
-2. **Apply the migration** `supabase/migrations/20260925160000_coding_agent_foundation.sql`
-   through the protected database process, then confirm:
-   `npm run db:replay` locally, and the production fingerprint check in
-   `supabase/verify/README.md`.
-3. **Install the worker service** (root, once): `sudo bash ops/install-deploy.sh`
-   from a reviewed checkout. This installs the compose file with the opt-in
-   `coding-worker` service and does not restart anything.
-4. **Configure `.env`** (root-owned): `COMPOSE_PROFILES=coding`,
-   `CODING_GITHUB_TOKEN` (fine-grained token: contents + pull requests +
-   actions read, limited to the repositories the agent may change), optionally
-   `CODING_SUPABASE_ACCESS_TOKEN`, and any additional provider keys and privacy
-   flags. Then `docker compose up -d coding-worker` and check
-   `docker exec fahad-office-coding-worker node src/coding-agent/verify-isolation.js`.
-5. **Live canary**: `docker exec fahad-office-coding-worker node src/canary/agentic-canary.js --record`
-   verifies each routable model with a real tool-calling round trip and runs the
-   real failover drill (one injected, labelled failure).
-6. **First task** from the Hub → Coding Agent, e.g. a small documentation change
-   with “merge & deploy” unchecked.
+Already done: code merged and deployed, migrations applied and verified, live
+canary passed. Remaining (root on the VPS, once):
+
+1. Create a **fine-grained GitHub token**: GitHub → Settings → Developer
+   settings → Fine-grained tokens → *Only select repositories*: the repositories
+   the agent may change (e.g. `FahadTrail/fahad-ai-office`). Repository
+   permissions: **Contents: Read and write**, **Pull requests: Read and write**,
+   **Actions: Read**, **Checks: Read**, **Commit statuses: Read** (Metadata: Read
+   is automatic). Nothing else — not Workflows, not Administration.
+2. On the VPS:
+
+   ```sh
+   sudo rm -rf /root/fahad-ai-office-activate
+   sudo git clone --depth 1 https://github.com/FahadTrail/fahad-ai-office.git /root/fahad-ai-office-activate
+   sudo bash /root/fahad-ai-office-activate/ops/enable-coding-worker.sh
+   ```
+
+   The script checks `.env` (Supabase + at least one provider key) before
+   changing anything, asks for the token with hidden input, runs
+   `ops/install-deploy.sh` (installs the compose file with the opt-in
+   `coding-worker`; no restart), adds `COMPOSE_PROFILES=coding`, starts only the
+   worker, waits for it to be healthy and runs `verify-isolation.js`. Later
+   deployments recreate the worker with each new image automatically.
+3. Optional: `CODING_SUPABASE_ACCESS_TOKEN` (Supabase personal access token) in
+   `.env` enables the Supabase tools for sessions that allowlist a project.
+4. First task: Hub → Coding Agent → a small documentation change with
+   “merge & deploy” unchecked.
+
+Undo: `sudo docker compose -f /opt/fahad-ai-office/docker-compose.yml stop coding-worker`
+and remove the `COMPOSE_PROFILES`/`CODING_GITHUB_TOKEN` lines from `.env`.
 
 ## Verification in this repository
 
