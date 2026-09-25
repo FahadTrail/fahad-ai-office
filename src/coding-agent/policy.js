@@ -32,6 +32,8 @@ const SECRET_PATTERNS = Object.freeze([
   /\bsb_secret_[A-Za-z0-9_-]{16,}\b/,
   /\bsbp_[A-Za-z0-9]{20,}\b/,
   /\bAIza[0-9A-Za-z_-]{30,}\b/,
+  // Google AI Studio auth keys (Gemini API, 2026-05 onwards).
+  /\bAQ\.Ab[A-Za-z0-9._-]{30,}/,
   /\bxox[abp]-[A-Za-z0-9-]{10,}\b/,
   /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
   new RegExp(`\\b(?:${SECRET_ENV_NAMES.join('|')})\\s*[=:]\\s*['"]?[A-Za-z0-9_./+-]{12,}`, 'i'),
