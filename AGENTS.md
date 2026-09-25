@@ -32,6 +32,11 @@ Read it fully before changing anything. `CLAUDE.md` imports it.
 * Only `src/`, `package.json` and `package-lock.json` are shipped by a deploy.
   `Dockerfile`, `.dockerignore`, `docker-compose.yml` and `ops/deploy.sh` change
   on the server only via a reviewed root run of `ops/install-deploy.sh`.
+* Public Hub domain: Traefik routes `HUB_PUBLIC_HOST` and `HUB_EXTRA_PUBLIC_HOST`
+  from `.env` (compose labels). Change it only with
+  `sudo bash ops/set-hub-domain.sh <domain>`, which keeps the previous host as
+  the extra one. A canary report's `runtimeDiagnostics` shows the running
+  settings and HTTPS probes from inside the VPS, with no secrets.
 * Supabase project `zkzibipinjeswhdxnfgf` (`fahad-ai-office`). Secrets live only
   in the server's root-owned `.env`.
 
