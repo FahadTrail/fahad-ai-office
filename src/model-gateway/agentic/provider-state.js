@@ -153,7 +153,10 @@ export class SupabaseProviderStateStore {
       ...values,
     });
     // Health bookkeeping must never block model execution.
-    if (error) console.warn('[provider-state] could not record outcome:', error.message);
+    if (error && !this.warned) {
+      this.warned = true;
+      console.warn('[provider-state] could not record outcome (further warnings suppressed):', error.message);
+    }
   }
 }
 

@@ -11,7 +11,11 @@
     "canary:deepseek": "node src/canary/deepseek-canary.js",
     "canary:tool-broker": "node src/tool-broker/canary.js",
     "canary:qwen": "node src/canary/qwen-canary.js",
-    "test": "node --test"
+    "test": "node --test",
+    "coding-worker": "node src/coding-worker.js",
+    "canary:agentic": "node src/canary/agentic-canary.js",
+    "db:replay": "bash supabase/verify/replay.sh",
+    "verify:sandbox": "node src/coding-agent/verify-isolation.js"
   },
   "engines": {
     "node": ">=22"

@@ -129,3 +129,54 @@ test('model pool marks missing credentials, unknown pricing and privacy truthful
   assert.ok(pool.find((entry) => entry.provider === 'minimax').privacyApproved === false);
   assert.ok(pool.find((entry) => entry.provider === 'openrouter').unavailableReasons.includes('MODEL_NOT_CONFIGURED'));
 });
+
+test('the Office ModelGateway shares outcomes with durable provider state without depending on it', async () => {
+  const { ModelGateway } = await import('../src/model-gateway/gateway.js');
+  const { RoutingPolicy } = await import('../src/model-gateway/policy.js');
+  const shared = new MemoryProviderStateStore();
+  const adapter = (name, behavior) => ({ name, model: `${name}-model`, capabilities: ['text'], complete: behavior });
+  const gateway = new ModelGateway({
+    adapters: [
+      adapter('anthropic', async () => { throw Object.assign(new Error('x'), { status: 429 }); }),
+      adapter('deepseek', async () => ({ text: 'ok', usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.001 } })),
+    ],
+    routingPolicy: new RoutingPolicy({ allowedProviders: ['anthropic', 'deepseek'], failoverEnabled: true }),
+    maxAttemptsPerProvider: 1,
+    healthStore: shared,
+    sleepFn: async () => {},
+  });
+  const result = await gateway.execute({ prompt: 'p', systemPrompt: 's', model: 'claude-sonnet-5', idempotencyKey: 'k1', maxTurns: 1 });
+  assert.equal(result.provider, 'deepseek');
+  await new Promise((resolve) => setImmediate(resolve));
+  const snapshot = await shared.snapshot();
+  assert.equal(snapshot.get('anthropic:claude-sonnet-5').health, 'rate_limited');
+  assert.equal(snapshot.get('deepseek:deepseek-model').health, 'healthy');
+
+  const broken = { recordSuccess: async () => { throw new Error('table missing'); }, recordFailure: async () => { throw new Error('table missing'); } };
+  const tolerant = new ModelGateway({
+    adapters: [adapter('anthropic', async () => ({ text: 'fine', usage: {} }))],
+    routingPolicy: new RoutingPolicy(), healthStore: broken,
+  });
+  assert.equal((await tolerant.execute({ prompt: 'p', systemPrompt: 's', model: 'm', idempotencyKey: 'k2', maxTurns: 1 })).text, 'fine');
+});
+
+test('a failed pre-switch checkpoint prevents any call to the backup provider', async () => {
+  const primary = scripted([failure(503), failure(503)]);
+  const backup = scripted(['should never run']);
+  const gateway = new AgentTurnGateway({
+    pool: [route('a:m', { protocolClient: primary }), route('b:m', { protocolClient: backup })],
+    stateStore: new MemoryProviderStateStore(), sleepFn: async () => {},
+  });
+  await assert.rejects(gateway.turn({
+    tools: [], preferredRouteId: 'a:m', prepare: async () => ({ system: 'S', messages: [] }),
+    hooks: { onSwitch: async () => { throw new Error('checkpoint store unavailable'); } },
+  }), /checkpoint store unavailable/);
+  assert.equal(backup.calls.length, 0);
+});
+
+test('Qwen stays unroutable until its workspace endpoint is configured', () => {
+  const env = { QWEN_API_KEY: 'qwen-test-key-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true' };
+  assert.ok(createModelPool({ env }).find((entry) => entry.provider === 'qwen').unavailableReasons.includes('ENDPOINT_NOT_CONFIGURED'));
+  const configured = createModelPool({ env: { ...env, QWEN_API_ENDPOINT: 'https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions' } });
+  assert.deepEqual(configured.find((entry) => entry.provider === 'qwen').unavailableReasons, []);
+});

@@ -467,7 +467,7 @@ $$;
 
 -- Consumes an approved request exactly once for the exact arguments that
 -- were shown to the approver.
-create function public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_arguments_sha256 text)
+create function public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_tool text, p_arguments_sha256 text)
 returns boolean
 language plpgsql
 security invoker
@@ -477,7 +477,7 @@ begin
   update public.agent_approvals a
   set status = 'consumed', consumed_at = now()
   where a.id = p_approval and a.session_id = p_session and a.call_id = p_call_id
-    and a.arguments_sha256 = p_arguments_sha256 and a.status = 'approved';
+    and a.tool_name = p_tool and a.arguments_sha256 = p_arguments_sha256 and a.status = 'approved';
   return found;
 end;
 $$;
@@ -577,7 +577,7 @@ begin
     'public.finish_agent_session(uuid, uuid, text, jsonb, text, text)',
     'public.request_agent_approval(uuid, uuid, text, text, text, text, text, text, text, jsonb)',
     'public.decide_agent_approval(uuid, text, text, text)',
-    'public.consume_agent_approval(uuid, uuid, text, text)',
+    'public.consume_agent_approval(uuid, uuid, text, text, text)',
     'public.request_agent_session_cancel(uuid)',
     'public.resume_agent_session(uuid)',
     'public.record_provider_outcome(text, text, text, boolean, text, timestamptz, text, jsonb, bigint, bigint, numeric)'

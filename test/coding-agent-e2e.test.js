@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodingWorker } from '../src/coding-agent/runtime.js';
@@ -12,14 +12,20 @@ import {
 
 const branchFile = (bare, branch, path) => execFileSync('git', ['--git-dir', bare, 'show', `refs/heads/${branch}:${path}`]).toString();
 
-test('coding agent completes the lifecycle with a real handoff, CI repair, approval, merge and verification', { timeout: 120_000 }, async () => {
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0 && process.platform === 'linux';
+
+for (const sandboxMode of ['unisolated', 'isolated']) {
+test(`coding agent completes the lifecycle with a real handoff, CI repair, approval, merge and verification (${sandboxMode} sandbox)`, {
+  timeout: 120_000, skip: sandboxMode === 'isolated' && !isRoot && 'isolated mode requires container root',
+}, async () => {
   const root = mkdtempSync(join(tmpdir(), 'fahad-coding-e2e-'));
+  if (sandboxMode === 'isolated') chmodSync(root, 0o755);
   try {
     const { bare } = createFixtureRepo(root);
     const apis = fakeApis({ bare });
     const log = [];
     const { runtime, sessionStore, auditStore, providerStateStore, attempts } = localRuntime({
-      root, storePath: join(root, 'state.json'), pool: scriptedPool({ log }), fetchFn: apis.fetchFn,
+      root, storePath: join(root, 'state.json'), pool: scriptedPool({ log }), fetchFn: apis.fetchFn, sandboxMode,
     });
     const created = await sessionStore.createSession({
       workspaceId: WORKSPACE_ID, title: 'Fix add() bug', repository: REPOSITORY,
@@ -44,6 +50,8 @@ test('coding agent completes the lifecycle with a real handoff, CI repair, appro
     assert.equal(primaryState.health, 'rate_limited');
     const events = await sessionStore.listEvents(created.id);
     assert.ok(events.some((event) => event.type === 'provider_switch'));
+    assert.ok(events.some((event) => event.type === 'tool_result' && event.message === 'list_files ok'), 'listing the repository root works');
+    assert.ok(!events.some((event) => event.type === 'tool_result' && /→ [A-Z_]+/.test(event.message)), 'no scripted tool call failed');
     const switchCheckpoint = sessionStore.data.checkpoints[created.id].find((checkpoint) => checkpoint.reason === 'provider_switch');
     assert.ok(switchCheckpoint, 'a checkpoint precedes the provider switch');
     assert.ok(switchCheckpoint.state.filesChanged.includes('src/math.js'), 'checkpoint carries the in-progress change');
@@ -84,6 +92,7 @@ test('coding agent completes the lifecycle with a real handoff, CI repair, appro
     rmSync(root, { recursive: true, force: true });
   }
 });
+}
 
 function runChild(args) {
   const child = spawn(process.execPath, ['testing/fixtures/coding-worker-child.js', ...args], {

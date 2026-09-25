@@ -102,9 +102,9 @@ export class SupabaseAgentSessionStore {
     return data ? { id: data.id, status: data.status, note: data.note, argumentsSha256: data.arguments_sha256 } : null;
   }
 
-  async consumeApproval({ approvalId, sessionId, callId, argumentsSha256 }) {
+  async consumeApproval({ approvalId, sessionId, callId, tool, argumentsSha256 }) {
     const { data, error } = await this.db.rpc('consume_agent_approval', {
-      p_approval: approvalId, p_session: sessionId, p_call_id: callId, p_arguments_sha256: argumentsSha256,
+      p_approval: approvalId, p_session: sessionId, p_call_id: callId, p_tool: tool, p_arguments_sha256: argumentsSha256,
     });
     if (error) throw storeError('consume_agent_approval', error);
     return data === true;
@@ -256,10 +256,10 @@ export class MemoryAgentSessionStore {
     this.persist();
   }
 
-  async consumeApproval({ approvalId, sessionId, callId, argumentsSha256 }) {
+  async consumeApproval({ approvalId, sessionId, callId, tool, argumentsSha256 }) {
     this.reload();
     const row = this.data.approvals[`${sessionId}:${callId}`];
-    if (!row || row.id !== approvalId || row.status !== 'approved' || row.arguments_sha256 !== argumentsSha256) return false;
+    if (!row || row.id !== approvalId || row.status !== 'approved' || row.tool !== tool || row.arguments_sha256 !== argumentsSha256) return false;
     row.status = 'consumed';
     this.persist();
     return true;

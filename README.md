@@ -31,36 +31,35 @@ or credentials. A simulated outage must persist its isolated checkpoint before
 the proven Anthropic adapter can take over. Production remains Anthropic-only
 unless both the failover flag and an explicit server-side allowlist are changed.
 
-## Development escape route
+## Fahad Coding Agent
 
-Phase 2C also defines an isolated OpenCode execution service under
-`development/`. OpenCode is pinned in a separate image and uses DeepSeek for
-repository analysis and edits. The coding model has no shell, web, subagent,
-external-directory, Git or GitHub access. Its provider key is read from a
-controller-owned file outside the task worktree and is not present in tool
-environment variables.
+System A of the platform: an autonomous, controller-driven development worker
+(`src/coding-agent/`, `src/coding-worker.js`) launched from the Hub. It plans,
+edits, runs commands and tests in an isolated uid-separated sandbox, debugs,
+passes a finish gate (tests, protected paths, Hermes isolation, secret scan),
+opens a pull request, repairs CI failures, merges and deploys only when policy
+or the owner allows, verifies production and reports.
 
-The controller creates a clean worktree from `origin/main`, retries transient
-headless failures, runs the fixed test suite itself, returns redacted failures
-for repair, scans the diff for secrets and protected paths, and only then owns
-the commit, branch push and safe PR creation. Workflow, deployment, migration,
-credential, local OpenCode override and Hermes paths cannot be changed through
-the automatic route. Merge and production deployment remain approval-gated.
+Work survives provider limits and restarts: every turn is checkpointed in
+Supabase (`agent_sessions`, `agent_checkpoints`), provider health is shared in
+`provider_status`, and a provider switch hands the next model a durable
+continuation of the same task. The provider-neutral agentic gateway supports
+Anthropic, OpenAI-style Responses, Chat Completions providers (DeepSeek, Qwen,
+Kimi, GLM, MiniMax, OpenRouter, Groq) and Gemini. Routine sandbox work is AUTO;
+merges and database writes require approval by workspace policy.
 
-This service is not part of the production runtime image and is not activated
-until a separately stored DeepSeek credential, provider billing and the live
-canary are approved and verified.
+It replaces the Phase 1 `continuity/` POC and the OpenCode `development/`
+escape route. Architecture, routing policy, security boundaries and the
+production activation runbook: `docs/coding-agent.md`. Agent instructions:
+`AGENTS.md`.
 
 The action policy is AUTO for routine, reversible work and APPROVAL for merge,
-production deploy and production migrations. Policies are supplied through a
-rule source, so a future signed policy can authorize tested low-risk automation
-without replacing the engine. Destructive actions remain denied by default.
+production deploy and production migrations. Destructive actions remain denied
+by default.
 
-The migration under `supabase/migrations/` adds a service-only
-`model_attempts` audit table. It stores provider/model/token/cost/duration and
-failure metadata but never prompts, responses, credentials or hidden reasoning.
-Apply it only through a separately approved database change before deploying
-code that requires the table.
+The migrations under `supabase/migrations/` mirror production's migration
+history one-to-one; `supabase/verify/` replays them into a throwaway
+PostgreSQL and compares a structural fingerprint with production.
 
 ## Workspace policy boundary
 
@@ -183,6 +182,9 @@ the normal workflow, dependency and handoff integrity, retry exhaustion,
 stale recovery, duplicate claims, and usage/event attribution.
 `npm run canary:tool-broker` runs the zero-network, zero-secret Phase 2E MCP
 canary and performs no external calls or database writes.
+`npm run db:replay` replays every migration and the SQL behavior scenarios.
+`npm run canary:agentic` is the live model canary and failover drill for the
+Coding Agent (real provider calls; run where credentials exist).
 `npm run healthcheck` and `npm run selftest` perform the same read-only
 production readiness check: settings, JavaScript syntax, SDK imports, Chief
 and Research configuration, database access and workflow RPC visibility. They never claim a

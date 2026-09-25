@@ -13,11 +13,14 @@ import { runProductionToolBrokerCanary } from './tool-broker/production-canary.j
 import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
 import { createHubServer } from './hub-server.js';
 import { runStartupCanary } from './startup-canary.js';
+import { configureSharedProviderHealth } from './model-runner.js';
+import { SupabaseProviderStateStore } from './model-gateway/agentic/provider-state.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
 // flag remains the explicit switch for legacy jobs that have no workspace.
 const workspacePolicyStore = new SupabaseWorkspacePolicyStore(db);
+configureSharedProviderHealth(new SupabaseProviderStateStore(db));
 const toolBrokerStore = new SupabaseToolBrokerStore(db);
 const { client: safeCanaryClient, transport: safeCanaryTransport } = createSafeCanaryMcpClient();
 const toolBroker = new ToolBroker({

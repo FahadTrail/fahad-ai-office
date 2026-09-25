@@ -617,7 +617,6 @@ function_acl|5726aff344b026eb393d3c596109ab4a|public.complete_task(p_task uuid, 
 function_acl|5a3c9a3eeaef8c2afa1c9b8802024b60|public.claim_agent_session(p_worker text, p_lease_seconds integer) service_role=X/postgres
 function_acl|63efd34ce1d95605512dae26969e5ecd|public.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) service_role=X/postgres
 function_acl|66e6b5c85e807c2f4730de6e62f5a2dc|public.resume_agent_session(p_session uuid) service_role=X/postgres
-function_acl|7230f33ba2d21c058cbabb353409d8e0|public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_arguments_sha256 text) service_role=X/postgres
 function_acl|75171a64b6ac8c3b288a132517a62957|private.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) default
 function_acl|7de3b42b24dd17ce950030665a89c48a|public.request_agent_approval(p_session uuid, p_token uuid, p_call_id text, p_broker text, p_tool text, p_action text, p_risk text, p_summary text, p_arguments_
 function_acl|84f9f1e52133a727e6af3a17db606113|public.record_provider_outcome(p_provider text, p_model text, p_billing_class text, p_success boolean, p_health text, p_cooldown_until timestamp with time zone,
@@ -628,6 +627,7 @@ function_acl|990c256b6bbd218b83b8a4fb2d9ef111|private.create_task(p_job uuid, p_
 function_acl|a50ce8504309d8a599f872f944439db8|public.create_coding_session(p_workspace uuid, p_title text, p_objective text, p_repository text, p_base_branch text, p_budget_usd numeric, p_config jsonb, p_cr
 function_acl|a7492340813ecbd24fc33921cf4a1b8f|public.settle_workspace_budget(p_workspace uuid, p_reservation uuid, p_idempotency_key text, p_actual_usd numeric) service_role=X/postgres
 function_acl|ae1641f3b1d5668e92f222c6f367da7c|private.fail_task(p_task uuid, p_run uuid, p_error text) default
+function_acl|af7583fa8d0b36abe7e95d097d8fbf08|public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_tool text, p_arguments_sha256 text) service_role=X/postgres
 function_acl|c36fcaa6f000027a77239dce03201055|public.begin_tool_execution(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid, p_agent uuid, p_broker text, p_tool text, p_action text, p_scopes text[], p_r
 function_acl|cf6f0427f71ead7bf0f2993d203fa86d|private.claim_next_job() service_role=X/postgres
 function_acl|d4095bf957857b1275a691716c66abd0|public.reserve_workspace_budget(p_workspace uuid, p_idempotency_key text, p_requested_usd numeric) service_role=X/postgres
@@ -655,6 +655,7 @@ function|53ecf9efd95051393091250b05af26d3|public.claim_next_task(p_agent_slug te
 function|6ccea8dc4a2d0ad62cd554dd946af5c4|public.decide_agent_approval(p_approval uuid, p_decision text, p_decided_by text, p_note text) md5=da13f87e9c7a05e5fb51d05c48ba4fc6
 function|77480f84e37af3c314f45edf2d30c203|public.finish_tool_execution(p_execution uuid, p_status text, p_duration_ms integer, p_cost_usd numeric, p_result_sha256 text, p_output_bytes integer, p_attempt
 function|856015072a3365f20c2c025a7aef9328|public.begin_tool_execution(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid, p_agent uuid, p_broker text, p_tool text, p_action text, p_scopes text[], p_r
+function|8b590b20eaf6adb9e49bd75b1f1287be|public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_tool text, p_arguments_sha256 text) md5=fc2f0b095f0219fb952b422d307b87c9
 function|942f34772c6a1321ed9f69126b4cc221|public.continuity_transfer_owner(p_task_id uuid, p_from_owner text, p_to_owner text, p_token uuid, p_checkpoint_id uuid, p_verification jsonb) md5=1c91a3fc2c333
 function|94f3652f7411f873d78f2c5f52efced7|public.enforce_tool_execution_workspace() md5=75cda757a92b21994aabb212f0e951d0
 function|a053e45cb0df5538e18c36f24733da5e|public.continuity_acquire_lease(p_task_id uuid, p_owner text, p_token uuid, p_seconds integer) md5=856678560b36b17ee5a540eeb47b29a7
@@ -663,7 +664,6 @@ function|a8529a0e3bcfc993e69dde9e44ffc11b|private.requeue_stale_tasks(p_older_th
 function|acccb14fced6b73ccfbcf9c90e9b803f|public.reserve_workspace_budget(p_workspace uuid, p_idempotency_key text, p_requested_usd numeric) md5=c4feb8eea2400022bbd7672802afddd5
 function|adae47c8ab36845ca18c3b6a07b29962|public.settle_workspace_budget(p_workspace uuid, p_reservation uuid, p_idempotency_key text, p_actual_usd numeric) md5=3f68bb3dfcd54c772e93e2f1433e73d1
 function|b17eb7edb59bcfcb49ce406673f74e32|public.resume_agent_session(p_session uuid) md5=fe891cfdb670ebcc1eec2bcb486e9e0f
-function|b8e4ac3efbb29be12245f8d078ba6cc3|public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_arguments_sha256 text) md5=b29846fbdcda655dd378b380c7107ffd
 function|b93f9174def89154e0cfd87761d602be|public.request_agent_approval(p_session uuid, p_token uuid, p_call_id text, p_broker text, p_tool text, p_action text, p_risk text, p_summary text, p_arguments_
 function|c8049f4cf72ae52ca6abb4c24ffd0275|public.enforce_model_attempt_workspace() md5=984efbd3b908b96ee1818f21b3f20c2f
 function|ce1217e2ced868e848a27dc5f4a91735|private.fail_task(p_task uuid, p_run uuid, p_error text) md5=d31bad1c8f4208537383a81a6ab2764e

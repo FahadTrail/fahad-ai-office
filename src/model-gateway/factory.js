@@ -36,6 +36,7 @@ export function createDefaultModelGateway({
   sleepFn,
   workspacePolicyStore,
   providerSecretRefs = DEFAULT_PROVIDER_SECRET_REFS,
+  healthStore = null,
 } = {}) {
   const adapters = [
     new AnthropicModelAdapter({ queryFn, env }),
@@ -52,6 +53,7 @@ export function createDefaultModelGateway({
     routingPolicy: new RoutingPolicy(routing),
     maxAttemptsPerProvider: MODEL_GATEWAY_MAX_ATTEMPTS,
     sleepFn,
+    healthStore,
   });
   return workspacePolicyStore
     ? new WorkspacePolicyGateway({ gateway, policyStore: workspacePolicyStore, providerSecretRefs })

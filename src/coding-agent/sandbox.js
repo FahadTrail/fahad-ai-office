@@ -76,6 +76,14 @@ export class Sandbox {
   // (it needs the token for private repositories) and ownership is handed to
   // the sandbox identity afterwards; the stored remote carries no credential.
   async prepare({ repository, baseBranch, workBranch, token = null, fetchUrl = null }) {
+    // Parents are traversable (0711) but not listable; the session directory
+    // belongs to the sandbox identity; control material is root-only.
+    for (const directory of [this.root, join(this.root, 'sessions')]) {
+      await mkdir(directory, { recursive: true, mode: 0o711 });
+      await chmod(directory, 0o711);
+    }
+    await mkdir(join(this.root, 'control'), { recursive: true, mode: 0o700 });
+    await mkdir(this.sessionDir, { recursive: true, mode: 0o700 });
     await mkdir(join(this.homeDir, 'tmp'), { recursive: true, mode: 0o700 });
     await mkdir(this.controlDir, { recursive: true, mode: 0o700 });
     await chmod(this.controlDir, 0o700);
@@ -88,7 +96,7 @@ export class Sandbox {
       const checkout = await this.git(['checkout', '-B', workBranch]);
       if (checkout.code !== 0) throw policyError('BRANCH_FAILED', 'Could not create the work branch');
     }
-    await this.handOver(this.homeDir);
+    await this.handOver(this.sessionDir);
     const head = await this.git(['rev-parse', 'HEAD']);
     return { head: head.stdout.trim() };
   }
@@ -121,8 +129,8 @@ export class Sandbox {
       cwd, env, timeoutMs, maxOutputBytes, input,
       identity: this.isolated ? this.identity : null,
       detached: !this.isolated,
+      afterExit: this.isolated ? () => killUidProcesses(this.identity.uid) : null,
     });
-    if (this.isolated) await killUidProcesses(this.identity.uid);
     return result;
   }
 
@@ -203,8 +211,10 @@ export class Sandbox {
     const relativePath = normalizeRepoPath(path);
     const repoReal = await realpath(this.repoDir);
     const absolute = relativePath === '.' ? repoReal : join(repoReal, relativePath);
-    const parent = await realpath(dirname(absolute)).catch(() => null);
-    if (parent && parent !== repoReal && !parent.startsWith(repoReal + sep)) throw policyError('PATH_ESCAPE', 'Path resolves outside the repository');
+    if (relativePath !== '.') {
+      const parent = await realpath(dirname(absolute)).catch(() => null);
+      if (parent && parent !== repoReal && !parent.startsWith(repoReal + sep)) throw policyError('PATH_ESCAPE', 'Path resolves outside the repository');
+    }
     if (mustExist) {
       const real = await realpath(absolute).catch(() => null);
       if (!real) throw policyError('FILE_NOT_FOUND', `${relativePath} does not exist`);
@@ -357,7 +367,7 @@ async function pathExists(path) {
   }
 }
 
-export function runProcess(command, args, { cwd, env, timeoutMs = 300_000, maxOutputBytes = 200_000, identity = null, detached = false, input = null } = {}) {
+export function runProcess(command, args, { cwd, env, timeoutMs = 300_000, maxOutputBytes = 200_000, identity = null, detached = false, input = null, afterExit = null } = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       cwd, env, shell: false, windowsHide: true, detached,
@@ -380,6 +390,7 @@ export function runProcess(command, args, { cwd, env, timeoutMs = 300_000, maxOu
     child.stderr.on('data', (chunk) => { stderr = append(stderr, String(chunk)); });
     let timedOut = false;
     let hardKill;
+    let settled = false;
     const kill = (signal) => {
       try {
         if (detached && child.pid) process.kill(-child.pid, signal);
@@ -391,12 +402,28 @@ export function runProcess(command, args, { cwd, env, timeoutMs = 300_000, maxOu
       kill('SIGTERM');
       hardKill = setTimeout(() => kill('SIGKILL'), 5000);
     }, timeoutMs);
-    child.on('error', (error) => { clearTimeout(timer); clearTimeout(hardKill); reject(error); });
-    child.on('close', (code, signal) => {
+    const finish = (code, signal) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       clearTimeout(hardKill);
-      if (detached) kill('SIGKILL');
       resolvePromise({ code: code ?? (timedOut ? 124 : 1), signal, stdout, stderr, timedOut, truncated });
+    };
+    child.on('error', (error) => { clearTimeout(timer); clearTimeout(hardKill); if (!settled) { settled = true; reject(error); } });
+    // Resolve when the command itself exits. Background descendants that keep
+    // stdout open are killed instead of being allowed to hold the tool call.
+    let closed = false;
+    let exited = null;
+    child.on('close', () => {
+      closed = true;
+      if (exited) finish(exited.code, exited.signal);
+    });
+    child.on('exit', async (code, signal) => {
+      if (detached) kill('SIGKILL');
+      if (afterExit) await afterExit().catch(() => {});
+      exited = { code, signal };
+      if (closed) return finish(code, signal);
+      setTimeout(() => finish(code, signal), 2000);
     });
   });
 }
@@ -412,6 +439,7 @@ export async function killUidProcesses(uid) {
     try {
       const status = await readFile(`/proc/${entry}/status`, 'utf8');
       const match = status.match(/^Uid:\s+(\d+)/m);
+      if (/^State:\s+Z/m.test(status)) continue;
       if (match && Number(match[1]) === uid) {
         process.kill(Number(entry), 'SIGKILL');
         killed += 1;

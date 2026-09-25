@@ -102,6 +102,7 @@ export class ToolBroker {
         approvalId: input.approval.id,
         callId: input.approval.callId,
         sessionId: input.approval.sessionId,
+        tool: request.tool,
         argumentsSha256: argumentsSha256(request.arguments),
       });
       if (!consumed) throw new ToolBrokerError('The approval is missing, already used, or does not match these arguments', { code: 'TOOL_APPROVAL_INVALID' });

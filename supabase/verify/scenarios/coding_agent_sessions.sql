@@ -62,12 +62,13 @@ begin
     'Merge PR #1', repeat('a', 64), '{"pr": 1}'::jsonb), 'approval requests are idempotent per call';
   perform public.finish_agent_session(v_session.id, v_token, 'awaiting_approval', null, 'Merge requires approval', null);
   assert (select status from public.jobs where id = v_session.job_id) = 'waiting_approval', 'job mirrors approval wait';
-  assert not public.consume_agent_approval(v_approval, v_session.id, 'call-1', repeat('a', 64)), 'pending approval cannot be consumed';
+  assert not public.consume_agent_approval(v_approval, v_session.id, 'call-1', 'github.pr_merge', repeat('a', 64)), 'pending approval cannot be consumed';
   perform public.decide_agent_approval(v_approval, 'approved', 'owner@example.com', null);
   assert (select status from public.agent_sessions where id = v_session.id) = 'queued', 'approval re-queues the session';
-  assert not public.consume_agent_approval(v_approval, v_session.id, 'call-1', repeat('b', 64)), 'approval is bound to the exact arguments';
-  assert public.consume_agent_approval(v_approval, v_session.id, 'call-1', repeat('a', 64)), 'approved request consumed';
-  assert not public.consume_agent_approval(v_approval, v_session.id, 'call-1', repeat('a', 64)), 'approval is single use';
+  assert not public.consume_agent_approval(v_approval, v_session.id, 'call-1', 'github.pr_merge', repeat('b', 64)), 'approval is bound to the exact arguments';
+  assert not public.consume_agent_approval(v_approval, v_session.id, 'call-1', 'supabase.migration_apply', repeat('a', 64)), 'approval is bound to the approved tool';
+  assert public.consume_agent_approval(v_approval, v_session.id, 'call-1', 'github.pr_merge', repeat('a', 64)), 'approved request consumed';
+  assert not public.consume_agent_approval(v_approval, v_session.id, 'call-1', 'github.pr_merge', repeat('a', 64)), 'approval is single use';
 
   select * into v_claim from public.claim_agent_session('worker-c', 60);
   perform public.finish_agent_session(v_claim.id, v_claim.lease_token, 'completed',
