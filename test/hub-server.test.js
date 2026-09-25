@@ -115,3 +115,28 @@ test('Hub shows the complete Chief result before the short job summary', async (
   assert.match(html, /done\?\.result\?\.content\|\|s\.job\.final_summary/);
   await new Promise((resolve) => server.close(resolve));
 });
+
+
+test('OTP verification cannot replace the service-role project session', async () => {
+  const db = fakeDb();
+  db.auth = {
+    verifyOtp: async () => { throw new Error('shared DB auth was used'); },
+    getUser: async () => { throw new Error('shared DB auth was used'); },
+  };
+  const authClient = {
+    verifyOtp: async () => ({ error: null, data: { user: { email: 'owner@example.com' }, session: { access_token: 'isolated-session' } } }),
+    getUser: async (token) => token === 'isolated-session'
+      ? { error: null, data: { user: { email: 'owner@example.com' } } }
+      : { error: new Error('invalid'), data: null },
+  };
+  const server = createHubServer({ db, authClient, store: {}, port: 0, authEnabled: true, ownerEmail: 'owner@example.com' });
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const verified = await fetch(`${base}/api/auth/verify-otp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'owner@example.com', token: '123456' }) });
+  assert.equal(verified.status, 200);
+  const cookie = verified.headers.get('set-cookie').split(';')[0];
+  const response = await fetch(`${base}/api/workspaces`, { headers: { cookie } });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).workspaces, [{ id: workspaceId, name: 'Fahad AI Office' }]);
+  await new Promise((resolve) => server.close(resolve));
+});

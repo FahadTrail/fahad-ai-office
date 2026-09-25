@@ -15,6 +15,11 @@ export const db = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+// Keep OTP sessions isolated from service-role database access.
+export const hubAuth = createClient(url, key, {
+  auth: { persistSession: false, autoRefreshToken: false },
+}).auth;
+
 export function log(...parts) {
   console.log('[' + new Date().toISOString() + ']', ...parts);
 }
