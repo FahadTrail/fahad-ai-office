@@ -48,8 +48,20 @@ const REGISTRY = [
   [/(^|\/)qwen3/i, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
   [/(^|\/)glm-4\.\d+-air/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
   [/(^|\/)llama-4/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 4, vision: true, structuredOutput: true }],
+  [/(^|\/)gemma-4/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 4, vision: true, structuredOutput: true }],
   [/(^|\/)gemma/i, { coding: 2, reasoning: 3, research: 3, writing: 3, speed: 4, vision: true, structuredOutput: false }],
+  // Seen in OpenRouter's free catalog (2026-09). Small, safety-only and
+  // domain-specialised variants score lower for general Office work.
+  [/nemotron.*(safety|guard)/i, { coding: 1, reasoning: 2, research: 1, writing: 1, speed: 5, vision: false, structuredOutput: false }],
+  [/nemotron.*nano/i, { coding: 2, reasoning: 3, research: 2, writing: 2, speed: 5, vision: true, structuredOutput: false }],
+  [/nemotron-3-ultra/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 2, vision: false, structuredOutput: true }],
+  [/nemotron-3-super/i, { coding: 3, reasoning: 4, research: 4, writing: 3, speed: 3, vision: false, structuredOutput: true }],
   [/nemotron/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
+  [/ling-[\d.]+-flash-(sante|fin)/i, { coding: 2, reasoning: 3, research: 2, writing: 3, speed: 4, vision: false, structuredOutput: false }],
+  [/lfm-[\d.]+-[\d.]+b/i, { coding: 1, reasoning: 2, research: 2, writing: 2, speed: 5, vision: false, structuredOutput: true }],
+  [/inkling-small/i, { coding: 2, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: false }],
+  [/(north-mini-code|laguna-xs)/i, { coding: 3, reasoning: 2, research: 2, writing: 2, speed: 4, vision: false, structuredOutput: false }],
+  [/laguna-s/i, { coding: 3, reasoning: 3, research: 2, writing: 2, speed: 4, vision: false, structuredOutput: false }],
 ];
 
 function lookup(model) {

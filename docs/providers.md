@@ -50,7 +50,7 @@ missing.
 | Qwen (Alibaba Model Studio) | `qwen3.8-flash` | paid | 1M tokens per model, one-time, 90 days, Singapore region only | one-time | yes | yes | flag `QWEN_API_PRIVATE_DATA_APPROVED` | Key present; account not activated (`AccessDenied.Unpurchased`) |
 | Gemini API (AI Studio) | `gemini-flash-latest` | free | Per project/model; Google shows limits only in AI Studio (Flash is about 20 requests/day on the free tier) | midnight Pacific | yes | yes | flag `GEMINI_API_PRIVATE_DATA_APPROVED` (free-tier prompts may be used by Google) | READY — CREDENTIAL REQUIRED |
 | Groq | `openai/gpt-oss-120b` | free | Per org/model, e.g. 1,000 requests/day; exact values in response headers | rolling | yes | no (coding 3) | flag | READY — CREDENTIAL REQUIRED |
-| OpenRouter | `openai/gpt-oss-120b:free` | free | `:free` models: 20/min, 50/day (1,000/day after $10 credit purchase) | midnight UTC | yes | no (coding 3) | flag | READY — CREDENTIAL REQUIRED |
+| OpenRouter | discovered free catalog (17 free models on 2026-09-25, 16 tool-capable, up to 12 admitted) | free (free-only guard) | `:free` models: 20/min, 50/day shared by the key (1,000/day after $10 credit purchase) | midnight UTC | yes | no (public data only) | never for private code | LIVE (dots-3-note, ling-3.0-flash ×2 verified; free→free failover drill passed) |
 | GitHub Models | `openai/gpt-4.1` | free | About 150/day low-tier, 50/day high-tier, 10–15/min, 8K in / 4K out per request | rolling | yes | no (8K context) | flag | READY — CREDENTIAL REQUIRED |
 | Cerebras | `gpt-oss-120b` | free | 14,400 requests/day, 1M tokens/day, 30/min; small free context | rolling | yes | no (context) | flag | READY — CREDENTIAL REQUIRED |
 | Z.ai (GLM) free | `glm-4.7-flash` | free ($0 list price) | rate-limited, no daily cap published | — | yes | no (coding 3) | flag `ZHIPU_API_PRIVATE_DATA_APPROVED` | READY — CREDENTIAL REQUIRED |
@@ -129,6 +129,12 @@ OpenRouter routes are therefore **never** approved for private code,
 whatever `OPENROUTER_API_PRIVATE_DATA_APPROVED` says. They serve Office jobs
 with non-private data.
 
+Root cause of the first OpenRouter failure (2026-09-25): the static default
+`openai/gpt-oss-120b:free` no longer exists as a free variant, so OpenRouter
+answered 404 and the route was marked unsuitable. The key was valid. The
+catalog now replaces the static default, and a configured model the catalog
+rules out is shown as `CATALOG_…` and never called.
+
 A 404 from any provider is recorded with a reason code, never the provider
 text. The codes are `DATA_POLICY`, `NO_TOOL_SUPPORT`, `MODEL_NOT_FOUND`,
 `PROVIDER_FILTERED`, `PRICE_FILTERED` and `NO_CREDITS`. Route-level reasons
@@ -140,6 +146,8 @@ Canary behaviour:
   run, never-verified ones first, to protect the shared free allowance.
 * The failover drill prefers a free primary and a free backup at another
   provider.
+* Paid routes that succeeded within `CANARY_PAID_REVERIFY_HOURS` (default 24)
+  are not re-probed; `CANARY_INCLUDE_PAID=true` forces a full paid check.
 
 ## Adding a key
 
