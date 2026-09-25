@@ -2,6 +2,7 @@
 // locking or idempotency stay in the existing service-role-only RPCs.
 
 import { createClient } from '@supabase/supabase-js';
+import { FAILURE_CLASS, GatewayError } from './model-gateway/contracts.js';
 
 const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -43,6 +44,9 @@ export class SupabaseStore {
       payload: event.payload ?? {},
     };
     const { error } = await this.db.from('events').insert(row);
+    if (error && event.required) throw new GatewayError('Required audit event could not be recorded', {
+      code: 'AUDIT_PERSISTENCE_FAILED', failureClass: FAILURE_CLASS.FATAL, cause: error,
+    });
     if (error) log('WARN  could not write event:', error.message);
     else log('event  ' + row.type.padEnd(18) + ' ' + row.message);
   }
@@ -180,8 +184,8 @@ export class SupabaseStore {
     if (error) throw new Error('Could not update task heartbeat: ' + error.message);
   }
 
-  async createJob({ title, goal, priority = 'normal', projectId = null }) {
-    const values = { title, goal, priority, status: 'planning' };
+  async createJob({ title, goal, priority = 'normal', projectId = null, requestedProvider = 'auto' }) {
+    const values = { title, goal, priority, status: 'planning', requested_provider: requestedProvider };
     if (projectId) values.project_id = projectId;
     const { data, error } = await this.db
       .from('jobs')

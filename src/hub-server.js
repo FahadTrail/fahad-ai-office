@@ -56,7 +56,13 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
         return sendJson(response, 200, { ok: true, workspaces });
       }
       if (request.method === 'GET' && requestUrl.pathname === '/api/model-catalog') {
-        return sendJson(response, 200, { ok: true, models: modelCatalog() });
+        const workspaceId = requestUrl.searchParams.get('workspaceId');
+        if (workspaceId) {
+          const id = requireUuid(workspaceId, 'workspaceId');
+          if (!await readWorkspace(db, id)) return sendJson(response, 404, { ok: false, error: 'WORKSPACE_NOT_FOUND' });
+          return sendJson(response, 200, { ok: true, models: modelCatalog(await readModelPermissions(db, id)) });
+        }
+        return sendJson(response, 200, { ok: true, models: modelCatalog([]) });
       }
       if (request.method === 'GET' && requestUrl.pathname === '/api/usage') {
         const workspaceId = requireUuid(requestUrl.searchParams.get('workspaceId'), 'workspaceId');
@@ -86,7 +92,12 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
         if (!workspace) return sendJson(response, 404, { ok: false, error: 'WORKSPACE_NOT_FOUND' });
         const policy = await readPolicy(db, workspaceId);
         if (!policy?.enabled) return sendJson(response, 403, { ok: false, error: 'WORKSPACE_DISABLED' });
-        const job = await store.createJob({ title: goal.slice(0, 120), goal, projectId: workspaceId });
+        const requestedProvider = typeof body.provider === 'string' ? body.provider : 'auto';
+        if (requestedProvider !== 'auto') {
+          const selected = modelCatalog(await readModelPermissions(db, workspaceId)).find((entry) => entry.provider === requestedProvider);
+          if (!selected?.selectable) return sendJson(response, 403, { ok: false, error: 'MODEL_NOT_PERMITTED' });
+        }
+        const job = await store.createJob({ title: goal.slice(0, 120), goal, projectId: workspaceId, requestedProvider });
         return sendJson(response, 201, { ok: true, job: { id: job.id, title: job.title, goal: job.goal, status: job.status, workspaceId } });
       }
       const jobMatch = requestUrl.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
@@ -120,14 +131,15 @@ export async function listJobs(db, workspaceId, limit = 30) {
   return data || [];
 }
 
-export function modelCatalog() {
+export function modelCatalog(permissions = null) {
   const configured = new Set(MODEL_GATEWAY_ALLOWED_PROVIDERS);
+  const permitted = permissions == null ? null : new Map(permissions.filter((row) => row.enabled).map((row) => [row.provider, row.models]));
   const provider = (name, model, label) => ({
     provider: name,
     model,
     label,
-    state: configured.has(name) ? 'active' : 'not_connected',
-    selectable: configured.has(name),
+    state: configured.has(name) && (!permitted || permitted.get(name)?.includes(model)) ? 'active' : 'not_connected',
+    selectable: Boolean(configured.has(name) && (!permitted || permitted.get(name)?.includes(model))),
     default: name === 'anthropic',
   });
   return [
@@ -140,15 +152,19 @@ export function modelCatalog() {
   ];
 }
 
+async function readModelPermissions(db, workspaceId) {
+  return rows(db.from('workspace_provider_permissions').select('provider,models,enabled').eq('workspace_id', workspaceId));
+}
+
 export async function usageSnapshot(db, workspaceId, now = new Date()) {
   const [attempts, policy, jobs] = await Promise.all([
-    rows(db.from('model_attempts').select('provider,model,status,input_tokens,output_tokens,reasoning_tokens,cached_input_tokens,cost_usd,started_at').eq('workspace_id', workspaceId).order('started_at', { ascending: false }).limit(5000)),
+    rows(db.from('model_attempts').select('run_id,provider,model,status,input_tokens,output_tokens,reasoning_tokens,cached_input_tokens,cost_usd,started_at').eq('workspace_id', workspaceId).order('started_at', { ascending: false }).limit(5000)),
     readPolicy(db, workspaceId),
     rows(db.from('jobs').select('id').eq('project_id', workspaceId).limit(5000)),
   ]);
   const jobIds = (jobs || []).map((job) => job.id);
   const events = jobIds.length
-    ? await rows(db.from('events').select('type').in('job_id', jobIds).limit(5000))
+    ? await rows(db.from('events').select('type,run_id,payload').in('job_id', jobIds).limit(5000))
     : [];
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -168,7 +184,12 @@ export async function usageSnapshot(db, workspaceId, now = new Date()) {
     current.requests += 1;
     if (attempt.status === 'succeeded') current.successful += 1;
     if (attempt.status === 'failed') current.failed += 1;
-    current.models[attempt.model || 'unknown'] = (current.models[attempt.model || 'unknown'] || 0) + 1;
+    const modelName = attempt.model || 'unknown';
+    const modelUsage = current.models[modelName] || { model: modelName, requests: 0, tokens: 0, costUsd: 0 };
+    modelUsage.requests += 1;
+    modelUsage.tokens += input + output + reasoning;
+    modelUsage.costUsd += cost;
+    current.models[modelName] = modelUsage;
     byProvider.set(name, current);
     totals.tokens += input + output + reasoning;
     totals.costUsd += cost;
@@ -180,10 +201,23 @@ export async function usageSnapshot(db, workspaceId, now = new Date()) {
     void cached;
   }
   totals.remainingUsd = policy ? Math.max(0, Number(policy.monthly_budget_usd || 0) - Number(policy.spent_usd || 0) - Number(policy.reserved_usd || 0)) : null;
+  const switchedRuns = new Set((events || [])
+    .filter((event) => event.type === 'provider_switch' || event.payload?.kind === 'provider_switch')
+    .map((event) => event.run_id).filter(Boolean));
+  const byRun = new Map();
+  for (const attempt of [...(attempts || [])].reverse()) {
+    if (!attempt.run_id) continue;
+    const previous = byRun.get(attempt.run_id) || [];
+    if (attempt.status === 'succeeded' && previous.some((entry) => entry.status === 'failed' && entry.provider !== attempt.provider)) {
+      switchedRuns.add(attempt.run_id);
+    }
+    previous.push(attempt);
+    byRun.set(attempt.run_id, previous);
+  }
   return {
     totals,
-    providers: [...byProvider.values()].map((entry) => ({ ...entry, models: Object.entries(entry.models).map(([model, requests]) => ({ model, requests })) })),
-    fallbacks: (events || []).filter((event) => event.type === 'provider_switch').length,
+    providers: [...byProvider.values()].map((entry) => ({ ...entry, models: Object.values(entry.models) })),
+    fallbacks: switchedRuns.size,
     budget: policy ? {
       monthlyBudgetUsd: Number(policy.monthly_budget_usd),
       maxRequestBudgetUsd: Number(policy.max_request_budget_usd),
@@ -196,13 +230,13 @@ export async function usageSnapshot(db, workspaceId, now = new Date()) {
 }
 
 async function createWorkspace(db, name) {
-  const { data, error } = await db.from('projects').insert({ name }).select('id,name').single();
+  const { data, error } = await db.rpc('create_hub_project', { p_name: name });
   if (error) throw new Error(`Could not create workspace: ${error.message}`);
-  return data;
+  return Array.isArray(data) ? data[0] : data;
 }
 
 export async function readJobSnapshot(db, jobId) {
-  const job = await one(db.from('jobs').select('id,title,goal,status,priority,project_id,tokens_used,cost_usd,final_summary,created_at').eq('id', jobId).maybeSingle(), 'job');
+  const job = await one(db.from('jobs').select('id,title,goal,status,priority,requested_provider,project_id,tokens_used,cost_usd,final_summary,created_at').eq('id', jobId).maybeSingle(), 'job');
   if (!job) return null;
   const [workspace, tasks, events, attempts, toolExecutions, policy, runs] = await Promise.all([
     readWorkspace(db, job.project_id),
@@ -238,7 +272,16 @@ export async function readJobSnapshot(db, jobId) {
     runs: runs || [],
     events: (events || []).map(safeEvent),
     attempts: attempts || [],
-    toolExecutions: toolExecutions || [],
+    toolExecutions: [
+      ...(toolExecutions || []),
+      ...(events || []).filter((event) => event.type === 'activity' && event.payload?.kind === 'host_tool' && event.payload.status !== 'started')
+        .map((event) => ({
+          id: event.id, task_id: event.task_id, run_id: event.run_id, agent_id: event.agent_id,
+          broker: 'model-host', tool_name: event.payload.tool, action: 'invoke', risk: 'low',
+          decision: 'auto', status: event.payload.status, duration_ms: event.payload.duration_ms,
+          started_at: event.created_at, ended_at: event.created_at,
+        })),
+    ],
   };
 }
 
@@ -429,6 +472,10 @@ $('authButton').onclick=()=> $('otp').classList.contains('hidden')?sendOtp():ver
 export const HUB_HTML = BASE_HUB_HTML
   .replace("if(!workspaceId&&d.workspaces?.[0])selectWorkspace(d.workspaces[0].id);", "const saved=localStorage.getItem('hub-workspace-id');const preferred=d.workspaces?.find(w=>w.id===saved);if(!workspaceId&&preferred)selectWorkspace(preferred.id);else if(!workspaceId&&d.workspaces?.[0])selectWorkspace(d.workspaces[0].id);")
   .replace("async function selectWorkspace(id){workspaceId=id;", "async function selectWorkspace(id){workspaceId=id;localStorage.setItem('hub-workspace-id',id);")
+  .replace("document.querySelectorAll('.workspace-item').forEach(x=>x.classList.toggle('active',x.dataset.id===id));await loadHistory();", "document.querySelectorAll('.workspace-item').forEach(x=>x.classList.toggle('active',x.dataset.id===id));window.dispatchEvent(new Event('hub-workspace-changed'));await loadHistory();")
+  .replace("body:JSON.stringify({workspaceId,goal})", "body:JSON.stringify({workspaceId,goal,provider:document.getElementById('modelSelect')?.value||'auto'})")
+  .replace("async function openJob(id){jobId=id;", "async function openJob(id){jobId=id;$('conversation').innerHTML='';")
+  .replace("function render(s){const attempts", "function render(s){if(s.job?.goal)addBubble(s.job.goal,'user');const attempts")
   .replace('</head>', '<style>.top-controls{display:flex;align-items:center;gap:10px}.model-select,.project-select{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);padding:7px 12px;max-width:200px}.menu-button{display:none;background:transparent;color:var(--ink);font-size:20px}.usage-button{border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:7px 11px}.usage-panel{position:fixed;right:24px;top:74px;width:min(420px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;z-index:5;box-shadow:0 18px 60px #0008}.usage-panel h3{margin:0 0 10px}.provider-row{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}.provider-row small{display:block;color:var(--muted);margin-top:3px}.provider-state{font-size:11px;color:var(--good)}.provider-state.off{color:var(--muted)}.usage-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0}.usage-grid .metric{background:#0d1525}.fallback-note{color:#f5c97a;font-size:12px;margin-top:8px}@media(max-width:820px){.sidebar{display:flex;position:fixed;inset:0 auto 0 0;width:min(300px,85vw);z-index:8;background:#0d1525;transform:translateX(-105%);transition:transform .2s}.sidebar.open{transform:translateX(0)}.menu-button{display:inline-flex}.project-select{max-width:150px}.model-select{max-width:150px}.topbar{gap:8px;flex-wrap:wrap;height:auto;min-height:64px;padding:8px 14px}.top-controls{gap:5px;margin-left:auto}.top-controls .status{display:none}}@media(max-width:480px){.project-select,.model-select{max-width:125px}}</style></head>')
   .replace('<div class="context"><span class="dot"></span><span id="workspaceLabel">Choose a project</span></div><span id="health" class="status">Connecting…</span>', '<div class="context"><span class="dot"></span><span id="workspaceLabel">Choose a project</span></div><div class="top-controls"><select id="modelSelect" class="model-select" aria-label="Model routing"><option value="auto">AUTO</option></select><button id="usageButton" class="usage-button">AI usage</button><span id="health" class="status">Connecting…</span></div>')
   .replace('<div class="context"><span class="dot"></span>', '<div class="context"><button id="sidebarToggle" class="menu-button" aria-label="Open sidebar">☰</button><span class="dot"></span>')
@@ -447,11 +494,12 @@ export const HUB_HTML = BASE_HUB_HTML
   document.addEventListener('click',event=>{if(event.target.closest('.workspace-item,.history-item,#newChat,#newWorkspace'))sidebar.classList.remove('open')});
   syncProjects();
   const workspaceIdFromUi=()=>document.querySelector('.workspace-item.active')?.dataset.id||'';
-  const money=value=>'$'+Number(value||0).toFixed(2);
-  async function loadModelCatalog(){try{const data=await api('./api/model-catalog');modelSelect.innerHTML='<option value="auto">AUTO · policy routed</option>'+(data.models||[]).map(m=>'<option value="'+esc(m.provider)+'" disabled>'+esc(m.label)+' · '+(m.state==='active'?'Connected via AUTO':'Not connected')+'</option>').join('');}catch{modelSelect.innerHTML='<option value="auto">AUTO · policy routed</option>'}}
-  async function loadUsagePanel(){const workspaceId=workspaceIdFromUi();if(!workspaceId){usagePanel.innerHTML='<h3>AI usage</h3><p class="status">Choose a project to view usage.</p>';return}try{const data=await api('./api/usage?workspaceId='+encodeURIComponent(workspaceId));const u=data.usage||{};const t=u.totals||{};const rows=(u.providers||[]).map(p=>'<div class="provider-row"><div><strong>'+esc(p.provider)+'</strong><small>'+p.tokens.toLocaleString()+' tokens · '+p.requests+' requests</small></div><div><span>'+money(p.costUsd)+'</span><small class="provider-state">'+p.successful+' succeeded · '+p.failed+' failed</small></div></div>').join('');usagePanel.innerHTML='<h3>AI usage</h3><div class="usage-grid"><div class="metric">Today<strong>'+money(t.todayUsd)+'</strong></div><div class="metric">This month<strong>'+money(t.monthUsd)+'</strong></div><div class="metric">Requests<strong>'+t.requests+'</strong></div><div class="metric">Fallbacks<strong>'+u.fallbacks+'</strong></div></div><p class="status">Workspace budget: '+(u.budget?money(u.budget.spentUsd)+' / '+money(u.budget.monthlyBudgetUsd)+' · '+money(u.budget.remainingUsd)+' remaining':'not configured')+'</p>'+(rows||'<p class="status">No model attempts yet.</p>')+(u.fallbacks?'<p class="fallback-note">Automatic fallback events are recorded in the execution details.</p>':'');}catch(e){usagePanel.innerHTML='<h3>AI usage</h3><p class="error">'+esc(e.message)+'</p>'}}
+  const money=value=>{const n=Number(value||0);return '$'+n.toFixed(n>0&&n<0.01?6:2)};
+  async function loadModelCatalog(){const workspaceId=workspaceIdFromUi();const previous=modelSelect.value;try{const data=await api('./api/model-catalog'+(workspaceId?'?workspaceId='+encodeURIComponent(workspaceId):''));modelSelect.innerHTML='<option value="auto">AUTO · policy routed</option>'+(data.models||[]).map(m=>'<option value="'+esc(m.provider)+'" '+(m.selectable?'':'disabled')+'>'+esc(m.label)+' · '+(m.state==='active'?(m.provider==='deepseek'?'Chief only; web research uses Claude':'Available'):'Not available here')+'</option>').join('');modelSelect.value=[...modelSelect.options].some(o=>o.value===previous&&!o.disabled)?previous:'auto';}catch{modelSelect.innerHTML='<option value="auto">AUTO · policy routed</option>'}}
+  async function loadUsagePanel(){const workspaceId=workspaceIdFromUi();if(!workspaceId){usagePanel.innerHTML='<h3>AI usage</h3><p class="status">Choose a project to view usage.</p>';return}try{const [data,catalog]=await Promise.all([api('./api/usage?workspaceId='+encodeURIComponent(workspaceId)),api('./api/model-catalog?workspaceId='+encodeURIComponent(workspaceId))]);const u=data.usage||{};const t=u.totals||{};const rows=(u.providers||[]).map(p=>'<div class="provider-row"><div><strong>'+esc(p.provider)+'</strong><small>'+p.tokens.toLocaleString()+' tokens · '+p.requests+' requests</small><small>'+(p.models||[]).map(m=>esc(m.model)+': '+m.tokens.toLocaleString()+' tokens · '+money(m.costUsd)).join('<br>')+'</small></div><div><span>'+money(p.costUsd)+'</span><small class="provider-state">'+p.successful+' succeeded · '+p.failed+' failed</small></div></div>').join('');const states=(catalog.models||[]).map(m=>'<div class="provider-row"><span>'+esc(m.label)+'</span><span class="provider-state '+(m.state==='active'?'':'off')+'">'+(m.state==='active'?'Available':'Inactive')+'</span></div>').join('');usagePanel.innerHTML='<h3>AI usage</h3><div class="usage-grid"><div class="metric">Today<strong>'+money(t.todayUsd)+'</strong></div><div class="metric">This month<strong>'+money(t.monthUsd)+'</strong></div><div class="metric">Tokens<strong>'+Number(t.tokens||0).toLocaleString()+'</strong></div><div class="metric">Requests<strong>'+t.requests+'</strong></div><div class="metric">Fallbacks<strong>'+u.fallbacks+'</strong></div></div><p class="status">Workspace budget: '+(u.budget?money(u.budget.spentUsd)+' / '+money(u.budget.monthlyBudgetUsd)+' · '+money(u.budget.remainingUsd)+' remaining':'not configured')+'</p><p class="status">Provider account balances are separate and are not shown here.</p>'+(rows||'<p class="status">No model attempts yet.</p>')+'<h3>Model availability</h3>'+states+(u.fallbacks?'<p class="fallback-note">Automatic fallback events are recorded in the execution details.</p>':'');}catch(e){usagePanel.innerHTML='<h3>AI usage</h3><p class="error">'+esc(e.message)+'</p>'}}
   usageButton.onclick=async()=>{usagePanel.classList.toggle('hidden');if(!usagePanel.classList.contains('hidden'))await loadUsagePanel()};
   document.addEventListener('click',event=>{if(event.target.closest('.workspace-item')&&!usagePanel.classList.contains('hidden'))loadUsagePanel()});
   document.addEventListener('click',event=>{if(!event.target.closest('.usage-panel')&&!event.target.closest('#usageButton'))usagePanel.classList.add('hidden')});
+  window.addEventListener('hub-workspace-changed',loadModelCatalog);
   loadModelCatalog();
   </script></body>`);
