@@ -97,6 +97,50 @@ Sources:
 [Model Studio error codes](https://www.alibabacloud.com/help/en/model-studio/error-code),
 [Kimi pricing](https://platform.moonshot.ai/docs/pricing/chat).
 
+## OpenRouter: one key, many free models
+
+`src/model-gateway/agentic/openrouter-catalog.js` discovers OpenRouter's free
+models at runtime start, every 6 hours, and before each canary. It reads
+OpenRouter's public `/api/v1/models` catalog, plus the key-scoped
+`/api/v1/models/user` list, which already applies the account's privacy and
+provider settings.
+
+A model is **admitted** only when all of these hold:
+* its id ends in `:free`;
+* every published price is zero;
+* it supports tool calling;
+* its context window is at least 16K;
+* the key can actually use it.
+
+The best Office-job fits are admitted first, up to `OPENROUTER_MAX_FREE_MODELS`
+(default 8). Every other free model is listed on the dashboard with the reason
+it was not admitted.
+
+Free-only protection:
+* Admitted routes are FREE and flagged `freeOnly`.
+* Every call requests OpenRouter usage accounting. A response that reports any
+  cost is refused, the real cost is settled against the budget, and the route
+  is quarantined for 24 hours while the turn fails over.
+* No paid `models` fallback list is ever sent. The workspace budget remains an
+  additional safeguard.
+
+Privacy: OpenRouter free endpoints may log or train on prompts. Free
+OpenRouter routes are therefore **never** approved for private code,
+whatever `OPENROUTER_API_PRIVATE_DATA_APPROVED` says. They serve Office jobs
+with non-private data.
+
+A 404 from any provider is recorded with a reason code, never the provider
+text. The codes are `DATA_POLICY`, `NO_TOOL_SUPPORT`, `MODEL_NOT_FOUND`,
+`PROVIDER_FILTERED`, `PRICE_FILTERED` and `NO_CREDITS`. Route-level reasons
+cool the route down for 6 hours instead of retrying it every turn.
+
+Canary behaviour:
+* Routes in an active cooldown are skipped.
+* Only `CANARY_OPENROUTER_SAMPLE` (default 3) discovered models are probed per
+  run, never-verified ones first, to protect the shared free allowance.
+* The failover drill prefers a free primary and a free backup at another
+  provider.
+
 ## Adding a key
 
 Every credential goes through one command on the server. The input is hidden,

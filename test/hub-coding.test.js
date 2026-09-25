@@ -202,3 +202,41 @@ test('platform overview covers every dashboard section and reports credentials o
   const none = await platformOverview({ db: fakeDb(), workspaceId, env: {} });
   assert.equal(none.codingAgent.supabaseTools.tokenConfigured, false);
 });
+
+test('model pool dashboard lists each discovered OpenRouter free model, why it is excluded and COOLDOWN/UNSUITABLE states', async () => {
+  const { setOpenRouterCatalog } = await import('../src/model-gateway/agentic/openrouter-catalog.js');
+  setOpenRouterCatalog({
+    fetchedAt: '2026-09-26T00:00:00Z', source: 'openrouter /models + key-scoped /models/user', keyScopedList: 'available', freeModels: 3, accessibleFreeModels: 2,
+    admitted: ['deepseek/deepseek-r1-0528:free'],
+    models: [
+      { id: 'deepseek/deepseek-r1-0528:free', contextLength: 163840, tools: true, eligible: true, admitted: true, reasons: [] },
+      { id: 'google/gemma-3-27b-it:free', contextLength: 96000, tools: false, eligible: false, admitted: false, reasons: ['NO_TOOL_CALLING'] },
+    ],
+  });
+  try {
+    const db = fakeDb();
+    const future = new Date(Date.now() + 600_000).toISOString();
+    const statusRows = [
+      { provider: 'gemini', model: 'gemini-flash-latest', billing_class: 'free', health: 'unavailable', cooldown_until: future, last_error_code: 'PROVIDER_TRANSIENT', last_success_at: '2026-09-25T23:14:20Z' },
+      { provider: 'openrouter', model: 'deepseek/deepseek-r1-0528:free', billing_class: 'free', health: 'unavailable', cooldown_until: future, last_error_code: 'PROVIDER_UNSUITABLE_DATA_POLICY' },
+    ];
+    db.from('provider_status').rows.push(...statusRows); // rows is the table itself
+    const snapshot = await modelPoolSnapshot({ db, workspaceId, env: { GEMINI_API_KEY: 'AIzaTestKey_0123456789abcdefghijklmn', OPENROUTER_API_KEY: 'sk-or-v1-test-0123456789abcdef' } });
+    const byId = Object.fromEntries(snapshot.routes.map((route) => [route.id, route]));
+    assert.equal(byId['gemini:gemini-flash-latest'].status, 'COOLDOWN');
+    const or = byId['openrouter:deepseek/deepseek-r1-0528:free'];
+    assert.equal(or.status, 'UNSUITABLE');
+    assert.equal(or.discovered, true);
+    assert.equal(or.freeOnly, true);
+    assert.equal(or.billingClass, 'FREE');
+    assert.match(or.group, /OpenRouter \(one key/);
+    assert.match(or.privateCode, /NOT APPROVED/);
+    assert.ok(or.excludedBecause.includes('not approved for private code'));
+    assert.ok(!('openrouter:openai/gpt-oss-120b:free' in byId), 'the static default is replaced by the discovered catalog');
+    assert.equal(snapshot.openRouter.freeModels, 3);
+    assert.deepEqual(snapshot.openRouter.models.map((entry) => [entry.id, entry.admitted]), [['deepseek/deepseek-r1-0528:free', true], ['google/gemma-3-27b-it:free', false]]);
+    assert.doesNotMatch(JSON.stringify(snapshot), /sk-or-v1-test|AIzaTestKey/);
+  } finally {
+    setOpenRouterCatalog(null);
+  }
+});

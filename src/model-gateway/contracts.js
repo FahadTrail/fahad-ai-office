@@ -136,6 +136,7 @@ export function classifyProviderError(error) {
     type: optionalString(error?.type),
     networkCode,
     retryAfter: optionalString(error?.retryAfter),
+    ...(error?.reason ? { reason: optionalString(error.reason) } : {}),
     providerRequestId: optionalString(error?.providerRequestId || error?.requestId),
     usage,
   });

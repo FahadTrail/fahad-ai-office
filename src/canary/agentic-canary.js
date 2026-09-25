@@ -18,6 +18,8 @@ import { AgentTurnGateway } from '../model-gateway/agentic/turn-gateway.js';
 import { MemoryProviderStateStore, SupabaseProviderStateStore } from '../model-gateway/agentic/provider-state.js';
 import { toolResult, userText } from '../model-gateway/agentic/conversation.js';
 import { continuationMessage } from '../coding-agent/prompts.js';
+import { getOpenRouterCatalog } from '../model-gateway/agentic/openrouter-catalog.js';
+import { isCoolingDown } from '../model-gateway/agentic/provider-state.js';
 
 const TOOLS = [
   { name: 'add_numbers', description: 'Add two integers and return the sum.', inputSchema: { type: 'object', properties: { a: { type: 'integer' }, b: { type: 'integer' } }, required: ['a', 'b'] } },
@@ -90,11 +92,13 @@ export function poolStatus(pool) {
   }));
 }
 
-// Picks the drill pair: the cheapest verified route as primary and the
-// cheapest verified route of a DIFFERENT provider as backup, so the drill
-// proves cross-provider continuation whenever two providers work.
+// Picks the drill pair: FREE routes first, then the cheapest; the backup is a
+// route of a DIFFERENT provider, so the drill proves cross-provider
+// continuation (free → free whenever two free providers work).
+const BILLING_ORDER = ['free', 'included', 'promo', 'paid'];
 export function failoverPair(verified) {
-  const byCost = verified.toSorted((left, right) => left.costTier - right.costTier || right.qualityTier - left.qualityTier);
+  const billingRank = (route) => { const index = BILLING_ORDER.indexOf(route.billingClass); return index < 0 ? BILLING_ORDER.length : index; };
+  const byCost = verified.toSorted((left, right) => billingRank(left) - billingRank(right) || left.costTier - right.costTier || right.qualityTier - left.qualityTier);
   const primary = byCost[0];
   if (!primary) return null;
   const backup = byCost.find((route) => route.provider !== primary.provider) || byCost[1];
@@ -112,10 +116,33 @@ export async function runAgenticCanary({
   pool = createModelPool({ env: { ...env, CODING_ANTHROPIC_EFFORT: env.CANARY_ANTHROPIC_EFFORT || 'low' } }),
   checkpointStore = memoryCheckpoints(),
 } = {}) {
-  const routable = pool.filter((route) => !route.unavailableReasons.length);
-  const report = { startedAt: new Date().toISOString(), kind: 'REAL provider calls; failover drill uses ONE injected routing failure', pool: poolStatus(pool), routes: [], failover: null };
-  // A canary is an explicit probe: it ignores cooldowns but still records the
-  // real outcome, so a recovered provider becomes routable again.
+  const report = { startedAt: new Date().toISOString(), kind: 'REAL provider calls; failover drill uses ONE injected routing failure', pool: poolStatus(pool), routes: [], skipped: [], failover: null };
+  // Routes in an active cooldown are NOT probed (no hammering a provider that
+  // asked us to back off); they return to rotation when the cooldown ends.
+  const state = await Promise.resolve(stateStore.snapshot?.()).catch(() => null) || new Map();
+  const ignoreCooldown = /^(1|true|yes)$/i.test(String(env.CANARY_IGNORE_COOLDOWN || ''));
+  // One OpenRouter key has a small shared free allowance (e.g. 50 requests
+  // a day): probe only a few discovered free models per run, never-verified
+  // ones first, so repeated canaries rotate through the catalog.
+  const sampleSize = Math.max(0, Number(env.CANARY_OPENROUTER_SAMPLE ?? 3));
+  const discovered = pool.filter((route) => route.discovered && !route.unavailableReasons.length)
+    .toSorted((left, right) => String(state.get(left.id)?.lastSuccessAt || '').localeCompare(String(state.get(right.id)?.lastSuccessAt || '')));
+  const sampled = new Set(discovered.slice(0, sampleSize).map((route) => route.id));
+  const routable = [];
+  for (const route of pool.filter((candidate) => !candidate.unavailableReasons.length)) {
+    const routeState = state.get(route.id);
+    if (!ignoreCooldown && isCoolingDown(routeState, Date.now())) {
+      report.skipped.push({ id: route.id, reason: 'COOLDOWN', until: routeState.cooldownUntil, health: routeState.health || null });
+    } else if (route.discovered && !sampled.has(route.id)) {
+      report.skipped.push({ id: route.id, reason: 'NOT_SAMPLED_THIS_RUN' });
+    } else {
+      routable.push(route);
+    }
+  }
+  const catalog = getOpenRouterCatalog();
+  if (catalog) report.openRouterCatalog = catalog;
+  // Probes record the real outcome in provider health, so a recovered
+  // provider becomes routable again and a failing one cools down.
   const probeStore = {
     snapshot: async () => new Map(),
     recordSuccess: (...args) => stateStore.recordSuccess(...args),
@@ -135,7 +162,8 @@ export async function runAgenticCanary({
         failureClass: error.cause?.failureClass || error.failureClass || null,
         // Provider error type string only (e.g. "invalid_api_key"); never the message body.
         providerType: String(error.cause?.type || error.cause?.cause?.type || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80) || null,
-        attempts: (error.attempts || []).map((attempt) => ({ code: attempt.error?.code || null, status: attempt.error?.status || null, failureClass: attempt.error?.failureClass || null })),
+        providerReason: error.cause?.reason || error.reason || null,
+        attempts: (error.attempts || []).map((attempt) => ({ code: attempt.error?.code || null, status: attempt.error?.status || null, failureClass: attempt.error?.failureClass || null, reason: attempt.error?.reason || null })),
         durationMs: Date.now() - startedAt,
       });
     }

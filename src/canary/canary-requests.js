@@ -6,9 +6,12 @@
 import { runAgenticCanary } from './agentic-canary.js';
 import { parseRouteId } from '../model-gateway/agentic/route-id.js';
 import { runtimeDiagnostics } from './runtime-diagnostics.js';
+import { refreshOpenRouterCatalog } from '../model-gateway/agentic/openrouter-catalog.js';
+import { rankFreeModels } from '../model-gateway/agentic/capabilities.js';
 
 export class CanaryRequestRunner {
-  constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now(), diagnostics = runtimeDiagnostics }) {
+  constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now(), diagnostics = runtimeDiagnostics, refreshCatalog = refreshOpenRouterCatalog }) {
+    this.refreshCatalog = refreshCatalog;
     this.diagnostics = diagnostics;
     this.db = db;
     this.stateStore = stateStore;
@@ -57,6 +60,9 @@ export class CanaryRequestRunner {
     if (!request?.id) return false;
     this.log('Running requested live provider canary', request.id);
     try {
+      // Current OpenRouter free models before probing (keeps the last good
+      // catalog when OpenRouter's catalog API is unavailable).
+      await this.refreshCatalog({ env: this.env, log: this.log, rank: (left, right) => rankFreeModels(left, right, this.env) }).catch(() => null);
       const checkpointStore = this.checkpointStore(request.id);
       const report = await this.run({ env: this.env, stateStore: this.stateStore, log: () => {}, checkpointStore });
       const checkpoint = await checkpointStore.load().catch(() => null);
