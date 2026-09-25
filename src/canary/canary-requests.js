@@ -66,7 +66,7 @@ export class CanaryRequestRunner {
       for (const id of verified) {
         const { provider, model } = parseRouteId(id);
         await this.db.from('provider_status').update({ verified_at: new Date(this.now()).toISOString() })
-          .eq('provider', provider).eq('model', model);
+          .eq('provider', provider).eq('model', provider);
       }
       await this.db.from('provider_canary_runs').update({
         status: 'completed', completed_at: new Date(this.now()).toISOString(), report,
