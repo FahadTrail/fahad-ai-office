@@ -14,6 +14,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { argumentsSha256 } from '../tool-broker/broker.js';
 import { pendingToolCalls, toolResult, transcriptChars, truncate, userText } from '../model-gateway/agentic/conversation.js';
 import { estimateTokens } from '../model-gateway/agentic/turn-gateway.js';
+import { normalizeRouting } from '../model-gateway/agentic/routing-policy.js';
 import { CODING_BROKER, MODEL_TOOL_TO_BROKER, modelToolSpecs } from './tools.js';
 import { classifyChangedPaths, findSecretMaterial, redact, safeSlug } from './policy.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
@@ -55,6 +56,7 @@ export class CodingAgentController {
     recordModelAttempt = async () => {},
     authorizedRouteIds = null,
     authorizeRoute = async () => {},
+    routingFor = async () => null,
     budget = { reserve: async () => null, settle: async () => {} },
     limits = {},
     log = () => {},
@@ -69,6 +71,7 @@ export class CodingAgentController {
     this.recordModelAttempt = recordModelAttempt;
     this.authorizedRouteIds = authorizedRouteIds;
     this.authorizeRoute = authorizeRoute;
+    this.routingFor = routingFor;
     this.budget = budget;
     this.limits = { ...DEFAULT_LIMITS, ...limits };
     this.log = log;
@@ -292,6 +295,7 @@ class SessionRun {
     });
     if (transcriptChars(this.transcript.messages) > this.c.limits.compactAtChars) await this.compact();
     const estimatedInputTokens = estimateTokens(system, this.transcript.messages, tools);
+    const policy = await this.c.routingFor(this.session, this.config.routing) || {};
     let prepared = null;
     const response = await this.c.gateway.turn({
       tools,
@@ -302,7 +306,11 @@ class SessionRun {
         estimatedInputTokens,
         remainingBudgetUsd: Math.max(0, this.session.budgetUsd - this.session.spentUsd),
         authorizedRouteIds: this.c.authorizedRouteIds,
-        allowPaid: this.config.allowPaid,
+        allowPaid: this.config.allowPaid && policy.allowPaid !== false,
+        billingPriority: policy.billingPriority,
+        strategy: policy.strategy,
+        policyExcludedRouteIds: policy.excludedRoutes || [],
+        budgetExhaustedRouteIds: policy.exhaustedRoutes || [],
       },
       prepare: async (route) => {
         if (this.transcript.segmentRoute === route.id || (!this.transcript.segmentRoute && !this.transcript.handedOff)) {
@@ -731,7 +739,8 @@ function normalizeConfig(config) {
     publish: ['pull_request', 'branch', 'none'].includes(config.publish) ? config.publish : 'pull_request',
     waitForCi: config.waitForCi !== false,
     privateData: config.privateData !== false,
-    allowPaid: config.allowPaid !== false,
+    allowPaid: config.allowPaid !== false && config.routing?.allowPaid !== false,
+    routing: normalizeRouting(config.routing || {}),
     allowProtectedPaths: config.allowProtectedPaths === true,
     fetchUrl: typeof config.fetchUrl === 'string' ? config.fetchUrl : null,
     deploy: { mode: deploy.mode === 'merge' ? 'merge' : 'none', workflow: typeof deploy.workflow === 'string' ? deploy.workflow : null },

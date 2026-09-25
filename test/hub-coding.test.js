@@ -16,6 +16,7 @@ class Query {
   order() { return this; }
   limit() { return this; }
   maybeSingle() { this.maybe = true; return this; }
+  single() { this.maybe = true; return this; }
   then(resolve) {
     if (this.error) return resolve({ data: null, error: this.error });
     const rows = this.rows.filter((row) => this.filters.every((filter) => filter(row)));
@@ -37,13 +38,19 @@ function fakeDb({ installed = true } = {}) {
     model_attempts: [],
     provider_status: [
       { provider: 'anthropic', model: 'claude-opus-5', billing_class: 'paid', health: 'rate_limited', cooldown_until: new Date(Date.now() + 3_600_000).toISOString(), rate_limit: { requestsLimit: 50, requestsRemaining: 0 }, requests_total: 4, failures_total: 1, input_tokens_total: 1000, output_tokens_total: 100, cost_usd_total: 0.02, last_error_code: 'PROVIDER_RATE_LIMIT' },
-      { provider: 'deepseek', model: 'deepseek-flash', billing_class: 'paid', health: 'healthy', rate_limit: null, requests_total: 2, failures_total: 0, input_tokens_total: 10, output_tokens_total: 1, cost_usd_total: 0.001 },
+      { provider: 'deepseek', model: 'deepseek-flash', billing_class: 'paid', health: 'healthy', rate_limit: null, last_success_at: '2026-09-25T00:00:00Z', requests_total: 2, failures_total: 0, input_tokens_total: 10, output_tokens_total: 1, cost_usd_total: 0.001 },
     ],
   };
   const rpcCalls = [];
   return {
     rpcCalls,
-    from(name) { return !installed && /^agent_|provider_status/.test(name) ? new Query([], missing) : new Query(tables[name] || []); },
+    upserts: [],
+    from(name) {
+      if (!installed && /^agent_|provider_status/.test(name)) return new Query([], missing);
+      const query = new Query(tables[name] || []);
+      query.upsert = (row) => { this.upserts.push([name, row]); return new Query([row]); };
+      return query;
+    },
     async rpc(name, args) {
       rpcCalls.push([name, args]);
       if (!installed) return { data: null, error: { message: 'Could not find the function public.create_coding_session', code: 'PGRST202' } };
@@ -121,10 +128,23 @@ test('model pool dashboard never invents quota and explains unavailability', asy
   assert.match(deepseek.availability, /PRIVACY REVIEW PENDING/);
   assert.equal(deepseek.quotaPercentRemaining, null);
   const sonnet = byId['anthropic:claude-sonnet-5'];
-  assert.equal(sonnet.availability, 'AVAILABLE — EXACT QUOTA UNKNOWN');
+  assert.equal(sonnet.availability, 'AVAILABLE — EXACT QUOTA NOT AVAILABLE');
+  assert.deepEqual(sonnet.quota, { exact: false, label: 'EXACT QUOTA NOT AVAILABLE' });
+  assert.equal(sonnet.status, 'CONFIGURED — NOT YET VERIFIED', 'no canary or traffic yet');
   assert.equal(sonnet.routingRank, 1);
+  assert.equal(opus.status, 'RATE LIMITED');
+  assert.equal(opus.quota.exact, true);
+  assert.equal(deepseek.status, 'LIVE');
+  assert.equal(deepseek.activeTasks, 1);
+  assert.equal(deepseek.codingSuitability, 'PUBLIC CODE ONLY — PRIVACY REVIEW PENDING');
+  assert.equal(sonnet.codingSuitability, 'SUITABLE FOR PRIVATE CODE');
   assert.match(byId['gemini:gemini-2.5-flash'].availability, /NOT CONFIGURED — CREDENTIAL_MISSING/);
+  assert.equal(byId['gemini:gemini-2.5-flash'].status, 'NOT CONFIGURED');
+  assert.equal(byId['gemini:gemini-2.5-flash'].integration, 'READY — CREDENTIAL REQUIRED');
+  assert.match(byId['qwen:qwen3.8-flash'].integration, /READY — ENDPOINT REQUIRED/);
   assert.equal(byId['openai:gpt-5.3-codex'].enabled, false);
+  assert.deepEqual(snapshot.billingPriority, ['free', 'included', 'promo', 'paid']);
+  assert.equal(snapshot.routing.strategy, 'economy');
 });
 
 test('Hub page includes the Coding Agent UI in parseable scripts and exposes the deployed version', async () => {
@@ -137,5 +157,21 @@ test('Hub page includes the Coding Agent UI in parseable scripts and exposes the
   await withServer(fakeDb(), async (base) => {
     const health = await fetch(`${base}/healthz`).then((response) => response.json());
     assert.ok('version' in health);
+  });
+});
+
+test('project routing policy is validated and saved through the Hub', async () => {
+  const db = fakeDb();
+  await withServer(db, async (base) => {
+    const put = (body) => fetch(`${base}/api/model-pool/routing`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal((await put({ workspaceId, strategy: 'yolo' })).status, 400, 'nothing valid to save');
+    assert.equal((await put({ workspaceId: 'x', strategy: 'economy' })).status, 400);
+    const saved = await put({ workspaceId, strategy: 'quality', allowPaid: false, billingPriority: ['free', 'paid', 'nope'] });
+    assert.equal(saved.status, 200);
+    const [table, row] = db.upserts.at(-1);
+    assert.equal(table, 'workspace_routing_policies');
+    assert.deepEqual([row.workspace_id, row.strategy, row.allow_paid, row.billing_priority], [workspaceId, 'quality', false, ['free', 'paid']]);
+    const pool = await fetch(`${base}/api/model-pool?workspaceId=${workspaceId}`);
+    assert.equal(pool.status, 200);
   });
 });

@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { createModelPool } from './model-gateway/agentic/model-pool.js';
 import { AgentTurnGateway } from './model-gateway/agentic/turn-gateway.js';
-import { billingPriority } from './coding-agent/runtime.js';
+import { exhaustedRoutes, normalizeRouting, resolveRouting, SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -28,7 +28,8 @@ export async function handleCodingApi({ db, request, response, url, sendJson, re
   if (!path.startsWith('/api/coding') && !path.startsWith('/api/approvals') && !path.startsWith('/api/model-pool')) return false;
   try {
     if (request.method === 'GET' && path === '/api/model-pool') {
-      const snapshot = await modelPoolSnapshot({ db, env, now });
+      const requested = url.searchParams.get('workspaceId');
+      const snapshot = await modelPoolSnapshot({ db, env, now, workspaceId: requested ? uuid(requested, 'workspaceId') : null });
       let lastCanary = null;
       try {
         lastCanary = (await rows(db.from('provider_canary_runs').select('id,status,requested_at,completed_at,report,error').order('requested_at', { ascending: false }).limit(1)))[0] || null;
@@ -36,6 +37,15 @@ export async function handleCodingApi({ db, request, response, url, sendJson, re
         if (!error.notInstalled) throw error;
       }
       return sendJson(response, 200, { ok: true, ...snapshot, lastCanary }), true;
+    }
+    if (request.method === 'PUT' && path === '/api/model-pool/routing') {
+      const body = await readJson(request);
+      const workspaceId = uuid(body.workspaceId, 'workspaceId');
+      const routing = normalizeRouting(body);
+      if (!Object.keys(routing).length) throw input('No valid routing setting was provided');
+      const saved = await new SupabaseRoutingPolicyStore(db).setRoutingPolicy(workspaceId, routing)
+        .catch((error) => { throw dbError('Could not save the routing policy', error); });
+      return sendJson(response, 200, { ok: true, routing: saved }), true;
     }
     if (request.method === 'POST' && path === '/api/model-pool/canary') {
       const { data, error } = await db.from('provider_canary_runs').insert({ requested_by: actor || 'hub-owner' }).select('id,status,requested_at').single();
@@ -129,73 +139,146 @@ function validateSessionInput(body) {
       config.verify = { url: url.href, hosts: [url.hostname], ...(body.verifyShaField ? { expectShaField: String(body.verifyShaField).slice(0, 60) } : {}) };
     }
   }
+  if (body.routing && typeof body.routing === 'object') {
+    const routing = normalizeRouting(body.routing);
+    if (Object.keys(routing).length) config.routing = routing;
+  }
   if (Array.isArray(body.supabaseProjects)) config.supabase = { projects: body.supabaseProjects.filter((ref) => /^[a-z0-9]{20}$/.test(ref)).slice(0, 5) };
   return { workspaceId, objective, repository, baseBranch, budgetUsd, title, config };
 }
 
 // Truthful per-route status: provider-reported rate limits only; quota is
-// "unknown" when the provider does not expose it; costs are marked estimated.
-export async function modelPoolSnapshot({ db, env = process.env, now = () => Date.now() }) {
+// "EXACT QUOTA NOT AVAILABLE" unless a provider reports it; costs are marked
+// estimated; a route is LIVE only after a real canary or real traffic.
+export async function modelPoolSnapshot({ db, env = process.env, now = () => Date.now(), workspaceId = null }) {
   const pool = createModelPool({ env });
-  let statusRows = [];
-  try {
-    statusRows = await rows(db.from('provider_status').select('*'));
-  } catch (error) {
-    if (!error.notInstalled) throw error;
-  }
+  const optional = async (promise, fallback) => {
+    try {
+      return await promise;
+    } catch (error) {
+      if (error.notInstalled) return fallback;
+      throw error;
+    }
+  };
+  const routingStore = new SupabaseRoutingPolicyStore(db);
+  const [statusRows, todayRows, periodRows, activeRows, workspaceRouting] = await Promise.all([
+    optional(rows(db.from('provider_status').select('*')), []),
+    optional(rpcRows(db, 'model_usage_summary', { p_since: null, p_workspace: null }), []),
+    workspaceId ? optional(rpcRows(db, 'model_usage_summary', { p_since: null, p_workspace: workspaceId }), []) : [],
+    optional(rows(db.from('agent_sessions').select('current_route,status').in('status', ['queued', 'running', 'awaiting_approval'])), []),
+    workspaceId ? routingStore.getRoutingPolicy(workspaceId).catch(() => null) : null,
+  ]);
+  const routing = resolveRouting({ env, workspace: workspaceRouting });
   const state = new Map(statusRows.map((row) => [`${row.provider}:${row.model}`, row]));
+  const today = new Map(todayRows.map((row) => [`${row.provider}:${row.model}`, row]));
+  const period = new Map(periodRows.map((row) => [`${row.provider}:${row.model}`, Number(row.cost_usd || 0)]));
+  const active = new Map();
+  for (const row of activeRows) if (row.current_route) active.set(row.current_route, (active.get(row.current_route) || 0) + 1);
+  const minQualityTier = Number(env.CODING_MIN_QUALITY_TIER || 4);
   const gateway = new AgentTurnGateway({
     pool,
     stateStore: { snapshot: async () => new Map([...state].map(([key, row]) => [key, { health: row.health, cooldownUntil: row.cooldown_until }])) },
-    billingPriority: billingPriority(env),
+    billingPriority: routing.billingPriority,
+    strategy: routing.strategy,
+    minQualityTier,
     now,
   });
-  const evaluations = await gateway.evaluate({ requiresPrivateData: true });
+  const evaluations = await gateway.evaluate({
+    requiresPrivateData: true, allowPaid: routing.allowPaid,
+    policyExcludedRouteIds: routing.excludedRoutes, budgetExhaustedRouteIds: exhaustedRoutes(routing, period),
+  });
   const order = gateway.order(evaluations).map((route) => route.id);
   const routes = evaluations.map(({ route, reasons }) => {
     const row = state.get(route.id) || null;
     const rateLimit = row?.rate_limit || null;
     const limit = rateLimit?.requestsLimit ?? null;
     const remaining = rateLimit?.requestsRemaining ?? null;
-    const cooling = row?.cooldown_until && Date.parse(row.cooldown_until) > now();
+    const cooling = Boolean(row?.cooldown_until && Date.parse(row.cooldown_until) > now());
+    const configured = !route.unavailableReasons.includes('CREDENTIAL_MISSING');
     let availability;
     if (route.unavailableReasons.length) availability = `NOT CONFIGURED — ${route.unavailableReasons.join(', ')}`;
     else if (cooling) availability = `${String(row.health || 'unavailable').toUpperCase().replace('_', ' ')} — RETRY AFTER ${formatRemaining(Date.parse(row.cooldown_until) - now())}`;
     else if (reasons.includes('PRIVACY_NOT_APPROVED')) availability = 'AVAILABLE FOR PUBLIC DATA ONLY — PRIVACY REVIEW PENDING';
     else if (reasons.includes('BELOW_QUALITY_FLOOR')) availability = 'AVAILABLE — BELOW CODING QUALITY FLOOR';
     else if (limit != null && remaining != null) availability = `AVAILABLE — ${remaining}/${limit} REQUESTS LEFT (PROVIDER-REPORTED)`;
-    else availability = 'AVAILABLE — EXACT QUOTA UNKNOWN';
+    else availability = 'AVAILABLE — EXACT QUOTA NOT AVAILABLE';
+    const verifiedAt = row?.verified_at || null;
+    let status;
+    if (!configured) status = 'NOT CONFIGURED';
+    else if (route.unavailableReasons.length) status = 'NOT READY';
+    else if (cooling && row.health === 'rate_limited') status = 'RATE LIMITED';
+    else if (cooling) status = 'OFFLINE';
+    else if (row?.health === 'degraded') status = 'DEGRADED';
+    else if (verifiedAt || row?.last_success_at) status = 'LIVE';
+    else status = 'CONFIGURED — NOT YET VERIFIED';
+    const integration = route.unavailableReasons.length === 0 ? 'READY'
+      : route.unavailableReasons.map((reason) => ({
+        CREDENTIAL_MISSING: 'READY — CREDENTIAL REQUIRED', ENDPOINT_NOT_CONFIGURED: 'READY — ENDPOINT REQUIRED',
+        MODEL_NOT_CONFIGURED: 'READY — MODEL ID REQUIRED', PRICING_UNKNOWN: 'READY — PRICING REQUIRED',
+      })[reason] || reason).join(' · ');
+    const usageToday = today.get(route.id);
+    const cap = routing.routeMonthlyBudgetUsd[route.id];
     return {
       id: route.id,
       provider: route.provider,
       model: route.model,
       protocol: route.protocol,
-      enabled: !route.unavailableReasons.length,
+      status,
+      integration,
+      configured,
+      enabled: !route.unavailableReasons.length && !routing.excludedRoutes.includes(route.id),
       eligibleForPrivateCode: reasons.length === 0,
       routingRank: order.indexOf(route.id) >= 0 ? order.indexOf(route.id) + 1 : null,
       billingClass: route.billingClass.toUpperCase(),
       health: row?.health || 'unknown',
       availability,
       reasons,
+      codingSuitability: !route.toolCalling ? 'TEXT ONLY — NOT FOR CODING'
+        : route.qualityTier < minQualityTier ? 'BELOW CODING QUALITY FLOOR'
+          : route.privacyApproved ? 'SUITABLE FOR PRIVATE CODE' : 'PUBLIC CODE ONLY — PRIVACY REVIEW PENDING',
+      activeTasks: active.get(route.id) || 0,
+      quota: limit != null && remaining != null
+        ? { exact: true, source: 'provider response headers (rate-limit window)', requestsLimit: limit, requestsRemaining: remaining, resetsAt: rateLimit.requestsReset || null }
+        : { exact: false, label: 'EXACT QUOTA NOT AVAILABLE' },
       rateLimit: rateLimit ? { ...rateLimit, source: 'provider response headers' } : null,
       quotaPercentRemaining: limit && remaining != null ? Math.round((remaining / limit) * 100) : null,
       cooldownUntil: cooling ? row.cooldown_until : null,
+      resetsAt: cooling ? row.cooldown_until : rateLimit?.requestsReset || null,
+      today: usageToday ? {
+        requests: Number(usageToday.requests || 0), failures: Number(usageToday.failures || 0),
+        inputTokens: Number(usageToday.input_tokens || 0), outputTokens: Number(usageToday.output_tokens || 0),
+        estimatedCostUsd: Number(usageToday.cost_usd || 0), source: 'model_attempts audit (Office + Coding Agent, UTC day)',
+      } : { requests: 0, failures: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0, source: 'model_attempts audit (Office + Coding Agent, UTC day)' },
+      budgetCap: cap != null ? { monthlyUsd: cap, spentThisPeriodUsd: period.get(route.id) || 0, basis: 'ESTIMATED' } : null,
       usage: row ? {
         requests: Number(row.requests_total || 0), failures: Number(row.failures_total || 0),
         inputTokens: Number(row.input_tokens_total || 0), outputTokens: Number(row.output_tokens_total || 0),
-        estimatedCostUsd: Number(row.cost_usd_total || 0), costBasis: 'ESTIMATED from token counts and published list prices',
+        estimatedCostUsd: Number(row.cost_usd_total || 0), costBasis: 'ESTIMATED from token counts and published list prices (lifetime, includes canaries)',
       } : null,
       lastSuccessAt: row?.last_success_at || null,
       lastErrorAt: row?.last_error_at || null,
       lastErrorCode: row?.last_error_code || null,
-      verifiedAt: row?.verified_at || row?.last_success_at || null,
+      verifiedAt,
       toolCalling: route.toolCalling,
       contextWindow: route.contextWindow,
+      qualityTier: route.qualityTier,
+      costTier: route.costTier,
       privacy: route.privacyApproved ? 'approved for private code' : (route.privacyFlag ? `requires ${route.privacyFlag}=true after review` : route.privacyNote || 'not approved'),
       pricing: route.pricing ? { ...route.pricing, basis: 'published list price' } : null,
     };
   });
-  return { billingPriority: billingPriority(env), routes, installed: statusRows.length > 0 || true };
+  return {
+    billingPriority: [...routing.billingPriority],
+    routing: { ...routing, source: workspaceRouting ? 'workspace policy' : 'defaults' },
+    routes,
+    installed: true,
+  };
+}
+
+async function rpcRows(db, name, args) {
+  const { data, error } = await db.rpc(name, args);
+  if (error) throw dbError(`Could not load ${name}`, error);
+  return data || [];
 }
 
 function formatRemaining(ms) {
@@ -292,7 +375,7 @@ async function one(query) {
 // Injected into the existing Hub page script (the Hub keeps two scripts).
 export const CODING_STYLE = '<style>.coding-view{position:fixed;inset:0 0 0 270px;background:#0a1020;z-index:4;overflow:auto;padding:24px 30px}.coding-view h2{margin:0 0 4px}.coding-grid{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:18px;margin-top:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}.card h3{margin:0 0 10px;font-size:14px}.session-item{display:block;width:100%;text-align:left;background:transparent;color:var(--ink);padding:9px;border-radius:9px;border:1px solid transparent}.session-item:hover,.session-item.active{background:#1b2943;border-color:var(--line)}.session-item small{display:block;color:var(--muted);margin-top:3px}.kv{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.kv .metric strong{font-size:12px}.pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:700;background:#26375e;color:#cbd6ff}.pill.completed{background:#16432f;color:#8ff0c4}.pill.failed,.pill.cancelled{background:#4a2027;color:#ffb3b3}.pill.awaiting_approval,.pill.blocked{background:#4a3a18;color:#f5d68a}.feed{max-height:380px;overflow:auto;font-size:12px}.feed div{padding:6px 0;border-bottom:1px solid var(--line)}.feed .warning{color:#f5d68a}.feed .error{color:var(--danger);background:none;border:0;padding:6px 0;margin:0}.feed .success{color:var(--good)}.approval{border:1px solid #6b5a2a;background:#2a2412;border-radius:10px;padding:10px;margin-bottom:8px}.approval button{margin-right:6px;margin-top:6px;padding:6px 10px;border-radius:8px}.approve{background:#1f7a52;color:#fff}.reject{background:#7f3542;color:#fff}.report{white-space:pre-wrap;font-size:12px;background:#0d1525;border-radius:10px;padding:10px;max-height:340px;overflow:auto}.pool-table{width:100%;border-collapse:collapse;font-size:12px}.pool-table td,.pool-table th{border-bottom:1px solid var(--line);padding:7px 6px;text-align:left;vertical-align:top}.pool-table th{color:var(--muted);font-weight:600}.muted{color:var(--muted)}.row-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:7px 11px}.coding-form label{display:block;color:var(--muted);font-size:12px;margin-top:10px}.coding-form .field{margin-top:4px}.check{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:12px}.approvals-badge{background:#b7791f;color:#1a1204;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:800;margin-left:4px}@media(max-width:820px){.coding-view{inset:0;padding:16px}.coding-grid{grid-template-columns:1fr}.kv{grid-template-columns:repeat(2,1fr)}}</style>';
 
-export const CODING_MARKUP = '<div id="codingView" class="coding-view hidden"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2>Coding Agent</h2><div class="muted">Autonomous development: plan → edit → test → debug → PR → CI → deploy → verify. It keeps working across model switches and restarts.</div></div><div class="row-actions" style="margin:0"><button id="poolButton" class="ghost">Model pool</button><button id="codingClose" class="ghost">Back to chat</button></div></div><div id="codingError" class="error hidden"></div><div id="poolPanel" class="card hidden" style="margin-top:14px"></div><div class="coding-grid"><div><div class="card coding-form"><h3>New development task</h3><label>Repository<input id="cRepo" class="field" value="FahadTrail/fahad-ai-office"></label><label>Base branch<input id="cBase" class="field" value="main"></label><label>Development instruction<textarea id="cObjective" class="field" style="min-height:140px" placeholder="Paste the full specification…"></textarea></label><label>Budget (USD)<input id="cBudget" class="field" type="number" min="0.5" max="500" step="0.5" value="5"></label><label>Test command (optional; auto-detected)<input id="cTest" class="field" placeholder="npm test"></label><div class="check"><input id="cDeploy" type="checkbox"><span>Merge &amp; deploy after CI passes (merge needs your approval unless your policy allows it)</span></div><label>Production health URL (optional)<input id="cVerify" class="field" placeholder="https://…/healthz"></label><button id="cStart" class="newchat" style="width:100%;margin-top:12px">Start Coding Agent</button></div><div class="card" style="margin-top:14px"><h3>Sessions</h3><div id="cSessions" class="muted">No sessions yet.</div></div></div><div id="cDetail" class="card"><div class="muted">Select or start a session. You can leave; the agent keeps working and this view updates live.</div></div></div></div>';
+export const CODING_MARKUP = '<div id="codingView" class="coding-view hidden"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2>Coding Agent</h2><div class="muted">Autonomous development: plan → edit → test → debug → PR → CI → deploy → verify. It keeps working across model switches and restarts.</div></div><div class="row-actions" style="margin:0"><button id="poolButton" class="ghost">Model pool</button><button id="codingClose" class="ghost">Back to chat</button></div></div><div id="codingError" class="error hidden"></div><div id="poolPanel" class="card hidden" style="margin-top:14px"></div><div class="coding-grid"><div><div class="card coding-form"><h3>New development task</h3><label>Repository<input id="cRepo" class="field" value="FahadTrail/fahad-ai-office"></label><label>Base branch<input id="cBase" class="field" value="main"></label><label>Development instruction<textarea id="cObjective" class="field" style="min-height:140px" placeholder="Paste the full specification…"></textarea></label><label>Budget (USD)<input id="cBudget" class="field" type="number" min="0.5" max="500" step="0.5" value="5"></label><label>Model routing<select id="cRouting" class="field"><option value="">Project default</option><option value="economy">Economy — free first, cheapest capable model</option><option value="balanced">Balanced — best model, then cheaper</option><option value="quality">Quality — strongest model first</option><option value="nopaid">Free / included only — never paid</option></select></label><label>Test command (optional; auto-detected)<input id="cTest" class="field" placeholder="npm test"></label><div class="check"><input id="cDeploy" type="checkbox"><span>Merge &amp; deploy after CI passes (merge needs your approval unless your policy allows it)</span></div><label>Production health URL (optional)<input id="cVerify" class="field" placeholder="https://…/healthz"></label><button id="cStart" class="newchat" style="width:100%;margin-top:12px">Start Coding Agent</button></div><div class="card" style="margin-top:14px"><h3>Sessions</h3><div id="cSessions" class="muted">No sessions yet.</div></div></div><div id="cDetail" class="card"><div class="muted">Select or start a session. You can leave; the agent keeps working and this view updates live.</div></div></div></div>';
 
 export const CODING_SCRIPT = String.raw`
   (function(){
@@ -306,7 +389,7 @@ export const CODING_SCRIPT = String.raw`
     function closeCoding(){codingView.classList.add('hidden');clearInterval(codingPoll)}
     async function loadSessions(){if(!ws())return;try{cerr('');const d=await codingApi('./api/coding/sessions?workspaceId='+encodeURIComponent(ws()));document.getElementById('cSessions').innerHTML=(d.sessions||[]).map(s=>'<button class="session-item '+(s.id===codingSession?'active':'')+'" data-session="'+s.id+'"><strong>'+esc(s.title)+'</strong> <span class="pill '+esc(s.status)+'">'+esc(s.status)+'</span><small>'+esc(s.repository)+' · '+esc(s.phase)+' · '+new Date(s.createdAt).toLocaleString()+'</small></button>').join('')||'No sessions yet.';document.querySelectorAll('[data-session]').forEach(b=>b.onclick=()=>openSession(b.dataset.session));await loadApprovalsBadge()}catch(e){cerr(e.message)}}
     async function loadApprovalsBadge(){if(!ws())return;try{const d=await codingApi('./api/approvals?workspaceId='+encodeURIComponent(ws()));const n=(d.approvals||[]).length;const b=document.getElementById('approvalsBadge');b.textContent=String(n);b.classList.toggle('hidden',!n)}catch{}}
-    async function startSession(){const objective=document.getElementById('cObjective').value.trim();if(objective.length<12)return cerr('Describe the development task (at least 12 characters).');const body={workspaceId:ws(),repository:document.getElementById('cRepo').value.trim(),baseBranch:document.getElementById('cBase').value.trim()||'main',objective,budgetUsd:Number(document.getElementById('cBudget').value||5),deploy:document.getElementById('cDeploy').checked};const t=document.getElementById('cTest').value.trim();if(t)body.testCommand=t;const v=document.getElementById('cVerify').value.trim();if(v){body.verifyUrl=v}document.getElementById('cStart').disabled=true;try{cerr('');const d=await codingApi('./api/coding/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.getElementById('cObjective').value='';await loadSessions();await openSession(d.session.id)}catch(e){cerr(e.message)}finally{document.getElementById('cStart').disabled=false}}
+    async function startSession(){const objective=document.getElementById('cObjective').value.trim();if(objective.length<12)return cerr('Describe the development task (at least 12 characters).');const body={workspaceId:ws(),repository:document.getElementById('cRepo').value.trim(),baseBranch:document.getElementById('cBase').value.trim()||'main',objective,budgetUsd:Number(document.getElementById('cBudget').value||5),deploy:document.getElementById('cDeploy').checked};const rt=document.getElementById('cRouting').value;if(rt==='nopaid')body.routing={allowPaid:false};else if(rt)body.routing={strategy:rt};const t=document.getElementById('cTest').value.trim();if(t)body.testCommand=t;const v=document.getElementById('cVerify').value.trim();if(v){body.verifyUrl=v}document.getElementById('cStart').disabled=true;try{cerr('');const d=await codingApi('./api/coding/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.getElementById('cObjective').value='';await loadSessions();await openSession(d.session.id)}catch(e){cerr(e.message)}finally{document.getElementById('cStart').disabled=false}}
     async function openSession(id){codingSession=id;clearInterval(codingPoll);await renderSession();codingPoll=setInterval(renderSession,4000);document.querySelectorAll('[data-session]').forEach(b=>b.classList.toggle('active',b.dataset.session===id))}
     async function decide(id,decision){try{await codingApi('./api/approvals/'+id,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({decision})});await renderSession();await loadApprovalsBadge()}catch(e){cerr(e.message)}}
     async function sessionAction(action){try{await codingApi('./api/coding/sessions/'+codingSession+'/'+action,{method:'POST'});await renderSession()}catch(e){cerr(e.message)}}
@@ -326,7 +409,14 @@ export const CODING_SCRIPT = String.raw`
         +'<h3 style="margin-top:14px">Live activity</h3><div class="feed">'+(d.events||[]).map(e=>'<div class="'+esc(e.level)+'">'+esc(new Date(e.createdAt).toLocaleTimeString())+' · <strong>'+esc(e.type)+'</strong> '+esc(e.message)+'</div>').join('')+'</div>';
       document.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>decide(b.dataset.approve,'approved'));document.querySelectorAll('[data-reject]').forEach(b=>b.onclick=()=>decide(b.dataset.reject,'rejected'));document.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>sessionAction(b.dataset.act));
       if(['completed','failed','cancelled'].includes(s.status))clearInterval(codingPoll)}catch(e){cerr(e.message);clearInterval(codingPoll)}}
-    async function togglePool(){const panel=document.getElementById('poolPanel');poolOpen=!poolOpen;panel.classList.toggle('hidden',!poolOpen);if(!poolOpen)return;panel.innerHTML='<div class="muted">Loading…</div>';try{const d=await codingApi('./api/model-pool');const lc=d.lastCanary;const canaryLine='<div class="row-actions" style="margin:0 0 10px"><button id="runCanary" class="ghost">Run live canary</button><span class="muted">'+(lc?('Last canary: '+esc(lc.status)+(lc.report?(' · verified: '+esc((lc.report.routes||[]).filter(r=>r.ok).map(r=>r.id).join(', ')||'none')+' · failover drill: '+(lc.report.failover?.ok?('passed'+(lc.report.failover.crossProvider?' ('+esc(lc.report.failover.primary)+' → '+esc(lc.report.failover.backup)+')':' (same provider)')):'not passed')+(lc.report.totalCostUsd!=null?' · cost '+usd(lc.report.totalCostUsd)+' ESTIMATED':'')):'')+' · '+new Date(lc.requested_at).toLocaleString()):'No live canary has run yet.')+'</span></div>';panel.innerHTML=canaryLine+'<h3>Model pool · routing priority: '+esc((d.billingPriority||[]).join(' → '))+'</h3><div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Class</th><th>Status</th><th>Health</th><th>Usage (estimated cost)</th><th>Last success / error</th><th>Tools · context</th><th>Privacy</th></tr>'+(d.routes||[]).map(r=>'<tr><td>'+(r.routingRank||'–')+'</td><td><strong>'+esc(r.provider)+'</strong><br><span class="muted">'+esc(r.model)+'</span></td><td>'+esc(r.billingClass)+'</td><td>'+esc(r.availability)+(r.quotaPercentRemaining!=null?'<br><span class="muted">'+r.quotaPercentRemaining+'% of request window left</span>':'')+'</td><td>'+esc(r.health)+'</td><td>'+(r.usage?(r.usage.requests+' req · '+(r.usage.inputTokens+r.usage.outputTokens).toLocaleString()+' tok<br>'+usd(r.usage.estimatedCostUsd)+' ESTIMATED'):'<span class="muted">no traffic yet</span>')+'</td><td>'+(r.lastSuccessAt?new Date(r.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(r.lastErrorCode||'')+'</span></td><td>'+(r.toolCalling?'tools':'no tools')+' · '+Math.round(r.contextWindow/1000)+'K</td><td class="muted">'+esc(r.privacy)+'</td></tr>').join('')+'</table></div><p class="muted">Quota and remaining limits are shown only when the provider reports them in response headers; otherwise they are marked unknown. Costs are estimates from token counts and published list prices — check each provider console for billing.</p>';const rc=document.getElementById('runCanary');if(rc)rc.onclick=async()=>{rc.disabled=true;try{await codingApi('./api/model-pool/canary',{method:'POST'});rc.textContent='Queued — runs within a minute';}catch(e){cerr(e.message)}}}catch(e){panel.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
+    async function togglePool(){const panel=document.getElementById('poolPanel');poolOpen=!poolOpen;panel.classList.toggle('hidden',!poolOpen);if(!poolOpen)return;await renderPool()}
+    async function renderPool(){const panel=document.getElementById('poolPanel');panel.innerHTML='<div class="muted">Loading…</div>';try{const d=await codingApi('./api/model-pool'+(ws()?'?workspaceId='+encodeURIComponent(ws()):''));const lc=d.lastCanary;const r=d.routing||{};
+      const canaryLine='<div class="row-actions" style="margin:0 0 10px"><button id="runCanary" class="ghost">Run live canary</button><span class="muted">'+(lc?('Last canary: '+esc(lc.status)+(lc.report?(' · verified: '+esc((lc.report.routes||[]).filter(x=>x.ok).map(x=>x.id).join(', ')||'none')+' · failover drill: '+(lc.report.failover?.ok?('passed'+(lc.report.failover.crossProvider?' ('+esc(lc.report.failover.primary)+' → '+esc(lc.report.failover.backup)+')':' (same provider)')):'not passed')+(lc.report.totalCostUsd!=null?' · cost '+usd(lc.report.totalCostUsd)+' ESTIMATED':'')):'')+' · '+new Date(lc.requested_at).toLocaleString()):'No live canary has run yet.')+'</span></div>';
+      const routingForm='<div class="row-actions" style="margin:0 0 10px;flex-wrap:wrap"><span class="muted">Project routing:</span><select id="rStrategy" class="field" style="width:auto">'+['economy','balanced','quality'].map(v=>'<option value="'+v+'"'+(r.strategy===v?' selected':'')+'>'+v+'</option>').join('')+'</select><label class="check" style="margin:0"><input id="rPaid" type="checkbox"'+(r.allowPaid!==false?' checked':'')+'><span>allow paid models</span></label><button id="rSave" class="ghost">Save</button><span class="muted">Priority: '+esc((d.billingPriority||[]).join(' → '))+' · source: '+esc(r.source||'defaults')+'</span></div>';
+      const cls=s=>/^LIVE/.test(s)?'completed':/RATE|OFFLINE|DEGRADED/.test(s)?'blocked':/NOT/.test(s)?'cancelled':'queued';
+      panel.innerHTML=canaryLine+routingForm+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong><br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+'</td><td>'+esc(x.billingClass)+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span></td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td></tr>').join('')+'</table></div><p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
+      const rc=document.getElementById('runCanary');if(rc)rc.onclick=async()=>{rc.disabled=true;try{await codingApi('./api/model-pool/canary',{method:'POST'});rc.textContent='Queued — runs within a minute';}catch(e){cerr(e.message)}};
+      const rs=document.getElementById('rSave');if(rs)rs.onclick=async()=>{if(!ws())return cerr('Select a project first.');rs.disabled=true;try{await codingApi('./api/model-pool/routing',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({workspaceId:ws(),strategy:document.getElementById('rStrategy').value,allowPaid:document.getElementById('rPaid').checked})});await renderPool()}catch(e){cerr(e.message);rs.disabled=false}}}catch(e){panel.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
     btn.onclick=openCoding;document.getElementById('codingClose').onclick=closeCoding;document.getElementById('cStart').onclick=startSession;document.getElementById('poolButton').onclick=togglePool;
     window.addEventListener('hub-workspace-changed',()=>{codingSession='';if(!codingView.classList.contains('hidden'))loadSessions();else loadApprovalsBadge()});
     setInterval(loadApprovalsBadge,30000);

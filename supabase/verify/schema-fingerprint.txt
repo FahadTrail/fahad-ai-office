@@ -1,12 +1,14 @@
 column|00528ba5bf006c228d5f2e21682642cc|public.provider_canary_runs.requested_by text null=YES default=
 column|00d02eecda4d1376836ca1ef2a76194c|public.continuity_handoffs.status text null=NO default='accepted'::text
 column|020da0312d4778ba25a9e78be16b1eda|public.tool_executions.ended_at timestamp with time zone null=YES default=
+column|0323d1ca243dee7e45e40cdbc3db192e|public.workspace_routing_policies.workspace_id uuid null=NO default=
 column|03ce5a635d0400c4df68c498b0dc5e68|public.agent_checkpoints.route text null=YES default=
 column|04b6cfcd09e704b6508e029da6a04cc8|public.projects.id uuid null=NO default=gen_random_uuid()
 column|04d08cfdd636110aa40e0fdd0e228baa|public.agent_checkpoints.git_head text null=YES default=
 column|058e70c2c1c2adfe7170e3a1e8efdcd3|public.results.content text null=NO default=''::text
 column|06459790f46ce774663f724bc1d0f5c8|public.workspace_budget_reservations.created_at timestamp with time zone null=NO default=now()
 column|0706a9ffc7803e8036816d0975e2ccd4|public.office_owners.user_id uuid null=NO default=
+column|087c918702bcaa762a464cdbb5dc162b|public.workspace_routing_policies.strategy text null=NO default='economy'::text
 column|09520c6a8c4c780bf423bd18252875a2|public.continuity_handoffs.to_provider text null=NO default=
 column|09a37e2fa23bc9720e01dc9f677cb671|public.continuity_tasks.task_envelope jsonb null=NO default=
 column|09f495ef0396cec41edeeeb4f3afc6a6|public.agents.name text null=NO default=
@@ -80,6 +82,7 @@ column|3773ddefb9d0869552a863fff12e727a|public.jobs.title text null=YES default=
 column|394e4d518b2001ef56e9354b60d34fbf|public.agent_events.payload jsonb null=NO default='{}'::jsonb
 column|3aa3d29664dd826ce828b9a1203dc9c7|public.tool_executions.duration_ms integer null=YES default=
 column|3ad814ccc6c749b94f5b92c3138b6841|public.memory.updated_at timestamp with time zone null=NO default=now()
+column|3d8c3c2dfe145c7604291ac8d8f2a6b5|public.workspace_routing_policies.route_monthly_budget_usd jsonb null=NO default='{}'::jsonb
 column|3f2705ae7392f81581ae3cb05ae73f16|public.continuity_checkpoints.stage text null=NO default=
 column|40085e742f6a591635115051e83d8bb5|public.agent_sessions.spent_usd numeric null=NO default=0
 column|40c78ed3df615eb036c9ad9c9aace726|public.agent_approvals.status text null=NO default='pending'::text
@@ -96,6 +99,7 @@ column|47261fbbf7865daf16e1f855248cab0d|public.tool_executions.tool_name text nu
 column|483f28f47f7a5565a660c026da391768|public.events.message text null=NO default=
 column|492d86a7d0b0277a446657bbcacce022|public.agent_sessions.objective text null=NO default=
 column|4956459c427ca4089f1a9dfcbeb73f06|public.continuity_checkpoints.progress_hash text null=NO default=
+column|49ff545ee20def05f7a2fdfd97f1dde4|public.workspace_routing_policies.updated_at timestamp with time zone null=NO default=now()
 column|4a6414dd4445089c6170cbb5b06f1250|public.continuity_usage.task_id uuid null=NO default=
 column|4b65d4ceb2d8795bcd031208b39efcf4|public.workspace_tool_grants.enabled boolean null=NO default=false
 column|4bd2dbfe533859404cf4f762f3032ae5|public.model_attempts.ended_at timestamp with time zone null=YES default=
@@ -182,6 +186,7 @@ column|8473a16130fbcc389f4a4b7800468ac4|public.results.kind text null=NO default
 column|85f2ab96ab6261745319bfbf764aa34d|public.agent_sessions.cancel_requested boolean null=NO default=false
 column|86b412ef132fe8c06d371ee743a8695a|public.memory.tags ARRAY null=NO default='{}'::text[]
 column|87cad649aabf3541b3c4145608eceded|public.tasks.agent_id uuid null=NO default=
+column|87d6bfc1dbc057077db8599f16310a28|public.workspace_routing_policies.allow_paid boolean null=NO default=true
 column|88941285ac881f75aebaeef82b3c8602|public.results.task_id uuid null=YES default=
 column|88971883e732f3858ca3e73cb5c1f44f|public.continuity_tasks.result jsonb null=YES default=
 column|88d77f9765632813b63d9afb87ce471b|public.agent_sessions.repository text null=NO default=
@@ -269,6 +274,7 @@ column|bab0d28cf0cf84e85b46edba9e9001e1|public.agent_approvals.action text null=
 column|bb7e2dabdc44a0a36a3a12be30acf565|public.continuity_tasks.base_branch text null=NO default=
 column|bb9c7c66107c73eabf163775bbcc6a85|public.tasks.job_id uuid null=NO default=
 column|be0c31372dc180cbcc7438d1b445a38f|public.continuity_checkpoints.sequence integer null=NO default=
+column|bea44268019e1e7f72967a801153e5a1|public.workspace_routing_policies.excluded_routes ARRAY null=NO default='{}'::text[]
 column|bec14ed8be8b5e340ad118aa88945d06|public.files.size_bytes bigint null=YES default=
 column|bf4a2145c912fcbbbfde80f50d5d261d|public.continuity_handoffs.checkpoint_id uuid null=NO default=
 column|bf8fcf18e652e4a6269971628b7e7b5a|public.approvals.id uuid null=NO default=gen_random_uuid()
@@ -328,6 +334,7 @@ column|db191c064a73874a9b504df1b4ed6293|public.workspace_policies.workspace_id u
 column|db6b11e5abaa2b694f87fa14f48bcbb3|public.provider_canary_runs.started_at timestamp with time zone null=YES default=
 column|dc856145685a3580fe638e2a939150c6|public.events.created_at timestamp with time zone null=NO default=clock_timestamp()
 column|deab7d08663ecd750393d35fc9d9655e|public.agents.model_tier text null=NO default='standard'::text
+column|dfdf9db78385a77ee0e6a38d838c26fd|public.workspace_routing_policies.billing_priority ARRAY null=NO default=ARRAY['free'::text, 'included'::text, 'promo'::text, 'paid'::text]
 column|e300baad820eab6008146dbc7dda9575|public.projects.name text null=NO default=
 column|e45f8c23af14d02c6c5b162e57b7c071|public.workspace_policies.enabled boolean null=NO default=false
 column|e6019bc65f647a8da42842ee6bfbb8fd|public.continuity_events.message text null=NO default=
@@ -390,6 +397,7 @@ constraint|0d9c32312d5b477470f383cdf53740f5|public.handoffs handoffs_from_task_i
 constraint|0f05f1d0e1b769c930a5da21e3928527|public.tool_executions tool_executions_server_name_check CHECK ((server_name ~ '^[A-Za-z0-9_.-]{1,80}$'::text))
 constraint|0f5572401066b3ade76bdc66a51b2c59|public.workspace_tool_grants workspace_tool_grants_broker_check CHECK (((char_length(broker) >= 1) AND (char_length(broker) <= 80)))
 constraint|0f76526a64d82a7acd2c9c1ef3ad409c|public.jobs jobs_pkey PRIMARY KEY (id)
+constraint|0fe4742c225be76cab2386139f09bd85|public.workspace_routing_policies workspace_routing_policies_route_monthly_budget_usd_check CHECK ((jsonb_typeof(route_monthly_budget_usd) = 'object'::text))
 constraint|10766fefd24c6a23e34c00e0ef7861ed|public.agent_sessions agent_sessions_created_by_check CHECK (((created_by IS NULL) OR (char_length(created_by) <= 320)))
 constraint|124eb9d9abaefda5dddf11a2423a0998|public.model_attempts model_attempts_route_check CHECK ((jsonb_typeof(route) = 'array'::text))
 constraint|1353273510ee936b74699db5be845fef|public.tool_executions tool_executions_secret_ref_check CHECK (((secret_ref IS NULL) OR (secret_ref ~ '^(env://[A-Z][A-Z0-9_]{2,127}|vault://[A-Za-z0-9][A-Za-z0
@@ -473,6 +481,7 @@ constraint|6a4b59b793589e3e65065151bd045395|public.provider_status provider_stat
 constraint|6ac28c739a3aed4931b742af1c07d723|public.workspace_policies workspace_policies_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES projects(id) ON DELETE CASCADE
 constraint|6e0c2e3bfa02adfe24b48e14c9b79687|public.agent_sessions agent_sessions_plan_check CHECK ((jsonb_typeof(plan) = 'array'::text))
 constraint|6f319b25a4b16dc3f91e26319b8f7956|public.agent_events agent_events_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text))
+constraint|7497e0252922aee86c9a719068395893|public.workspace_routing_policies workspace_routing_policies_pkey PRIMARY KEY (workspace_id)
 constraint|75c76f4902a5c7545a6bab69a4055c97|public.handoffs handoffs_to_task_id_fkey FOREIGN KEY (to_task_id) REFERENCES tasks(id) ON DELETE SET NULL
 constraint|760aaba78bd9d65a4bbdca2a3bb793b2|public.agent_sessions agent_sessions_provider_switches_check CHECK ((provider_switches >= 0))
 constraint|77f523067680aee2638d2fea805e3146|public.workspace_provider_permissions workspace_provider_permissions_pkey PRIMARY KEY (workspace_id, provider)
@@ -497,11 +506,13 @@ constraint|84acda1bb558d63da11f7276fb78d0d2|public.model_attempts model_attempts
 constraint|84c3d59051892162d1a9f8ae0ca1a716|public.agent_sessions agent_sessions_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE RESTRICT
 constraint|8595943a3e49832a5da7d522fa568f77|public.agent_sessions agent_sessions_repository_check CHECK ((repository ~ '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$'::text))
 constraint|8a18dfed89ecd2934760f045084aa447|public.agent_sessions agent_sessions_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT
+constraint|8b0cd0861bcd65ebfebce3c472383678|public.workspace_routing_policies workspace_routing_policies_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON DELETE 
 constraint|8b0e6aec3edbcd8f92913e2b6cde52fe|public.workspace_tool_grants workspace_tool_grants_decision_check CHECK ((decision = ANY (ARRAY['auto'::text, 'approval'::text, 'deny'::text])))
 constraint|8c556950828dad15e9db3d8f535c3763|public.tool_executions tool_executions_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT
 constraint|8de73f66d314e16b7a040b8865c7c114|public.events events_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE SET NULL
 constraint|908a46f3c2df24e2d743809c119b1541|public.agent_sessions agent_sessions_blocker_check CHECK (((blocker IS NULL) OR (char_length(blocker) <= 4000)))
 constraint|93954ae89811bc1bfd5845bd3c409f36|public.approvals approvals_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
+constraint|94b81c9209f2b44f8463be3a759b6eef|public.workspace_routing_policies workspace_routing_policies_strategy_check CHECK ((strategy = ANY (ARRAY['economy'::text, 'balanced'::text, 'quality'::text])))
 constraint|95f70fcd7586cf7372ba2fde87973669|public.results results_pkey PRIMARY KEY (id)
 constraint|97d758c353831b5edd4b6c1c14bb9188|public.agent_events agent_events_level_check CHECK ((level = ANY (ARRAY['info'::text, 'success'::text, 'warning'::text, 'error'::text])))
 constraint|98c55d2266bc54339a83299e47a02187|public.model_attempts model_attempts_stage_check CHECK (((char_length(stage) >= 1) AND (char_length(stage) <= 80)))
@@ -560,6 +571,7 @@ constraint|ccb2182f52f97b14ffc502e782778f01|public.runs runs_job_id_fkey FOREIGN
 constraint|cd06335536fb9dd4932ec2c663cadfa8|public.approvals approvals_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 constraint|cf0b4f25994370c97bf04b7314febeed|public.results results_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|cf660fab1f89475e23642a3bd4b3ca4e|public.continuity_events continuity_events_pkey PRIMARY KEY (id)
+constraint|cfa43427a3b8457380e47f4180fe6658|public.workspace_routing_policies workspace_routing_policies_billing_priority_check CHECK ((((cardinality(billing_priority) >= 1) AND (cardinality(billing_prior
 constraint|d023b7fae22bf0410f04939ed4b41143|public.provider_canary_runs provider_canary_runs_requested_by_check CHECK (((requested_by IS NULL) OR (char_length(requested_by) <= 320)))
 constraint|d09f8500c8d5d3ce2c358909c003d370|public.workspace_tool_grants workspace_tool_grants_action_check CHECK (((char_length(action) >= 1) AND (char_length(action) <= 80)))
 constraint|d0db26f7c33a6ab5f4689bebd25c8eeb|public.agent_approvals agent_approvals_pkey PRIMARY KEY (id)
@@ -591,6 +603,7 @@ constraint|e5a6f38caceef82025771e4e84f669f0|public.provider_canary_runs provider
 constraint|e5af2d53a80aa8ba1dd8216dbd670b26|public.agent_approvals agent_approvals_decided_by_check CHECK (((decided_by IS NULL) OR (char_length(decided_by) <= 320)))
 constraint|e7c0c80f288d1d0c5815a01543dcb336|public.workspace_provider_permissions workspace_provider_permissions_models_check CHECK ((cardinality(models) > 0))
 constraint|ea09cd252e48a78614a66b86a491c43d|public.handoffs handoffs_to_agent_id_fkey FOREIGN KEY (to_agent_id) REFERENCES agents(id)
+constraint|ea57cd6c620ff4497a41236f615b8b76|public.workspace_routing_policies workspace_routing_policies_excluded_routes_check CHECK ((cardinality(excluded_routes) <= 50))
 constraint|ea62d8c7e68128bf998c6c683f299832|public.model_attempts model_attempts_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
 constraint|eb3a88ec00ca82b4c2f519ea6ee78f86|public.agent_checkpoints agent_checkpoints_session_id_fkey FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
 constraint|eb628489422331c5f70c7536e554fce8|public.workspace_provider_permissions workspace_provider_permissions_secret_ref_check CHECK ((secret_ref ~ '^(env://[A-Z][A-Z0-9_]{2,127}|vault://[A-Za-z0-9][A-
@@ -642,6 +655,7 @@ function_acl|a50ce8504309d8a599f872f944439db8|public.create_coding_session(p_wor
 function_acl|a7492340813ecbd24fc33921cf4a1b8f|public.settle_workspace_budget(p_workspace uuid, p_reservation uuid, p_idempotency_key text, p_actual_usd numeric) service_role=X/postgres
 function_acl|ae1641f3b1d5668e92f222c6f367da7c|private.fail_task(p_task uuid, p_run uuid, p_error text) default
 function_acl|af7583fa8d0b36abe7e95d097d8fbf08|public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_tool text, p_arguments_sha256 text) service_role=X/postgres
+function_acl|c27e17317880754dd2d5dd697a5aac5b|public.model_usage_summary(p_since timestamp with time zone, p_workspace uuid) service_role=X/postgres
 function_acl|c36fcaa6f000027a77239dce03201055|public.begin_tool_execution(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid, p_agent uuid, p_broker text, p_tool text, p_action text, p_scopes text[], p_r
 function_acl|cf6f0427f71ead7bf0f2993d203fa86d|private.claim_next_job() service_role=X/postgres
 function_acl|d4095bf957857b1275a691716c66abd0|public.reserve_workspace_budget(p_workspace uuid, p_idempotency_key text, p_requested_usd numeric) service_role=X/postgres
@@ -652,6 +666,7 @@ function_acl|f24e5684a43ad817900596a0791ad6c1|public.fail_task(p_task uuid, p_ru
 function_acl|fd9cdfccbfd95bd0fd6b903b57345c91|private.claim_next_task(p_agent_slug text) default
 function|006e800564bfe00a5e5d7336d5341a63|public.claim_next_job() md5=7e179046bacf3a0152134ef2be8f5669
 function|05be6b59e4f6498fc6bba0e506a82309|public.claim_agent_session(p_worker text, p_lease_seconds integer) md5=a3c00cd22e7f3e65305dcea220e2b467
+function|0d8abff3069e21cad6c6f7ed4c0edabf|public.model_usage_summary(p_since timestamp with time zone, p_workspace uuid) md5=496f4c4545543acb977582fa2219af80
 function|0e824d2033bf30c6979798a62610ade9|public.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) md5=e51624d920c5b460293081aa15554781
 function|1421d9797f86aac015a4b3811bb8fe23|public.fail_task(p_task uuid, p_run uuid, p_error text) md5=ad422bbe6faefb3d39ba55cc79b9e9da
 function|171ecaef2926a4275e495a1dae20188d|private.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) md5=9eb
@@ -702,6 +717,7 @@ index|22c79ba85f42c20afc682869764ee11a|public CREATE INDEX tool_executions_task_
 index|2c024f3fd87ba738e8ba480f856fe9f0|public CREATE UNIQUE INDEX continuity_checkpoints_task_id_sequence_key ON public.continuity_checkpoints USING btree (task_id, sequence)
 index|2c696581ce47d18c017ecfcbf9d4c2d7|public CREATE UNIQUE INDEX continuity_handoffs_once_key ON public.continuity_handoffs USING btree (task_id, from_provider, to_provider, checkpoint_id)
 index|339931ee11b3b4e4bce9b1a1675bdfcf|public CREATE INDEX idx_tasks_status ON public.tasks USING btree (status)
+index|3503e2d21d8f09ae199015f94d4fb787|public CREATE UNIQUE INDEX workspace_routing_policies_pkey ON public.workspace_routing_policies USING btree (workspace_id)
 index|363ab09bb44dc5f781d7356c34bcfde0|public CREATE INDEX tool_executions_agent_idx ON public.tool_executions USING btree (agent_id, started_at DESC)
 index|36cd54af7223376f8e07644c0f6e759c|public CREATE INDEX idx_tasks_depends_on ON public.tasks USING gin (depends_on)
 index|3c487f7755c7d3e819afc42e83f37ddd|public CREATE UNIQUE INDEX projects_pkey ON public.projects USING btree (id)
@@ -793,6 +809,7 @@ publication|93b0138187e6c1fb3e2ab6e3da1f1922|supabase_realtime public.tasks
 publication|b6da8263c450bd4053553960629407a8|supabase_realtime public.handoffs
 publication|fb3c09d3f17d0431e0de564e355f7eee|supabase_realtime public.approvals
 table_acl|03e848914e98c5cfea7b1271efd25a21|public.continuity_usage rls=t service_role=arwdDxt/postgres
+table_acl|04184a9f6bb82c1fcbd2b9d1e8b83cb2|public.workspace_routing_policies rls=t service_role=arw/postgres
 table_acl|08cd372612a185d4f5bfc74009e1f829|public.tasks rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|15755150580ab0fe4fc3e949157cdd0c|public.files rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|1738651ed5dd0abe9fa1cf13d2ebbbc3|public.continuity_handoffs rls=t service_role=arwdDxt/postgres
