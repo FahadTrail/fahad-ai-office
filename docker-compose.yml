@@ -15,7 +15,9 @@ services:
     labels:
       - traefik.enable=${HUB_TRAEFIK_ENABLED:-false}
       - traefik.http.routers.fahad-office.entrypoints=websecure
-      - traefik.http.routers.fahad-office.rule=Host(`${HUB_PUBLIC_HOST:-fahad-ai-office.srv1964598.hstgr.cloud}`)
+      # Primary public domain plus one additional domain (for example the
+      # Hostinger host name kept as a fallback). Both default to that host.
+      - traefik.http.routers.fahad-office.rule=Host(`${HUB_PUBLIC_HOST:-fahad-ai-office.srv1964598.hstgr.cloud}`) || Host(`${HUB_EXTRA_PUBLIC_HOST:-fahad-ai-office.srv1964598.hstgr.cloud}`)
       - traefik.http.routers.fahad-office.tls.certresolver=letsencrypt
       - traefik.http.services.fahad-office.loadbalancer.server.port=2132
     ports:
