@@ -159,3 +159,10 @@ test('Supabase reads run through the read-only database role; writes never take 
   await assert.rejects(new SupabaseManagementClient({ token: null, allowedProjects: [ref], fetchFn }).queryReadOnly(ref, 'select 1'), /No Supabase access token/);
   assert.deepEqual(calls, [], 'refusals happen before the network');
 });
+
+test('Google AI Studio auth keys (AQ.) are recognised and redacted even when not configured', async () => {
+  const { redact, findSecretMaterial } = await import('../src/coding-agent/policy.js');
+  const key = ['AQ', 'Ab8RN6' + 'k2_Lm-'.repeat(8)].join('.');
+  assert.equal(findSecretMaterial(`GOOGLE=${key}`, {}), 'credential-shaped token');
+  assert.equal(redact(`key: ${key} end`, {}), 'key: [REDACTED] end');
+});

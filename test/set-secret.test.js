@@ -61,3 +61,34 @@ test('set-secret refuses unknown names and malformed values and changes nothing'
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
   assert.ok(ok.finalEnv.endsWith(`\nCODING_SUPABASE_ACCESS_TOKEN=${fakeToken}\n`));
 });
+
+test('set-secret accepts current Google AI Studio auth keys (AQ.) and legacy AIza keys, and rejects look-alikes', { skip }, () => {
+  // Fake values are assembled at runtime so no credential-shaped literal is committed.
+  const body = 'Ab8RN6' + 'x9_Y-z'.repeat(8) + '.' + 'Q7w'.repeat(5);
+  const authKey = ['AQ', body].join('.');
+  const ok = run({ input: `${authKey}\n` });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.ok(ok.finalEnv.endsWith(`\nGEMINI_API_KEY=${authKey}\n`));
+  assert.ok(!ok.stdout.includes(authKey) && !ok.stderr.includes(authKey), 'the value is never printed');
+
+  const legacy = ['AIza', 'S'.repeat(35)].join('');
+  assert.equal(run({ input: `${legacy}\n` }).status, 0, 'a restricted legacy AIza key is still accepted');
+  assert.equal(run({ input: `  ${authKey}  \n` }).status, 0, 'surrounding spaces from copy/paste are ignored');
+
+  for (const [value, why] of [
+    ['AQ.short', 'too short'],
+    [`AQ.${body} extra`, 'embedded space'],
+    [`AQ.${body}"`, 'quote character'],
+    [`AQ.${body}\\nHERMES_KEY=x`, 'escaped newline / injection attempt'],
+    [`AQ..${body}`, 'empty first segment'],
+    [`AQ.${'a'.repeat(600)}`, 'longer than any real key'],
+    [['AIza', 'S'.repeat(20)].join(''), 'truncated legacy key'],
+    [`XQ.${body}`, 'wrong prefix'],
+  ]) {
+    const result = run({ input: `${value}\n` });
+    assert.equal(result.status, 1, why);
+    assert.equal(result.finalEnv, BASE_ENV, `${why}: .env unchanged`);
+    assert.ok(!result.stdout.includes(value.trim()) && !result.stderr.includes(value.trim()), `${why}: the rejected value is not echoed`);
+    assert.match(result.stdout, /received \d+ characters; expected pattern/, `${why}: explains the expected format without the value`);
+  }
+});

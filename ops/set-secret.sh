@@ -19,7 +19,9 @@ NAME=${1:-}
 # name → accepted shape (anchored). Only these names can be written.
 declare -A SHAPE=(
   [CODING_SUPABASE_ACCESS_TOKEN]='^sbp_[A-Za-z0-9_]{20,}$'
-  [GEMINI_API_KEY]='^AIza[0-9A-Za-z_-]{30,}$'
+  # Google AI Studio issues "auth keys" (AQ.…) since 2026-05-28; legacy
+  # standard keys (AIza + 35 chars) are accepted while Google still honours them.
+  [GEMINI_API_KEY]='^(AQ\.[A-Za-z0-9_-][A-Za-z0-9._-]{30,510}|AIza[0-9A-Za-z_-]{35})$'
   [GROQ_API_KEY]='^gsk_[A-Za-z0-9]{20,}$'
   [OPENROUTER_API_KEY]='^sk-or-[A-Za-z0-9_-]{20,}$'
   [CEREBRAS_API_KEY]='^csk-[A-Za-z0-9]{20,}$'
@@ -38,7 +40,9 @@ fi
 read -rsp "Paste the value for $NAME (input hidden): " value; echo
 value=${value//$'\r'/}
 if [[ ! $value =~ ${SHAPE[$NAME]} ]]; then
-  unset value; echo "That does not look like a $NAME value; nothing changed."; exit 1
+  # Only the length and the expected pattern are shown, never the value.
+  length=${#value}; unset value
+  echo "That does not look like a $NAME value (received $length characters; expected pattern ${SHAPE[$NAME]}); nothing changed."; exit 1
 fi
 
 # Rewrite .env atomically with the same owner and mode: drop old NAME lines,

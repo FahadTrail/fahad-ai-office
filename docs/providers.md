@@ -63,7 +63,11 @@ Notes:
 
 * **Gemini consumer subscription ≠ Gemini API.** Google AI Pro/Ultra (the
   Gemini app) does not include API access. The API is a separate product: a key
-  from Google AI Studio (https://aistudio.google.com/apikey). It is free-tier
+  from Google AI Studio (https://aistudio.google.com/apikey). Since 2026-05-28
+  AI Studio creates **auth keys** that start with `AQ.`; legacy standard keys
+  (`AIza…`) are being retired by Google. Both are accepted by
+  `ops/set-secret.sh`, and the adapter sends the key in the `x-goog-api-key`
+  header that auth keys require. It is free-tier
   unless billing is enabled on its Cloud project. Free-tier prompts may be used
   to improve Google products, so private repository data stays off it until a
   reviewed **paid** project sets `GEMINI_API_PRIVATE_DATA_APPROVED=true` and
