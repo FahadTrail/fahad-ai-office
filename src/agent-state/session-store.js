@@ -7,6 +7,15 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
+// Must match the agent_events CHECK constraints in the Coding Agent migration;
+// the Supabase store only warns on a rejected insert, so the memory store
+// enforces the same lists to catch a new, unsupported event in tests.
+export const AGENT_EVENT_TYPES = Object.freeze([
+  'session', 'phase', 'plan', 'model_turn', 'provider_switch', 'checkpoint', 'tool_call', 'tool_result',
+  'test', 'git', 'github', 'ci', 'deploy', 'verify', 'supabase', 'approval', 'guard', 'error', 'report', 'note',
+]);
+export const AGENT_EVENT_LEVELS = Object.freeze(['info', 'success', 'warning', 'error']);
+
 export const TERMINAL_STATUSES = Object.freeze(['completed', 'failed', 'cancelled']);
 
 export class SupabaseAgentSessionStore {
@@ -218,6 +227,9 @@ export class MemoryAgentSessionStore {
   }
 
   async appendEvent(sessionId, { type, level = 'info', message, payload = {} }) {
+    if (!AGENT_EVENT_TYPES.includes(type) || !AGENT_EVENT_LEVELS.includes(level)) {
+      throw new Error(`agent_events rejects type=${type} level=${level}`);
+    }
     this.reload();
     this.data.eventSeq += 1;
     (this.data.events[sessionId] ||= []).push({ id: this.data.eventSeq, type, level, message: String(message).slice(0, 2000), payload, created_at: this.iso() });

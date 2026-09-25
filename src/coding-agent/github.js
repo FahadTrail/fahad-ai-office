@@ -113,6 +113,7 @@ function summarizePull(pull) {
     url: pull.html_url,
     state: pull.state,
     merged: Boolean(pull.merged || pull.merged_at),
+    mergeCommitSha: pull.merged || pull.merged_at ? pull.merge_commit_sha || null : null,
     mergeable: pull.mergeable ?? null,
     mergeableState: pull.mergeable_state || null,
     headSha: pull.head?.sha || null,
