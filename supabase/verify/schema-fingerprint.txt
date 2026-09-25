@@ -1,3 +1,4 @@
+column|00528ba5bf006c228d5f2e21682642cc|public.provider_canary_runs.requested_by text null=YES default=
 column|00d02eecda4d1376836ca1ef2a76194c|public.continuity_handoffs.status text null=NO default='accepted'::text
 column|020da0312d4778ba25a9e78be16b1eda|public.tool_executions.ended_at timestamp with time zone null=YES default=
 column|03ce5a635d0400c4df68c498b0dc5e68|public.agent_checkpoints.route text null=YES default=
@@ -27,6 +28,7 @@ column|16bfb1ade73c4e57d79e130eceb44ab4|public.model_attempts.workspace_id uuid 
 column|16d8ea94aa7e8c93b6e0952d33d3643f|public.workspace_provider_permissions.secret_ref text null=NO default=
 column|17960d7a3fe2e655957dab53065a6dfd|public.tool_executions.error_code text null=YES default=
 column|17c581f7e656249182502fb52b92a984|public.agents.role text null=NO default=
+column|189845f5f9bfac4c7b822cb060bf7f0e|public.provider_canary_runs.report jsonb null=YES default=
 column|18bd0f9595c134d4e63fecb07619e19d|public.continuity_checkpoints.task_id uuid null=NO default=
 column|1941c7326defea27415346ce6ac7a030|public.tasks.started_at timestamp with time zone null=YES default=
 column|1bcddfd952d189d5fcb5c5a1783ecc35|public.agent_sessions.created_at timestamp with time zone null=NO default=now()
@@ -44,6 +46,7 @@ column|24735a790a9d0b8f698228d8012bec60|public.agent_sessions.current_route text
 column|24decf33d893175f58cb99b5fc3fe539|public.continuity_handoffs.verification jsonb null=NO default=
 column|2529f4a03d549c5720cbfd8128b0b736|public.agent_approvals.workspace_id uuid null=NO default=
 column|2533e1ff6fd83059b467ffdfb97319f8|public.memory.key text null=NO default=
+column|25431d17449a51d59afd58629dc2040d|public.provider_canary_runs.id uuid null=NO default=gen_random_uuid()
 column|267326ce8d72e92db846f1943dc53213|public.events.from_agent_id uuid null=YES default=
 column|27f3731e8d293f3db0f894c1e3fc44ff|public.tool_executions.run_id uuid null=NO default=
 column|281ad23accabe2569c7e78a68b25e209|public.tool_executions.agent_id uuid null=NO default=
@@ -60,6 +63,7 @@ column|2d5bc04e9c09b8b77d71dd7b1538d10a|public.agents.system_prompt text null=NO
 column|2e28f194a734dfa1c4ad1e11f3006793|public.agent_sessions.task_id uuid null=NO default=
 column|2e55fe989d3b1ae59f92d824e4935c3c|public.runs.attempt_no integer null=NO default=1
 column|2ee2affe3f3378855531c5353f9db3c5|public.agents.id uuid null=NO default=gen_random_uuid()
+column|2fa0fcab28b432478c016678edfd620a|public.provider_canary_runs.status text null=NO default='queued'::text
 column|3100680246d136edade75dd89705489b|public.results.job_id uuid null=NO default=
 column|319d18ca59949eec9276f24f1e3b5821|public.workspace_policies.budget_period_end timestamp with time zone null=NO default=
 column|31ed64748313fe03bd814856961464ca|public.workspace_budget_reservations.id uuid null=NO default=gen_random_uuid()
@@ -127,6 +131,7 @@ column|5d37deaf6af09e1e6b6910217c3d1bf6|public.continuity_tasks.budget_usd numer
 column|5e990a704c9cbe670b68810b4ad554aa|public.agent_sessions.phase text null=NO default='understand'::text
 column|5fcaca012a7ea805b6d9de5bf355eb8c|public.workspace_policies.version bigint null=NO default=1
 column|615af1922fbb9ae689edd12a31036595|public.model_attempts.task_id uuid null=NO default=
+column|617789b30ad8362b67aad6b428d096ae|public.provider_canary_runs.error text null=YES default=
 column|61d8c202a0afb24f8a52576043f31835|public.workspace_policies.monthly_budget_usd numeric null=NO default=
 column|6331c58af42663c7e9b708fafdf984e3|public.agent_sessions.blocker text null=YES default=
 column|644708c967a77d3225e4db6d325cfea0|public.agent_approvals.consumed_at timestamp with time zone null=YES default=
@@ -209,6 +214,7 @@ column|988a602d4e9880ec9550e71a9c1d435c|public.runs.ended_at timestamp with time
 column|98c345806ffff6f7bda74a8c5a75ef80|public.handoffs.from_agent_id uuid null=YES default=
 column|999e1ef624389045d1fa09fc07499722|public.files.job_id uuid null=YES default=
 column|9a589959f279f205b77171c602722fca|public.agent_events.id bigint null=NO default=nextval('agent_events_id_seq'::regclass)
+column|9a74cc8479c8adef147637766cfb80e2|public.provider_canary_runs.requested_at timestamp with time zone null=NO default=now()
 column|9ae7ae43606af3cf8229d2a2bedc351e|public.continuity_usage.provider text null=NO default=
 column|9bf1c2c8456ad0b946dc64a8c788bd74|public.tasks.title text null=NO default=
 column|9c827a9650ae258dad58401003745224|public.jobs.project_id uuid null=YES default=
@@ -289,6 +295,7 @@ column|cb7a788ec3f01b3c2346fdcc86d4af14|public.approvals.action_type text null=N
 column|cb7fb3d1d85d2db8a42c64f74b9779a8|public.continuity_usage.cost_usd numeric null=NO default=0
 column|cbab19756309ef940b45f6113d760cfd|public.continuity_tasks.working_branch text null=NO default=
 column|cbc1993df21d30111e54d9310c40b161|public.workspace_tool_grants.tool_name text null=NO default=
+column|cc005152018c3e318e4dee4c2b1ac9a9|public.provider_canary_runs.completed_at timestamp with time zone null=YES default=
 column|cc4a39f7a86ff3fde4d2858c62ec1713|public.agent_sessions.status text null=NO default='queued'::text
 column|cccf9018c5c596d467cc0a812e69f019|public.agent_sessions.lease_owner text null=YES default=
 column|ce43e0d76d30421902d311485cec5d32|public.continuity_events.id bigint null=NO default=
@@ -318,6 +325,7 @@ column|d9ca884963918425d23c7c85f617e7e9|public.continuity_events.level text null
 column|da0e0adcb5b03e744d002a1cb0706da8|public.workspace_tool_grants.scopes ARRAY null=NO default='{}'::text[]
 column|da3ec0851ac019bc2afa0946f2a7d455|public.memory.scope_ref uuid null=YES default=
 column|db191c064a73874a9b504df1b4ed6293|public.workspace_policies.workspace_id uuid null=NO default=
+column|db6b11e5abaa2b694f87fa14f48bcbb3|public.provider_canary_runs.started_at timestamp with time zone null=YES default=
 column|dc856145685a3580fe638e2a939150c6|public.events.created_at timestamp with time zone null=NO default=clock_timestamp()
 column|deab7d08663ecd750393d35fc9d9655e|public.agents.model_tier text null=NO default='standard'::text
 column|e300baad820eab6008146dbc7dda9575|public.projects.name text null=NO default=
@@ -441,6 +449,7 @@ constraint|51fa61a4150324b401d799f844b9c6d6|public.approvals approvals_action_ty
 constraint|534fdb62607198ee7552fafa08523968|public.workspace_budget_reservations workspace_budget_reservations_reserved_usd_check CHECK ((reserved_usd > (0)::numeric))
 constraint|544500ce6b4a6a4e02293c60a4675516|public.model_attempts model_attempts_attempt_no_check CHECK ((attempt_no > 0))
 constraint|5488fc98a187367134e93201f535b625|public.workspace_policies workspace_policies_pkey PRIMARY KEY (workspace_id)
+constraint|560d0f95f3d1c073f48720626b5c42d6|public.provider_canary_runs provider_canary_runs_pkey PRIMARY KEY (id)
 constraint|573bf6ea16fdcba17e7598a61be4bb46|public.agent_sessions agent_sessions_phase_check CHECK ((phase = ANY (ARRAY['understand'::text, 'plan'::text, 'implement'::text, 'test'::text, 'debug'::text, 'r
 constraint|58bc8ef2c580b5d9cebdf4726204d935|public.model_attempts model_attempts_pkey PRIMARY KEY (id)
 constraint|58fea06edf4850942ad899024440115c|public.agent_sessions agent_sessions_pkey PRIMARY KEY (id)
@@ -540,7 +549,9 @@ constraint|c2931db28c3af3d0e184853e72f211b0|public.agent_approvals agent_approva
 constraint|c437565c32b1fcaee1a05977d4a418fa|public.tool_executions tool_executions_check CHECK ((((status = 'running'::text) AND (decision = 'auto'::text) AND (ended_at IS NULL)) OR ((status = ANY (ARRAY[
 constraint|c48480a8af79d224c08572085a9f7c2b|public.results results_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 constraint|c4f3ed2cea834c45d5dc3f72c2c65a42|public.continuity_checkpoints continuity_checkpoints_task_id_sequence_key UNIQUE (task_id, sequence)
+constraint|c60c072de0cad9a6bb10520f271cf58b|public.provider_canary_runs provider_canary_runs_report_check CHECK (((report IS NULL) OR (jsonb_typeof(report) = 'object'::text)))
 constraint|c638662fccffec5881a1099dd27cf41a|public.continuity_tasks continuity_tasks_expected_sha_check CHECK ((expected_sha ~ '^[0-9a-f]{40}$'::text))
+constraint|c6737505b3b0db8fe774e42a265b2ac7|public.provider_canary_runs provider_canary_runs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'completed'::text, 'failed'::text])))
 constraint|c68c0bebcb384d1452aa274c80bc3c0f|public.jobs jobs_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text])))
 constraint|c8de7c9b824d768514e76473b7da8877|public.tool_executions tool_executions_risk_check CHECK ((risk = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
 constraint|ca7f7ecb7e20b717b4b5436d50594a3f|public.workspace_policies workspace_policies_monthly_budget_usd_check CHECK ((monthly_budget_usd > (0)::numeric))
@@ -549,6 +560,7 @@ constraint|ccb2182f52f97b14ffc502e782778f01|public.runs runs_job_id_fkey FOREIGN
 constraint|cd06335536fb9dd4932ec2c663cadfa8|public.approvals approvals_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 constraint|cf0b4f25994370c97bf04b7314febeed|public.results results_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|cf660fab1f89475e23642a3bd4b3ca4e|public.continuity_events continuity_events_pkey PRIMARY KEY (id)
+constraint|d023b7fae22bf0410f04939ed4b41143|public.provider_canary_runs provider_canary_runs_requested_by_check CHECK (((requested_by IS NULL) OR (char_length(requested_by) <= 320)))
 constraint|d09f8500c8d5d3ce2c358909c003d370|public.workspace_tool_grants workspace_tool_grants_action_check CHECK (((char_length(action) >= 1) AND (char_length(action) <= 80)))
 constraint|d0db26f7c33a6ab5f4689bebd25c8eeb|public.agent_approvals agent_approvals_pkey PRIMARY KEY (id)
 constraint|d2675e092304238093775a7b50a0f1cd|public.agent_sessions agent_sessions_iteration_check CHECK ((iteration >= 0))
@@ -575,6 +587,7 @@ constraint|e1bffd1c021454672908da58e9a8fcf5|public.continuity_checkpoints contin
 constraint|e21c0467730494759603759219c3aad3|public.office_owners office_owners_pkey PRIMARY KEY (user_id)
 constraint|e2461ed4090f4ec9e12e42c2bc7f73ae|public.agent_checkpoints agent_checkpoints_route_check CHECK (((route IS NULL) OR (char_length(route) <= 200)))
 constraint|e2859cb8043ea2b8339e21fd1be859b4|public.model_attempts model_attempts_model_check CHECK (((char_length(model) >= 1) AND (char_length(model) <= 160)))
+constraint|e5a6f38caceef82025771e4e84f669f0|public.provider_canary_runs provider_canary_runs_error_check CHECK (((error IS NULL) OR (char_length(error) <= 500)))
 constraint|e5af2d53a80aa8ba1dd8216dbd670b26|public.agent_approvals agent_approvals_decided_by_check CHECK (((decided_by IS NULL) OR (char_length(decided_by) <= 320)))
 constraint|e7c0c80f288d1d0c5815a01543dcb336|public.workspace_provider_permissions workspace_provider_permissions_models_check CHECK ((cardinality(models) > 0))
 constraint|ea09cd252e48a78614a66b86a491c43d|public.handoffs handoffs_to_agent_id_fkey FOREIGN KEY (to_agent_id) REFERENCES agents(id)
@@ -615,6 +628,7 @@ function_acl|4fcec53300cd3b44d398cff09adb0c2c|public.claim_next_job() service_ro
 function_acl|54170f434a753b516167f50ee75b8a8b|public.continuity_transfer_owner(p_task_id uuid, p_from_owner text, p_to_owner text, p_token uuid, p_checkpoint_id uuid, p_verification jsonb) service_role=X/po
 function_acl|5726aff344b026eb393d3c596109ab4a|public.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) service_
 function_acl|5a3c9a3eeaef8c2afa1c9b8802024b60|public.claim_agent_session(p_worker text, p_lease_seconds integer) service_role=X/postgres
+function_acl|5d29e0a750755287ff3f60c397650022|public.claim_provider_canary_run() service_role=X/postgres
 function_acl|63efd34ce1d95605512dae26969e5ecd|public.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) service_role=X/postgres
 function_acl|66e6b5c85e807c2f4730de6e62f5a2dc|public.resume_agent_session(p_session uuid) service_role=X/postgres
 function_acl|75171a64b6ac8c3b288a132517a62957|private.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) default
@@ -654,6 +668,7 @@ function|538ae5626f359a32bb7cd1eda9f3bd90|public.assert_workspace_execution_cont
 function|53ecf9efd95051393091250b05af26d3|public.claim_next_task(p_agent_slug text) md5=69ebe747e6f5841e3b0fe001485f0148
 function|6ccea8dc4a2d0ad62cd554dd946af5c4|public.decide_agent_approval(p_approval uuid, p_decision text, p_decided_by text, p_note text) md5=da13f87e9c7a05e5fb51d05c48ba4fc6
 function|77480f84e37af3c314f45edf2d30c203|public.finish_tool_execution(p_execution uuid, p_status text, p_duration_ms integer, p_cost_usd numeric, p_result_sha256 text, p_output_bytes integer, p_attempt
+function|7e21bd4037759d5187c566bce6e8b66b|public.claim_provider_canary_run() md5=d894528b7109a4069d66c62c9fa9f2cc
 function|856015072a3365f20c2c025a7aef9328|public.begin_tool_execution(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid, p_agent uuid, p_broker text, p_tool text, p_action text, p_scopes text[], p_r
 function|8b590b20eaf6adb9e49bd75b1f1287be|public.consume_agent_approval(p_approval uuid, p_session uuid, p_call_id text, p_tool text, p_arguments_sha256 text) md5=fc2f0b095f0219fb952b422d307b87c9
 function|942f34772c6a1321ed9f69126b4cc221|public.continuity_transfer_owner(p_task_id uuid, p_from_owner text, p_to_owner text, p_token uuid, p_checkpoint_id uuid, p_verification jsonb) md5=1c91a3fc2c333
@@ -690,6 +705,7 @@ index|339931ee11b3b4e4bce9b1a1675bdfcf|public CREATE INDEX idx_tasks_status ON p
 index|363ab09bb44dc5f781d7356c34bcfde0|public CREATE INDEX tool_executions_agent_idx ON public.tool_executions USING btree (agent_id, started_at DESC)
 index|36cd54af7223376f8e07644c0f6e759c|public CREATE INDEX idx_tasks_depends_on ON public.tasks USING gin (depends_on)
 index|3c487f7755c7d3e819afc42e83f37ddd|public CREATE UNIQUE INDEX projects_pkey ON public.projects USING btree (id)
+index|3cd44a24af1183758a72598b8f2c51fd|public CREATE UNIQUE INDEX provider_canary_runs_pkey ON public.provider_canary_runs USING btree (id)
 index|411a2183790d7c86721eb6898f53cbeb|public CREATE INDEX idx_approvals_status ON public.approvals USING btree (status, created_at DESC)
 index|4a7e4319951f3c9bc8b9055213e6dc4b|public CREATE UNIQUE INDEX handoffs_pkey ON public.handoffs USING btree (id)
 index|4b906ddbe87d52adf4397d1e4907d29a|public CREATE UNIQUE INDEX tool_executions_pkey ON public.tool_executions USING btree (id)
@@ -749,6 +765,7 @@ index|d11474a7386bdadda040ad7f7ad1d11f|public CREATE UNIQUE INDEX workspace_tool
 index|d269fc86bc463617135bc4e56626fe35|public CREATE INDEX idx_events_job_time ON public.events USING btree (job_id, created_at DESC)
 index|d419aaf20dc9a9818bf6e4d321e3ede6|public CREATE UNIQUE INDEX continuity_usage_pkey ON public.continuity_usage USING btree (id)
 index|d7dce5d518cb513312c909d5ceaaf9fb|public CREATE INDEX idx_files_job ON public.files USING btree (job_id)
+index|dd99aea6e959cc152b993a10f50167a1|public CREATE INDEX provider_canary_runs_queue_idx ON public.provider_canary_runs USING btree (status, requested_at) WHERE (status = 'queued'::text)
 index|e1c574ba38fb4c419563b21cc2a1c85d|public CREATE INDEX model_attempts_task_started_idx ON public.model_attempts USING btree (task_id, started_at DESC)
 index|eb796366aafde1dbf6d7ae90ee41aa45|public CREATE UNIQUE INDEX workspace_provider_permissions_pkey ON public.workspace_provider_permissions USING btree (workspace_id, provider)
 index|ec62132b698406cb86217b41ade1c9c0|public CREATE INDEX agent_sessions_queue_idx ON public.agent_sessions USING btree (status, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'running'::tex
@@ -780,6 +797,7 @@ table_acl|08cd372612a185d4f5bfc74009e1f829|public.tasks rls=t authenticated=arwd
 table_acl|15755150580ab0fe4fc3e949157cdd0c|public.files rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|1738651ed5dd0abe9fa1cf13d2ebbbc3|public.continuity_handoffs rls=t service_role=arwdDxt/postgres
 table_acl|18bedf646cc9f3330874b56f0cf9cb99|public.workspace_provider_permissions rls=t service_role=arw/postgres
+table_acl|1bf842e5d457fd71c92e46390c3b2561|public.provider_canary_runs rls=t service_role=arw/postgres
 table_acl|1e053135d64a6b6ca5f488192f4d3c68|public.runs rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|2f7441673cedb61414de32ac37abc085|public.agent_approvals rls=t service_role=arw/postgres
 table_acl|311c747fabc9ead724bf1397f14e673b|public.provider_status rls=t service_role=arw/postgres

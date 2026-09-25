@@ -72,7 +72,11 @@ export async function runAgenticCanary({ env = process.env, stateStore = new Mem
       const ok = usedTool && /\b42\b/.test(text);
       report.routes.push({ id: route.id, ok, usedTool, answer: text.trim().slice(0, 40), durationMs: Date.now() - startedAt });
     } catch (error) {
-      report.routes.push({ id: route.id, ok: false, error: error.code || 'PROVIDER_ERROR', status: error.status || error.cause?.status || null, durationMs: Date.now() - startedAt });
+      report.routes.push({
+        id: route.id, ok: false, error: error.code || 'PROVIDER_ERROR', status: error.status || error.cause?.status || null,
+        attempts: (error.attempts || []).map((attempt) => ({ code: attempt.error?.code || null, status: attempt.error?.status || null })),
+        durationMs: Date.now() - startedAt,
+      });
     }
     log(JSON.stringify(report.routes.at(-1)));
   }
