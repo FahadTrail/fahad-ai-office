@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { withIsolatedSandboxLock } from '../testing/fixtures/uid-lock.js';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
@@ -16,8 +17,8 @@ const isRoot = typeof process.getuid === 'function' && process.getuid() === 0 &&
 
 for (const sandboxMode of ['unisolated', 'isolated']) {
 test(`coding agent completes the lifecycle with a real handoff, CI repair, approval, merge and verification (${sandboxMode} sandbox)`, {
-  timeout: 120_000, skip: sandboxMode === 'isolated' && !isRoot && 'isolated mode requires container root',
-}, async () => {
+  timeout: 180_000, skip: sandboxMode === 'isolated' && !isRoot && 'isolated mode requires container root',
+}, () => (sandboxMode === 'isolated' ? withIsolatedSandboxLock : (fn) => fn())(async () => {
   const root = mkdtempSync(join(tmpdir(), 'fahad-coding-e2e-'));
   if (sandboxMode === 'isolated') chmodSync(root, 0o755);
   try {
@@ -91,7 +92,7 @@ test(`coding agent completes the lifecycle with a real handoff, CI repair, appro
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}));
 }
 
 function runChild(args) {

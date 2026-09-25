@@ -196,7 +196,10 @@ export const SESSION_CONFIG = {
 
 export const FAST_LIMITS = { ciPollMs: 1, deployPollMs: 1, verifyDelayMs: 1, leaseRenewMs: 60_000 };
 
-export function localRuntime({ root, storePath, pool, fetchFn, workerLog = () => {}, sandboxMode = 'unisolated' }) {
+export function localRuntime({
+  root, storePath, pool, fetchFn, workerLog = () => {}, sandboxMode = 'unisolated',
+  now = undefined, sleepFn = async () => {}, providerStateStore = new MemoryProviderStateStore(),
+}) {
   const sessionStore = new MemoryAgentSessionStore({ persistPath: storePath });
   const policyStore = new LocalPolicyStore({
     workspaceId: WORKSPACE_ID,
@@ -206,14 +209,13 @@ export function localRuntime({ root, storePath, pool, fetchFn, workerLog = () =>
     ],
   });
   const auditStore = new LocalToolAuditStore();
-  const providerStateStore = new MemoryProviderStateStore();
   const attempts = [];
   const runtime = createCodingRuntime({
     env: { ...process.env, CODING_GITHUB_TOKEN: 'test-github-token-0001', CODING_SUPABASE_ACCESS_TOKEN: 'test-supabase-token-0001' },
     sessionStore, providerStateStore, policyStore, auditStore, pool, fetchFn,
     sandboxRoot: join(root, 'sandboxes'), sandboxMode, limits: FAST_LIMITS,
     modelAttemptSink: async (session, attempt) => { attempts.push({ route: attempt.route.id, status: attempt.status, error: attempt.error?.code || null }); },
-    log: workerLog, sleepFn: async () => {},
+    log: workerLog, sleepFn, now,
   });
   return { runtime, sessionStore, policyStore, auditStore, providerStateStore, attempts };
 }

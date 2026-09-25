@@ -16,6 +16,14 @@ import { GitHubClient } from './github.js';
 import { SupabaseManagementClient } from './supabase.js';
 import { Sandbox, resolveSandboxMode } from './sandbox.js';
 
+// Route ids the workspace policy authorizes: provider enabled, model listed
+// and the same controller-side secret reference the route uses.
+export function authorizedRoutes(pool, policy) {
+  return pool.filter((route) => (policy?.providers || []).some((permission) => permission.enabled
+    && permission.provider === route.provider && permission.models.includes(route.model)
+    && permission.secretRef === route.secretRef)).map((route) => route.id);
+}
+
 export function billingPriority(env = process.env) {
   return [...resolveRouting({ env }).billingPriority];
 }
@@ -36,6 +44,7 @@ export function createCodingRuntime({
   log = (...parts) => console.log(`[${new Date().toISOString()}] [coding]`, ...parts),
   sleepFn,
   now,
+  build = null,
 }) {
   const mode = sandboxMode || resolveSandboxMode(env);
   const modelPool = pool || createModelPool({ env, fetchFn });
@@ -77,13 +86,20 @@ export function createCodingRuntime({
 
   // Routing policy for the next turn: defaults < env < workspace < task. Per
   // route monthly caps exclude a route once its audited spend reaches the cap.
+  // Routes the workspace has not authorized are ineligible up front (and
+  // shown with WORKSPACE_NOT_AUTHORIZED) instead of being tried and denied.
   const routingFor = async (session, taskRouting) => {
     const workspace = routingStore ? await routingStore.getRoutingPolicy(session.workspaceId) : null;
     const routing = resolveRouting({ env, workspace, task: taskRouting });
     const capped = routingStore && Object.keys(routing.routeMonthlyBudgetUsd).length
       ? exhaustedRoutes(routing, await routingStore.routeSpend(session.workspaceId))
       : [];
-    return { ...routing, exhaustedRoutes: capped };
+    let authorizedRouteIds = null;
+    if (typeof policyStore?.getPolicy === 'function') {
+      const policy = await policyStore.getPolicy(session.workspaceId);
+      authorizedRouteIds = authorizedRoutes(modelPool, policy);
+    }
+    return { ...routing, exhaustedRoutes: capped, authorizedRouteIds };
   };
 
   // Paid model turns reserve their worst-case cost against the workspace's
@@ -120,6 +136,7 @@ export function createCodingRuntime({
     sleepFn,
     now,
     env,
+    build,
   });
   return { controller, gateway, pool: modelPool, mode };
 }

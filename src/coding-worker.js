@@ -11,6 +11,7 @@ import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-poli
 import { SupabaseWorkspacePolicyStore } from './workspace-policy/supabase-store.js';
 import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
 import { CodingWorker, createCodingRuntime } from './coding-agent/runtime.js';
+import { codeFingerprint } from './build-info.js';
 
 const log = (...parts) => console.log(`[${new Date().toISOString()}] [coding-worker]`, ...parts);
 
@@ -54,7 +55,9 @@ async function main() {
   const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
   const sessionStore = new SupabaseAgentSessionStore(db);
   const auditStore = new SupabaseToolBrokerStore(db);
+  const build = { codeFingerprint: codeFingerprint(), startedAt: new Date().toISOString() };
   const runtime = createCodingRuntime({
+    build,
     sessionStore,
     providerStateStore: new SupabaseProviderStateStore(db),
     policyStore: new SupabaseWorkspacePolicyStore(db),
@@ -67,7 +70,7 @@ async function main() {
     log,
   });
   const routable = runtime.pool.filter((route) => !route.unavailableReasons.length).map((route) => route.id);
-  log(`sandbox mode: ${runtime.mode}; routable models: ${routable.join(', ') || 'none'}`);
+  log(`code ${build.codeFingerprint}; sandbox mode: ${runtime.mode}; routable models: ${routable.join(', ') || 'none'}`);
   const worker = new CodingWorker({
     runtime, sessionStore, log,
     onHeartbeat: (state) => writeFileSync('/tmp/fahad-coding-worker-health.json', JSON.stringify({ ...state, pid: process.pid, updatedAt: Date.now() })),

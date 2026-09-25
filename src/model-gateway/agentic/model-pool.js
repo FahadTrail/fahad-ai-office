@@ -76,7 +76,8 @@ export function modelPoolDefinitions(env = process.env) {
     {
       provider: 'deepseek', model: env.DEEPSEEK_MODEL || 'deepseek-flash', protocol: 'chat-completions',
       endpoint: 'https://api.deepseek.com/chat/completions', secretEnv: 'DEEPSEEK_API_KEY', secretRef: 'env://DEEPSEEK_API_KEY',
-      qualityTier: 4, costTier: 1, contextWindow: 128_000, billingClass: billing(env, 'DEEPSEEK_BILLING_CLASS', 'paid'),
+      qualityTier: 4, costTier: 1, contextWindow: 128_000, maxOutputTokens: Number(env.DEEPSEEK_MAX_OUTPUT_TOKENS || 8192),
+      billingClass: billing(env, 'DEEPSEEK_BILLING_CLASS', 'paid'),
       privacyApproved: truthy(env.DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED), privacyFlag: 'DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED',
     },
     {

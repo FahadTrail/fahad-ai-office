@@ -95,3 +95,15 @@ test('private code only reaches providers whose data-use review is recorded', ()
   assert.equal(flagged.find((route) => route.provider === 'deepseek').privacyApproved, true);
   assert.equal(flagged.find((route) => route.provider === 'minimax').privacyApproved, false, 'MiniMax stays blocked in code');
 });
+
+test('requests are clamped to a route\'s declared output limit', async () => {
+  let sent = null;
+  const pool = createModelPool({ env, fetchFn: async (url, init) => { sent = JSON.parse(init.body); return json(toolCallResponse('chat-completions')); } });
+  const { AgentTurnGateway } = await import('../src/model-gateway/agentic/turn-gateway.js');
+  const { MemoryProviderStateStore } = await import('../src/model-gateway/agentic/provider-state.js');
+  const deepseek = pool.find((route) => route.provider === 'deepseek');
+  assert.equal(deepseek.maxOutputTokens, 8192);
+  const gateway = new AgentTurnGateway({ pool: [deepseek], stateStore: new MemoryProviderStateStore(), minQualityTier: 1 });
+  await gateway.turn({ tools, maxOutputTokens: 16_000, routing: { requiresPrivateData: false }, prepare: async () => ({ system: 'S', messages }) });
+  assert.equal(sent.max_tokens, 8192);
+});

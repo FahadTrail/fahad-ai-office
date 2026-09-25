@@ -60,12 +60,13 @@ export class AgentTurnGateway {
       if (authorizedRouteIds && !authorizedRouteIds.includes(route.id)) reasons.push('WORKSPACE_NOT_AUTHORIZED');
       if (requiresPrivateData && !route.privacyApproved) reasons.push('PRIVACY_NOT_APPROVED');
       if (route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
-      if (estimatedInputTokens + maxOutputTokens > route.contextWindow) reasons.push('CONTEXT_TOO_LARGE');
+      const outputTokens = routeOutputTokens(route, maxOutputTokens);
+      if (estimatedInputTokens + outputTokens > route.contextWindow) reasons.push('CONTEXT_TOO_LARGE');
       if (isCoolingDown(routeState, now)) reasons.push(`COOLDOWN_${String(routeState.health || 'unavailable').toUpperCase()}`);
       if (excludedRouteIds.includes(route.id)) reasons.push('FAILED_THIS_TURN');
       if (policyExcludedRouteIds.includes(route.id)) reasons.push('EXCLUDED_BY_ROUTING_POLICY');
       if (budgetExhaustedRouteIds.includes(route.id)) reasons.push('ROUTE_BUDGET_EXHAUSTED');
-      const estimateUsd = estimateTurnCost(route, estimatedInputTokens, maxOutputTokens);
+      const estimateUsd = estimateTurnCost(route, estimatedInputTokens, outputTokens);
       if (route.billingClass === 'paid' && !allowPaid) reasons.push('PAID_ROUTE_NOT_ALLOWED');
       if (route.billingClass === 'paid' && estimateUsd > remainingBudgetUsd) reasons.push('BUDGET_INSUFFICIENT');
       return Object.freeze({ route, state: routeState, eligible: reasons.length === 0, reasons, estimateUsd });
@@ -110,6 +111,10 @@ export class AgentTurnGateway {
     const authorize = hooks.authorize || (async () => {});
     const reserve = hooks.reserve || (async () => null);
     const settle = hooks.settle || (async () => {});
+    // Test hook at the routing boundary (controlled failover drills). An error
+    // it throws with `injected: true` is handled exactly like a provider
+    // failure but is never recorded as real provider health.
+    const beforeCall = hooks.beforeCall || (async () => {});
     const failed = [];
     const attempts = [];
     let previousRoute = null;
@@ -143,7 +148,9 @@ export class AgentTurnGateway {
         await onSwitch({
           from: previousRoute ? previousRoute.id : preferredRouteId,
           to: route.id,
-          reason: lastError ? { code: lastError.code, failureClass: lastError.failureClass, status: lastError.status || null } : { code: 'ROUTE_UNAVAILABLE' },
+          reason: lastError
+            ? { code: lastError.code, failureClass: lastError.failureClass, status: lastError.status || null, ...(lastError.injected ? { injected: true } : {}) }
+            : { code: 'ROUTE_UNAVAILABLE' },
         });
       }
       const input = await prepare(route, { switching, from: previousRoute?.id || preferredRouteId });
@@ -151,17 +158,25 @@ export class AgentTurnGateway {
       for (let attempt = 1; attempt <= this.maxAttemptsPerRoute; attempt += 1) {
         const attemptId = randomUUID();
         const startedAt = this.now();
-        const estimateUsd = estimateTurnCost(route, routing.estimatedInputTokens || 0, maxOutputTokens);
+        const outputTokens = routeOutputTokens(route, maxOutputTokens);
+        const estimateUsd = estimateTurnCost(route, routing.estimatedInputTokens || 0, outputTokens);
         const reservation = await reserve({ route, estimateUsd, attemptId });
         await onAttempt({ id: attemptId, route, attempt, status: 'started', startedAt: new Date(startedAt).toISOString() });
+        let hookFailure = null;
         try {
+          try {
+            await beforeCall({ route, attempt, attemptId });
+          } catch (hookError) {
+            if (!hookError?.injected) hookFailure = hookError;
+            throw hookError;
+          }
           const result = await route.protocolClient.turn({
             provider: route.provider,
             model: route.model,
             system: input.system,
             messages: input.messages,
             tools,
-            maxOutputTokens,
+            maxOutputTokens: outputTokens,
             clientRequestId: attemptId,
           });
           await settle(reservation, result.usage.costUsd || 0);
@@ -171,12 +186,21 @@ export class AgentTurnGateway {
           await onAttempt(record);
           return { ...result, route, attempts, switched: switching };
         } catch (caught) {
+          if (hookFailure) {
+            // A controller-side hook failed: never blame the provider for it.
+            await settle(reservation, 0);
+            throw hookFailure;
+          }
           const error = classifyProviderError(caught);
           if (!error.rateLimit && caught?.rateLimit) error.rateLimit = caught.rateLimit;
+          if (caught?.injected) {
+            error.code = caught.code || 'DRILL_INJECTED_FAILURE';
+            error.injected = true;
+          }
           await settle(reservation, Number(error.usage?.costUsd || 0));
-          await this.stateStore.recordFailure(route, error);
+          if (!error.injected) await this.stateStore.recordFailure(route, error);
           const record = { id: attemptId, route, attempt, status: 'failed', usage: error.usage || null,
-            error: { code: error.code, failureClass: error.failureClass, status: error.status || null } };
+            error: { code: error.code, failureClass: error.failureClass, status: error.status || null, ...(error.injected ? { injected: true } : {}) } };
           attempts.push(record);
           await onAttempt(record);
           lastError = error;
@@ -197,6 +221,13 @@ export class AgentTurnGateway {
       code: 'ALL_PROVIDERS_UNAVAILABLE', failureClass: FAILURE_CLASS.APPROVAL, attempts, cause: lastError || undefined,
     });
   }
+}
+
+// A route may declare the largest output its model accepts; requests are
+// clamped to it so a provider limit never turns into a failed turn.
+export function routeOutputTokens(route, requested) {
+  const cap = Number(route.maxOutputTokens);
+  return Number.isFinite(cap) && cap > 0 ? Math.min(requested, cap) : requested;
 }
 
 export function estimateTurnCost(route, inputTokens, outputTokens) {

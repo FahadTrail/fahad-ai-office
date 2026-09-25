@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { createModelPool } from './model-gateway/agentic/model-pool.js';
 import { AgentTurnGateway } from './model-gateway/agentic/turn-gateway.js';
 import { exhaustedRoutes, normalizeRouting, resolveRouting, SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
+import { authorizedRoutes } from './coding-agent/runtime.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -161,13 +162,17 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     }
   };
   const routingStore = new SupabaseRoutingPolicyStore(db);
-  const [statusRows, todayRows, periodRows, activeRows, workspaceRouting] = await Promise.all([
+  const [statusRows, todayRows, periodRows, activeRows, workspaceRouting, permissionRows] = await Promise.all([
     optional(rows(db.from('provider_status').select('*')), []),
     optional(rpcRows(db, 'model_usage_summary', { p_since: null, p_workspace: null }), []),
     workspaceId ? optional(rpcRows(db, 'model_usage_summary', { p_since: null, p_workspace: workspaceId }), []) : [],
     optional(rows(db.from('agent_sessions').select('current_route,status').in('status', ['queued', 'running', 'awaiting_approval'])), []),
     workspaceId ? routingStore.getRoutingPolicy(workspaceId).catch(() => null) : null,
+    workspaceId ? optional(rows(db.from('workspace_provider_permissions').select('provider,models,secret_ref,enabled').eq('workspace_id', workspaceId)), null) : null,
   ]);
+  const authorizedRouteIds = permissionRows ? authorizedRoutes(pool, {
+    providers: permissionRows.map((row) => ({ provider: row.provider, models: row.models || [], secretRef: row.secret_ref, enabled: row.enabled })),
+  }) : null;
   const routing = resolveRouting({ env, workspace: workspaceRouting });
   const state = new Map(statusRows.map((row) => [`${row.provider}:${row.model}`, row]));
   const today = new Map(todayRows.map((row) => [`${row.provider}:${row.model}`, row]));
@@ -184,7 +189,7 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     now,
   });
   const evaluations = await gateway.evaluate({
-    requiresPrivateData: true, allowPaid: routing.allowPaid,
+    requiresPrivateData: true, allowPaid: routing.allowPaid, authorizedRouteIds,
     policyExcludedRouteIds: routing.excludedRoutes, budgetExhaustedRouteIds: exhaustedRoutes(routing, period),
   });
   const order = gateway.order(evaluations).map((route) => route.id);
@@ -198,6 +203,7 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     let availability;
     if (route.unavailableReasons.length) availability = `NOT CONFIGURED — ${route.unavailableReasons.join(', ')}`;
     else if (cooling) availability = `${String(row.health || 'unavailable').toUpperCase().replace('_', ' ')} — RETRY AFTER ${formatRemaining(Date.parse(row.cooldown_until) - now())}`;
+    else if (reasons.includes('WORKSPACE_NOT_AUTHORIZED')) availability = 'NOT AUTHORIZED FOR THIS PROJECT';
     else if (reasons.includes('PRIVACY_NOT_APPROVED')) availability = 'AVAILABLE FOR PUBLIC DATA ONLY — PRIVACY REVIEW PENDING';
     else if (reasons.includes('BELOW_QUALITY_FLOOR')) availability = 'AVAILABLE — BELOW CODING QUALITY FLOOR';
     else if (limit != null && remaining != null) availability = `AVAILABLE — ${remaining}/${limit} REQUESTS LEFT (PROVIDER-REPORTED)`;
@@ -227,6 +233,7 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
       integration,
       configured,
       enabled: !route.unavailableReasons.length && !routing.excludedRoutes.includes(route.id),
+      authorizedForProject: authorizedRouteIds ? authorizedRouteIds.includes(route.id) : null,
       eligibleForPrivateCode: reasons.length === 0,
       routingRank: order.indexOf(route.id) >= 0 ? order.indexOf(route.id) + 1 : null,
       billingClass: route.billingClass.toUpperCase(),
@@ -414,7 +421,7 @@ export const CODING_SCRIPT = String.raw`
       const canaryLine='<div class="row-actions" style="margin:0 0 10px"><button id="runCanary" class="ghost">Run live canary</button><span class="muted">'+(lc?('Last canary: '+esc(lc.status)+(lc.report?(' · verified: '+esc((lc.report.routes||[]).filter(x=>x.ok).map(x=>x.id).join(', ')||'none')+' · failover drill: '+(lc.report.failover?.ok?('passed'+(lc.report.failover.crossProvider?' ('+esc(lc.report.failover.primary)+' → '+esc(lc.report.failover.backup)+')':' (same provider)')):'not passed')+(lc.report.totalCostUsd!=null?' · cost '+usd(lc.report.totalCostUsd)+' ESTIMATED':'')):'')+' · '+new Date(lc.requested_at).toLocaleString()):'No live canary has run yet.')+'</span></div>';
       const routingForm='<div class="row-actions" style="margin:0 0 10px;flex-wrap:wrap"><span class="muted">Project routing:</span><select id="rStrategy" class="field" style="width:auto">'+['economy','balanced','quality'].map(v=>'<option value="'+v+'"'+(r.strategy===v?' selected':'')+'>'+v+'</option>').join('')+'</select><label class="check" style="margin:0"><input id="rPaid" type="checkbox"'+(r.allowPaid!==false?' checked':'')+'><span>allow paid models</span></label><button id="rSave" class="ghost">Save</button><span class="muted">Priority: '+esc((d.billingPriority||[]).join(' → '))+' · source: '+esc(r.source||'defaults')+'</span></div>';
       const cls=s=>/^LIVE/.test(s)?'completed':/RATE|OFFLINE|DEGRADED/.test(s)?'blocked':/NOT/.test(s)?'cancelled':'queued';
-      panel.innerHTML=canaryLine+routingForm+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong><br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+'</td><td>'+esc(x.billingClass)+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span></td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td></tr>').join('')+'</table></div><p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
+      panel.innerHTML=canaryLine+routingForm+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong><br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.authorizedForProject===false?'<br><span class="muted">not authorized for this project</span>':'')+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+'</td><td>'+esc(x.billingClass)+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span></td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td></tr>').join('')+'</table></div><p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
       const rc=document.getElementById('runCanary');if(rc)rc.onclick=async()=>{rc.disabled=true;try{await codingApi('./api/model-pool/canary',{method:'POST'});rc.textContent='Queued — runs within a minute';}catch(e){cerr(e.message)}};
       const rs=document.getElementById('rSave');if(rs)rs.onclick=async()=>{if(!ws())return cerr('Select a project first.');rs.disabled=true;try{await codingApi('./api/model-pool/routing',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({workspaceId:ws(),strategy:document.getElementById('rStrategy').value,allowPaid:document.getElementById('rPaid').checked})});await renderPool()}catch(e){cerr(e.message);rs.disabled=false}}}catch(e){panel.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
     btn.onclick=openCoding;document.getElementById('codingClose').onclick=closeCoding;document.getElementById('cStart').onclick=startSession;document.getElementById('poolButton').onclick=togglePool;
