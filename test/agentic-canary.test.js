@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runAgenticCanary } from '../src/canary/agentic-canary.js';
+import { failoverPair, poolStatus, runAgenticCanary } from '../src/canary/agentic-canary.js';
 
 // Simulated providers that behave like tool-using models; the canary logic is
 // what is under test here. Live verification runs where real keys exist.
@@ -35,7 +35,17 @@ test('agentic canary verifies tool calling per route and proves continuation acr
   assert.deepEqual(report.routes.map((entry) => [entry.id, entry.ok]), [['anthropic:claude-opus-5', true], ['deepseek:deepseek-flash', true]]);
   assert.equal(report.failover.ok, true);
   assert.equal(report.failover.finishedOn, 'deepseek:deepseek-flash');
-  assert.equal(report.failover.checkpointsBeforeSwitch, 1);
+  assert.equal(report.failover.crossProvider, true);
+  assert.equal(report.failover.checkpointPersisted, true, 'the backup was prompted from the stored checkpoint');
+  assert.equal(report.failover.primaryCompletedStepBeforeSwitch, true);
+  assert.deepEqual(report.failover.attempts.map((entry) => [entry.route, entry.status, entry.injected]), [
+    ['anthropic:claude-opus-5', 'succeeded', false],
+    ['anthropic:claude-opus-5', 'failed', true],
+    ['deepseek:deepseek-flash', 'succeeded', false],
+    ['deepseek:deepseek-flash', 'succeeded', false],
+  ]);
+  assert.deepEqual(report.pool.map((entry) => entry.status), ['CONFIGURED', 'CONFIGURED', 'NOT CONFIGURED']);
+  assert.equal(JSON.stringify(report).includes('apiKey'), false);
   assert.equal(report.failover.backupRedidCompletedStep, false, 'the backup continued instead of restarting');
   assert.equal(report.failover.answer, '84');
 });
@@ -46,4 +56,23 @@ test('agentic canary reports failures without inventing success', async () => {
   assert.equal(report.routes[0].ok, false);
   assert.equal(report.routes[0].error, 'ALL_PROVIDERS_UNAVAILABLE');
   assert.equal(report.failover.ok, false);
+});
+
+test('the failover drill prefers a backup from a different provider', () => {
+  const opus = route('anthropic:claude-opus-5', { costTier: 4 });
+  const sonnet = route('anthropic:claude-sonnet-5', { costTier: 3 });
+  const flash = route('deepseek:deepseek-flash', { costTier: 1 });
+  const pair = failoverPair([opus, sonnet, flash]);
+  assert.equal(pair.primary.id, 'deepseek:deepseek-flash');
+  assert.equal(pair.backup.id, 'anthropic:claude-sonnet-5');
+  assert.equal(pair.crossProvider, true);
+  const sameProvider = failoverPair([opus, sonnet]);
+  assert.equal(sameProvider.crossProvider, false);
+  assert.equal(failoverPair([opus]), null);
+});
+
+test('pool status reports credential presence as a boolean and never a secret', () => {
+  const status = poolStatus([route('qwen:q', { unavailableReasons: ['ENDPOINT_NOT_CONFIGURED'], apiKey: 'sk-secret-value-123' }), route('kimi:k', { unavailableReasons: ['CREDENTIAL_MISSING'] })]);
+  assert.deepEqual(status.map((entry) => [entry.status, entry.credentialPresent]), [['NOT READY', true], ['NOT CONFIGURED', false]]);
+  assert.equal(JSON.stringify(status).includes('sk-secret'), false);
 });

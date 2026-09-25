@@ -18,6 +18,24 @@ export class CanaryRequestRunner {
     this.unavailable = false;
   }
 
+  // The failover drill's checkpoint is written to the run row and read back
+  // from the database before the backup provider is prompted.
+  checkpointStore(runId) {
+    const db = this.db;
+    return {
+      location: 'provider_canary_runs.report.failoverCheckpoint',
+      async save(checkpoint) {
+        const { error } = await db.from('provider_canary_runs').update({ report: { inProgress: true, failoverCheckpoint: checkpoint } }).eq('id', runId);
+        if (error) throw Object.assign(new Error('checkpoint write failed'), { code: 'CHECKPOINT_WRITE_FAILED' });
+      },
+      async load() {
+        const { data, error } = await db.from('provider_canary_runs').select('report').eq('id', runId).maybeSingle();
+        if (error) throw Object.assign(new Error('checkpoint read failed'), { code: 'CHECKPOINT_READ_FAILED' });
+        return data?.report?.failoverCheckpoint || null;
+      },
+    };
+  }
+
   // Called from the runtime loop; cheap when nothing is queued.
   async maybeRun() {
     if (this.unavailable || this.now() - this.lastCheck < this.intervalMs) return false;
@@ -36,7 +54,13 @@ export class CanaryRequestRunner {
     if (!request?.id) return false;
     this.log('Running requested live provider canary', request.id);
     try {
-      const report = await this.run({ env: this.env, stateStore: this.stateStore, log: () => {} });
+      const checkpointStore = this.checkpointStore(request.id);
+      const report = await this.run({ env: this.env, stateStore: this.stateStore, log: () => {}, checkpointStore });
+      const checkpoint = await checkpointStore.load().catch(() => null);
+      if (checkpoint) {
+        const { recentMessages, ...summary } = checkpoint;
+        report.failoverCheckpoint = { ...summary, recentMessageCount: recentMessages?.length || 0, storedIn: 'provider_canary_runs.report' };
+      }
       const verified = report.routes.filter((route) => route.ok).map((route) => route.id);
       for (const id of verified) {
         const [provider, ...model] = id.split(':');
