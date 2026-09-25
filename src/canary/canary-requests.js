@@ -4,6 +4,7 @@
 // queued. The report is metadata only.
 
 import { runAgenticCanary } from './agentic-canary.js';
+import { parseRouteId } from '../model-gateway/agentic/route-id.js';
 
 export class CanaryRequestRunner {
   constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now() }) {
@@ -63,9 +64,9 @@ export class CanaryRequestRunner {
       }
       const verified = report.routes.filter((route) => route.ok).map((route) => route.id);
       for (const id of verified) {
-        const [provider, ...model] = id.split(':');
+        const { provider, model } = parseRouteId(id);
         await this.db.from('provider_status').update({ verified_at: new Date(this.now()).toISOString() })
-          .eq('provider', provider).eq('model', model.join(':'));
+          .eq('provider', provider).eq('model', model);
       }
       await this.db.from('provider_canary_runs').update({
         status: 'completed', completed_at: new Date(this.now()).toISOString(), report,
