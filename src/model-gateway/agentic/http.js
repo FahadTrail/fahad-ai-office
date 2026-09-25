@@ -29,10 +29,13 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
     const type = payload?.error?.type || payload?.error?.status || payload?.error?.code || payload?.code || null;
     // Only a boolean derived from the provider's text is kept: whether the
     // limit hit is a daily allowance (so the route waits for the reset).
-    const dailyQuota = response.status === 429 && isDailyQuotaText(JSON.stringify(payload?.error ?? payload ?? '').slice(0, 4000));
+    const errorText = JSON.stringify(payload?.error ?? payload ?? '').slice(0, 4000);
+    const dailyQuota = response.status === 429 && isDailyQuotaText(errorText);
+    const reason = providerReasonHint(response.status, errorText);
     throw providerError(`${provider} request failed`, {
       status: response.status,
       ...(dailyQuota ? { quotaScope: 'day' } : {}),
+      ...(reason ? { reason } : {}),
       type: typeof type === 'string' ? type : String(type ?? ''),
       retryAfter: response.headers.get('retry-after'),
       providerRequestId: requestId,
@@ -40,6 +43,24 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
     });
   }
   return { body: await response.json(), requestId, rateLimit };
+}
+
+// Maps a provider's error wording to a short, fixed reason code so an
+// operator can see WHY a route is unsuitable (e.g. OpenRouter's "No endpoints
+// found matching your data policy") without the provider text being stored.
+const REASON_HINTS = [
+  ['DATA_POLICY', /data policy|privacy setting|allow.*(training|logging)|free model (training|publication)/i],
+  ['NO_TOOL_SUPPORT', /support(s)? tool|tool use|tool calling|tools are not supported|function calling is not supported/i],
+  ['PRICE_FILTERED', /max[_ ]?price/i],
+  ['PROVIDER_FILTERED', /no allowed providers|provider.{0,40}(ignored|not allowed)/i],
+  ['MODEL_NOT_FOUND', /not a valid model|model.{0,20}not found|no endpoints found|does not exist|unknown model|no such model|is not available/i],
+  ['NO_CREDITS', /insufficient (credits|balance)|requires more credits|out of credits/i],
+];
+export function providerReasonHint(status, text) {
+  if (!status || status < 400) return null;
+  const value = String(text || '');
+  for (const [code, pattern] of REASON_HINTS) if (pattern.test(value)) return code;
+  return null;
 }
 
 export function providerError(message, details = {}) {

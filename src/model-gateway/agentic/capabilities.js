@@ -40,6 +40,16 @@ const REGISTRY = [
   [/codestral|devstral/i, { coding: 4, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
   [/mistral-small|ministral/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
   [/(^|\/)gpt-4\.1(-mini)?$/, { coding: 4, reasoning: 3, research: 4, writing: 4, speed: 4, vision: true, structuredOutput: true }],
+  // Common OpenRouter free (":free") models. Conservative: free OpenRouter
+  // endpoints are never used for private code regardless of these scores.
+  [/(^|\/)deepseek-(r1|v3|chat)/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 2, vision: false, structuredOutput: true }],
+  [/(^|\/)kimi-k2/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 3, vision: false, structuredOutput: true }],
+  [/(^|\/)qwen3?-?\d*.*coder/i, { coding: 4, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
+  [/(^|\/)qwen3/i, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
+  [/(^|\/)glm-4\.\d+-air/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
+  [/(^|\/)llama-4/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 4, vision: true, structuredOutput: true }],
+  [/(^|\/)gemma/i, { coding: 2, reasoning: 3, research: 3, writing: 3, speed: 4, vision: true, structuredOutput: false }],
+  [/nemotron/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
 ];
 
 function lookup(model) {
@@ -74,8 +84,11 @@ export function capabilityProfile(definition, env = {}) {
     profile[score] = clampScore(override?.[score], clampScore(known?.[score], score === 'speed' ? 3 : base));
   }
   profile.toolCalling = definition.toolCalling !== false && override?.toolCalling !== false;
-  profile.vision = typeof override?.vision === 'boolean' ? override.vision : Boolean(known?.vision);
-  profile.structuredOutput = typeof override?.structuredOutput === 'boolean' ? override.structuredOutput : known ? Boolean(known.structuredOutput) : false;
+  // Provider catalog flags (e.g. OpenRouter supported_parameters) fill in
+  // what the registry does not know.
+  const flags = definition.catalogFlags || {};
+  profile.vision = typeof override?.vision === 'boolean' ? override.vision : known ? Boolean(known.vision) : Boolean(flags.vision);
+  profile.structuredOutput = typeof override?.structuredOutput === 'boolean' ? override.structuredOutput : known ? Boolean(known.structuredOutput) : Boolean(flags.structuredOutput);
   profile.contextWindow = definition.contextWindow;
   profile.longContext = definition.contextWindow >= 200_000;
   profile.costClass = definition.billingClass === 'paid' ? ['low', 'low', 'medium', 'high', 'premium'][Math.max(0, Math.min(4, (definition.costTier || 1) - 1))] : definition.billingClass;
@@ -127,4 +140,14 @@ export function jobFit(route, job) {
   if (!weights.length) return route.qualityTier || 0;
   const total = weights.reduce((sum, [, weight]) => sum + weight, 0);
   return weights.reduce((sum, [score, weight]) => sum + (capabilities[score] || 0) * weight, 0) / total;
+}
+
+// Orders discovered free models for admission: best average Office-job fit
+// first (research, content, reasoning), then the larger context window.
+export function rankFreeModels(left, right, env = {}) {
+  const score = (entry) => {
+    const profile = capabilityProfile({ model: entry.id, qualityTier: Number(env.OPENROUTER_QUALITY_TIER || 3), contextWindow: entry.contextLength, billingClass: 'free', catalogFlags: entry }, env);
+    return profile.research + profile.reasoning + profile.writing + profile.coding * 0.5;
+  };
+  return score(right) - score(left) || right.contextLength - left.contextLength || left.id.localeCompare(right.id);
 }

@@ -11,6 +11,7 @@ import { exhaustedRoutes, normalizeRouting, resolveRouting, SupabaseRoutingPolic
 import { authorizedRoutes } from './coding-agent/runtime.js';
 import { JOB_PROFILES, capabilityGaps } from './model-gateway/agentic/capabilities.js';
 import { freeQuotaStatus } from './model-gateway/agentic/free-quota.js';
+import { getOpenRouterCatalog } from './model-gateway/agentic/openrouter-catalog.js';
 import { OFFICE_ROLES } from './office-agents/roles.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -220,10 +221,13 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     else availability = 'AVAILABLE — EXACT QUOTA NOT AVAILABLE';
     const verifiedAt = row?.verified_at || null;
     let status;
+    const unsuitableCode = /^(PROVIDER_UNSUITABLE|PAID_ON_FREE_ROUTE)/.test(row?.last_error_code || '');
     if (!configured) status = 'NOT CONFIGURED';
+    else if (route.unavailableReasons.some((reason) => reason.startsWith('CATALOG_'))) status = 'UNSUITABLE';
     else if (route.unavailableReasons.length) status = 'NOT READY';
     else if (cooling && ['rate_limited', 'quota_exhausted'].includes(row.health)) status = 'RATE LIMITED';
-    else if (cooling) status = 'OFFLINE';
+    else if (cooling && unsuitableCode) status = 'UNSUITABLE';
+    else if (cooling) status = 'COOLDOWN';
     else if (row?.health === 'degraded') status = 'DEGRADED';
     else if (verifiedAt || row?.last_success_at) status = 'LIVE';
     else status = 'CONFIGURED — NOT YET VERIFIED';
@@ -249,6 +253,11 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
       health: row?.health || 'unknown',
       availability,
       reasons,
+      discovered: Boolean(route.discovered),
+      group: route.provider === 'openrouter' ? 'OpenRouter (one key, several free models)' : route.provider,
+      freeOnly: Boolean(route.freeOnly),
+      privateCode: route.privacyApproved ? 'APPROVED' : 'NOT APPROVED — public/non-private data only',
+      excludedBecause: reasons.map(explainReason),
       codingSuitability: !route.toolCalling ? 'TEXT ONLY — NOT FOR CODING'
         : route.qualityTier < minQualityTier || capabilityGaps(route.capabilities, 'coding').length ? 'NOT CAPABLE ENOUGH FOR CODING'
           : route.privacyApproved ? 'SUITABLE FOR PRIVATE CODE' : 'PUBLIC CODE ONLY — PRIVACY REVIEW PENDING',
@@ -289,7 +298,14 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
       pricing: route.pricing ? { ...route.pricing, basis: 'published list price' } : null,
     };
   });
+  const catalog = getOpenRouterCatalog();
   return {
+    openRouter: catalog ? {
+      fetchedAt: catalog.fetchedAt, source: catalog.source, keyScopedList: catalog.keyScopedList,
+      freeModels: catalog.freeModels, accessibleFreeModels: catalog.accessibleFreeModels, admitted: catalog.admitted,
+      models: catalog.models.map((entry) => ({ id: entry.id, contextLength: entry.contextLength, tools: entry.tools, admitted: entry.admitted, reasons: entry.reasons })),
+      note: 'One OpenRouter key; each admitted free model is its own route. Free-only: a response that reports any cost is refused and the route is quarantined.',
+    } : null,
     billingPriority: [...routing.billingPriority],
     routing: { ...routing, source: workspaceRouting ? 'workspace policy' : 'defaults' },
     routes,
@@ -351,7 +367,7 @@ export async function platformOverview({ db, env = process.env, now = () => Date
       total: routes.length,
       live: count(live),
       rateLimited: count((route) => route.status === 'RATE LIMITED'),
-      offline: count((route) => route.status === 'OFFLINE' || route.status === 'DEGRADED'),
+      offline: count((route) => ['COOLDOWN', 'DEGRADED', 'UNSUITABLE'].includes(route.status)),
       notConfigured: count((route) => route.status === 'NOT CONFIGURED' || route.status === 'NOT READY'),
       free: count((route) => route.billingClass !== 'PAID'),
       codingOrder: routes.filter((route) => route.routingRank).toSorted((a, b) => a.routingRank - b.routingRank).map((route) => route.id),
@@ -375,6 +391,24 @@ export async function platformOverview({ db, env = process.env, now = () => Date
       database: 'ok',
     },
   };
+}
+
+const REASON_TEXT = {
+  CREDENTIAL_MISSING: 'API key not configured', PRICING_UNKNOWN: 'paid model without a known price',
+  MODEL_NOT_CONFIGURED: 'model id not set', ENDPOINT_NOT_CONFIGURED: 'endpoint not set',
+  WORKSPACE_NOT_AUTHORIZED: 'not authorized for this project', PRIVACY_NOT_APPROVED: 'not approved for private code',
+  BELOW_QUALITY_FLOOR: 'below the coding quality floor', CONTEXT_TOO_LARGE: 'context window too small for this task',
+  FAILED_THIS_TURN: 'failed this turn', EXCLUDED_BY_ROUTING_POLICY: 'excluded by routing policy',
+  ROUTE_BUDGET_EXHAUSTED: 'route budget cap reached', PAID_ROUTE_NOT_ALLOWED: 'paid models not allowed',
+  BUDGET_INSUFFICIENT: 'workspace budget insufficient', TOOL_CALLING_REQUIRED: 'no tool calling',
+  STRUCTURED_OUTPUT_REQUIRED: 'no structured output', CONTEXT_WINDOW_TOO_SMALL: 'context window too small for coding',
+};
+export function explainReason(reason) {
+  if (REASON_TEXT[reason]) return REASON_TEXT[reason];
+  if (reason.startsWith('COOLDOWN_')) return `cooling down (${reason.slice(9).toLowerCase().replace(/_/g, ' ')})`;
+  if (reason.startsWith('CAPABILITY_')) return `capability too low for coding (${reason.slice(11).toLowerCase().replace(/_/g, ' ')})`;
+  if (reason.startsWith('CATALOG_')) return `OpenRouter catalog: ${reason.slice(8).toLowerCase().replace(/_/g, ' ')}`;
+  return reason.toLowerCase().replace(/_/g, ' ');
 }
 
 async function rpcRows(db, name, args) {
@@ -515,8 +549,8 @@ export const CODING_SCRIPT = String.raw`
     async function renderPool(){const panel=document.getElementById('poolPanel');panel.innerHTML='<div class="muted">Loading…</div>';try{const d=await codingApi('./api/model-pool'+(ws()?'?workspaceId='+encodeURIComponent(ws()):''));const lc=d.lastCanary;const r=d.routing||{};
       const canaryLine='<div class="row-actions" style="margin:0 0 10px"><button id="runCanary" class="ghost">Run live canary</button><span class="muted">'+(lc?('Last canary: '+esc(lc.status)+(lc.report?(' · verified: '+esc((lc.report.routes||[]).filter(x=>x.ok).map(x=>x.id).join(', ')||'none')+' · failover drill: '+(lc.report.failover?.ok?('passed'+(lc.report.failover.crossProvider?' ('+esc(lc.report.failover.primary)+' → '+esc(lc.report.failover.backup)+')':' (same provider)')):'not passed')+(lc.report.totalCostUsd!=null?' · cost '+usd(lc.report.totalCostUsd)+' ESTIMATED':'')):'')+' · '+new Date(lc.requested_at).toLocaleString()):'No live canary has run yet.')+'</span></div>';
       const routingForm='<div class="row-actions" style="margin:0 0 10px;flex-wrap:wrap"><span class="muted">Project routing:</span><select id="rStrategy" class="field" style="width:auto">'+['economy','balanced','quality'].map(v=>'<option value="'+v+'"'+(r.strategy===v?' selected':'')+'>'+v+'</option>').join('')+'</select><label class="check" style="margin:0"><input id="rPaid" type="checkbox"'+(r.allowPaid!==false?' checked':'')+'><span>allow paid models</span></label><button id="rSave" class="ghost">Save</button><span class="muted">Priority: '+esc((d.billingPriority||[]).join(' → '))+' · source: '+esc(r.source||'defaults')+'</span></div>';
-      const cls=s=>/^LIVE/.test(s)?'completed':/RATE|OFFLINE|DEGRADED/.test(s)?'blocked':/NOT/.test(s)?'cancelled':'queued';
-      panel.innerHTML=canaryLine+routingForm+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong><br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.authorizedForProject===false?'<br><span class="muted">not authorized for this project</span>':'')+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+'</td><td>'+esc(x.billingClass)+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span>'+((x.suitableJobs||[]).length?'<br><span class="muted">jobs: '+esc(x.suitableJobs.join(', '))+'</span>':'')+'</td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+(x.freeQuota?'<br><span class="muted">free: '+(x.freeQuota.requestsRemaining!=null?('≈'+x.freeQuota.requestsRemaining+' req left ('+esc(x.freeQuota.basis)+')'):esc(x.freeQuota.basis))+(x.freeQuota.published.requestsPerDay?' · published '+x.freeQuota.published.requestsPerDay+'/day':'')+(x.freeQuota.nextResetAt?' · resets '+new Date(x.freeQuota.nextResetAt).toLocaleString():' · '+esc(x.freeQuota.resetKind)+' window')+(x.freeQuota.estimatedExhaustionAt?' · est. exhausted '+new Date(x.freeQuota.estimatedExhaustionAt).toLocaleTimeString():'')+'</span>':'')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td></tr>').join('')+'</table></div><p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
+      const cls=s=>/^LIVE/.test(s)?'completed':/RATE|COOLDOWN|DEGRADED|UNSUITABLE/.test(s)?'blocked':/NOT/.test(s)?'cancelled':'queued';
+      panel.innerHTML=canaryLine+routingForm+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th><th>Private code</th><th>Why excluded (coding)</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong>'+(x.discovered?' <span class="muted">(free catalog)</span>':'')+(x.freeOnly?' <span class="muted">free-only</span>':'')+'<br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.authorizedForProject===false?'<br><span class="muted">not authorized for this project</span>':'')+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+'</td><td>'+esc(x.billingClass)+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span>'+((x.suitableJobs||[]).length?'<br><span class="muted">jobs: '+esc(x.suitableJobs.join(', '))+'</span>':'')+'</td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+(x.freeQuota?'<br><span class="muted">free: '+(x.freeQuota.requestsRemaining!=null?('≈'+x.freeQuota.requestsRemaining+' req left ('+esc(x.freeQuota.basis)+')'):esc(x.freeQuota.basis))+(x.freeQuota.published.requestsPerDay?' · published '+x.freeQuota.published.requestsPerDay+'/day':'')+(x.freeQuota.nextResetAt?' · resets '+new Date(x.freeQuota.nextResetAt).toLocaleString():' · '+esc(x.freeQuota.resetKind)+' window')+(x.freeQuota.estimatedExhaustionAt?' · est. exhausted '+new Date(x.freeQuota.estimatedExhaustionAt).toLocaleTimeString():'')+'</span>':'')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td><td>'+(x.privateCode==='APPROVED'?'approved':'<span class="muted">public data only</span>')+'</td><td class="muted">'+esc((x.excludedBecause||[]).join('; ')||'—')+'</td></tr>').join('')+'</table></div>'+(d.openRouter?'<details style="margin-top:10px"><summary class="muted">OpenRouter free models — '+d.openRouter.freeModels+' free on OpenRouter'+(d.openRouter.accessibleFreeModels!=null?', '+d.openRouter.accessibleFreeModels+' accessible to this key':'')+', '+d.openRouter.admitted.length+' admitted · discovered '+new Date(d.openRouter.fetchedAt).toLocaleString()+'</summary><div class="muted">'+esc(d.openRouter.note)+' Source: '+esc(d.openRouter.source)+'.</div><table class="pool-table"><tr><th>Model</th><th>Context</th><th>Tools</th><th>Admitted</th><th>Why not</th></tr>'+d.openRouter.models.map(o=>'<tr><td>'+esc(o.id)+'</td><td>'+Math.round(o.contextLength/1000)+'K</td><td>'+(o.tools?'yes':'no')+'</td><td>'+(o.admitted?'yes':'no')+'</td><td class="muted">'+esc((o.reasons||[]).join(', ').toLowerCase().replace(/_/g,' '))+'</td></tr>').join('')+'</table></details>':'')+'<p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
       const rc=document.getElementById('runCanary');if(rc)rc.onclick=async()=>{rc.disabled=true;try{await codingApi('./api/model-pool/canary',{method:'POST'});rc.textContent='Queued — runs within a minute';}catch(e){cerr(e.message)}};
       const rs=document.getElementById('rSave');if(rs)rs.onclick=async()=>{if(!ws())return cerr('Select a project first.');rs.disabled=true;try{await codingApi('./api/model-pool/routing',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({workspaceId:ws(),strategy:document.getElementById('rStrategy').value,allowPaid:document.getElementById('rPaid').checked})});await renderPool()}catch(e){cerr(e.message);rs.disabled=false}}}catch(e){panel.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
     const pbtn=document.createElement('button');pbtn.id='platformButton';pbtn.className='newchat';pbtn.style.background='linear-gradient(135deg,#a78bfa,#6d28d9)';pbtn.textContent='◎ Platform';btn.after(pbtn);

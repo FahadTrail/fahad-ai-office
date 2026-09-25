@@ -17,6 +17,14 @@ export const HEALTH = Object.freeze({
 });
 
 const MINUTE = 60_000;
+const ROUTE_LEVEL_REASONS = new Set(['MODEL_NOT_FOUND', 'DATA_POLICY', 'NO_TOOL_SUPPORT', 'PROVIDER_FILTERED', 'PRICE_FILTERED']);
+
+// Stored codes follow provider_status.last_error_code (^[A-Z][A-Z0-9_]{2,80}$).
+function errorCode(error) {
+  if (error.type === 'paid_on_free_route') return 'PAID_ON_FREE_ROUTE';
+  const base = error.code || 'PROVIDER_ERROR';
+  return error.reason && /^[A-Z_]{3,40}$/.test(error.reason) ? `${base}_${error.reason}`.slice(0, 80) : base;
+}
 
 // Decides the durable consequence of one failed attempt. A used-up daily
 // allowance cools the route down until the provider's next reset, after which
@@ -33,6 +41,15 @@ export function failureOutcome(error, previous = {}, now = Date.now(), route = n
   } else if (error.code === 'PROVIDER_RATE_LIMIT' && error.quotaScope === 'day') {
     health = HEALTH.QUOTA_EXHAUSTED;
     cooldownUntil = Date.parse(quotaCooldownUntil(route || { provider: previous.provider }, error, now));
+  } else if (error.type === 'paid_on_free_route') {
+    // A free-only route reported a cost: quarantine it for a day.
+    health = HEALTH.UNAVAILABLE;
+    cooldownUntil = now + 24 * 60 * MINUTE;
+  } else if (error.code === 'PROVIDER_UNSUITABLE' && ROUTE_LEVEL_REASONS.has(error.reason)) {
+    // The model/route itself cannot serve requests (not found, blocked by the
+    // account's data policy, no tool support): stop retrying it every turn.
+    health = HEALTH.UNAVAILABLE;
+    cooldownUntil = now + 6 * 60 * MINUTE;
   } else if (error.code === 'PROVIDER_CAPACITY') {
     health = HEALTH.QUOTA_EXHAUSTED;
     cooldownUntil = resetAt || now + 60 * MINUTE;
@@ -49,7 +66,7 @@ export function failureOutcome(error, previous = {}, now = Date.now(), route = n
     health,
     consecutiveFailures: consecutive,
     cooldownUntil: cooldownUntil ? new Date(cooldownUntil).toISOString() : null,
-    lastErrorCode: error.code || 'PROVIDER_ERROR',
+    lastErrorCode: errorCode(error),
     lastErrorAt: new Date(now).toISOString(),
     rateLimit: error.rateLimit || previous.rateLimit || null,
   };

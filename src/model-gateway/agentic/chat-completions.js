@@ -5,7 +5,8 @@ import { portableSchema } from './conversation.js';
 // DeepSeek, Qwen, Kimi, GLM/Zhipu, MiniMax, OpenRouter, Groq and any other
 // provider that officially documents this protocol.
 export class ChatCompletionsProtocol {
-  constructor({ apiKey, endpoint, pricing, fetchFn = fetch, timeoutMs = 600_000, maxTokensField = 'max_tokens', extraHeaders = {}, extraBody = {} } = {}) {
+  constructor({ apiKey, endpoint, pricing, fetchFn = fetch, timeoutMs = 600_000, maxTokensField = 'max_tokens', extraHeaders = {}, extraBody = {}, freeOnly = false } = {}) {
+    this.freeOnly = freeOnly;
     if (!/^https:\/\//.test(String(endpoint || ''))) throw new TypeError('Chat Completions endpoint must be an HTTPS URL');
     this.protocol = 'chat-completions';
     this.apiKey = apiKey || null;
@@ -57,6 +58,13 @@ export class ChatCompletionsProtocol {
       reasoningTokens: 0,
     };
     usage.costUsd = costUsd(usage, this.pricing);
+    // Free-only guard: a provider-reported cost on a free route means the
+    // request was billed. Record the real cost, refuse the result and let the
+    // gateway quarantine the route and fail over.
+    const reportedCost = Number(body.usage?.cost ?? body.usage?.total_cost ?? 0);
+    if (this.freeOnly && Number.isFinite(reportedCost) && reportedCost > 0) {
+      throw providerError(`${provider} billed a free-only route`, { status: 402, type: 'paid_on_free_route', usage: { ...usage, costUsd: Number(reportedCost.toFixed(8)) } });
+    }
     if (choice.finish_reason === 'content_filter') {
       throw providerError(`${provider} filtered the request`, { status: 422, type: 'refusal', usage });
     }

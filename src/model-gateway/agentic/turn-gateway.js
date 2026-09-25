@@ -12,6 +12,7 @@ import { DEFAULT_BILLING_PRIORITY } from './model-pool.js';
 import { isCoolingDown } from './provider-state.js';
 import { capabilityGaps, jobFit } from './capabilities.js';
 
+const CODING_JOBS = new Set(['coding', 'qa_security']);
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class AgentTurnGateway {
@@ -61,7 +62,9 @@ export class AgentTurnGateway {
       const routeState = state.get(route.id) || null;
       if (authorizedRouteIds && !authorizedRouteIds.includes(route.id)) reasons.push('WORKSPACE_NOT_AUTHORIZED');
       if (requiresPrivateData && !route.privacyApproved) reasons.push('PRIVACY_NOT_APPROVED');
-      if (route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
+      // The quality floor guards autonomous coding. Other jobs are governed by
+      // their own capability minimums (capabilities.js JOB_PROFILES).
+      if ((!job || CODING_JOBS.has(typeof job === 'string' ? job : '')) && route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
       // Capability before price: a free model that cannot do the job is not
       // offered the job.
       reasons.push(...capabilityGaps(route.capabilities, job));
@@ -203,6 +206,7 @@ export class AgentTurnGateway {
           const error = classifyProviderError(caught);
           if (!error.rateLimit && caught?.rateLimit) error.rateLimit = caught.rateLimit;
           if (caught?.quotaScope) error.quotaScope = caught.quotaScope;
+          if (caught?.reason) error.reason = caught.reason;
           if (caught?.injected) {
             error.code = caught.code || 'DRILL_INJECTED_FAILURE';
             error.injected = true;
@@ -210,7 +214,7 @@ export class AgentTurnGateway {
           await settle(reservation, Number(error.usage?.costUsd || 0));
           if (!error.injected) await this.stateStore.recordFailure(route, error);
           const record = { id: attemptId, route, attempt, status: 'failed', usage: error.usage || null,
-            error: { code: error.code, failureClass: error.failureClass, status: error.status || null, ...(error.injected ? { injected: true } : {}) } };
+            error: { code: error.code, failureClass: error.failureClass, status: error.status || null, ...(error.reason ? { reason: error.reason } : {}), ...(error.injected ? { injected: true } : {}) } };
           attempts.push(record);
           await onAttempt(record);
           lastError = error;

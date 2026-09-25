@@ -16,6 +16,8 @@ import { runStartupCanary } from './startup-canary.js';
 import { configureSharedProviderHealth } from './model-runner.js';
 import { SupabaseProviderStateStore } from './model-gateway/agentic/provider-state.js';
 import { CanaryRequestRunner } from './canary/canary-requests.js';
+import { refreshOpenRouterCatalog } from './model-gateway/agentic/openrouter-catalog.js';
+import { rankFreeModels } from './model-gateway/agentic/capabilities.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
@@ -24,6 +26,11 @@ const workspacePolicyStore = new SupabaseWorkspacePolicyStore(db);
 const providerStateStore = new SupabaseProviderStateStore(db);
 configureSharedProviderHealth(providerStateStore);
 const canaryRequests = new CanaryRequestRunner({ db, stateStore: providerStateStore, log });
+// OpenRouter free models are discovered from OpenRouter's API at startup and
+// every 6 hours; the Hub and the canary read the in-process catalog.
+const refreshCatalog = () => refreshOpenRouterCatalog({ log, rank: (left, right) => rankFreeModels(left, right, process.env) }).catch(() => null);
+refreshCatalog();
+setInterval(refreshCatalog, 6 * 60 * 60 * 1000).unref();
 const toolBrokerStore = new SupabaseToolBrokerStore(db);
 const { client: safeCanaryClient, transport: safeCanaryTransport } = createSafeCanaryMcpClient();
 const toolBroker = new ToolBroker({

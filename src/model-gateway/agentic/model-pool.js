@@ -10,6 +10,7 @@ import { OpenAIResponsesProtocol } from './openai-responses.js';
 import { ChatCompletionsProtocol } from './chat-completions.js';
 import { GeminiProtocol } from './gemini.js';
 import { capabilityProfile } from './capabilities.js';
+import { getOpenRouterCatalog } from './openrouter-catalog.js';
 
 export const BILLING_CLASS = Object.freeze({
   INCLUDED: 'included',
@@ -56,7 +57,7 @@ function billing(env, name, fallback) {
 // Each definition describes one route. `privacy` names the server-side flag
 // that records a human review of the provider's API data-use terms; routes
 // that lack it are never given private repository data.
-export function modelPoolDefinitions(env = process.env) {
+export function modelPoolDefinitions(env = process.env, { openRouterCatalog = getOpenRouterCatalog() } = {}) {
   const defs = [
     {
       provider: 'anthropic', model: env.CODING_ANTHROPIC_MODEL || 'claude-opus-5', protocol: 'anthropic-messages',
@@ -126,15 +127,21 @@ export function modelPoolDefinitions(env = process.env) {
       // data requires a reviewed paid project and this explicit flag.
       privacyApproved: truthy(env.GEMINI_API_PRIVATE_DATA_APPROVED), privacyFlag: 'GEMINI_API_PRIVATE_DATA_APPROVED',
     },
-    {
+    // Static OpenRouter route: an explicitly configured OPENROUTER_MODEL, or the
+    // default free model until the free-model catalog has been discovered.
+    ...(openRouterCatalog?.admitted?.length && !env.OPENROUTER_MODEL ? [] : [{
       provider: 'openrouter', model: env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free', protocol: 'chat-completions',
       endpoint: 'https://openrouter.ai/api/v1/chat/completions', secretEnv: 'OPENROUTER_API_KEY', secretRef: 'env://OPENROUTER_API_KEY',
       qualityTier: Number(env.OPENROUTER_QUALITY_TIER || 3), costTier: 1, contextWindow: Number(env.OPENROUTER_CONTEXT_WINDOW || 128_000),
       billingClass: billing(env, 'OPENROUTER_BILLING_CLASS', /:free$/.test(env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free') ? 'free' : 'paid'),
       pricing: readPricing(env, 'OPENROUTER_PRICING_JSON'),
-      privacyApproved: truthy(env.OPENROUTER_API_PRIVATE_DATA_APPROVED), privacyFlag: 'OPENROUTER_API_PRIVATE_DATA_APPROVED',
+      privacyApproved: /:free$/.test(env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free') ? false : truthy(env.OPENROUTER_API_PRIVATE_DATA_APPROVED),
+      privacyFlag: 'OPENROUTER_API_PRIVATE_DATA_APPROVED',
+      freeOnly: /:free$/.test(env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free'),
+      catalogBlocked: catalogVerdict(openRouterCatalog, env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free'),
       extraHeaders: { 'x-title': 'Fahad AI Office' },
-    },
+    }]),
+    ...openRouterFreeRoutes(env, openRouterCatalog),
     {
       provider: 'groq', model: env.GROQ_MODEL || 'openai/gpt-oss-120b', protocol: 'chat-completions',
       endpoint: 'https://api.groq.com/openai/v1/chat/completions', secretEnv: 'GROQ_API_KEY', secretRef: 'env://GROQ_API_KEY',
@@ -181,6 +188,34 @@ export function modelPoolDefinitions(env = process.env) {
   });
 }
 
+// Why the discovered catalog rules out a statically configured OpenRouter
+// model (null when it is fine or no catalog has been fetched yet).
+function catalogVerdict(catalog, id) {
+  if (!catalog?.models) return null;
+  if (!/:free$/.test(id)) return null;
+  const entry = catalog.models.find((model) => model.id === id);
+  if (!entry) return 'NOT_IN_OPENROUTER_FREE_CATALOG';
+  return entry.eligible ? null : String(entry.reasons[0] || 'NOT_ELIGIBLE').replace(/[^A-Z_]/g, '_').slice(0, 60);
+}
+
+// One OpenRouter key exposes many free models. Each admitted catalog model is
+// its own route: FREE, free-only guarded, never approved for private data
+// (OpenRouter free endpoints may log or train on prompts), capability-ranked.
+function openRouterFreeRoutes(env, catalog) {
+  if (!catalog?.models?.length) return [];
+  const explicit = env.OPENROUTER_MODEL || null;
+  return catalog.models.filter((entry) => entry.admitted && entry.id !== explicit).map((entry) => ({
+    provider: 'openrouter', model: entry.id, protocol: 'chat-completions',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions', secretEnv: 'OPENROUTER_API_KEY', secretRef: 'env://OPENROUTER_API_KEY',
+    qualityTier: Number(env.OPENROUTER_QUALITY_TIER || 3), costTier: 1, contextWindow: entry.contextLength,
+    ...(entry.maxOutputTokens ? { maxOutputTokens: Math.min(entry.maxOutputTokens, 16_000) } : {}),
+    billingClass: BILLING_CLASS.FREE, pricing: null, freeOnly: true, discovered: true,
+    privacyApproved: false, privacyNote: 'OpenRouter free endpoints may log or train on prompts: public/non-private data only',
+    extraHeaders: { 'x-title': 'Fahad AI Office' },
+    catalogFlags: { structuredOutput: entry.structuredOutput, vision: entry.vision },
+  }));
+}
+
 function credential(env, name) {
   const value = env[name];
   return typeof value === 'string' && value.trim().length >= 12 && !/PASTE_HERE|YOUR_.*KEY/i.test(value) ? value.trim() : null;
@@ -188,14 +223,15 @@ function credential(env, name) {
 
 // Builds the executable pool. Unavailable routes are kept with an explicit
 // reason so the dashboard can say why a provider is not being used.
-export function createModelPool({ env = process.env, fetchFn = fetch, protocolFactory = defaultProtocolFactory } = {}) {
-  return modelPoolDefinitions(env).map((definition) => {
+export function createModelPool({ env = process.env, fetchFn = fetch, protocolFactory = defaultProtocolFactory, openRouterCatalog = getOpenRouterCatalog() } = {}) {
+  return modelPoolDefinitions(env, { openRouterCatalog }).map((definition) => {
     const reasons = [];
     const apiKey = credential(env, definition.secretEnv);
     if (!definition.model) reasons.push('MODEL_NOT_CONFIGURED');
     if (!apiKey) reasons.push('CREDENTIAL_MISSING');
     if (definition.billingClass === BILLING_CLASS.PAID && !definition.pricing) reasons.push('PRICING_UNKNOWN');
     if (definition.endpoint && /\.invalid\//.test(definition.endpoint)) reasons.push('ENDPOINT_NOT_CONFIGURED');
+    if (definition.catalogBlocked) reasons.push(`CATALOG_${definition.catalogBlocked}`);
     const protocol = reasons.length ? null : protocolFactory(definition, { apiKey, fetchFn, env });
     return Object.freeze({ ...definition, protocolClient: protocol, unavailableReasons: Object.freeze(reasons) });
   });
@@ -211,5 +247,8 @@ export function defaultProtocolFactory(definition, { apiKey, fetchFn, env }) {
   return new ChatCompletionsProtocol({
     apiKey, pricing, fetchFn, endpoint: definition.endpoint,
     maxTokensField: definition.maxTokensField || 'max_tokens', extraHeaders: definition.extraHeaders || {},
+    // Free-only routes ask OpenRouter for usage accounting and refuse any
+    // response that reports a cost (see ChatCompletionsProtocol).
+    ...(definition.freeOnly ? { freeOnly: true, extraBody: { usage: { include: true } } } : {}),
   });
 }
