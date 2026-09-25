@@ -12,6 +12,7 @@ import { SAFE_CANARY_TOOL_DEFINITIONS, createSafeCanaryMcpClient } from './tool-
 import { runProductionToolBrokerCanary } from './tool-broker/production-canary.js';
 import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
 import { createHubServer } from './hub-server.js';
+import { runStartupCanary } from './startup-canary.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
@@ -37,10 +38,12 @@ let busy = false;
 let lastPollAt = 0;
 let heartbeatTimer;
 let hubServer;
+let toolBrokerCanary = { status: 'pending' };
 
 function heartbeat() {
   writeFileSync('/tmp/fahad-office-health.json', JSON.stringify({
     pid: process.pid, updatedAt: Date.now(), lastPollAt, busy, pollIntervalMs: IDLE_MS,
+    toolBrokerCanary: toolBrokerCanary.status,
   }), { mode: 0o600 });
 }
 
@@ -65,23 +68,15 @@ async function main() {
     hubServer = createHubServer({ db, authClient: hubAuth, store });
     log('Fahad AI Hub listening on the protected loopback port 2132.');
   }
-  const toolCanary = await runProductionToolBrokerCanary({
-    db,
-    broker: toolBroker,
-    policyStore: workspacePolicyStore,
-    transport: safeCanaryTransport,
+  toolBrokerCanary = await runStartupCanary({
+    log,
+    canary: () => runProductionToolBrokerCanary({
+      db,
+      broker: toolBroker,
+      policyStore: workspacePolicyStore,
+      transport: safeCanaryTransport,
+    }),
   });
-  log('Tool Broker production canary verified:', JSON.stringify({
-    workspaceId: toolCanary.workspaceId,
-    discovered: toolCanary.discovered,
-    replayVerified: toolCanary.replayVerified,
-    rejectionTests: {
-      agentDenied: toolCanary.agentDenied,
-      missingGrantDenied: toolCanary.missingGrantDenied,
-      crossWorkspaceDenied: toolCanary.crossWorkspaceDenied,
-    },
-    budgetDeltaUsd: toolCanary.budgetDeltaUsd,
-  }));
   heartbeatTimer = setInterval(heartbeat, 5000);
   log('------------------------------------------------------------');
   log('Fahad AI Office - Runtime v2 (Chief -> Research -> Chief)');

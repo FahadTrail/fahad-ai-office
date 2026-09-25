@@ -60,3 +60,4 @@ $$;
 revoke execute on function public.reserve_workspace_budget(uuid, text, numeric)
   from public, anon, authenticated;
 grant execute on function public.reserve_workspace_budget(uuid, text, numeric) to service_role;
+

@@ -66,3 +66,4 @@ $$;
 
 revoke all on function public.create_hub_project(text) from public, anon, authenticated;
 grant execute on function public.create_hub_project(text) to service_role;
+
