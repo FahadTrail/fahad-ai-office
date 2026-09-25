@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ModelGateway } from '../src/model-gateway/gateway.js';
 import { OpenAIResponsesAdapter } from '../src/model-gateway/adapters/openai.js';
 import { DeepSeekResponsesAdapter } from '../src/model-gateway/adapters/deepseek.js';
+import { AnthropicModelAdapter } from '../src/model-gateway/adapters/anthropic.js';
 import { QwenChatAdapter } from '../src/model-gateway/adapters/qwen.js';
 import { KimiChatAdapter } from '../src/model-gateway/adapters/kimi.js';
 import { ZhipuChatAdapter } from '../src/model-gateway/adapters/zhipu.js';
@@ -21,6 +22,43 @@ const baseRequest = Object.freeze({
   idempotencyKey: 'run-1:unit-test',
   capabilities: ['text'],
   context: { jobId: 'job-1', taskId: 'task-1', runId: 'run-1' },
+});
+
+test('Anthropic executes only explicitly available web tools and reports actual results', async () => {
+  let options;
+  const activities = [];
+  const adapter = new AnthropicModelAdapter({
+    queryFn: ({ options: received }) => {
+      options = received;
+      return (async function* () {
+        yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'web-1', name: 'WebFetch', input: { url: 'https://example.com' } }] } };
+        yield { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'web-1', content: 'private fetched content' }] } };
+        yield { type: 'assistant', message: { content: [{ type: 'text', text: 'Verified result.' }] } };
+        yield { type: 'result', subtype: 'success', result: 'Verified result.', usage: { input_tokens: 3, output_tokens: 4 }, total_cost_usd: 0.001 };
+      })();
+    },
+  });
+  const result = await adapter.complete({ prompt: 'Research', systemPrompt: 'Read only', model: 'claude-test', maxTurns: 3, allowedTools: ['WebFetch'], onActivity: async (activity) => activities.push(activity) });
+  assert.equal(result.text, 'Verified result.');
+  assert.deepEqual(options.tools, ['WebFetch']);
+  assert.deepEqual(options.allowedTools, ['WebFetch']);
+  assert.equal(options.permissionMode, 'dontAsk');
+  assert.deepEqual(activities.filter((entry) => entry.hostTool).map((entry) => [entry.hostTool.name, entry.hostTool.status]), [['WebFetch', 'started'], ['WebFetch', 'succeeded']]);
+  assert.equal(JSON.stringify(activities).includes('private fetched content'), false);
+});
+
+test('Anthropic rejects an ungranted host tool before accepting its result', async () => {
+  const adapter = new AnthropicModelAdapter({ queryFn: () => (async function* () {
+    yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'bad-1', name: 'Bash' }] } };
+  })() });
+  await assert.rejects(adapter.complete({ prompt: 'Research', systemPrompt: 'Read only', model: 'claude-test', maxTurns: 3, allowedTools: ['WebFetch'], onActivity: async () => {} }), { code: 'UNAUTHORIZED_HOST_TOOL' });
+});
+
+test('Research cannot claim verified web use when the provider made no host-tool call', async () => {
+  const adapter = new AnthropicModelAdapter({ queryFn: () => (async function* () {
+    yield { type: 'result', subtype: 'success', result: 'I used WebFetch', usage: { input_tokens: 2, output_tokens: 3 }, total_cost_usd: 0.001 };
+  })() });
+  await assert.rejects(adapter.complete({ prompt: 'Research', systemPrompt: 'Verify', model: 'claude-test', maxTurns: 3, allowedTools: ['WebFetch'], onActivity: async () => {} }), { code: 'HOST_TOOL_REQUIRED' });
 });
 
 test('automatic fallback configuration is scoped to workspace-enforced gateways', () => {

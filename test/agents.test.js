@@ -38,6 +38,19 @@ test('Research receives only the authorized web tools', async () => {
   assert.deepEqual(options.routingHints, { requiresPrivateData: true, preferQuality: true });
 });
 
+test('Chief accepts a policy-validated job model without granting host tools', async () => {
+  let options;
+  await planJob({
+    agent, goal: 'Plan a task', execution: { model: 'deepseek-flash' },
+    run: async (received) => {
+      options = received;
+      return { text: JSON.stringify({ research_required: true, plan_summary: 'Delegate.', research_brief: 'Verify.', review_brief: 'Review.' }), ...metrics };
+    },
+  });
+  assert.equal(options.model, 'deepseek-flash');
+  assert.deepEqual(options.allowedTools, []);
+});
+
 test('Chief review is tool-free and consumes the persisted result', async () => {
   let options;
   await reviewResearch({
