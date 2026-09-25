@@ -534,7 +534,7 @@ class SessionRun {
   }
 
   // Calls a catalog tool through the Tool Broker with approval handling.
-  async invoke(tool, action, args, { callId = randomUUID(), allowApproval = true } = {}) {
+  async invoke(tool, action, args, { callId = randomUUID(), allowApproval = true, quiet = false } = {}) {
     const context = {
       workspaceId: this.session.workspaceId, jobId: this.session.jobId, taskId: this.session.taskId,
       runId: this.session.runId, agentId: this.session.agentId,
@@ -544,7 +544,9 @@ class SessionRun {
     const existing = await this.c.store.findApproval(this.session.id, callId);
     if (existing?.status === 'approved') approval = { id: existing.id, callId, sessionId: this.session.id };
     else if (existing?.status === 'rejected') return { approvalRejected: true, note: existing.note };
-    await this.event('tool_call', `${tool}`, { tool, action, args: previewArgs(args) });
+    // Status polls stay in the tool audit but not in the activity feed; the
+    // caller records an event when the observed state changes.
+    if (!quiet) await this.event('tool_call', `${tool}`, { tool, action, args: previewArgs(args) });
     try {
       const result = await this.broker.execute({ context, broker: CODING_BROKER, tool, action, arguments: args, idempotencyKey, approval });
       const text = (result.content || []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
@@ -673,7 +675,7 @@ class SessionRun {
   // `fresh: true` so every poll really executes instead of replaying.
   async required(tool, action, args, label, { fresh = false } = {}) {
     const base = `${tool}-${this.session.iteration}-${createHash('sha256').update(JSON.stringify(args)).digest('hex').slice(0, 12)}`;
-    const outcome = await this.invoke(tool, action, args, { callId: fresh ? `${base}-${randomUUID().slice(0, 8)}` : base });
+    const outcome = await this.invoke(tool, action, args, { callId: fresh ? `${base}-${randomUUID().slice(0, 8)}` : base, quiet: fresh });
     if (outcome.approvalRejected) throw new Stop('blocked', `The owner rejected the ${label}.`, { code: 'APPROVAL_REJECTED' });
     if (outcome.error || outcome.structured?.error) {
       const code = outcome.code || outcome.structured.error;
@@ -690,7 +692,11 @@ class SessionRun {
       this.guard();
       const status = await this.required('github.ci_status', 'read', { sha }, 'CI status check', { fresh: true });
       const ci = status.structured;
+      const previous = this.state.ci?.sha === sha ? this.state.ci : null;
       this.state.ci = { sha, state: ci.state, failing: ci.failing, total: ci.total, checkedAt: new Date(this.c.now()).toISOString() };
+      if (ci.state === 'pending' && (previous?.state !== 'pending' || previous?.total !== ci.total)) {
+        await this.event('ci', `Waiting for CI on ${sha.slice(0, 7)} (${ci.total} check${ci.total === 1 ? '' : 's'} reported, still running).`, this.state.ci);
+      }
       if (ci.state === 'success') {
         await this.event('ci', `CI passed on ${sha.slice(0, 7)} (${ci.total} checks).`, this.state.ci, 'success');
         return true;
@@ -756,6 +762,11 @@ class SessionRun {
       this.guard();
       const status = await this.required('deploy.status', 'read', { workflow: this.config.deploy.workflow, sha: this.state.deploy.mergeSha }, 'deployment status check', { fresh: true });
       const run = status.structured.runs?.[0];
+      const observed = run ? run.status : 'not started';
+      if (this.state.deploy.observed !== observed && run?.status !== 'completed') {
+        this.state.deploy.observed = observed;
+        await this.event('deploy', `Waiting for the ${this.config.deploy.workflow} run for ${this.state.deploy.mergeSha.slice(0, 7)} (${observed}).`, { observed });
+      }
       if (run?.status === 'completed') {
         this.state.deploy = { ...this.state.deploy, status: run.conclusion, url: run.url };
         if (run.conclusion !== 'success') {

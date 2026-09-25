@@ -166,3 +166,16 @@ test('CI and deployment polls really re-execute while checks are still running (
     assert.equal(apis.state.merged.number, 1);
   }, { pendingPolls: 2 });
 });
+
+test('every provider attempt of one turn gets its own model_attempts row key', async () => {
+  const { modelAttemptRow } = await import('../src/coding-worker.js');
+  const session = { id: 's1', workspaceId: 'w', jobId: 'j', taskId: 't', runId: 'r', iteration: 7 };
+  const route = (id) => ({ id, provider: id.split(':')[0], model: id.split(':')[1], billingClass: 'paid' });
+  const drill = modelAttemptRow(session, { id: 'a1', route: route('deepseek:deepseek-flash'), attempt: 1, status: 'failed', error: { code: 'DRILL_INJECTED_RATE_LIMIT' } });
+  const backup = modelAttemptRow(session, { id: 'a2', route: route('anthropic:claude-sonnet-5'), attempt: 1, status: 'succeeded', usage: { costUsd: 0.0355 } });
+  const retry = modelAttemptRow(session, { id: 'a3', route: route('anthropic:claude-sonnet-5'), attempt: 2, status: 'succeeded' });
+  const unique = (row) => `${row.run_id}|${row.idempotency_key}|${row.attempt_no}`;
+  assert.equal(new Set([drill, backup, retry].map(unique)).size, 3);
+  const started = modelAttemptRow(session, { id: 'a2', route: route('anthropic:claude-sonnet-5'), attempt: 1, status: 'started' });
+  assert.equal(unique(started), unique(backup), 'the started and finished records of one attempt stay one row');
+});
