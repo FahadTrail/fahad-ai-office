@@ -5,9 +5,11 @@
 
 import { runAgenticCanary } from './agentic-canary.js';
 import { parseRouteId } from '../model-gateway/agentic/route-id.js';
+import { runtimeDiagnostics } from './runtime-diagnostics.js';
 
 export class CanaryRequestRunner {
-  constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now() }) {
+  constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now(), diagnostics = runtimeDiagnostics }) {
+    this.diagnostics = diagnostics;
     this.db = db;
     this.stateStore = stateStore;
     this.env = env;
@@ -62,6 +64,7 @@ export class CanaryRequestRunner {
         const { recentMessages, ...summary } = checkpoint;
         report.failoverCheckpoint = { ...summary, recentMessageCount: recentMessages?.length || 0, storedIn: 'provider_canary_runs.report' };
       }
+      report.runtimeDiagnostics = await this.diagnostics({ env: this.env }).catch((error) => ({ error: String(error?.code || 'DIAGNOSTICS_FAILED').slice(0, 60) }));
       const verified = report.routes.filter((route) => route.ok).map((route) => route.id);
       for (const id of verified) {
         const { provider, model } = parseRouteId(id);
