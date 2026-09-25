@@ -31,7 +31,7 @@ test('nothing runs or bills unless a canary is queued', async () => {
 test('a queued canary runs once and stores a metadata report and verification', async () => {
   const db = fakeDb({ queued: { id: 'r1' } });
   const report = { routes: [{ id: 'anthropic:claude-sonnet-5', ok: true }, { id: 'deepseek:deepseek-flash', ok: false, error: 'X' }], failover: { ok: false } };
-  const runner = new CanaryRequestRunner({ db, stateStore: {}, run: async () => report, intervalMs: 0 });
+  const runner = new CanaryRequestRunner({ db, stateStore: {}, run: async () => report, intervalMs: 0, diagnostics: async () => ({ probes: [] }) });
   assert.equal(await runner.maybeRun(), true);
   const verified = db.updates.find((entry) => entry.table === 'provider_status');
   assert.deepEqual(verified.filters, [['provider', 'anthropic'], ['model', 'claude-sonnet-5']]);
@@ -55,7 +55,7 @@ test('the failover checkpoint is persisted to the run row and read back from it'
     restored = await checkpointStore.load();
     return { routes: [], failover: { ok: true } };
   };
-  const runner = new CanaryRequestRunner({ db, stateStore: {}, run, intervalMs: 0 });
+  const runner = new CanaryRequestRunner({ db, stateStore: {}, run, intervalMs: 0, diagnostics: async () => ({ probes: [] }) });
   await runner.maybeRun();
   assert.deepEqual(restored.notes, ['sum 42']);
   const done = db.updates.find((entry) => entry.table === 'provider_canary_runs' && entry.values.status === 'completed');
