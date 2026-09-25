@@ -9,7 +9,7 @@ import { Sandbox, resolveSandboxMode } from '../src/coding-agent/sandbox.js';
 import {
   assertWritablePath, checkCommand, classifyChangedPaths, findSecretMaterial, normalizeRepoPath, redact, sandboxEnvironment,
 } from '../src/coding-agent/policy.js';
-import { assertReadOnlySql } from '../src/coding-agent/supabase.js';
+import { SupabaseManagementClient, assertReadOnlySql } from '../src/coding-agent/supabase.js';
 import { verifyHttp } from '../src/coding-agent/tools.js';
 import { createFixtureRepo } from '../testing/fixtures/coding-agent-harness.js';
 
@@ -136,3 +136,26 @@ test('isolated mode runs agent commands as an unprivileged uid that cannot read 
     rmSync(root, { recursive: true, force: true });
   }
 }));
+
+test('Supabase reads run through the read-only database role; writes never take that path', async () => {
+  const calls = [];
+  let readOnlyAvailable = true;
+  const fetchFn = async (url, init) => {
+    calls.push(new URL(url).pathname);
+    if (String(url).endsWith('/read-only') && !readOnlyAvailable) return new Response('{"message":"not found"}', { status: 404 });
+    return new Response(JSON.stringify([{ rows: [{ n: 1 }] }]), { status: 201 });
+  };
+  const ref = 'zkzibipinjeswhdxnfgf';
+  const client = new SupabaseManagementClient({ token: 'sbp_test_token_0123456789abcdef', allowedProjects: [ref], fetchFn, apiBase: 'https://api.supabase.test' });
+  assert.deepEqual(await client.queryReadOnly(ref, 'select 1 as n'), { rows: [{ n: 1 }], rowCount: 1 });
+  assert.deepEqual(calls, [`/v1/projects/${ref}/database/query/read-only`]);
+  readOnlyAvailable = false;
+  calls.length = 0;
+  await client.queryReadOnly(ref, 'select 1 as n');
+  assert.deepEqual(calls, [`/v1/projects/${ref}/database/query/read-only`, `/v1/projects/${ref}/database/query`], 'validated fallback only on 404');
+  calls.length = 0;
+  await assert.rejects(client.queryReadOnly(ref, 'delete from agent_events'), /SQL_NOT_READ_ONLY|must start with/);
+  await assert.rejects(client.queryReadOnly('abcdefghijklmnopqrst', 'select 1'), /not in this session's allowlist/);
+  await assert.rejects(new SupabaseManagementClient({ token: null, allowedProjects: [ref], fetchFn }).queryReadOnly(ref, 'select 1'), /No Supabase access token/);
+  assert.deepEqual(calls, [], 'refusals happen before the network');
+});

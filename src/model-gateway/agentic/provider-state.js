@@ -4,6 +4,7 @@
 // provider exposes nothing, the state says so.
 
 import { FAILURE_CLASS } from '../contracts.js';
+import { quotaCooldownUntil } from './free-quota.js';
 
 export const HEALTH = Object.freeze({
   HEALTHY: 'healthy',
@@ -17,8 +18,10 @@ export const HEALTH = Object.freeze({
 
 const MINUTE = 60_000;
 
-// Decides the durable consequence of one failed attempt.
-export function failureOutcome(error, previous = {}, now = Date.now()) {
+// Decides the durable consequence of one failed attempt. A used-up daily
+// allowance cools the route down until the provider's next reset, after which
+// it is eligible again automatically.
+export function failureOutcome(error, previous = {}, now = Date.now(), route = null) {
   const consecutive = Number(previous.consecutiveFailures || 0) + 1;
   const retryAfterMs = Number.isFinite(Number(error.retryAfter)) ? Number(error.retryAfter) * 1000 : null;
   const resetAt = parseReset(error.rateLimit?.requestsReset) || parseReset(error.rateLimit?.tokensReset);
@@ -27,6 +30,9 @@ export function failureOutcome(error, previous = {}, now = Date.now()) {
   if (error.failureClass === FAILURE_CLASS.APPROVAL) {
     health = HEALTH.AUTH_ERROR;
     cooldownUntil = now + 6 * 60 * MINUTE;
+  } else if (error.code === 'PROVIDER_RATE_LIMIT' && error.quotaScope === 'day') {
+    health = HEALTH.QUOTA_EXHAUSTED;
+    cooldownUntil = Date.parse(quotaCooldownUntil(route || { provider: previous.provider }, error, now));
   } else if (error.code === 'PROVIDER_CAPACITY') {
     health = HEALTH.QUOTA_EXHAUSTED;
     cooldownUntil = resetAt || now + 60 * MINUTE;
@@ -98,7 +104,7 @@ export class MemoryProviderStateStore {
       provider: route.provider,
       model: route.model,
       billingClass: route.billingClass,
-      ...failureOutcome(error, previous, this.now()),
+      ...failureOutcome(error, previous, this.now(), route),
       failures: (previous.failures || 0) + 1,
       costUsd: Number(((previous.costUsd || 0) + Number(error.usage?.costUsd || 0)).toFixed(8)),
     });
@@ -132,7 +138,7 @@ export class SupabaseProviderStateStore {
 
   async recordFailure(route, error) {
     const current = (await this.snapshot()).get(route.id) || {};
-    const outcome = failureOutcome(error, current, this.now());
+    const outcome = failureOutcome(error, current, this.now(), route);
     await this.#record(route, {
       p_success: false,
       p_health: outcome.health,

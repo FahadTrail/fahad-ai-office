@@ -190,6 +190,7 @@ export function fakeApis({ bare, pendingPolls = 0 }) {
     }
     if (url.host === 'api.supabase.test') {
       state.supabaseQuery = JSON.parse(init.body).query;
+      state.supabasePath = url.pathname;
       return json([{ rows: [{ ok: 1 }] }], 201);
     }
     if (url.host === 'office.example.test' && url.pathname === '/healthz') {

@@ -13,6 +13,7 @@ class Query {
   select() { return this; }
   eq(key, value) { this.filters.push((row) => row[key] === value); return this; }
   in(key, values) { this.filters.push((row) => values.includes(row[key])); return this; }
+  like(key, pattern) { const re = new RegExp(`^${pattern.replace(/[.]/g, '\\.').replace(/%/g, '.*')}$`); this.filters.push((row) => re.test(String(row[key]))); return this; }
   order() { return this; }
   limit() { return this; }
   maybeSingle() { this.maybe = true; return this; }
@@ -36,6 +37,12 @@ function fakeDb({ installed = true } = {}) {
     agent_events: [{ id: 1, session_id: sessionId, type: 'provider_switch', level: 'warning', message: 'switched', payload: { from: 'a', token: 'hide-me' }, created_at: '2026-09-25T00:00:01Z' }],
     agent_approvals: [{ id: '9c1f1d4e-1111-4222-8333-444455556666', session_id: sessionId, workspace_id: workspaceId, tool_name: 'github.pr_merge', action: 'merge', risk: 'medium', summary: 'Merge PR #7', status: 'pending', requested_at: '2026-09-25T00:00:02Z' }],
     model_attempts: [],
+    workspace_policies: [{ workspace_id: workspaceId, enabled: true, monthly_budget_usd: 2, spent_usd: 1.5, reserved_usd: 0.1, budget_period_end: '2026-10-01T00:00:00Z' }],
+    workspace_tool_grants: [
+      { workspace_id: workspaceId, tool_name: 'supabase.query_read', decision: 'auto', enabled: true },
+      { workspace_id: workspaceId, tool_name: 'supabase.migration_apply', decision: 'approval', enabled: true },
+      { workspace_id: workspaceId, tool_name: 'github.pr_merge', decision: 'approval', enabled: true },
+    ],
     provider_status: [
       { provider: 'anthropic', model: 'claude-opus-5', billing_class: 'paid', health: 'rate_limited', cooldown_until: new Date(Date.now() + 3_600_000).toISOString(), rate_limit: { requestsLimit: 50, requestsRemaining: 0 }, requests_total: 4, failures_total: 1, input_tokens_total: 1000, output_tokens_total: 100, cost_usd_total: 0.02, last_error_code: 'PROVIDER_RATE_LIMIT' },
       { provider: 'deepseek', model: 'deepseek-flash', billing_class: 'paid', health: 'healthy', rate_limit: null, last_success_at: '2026-09-25T00:00:00Z', requests_total: 2, failures_total: 0, input_tokens_total: 10, output_tokens_total: 1, cost_usd_total: 0.001 },
@@ -138,9 +145,9 @@ test('model pool dashboard never invents quota and explains unavailability', asy
   assert.equal(deepseek.activeTasks, 1);
   assert.equal(deepseek.codingSuitability, 'PUBLIC CODE ONLY — PRIVACY REVIEW PENDING');
   assert.equal(sonnet.codingSuitability, 'SUITABLE FOR PRIVATE CODE');
-  assert.match(byId['gemini:gemini-2.5-flash'].availability, /NOT CONFIGURED — CREDENTIAL_MISSING/);
-  assert.equal(byId['gemini:gemini-2.5-flash'].status, 'NOT CONFIGURED');
-  assert.equal(byId['gemini:gemini-2.5-flash'].integration, 'READY — CREDENTIAL REQUIRED');
+  assert.match(byId['gemini:gemini-flash-latest'].availability, /NOT CONFIGURED — CREDENTIAL_MISSING/);
+  assert.equal(byId['gemini:gemini-flash-latest'].status, 'NOT CONFIGURED');
+  assert.equal(byId['gemini:gemini-flash-latest'].integration, 'READY — CREDENTIAL REQUIRED');
   assert.match(byId['qwen:qwen3.8-flash'].integration, /READY — ENDPOINT REQUIRED/);
   assert.equal(byId['openai:gpt-5.3-codex'].enabled, false);
   assert.deepEqual(snapshot.billingPriority, ['free', 'included', 'promo', 'paid']);
@@ -174,4 +181,24 @@ test('project routing policy is validated and saved through the Hub', async () =
     const pool = await fetch(`${base}/api/model-pool?workspaceId=${workspaceId}`);
     assert.equal(pool.status, 200);
   });
+});
+
+test('platform overview covers every dashboard section and reports credentials only as present or absent', async () => {
+  const { platformOverview } = await import('../src/hub-coding.js');
+  const secret = 'sbp_platform_secret_value_0123456789';
+  const overview = await platformOverview({ db: fakeDb(), workspaceId, env: { CODING_SUPABASE_ACCESS_TOKEN: secret, GEMINI_API_KEY: 'AIzaGeminiTestKey0123456789abcdefghij' } });
+  for (const section of ['codingAgent', 'officeAgents', 'projects', 'modelPool', 'usage', 'approvals', 'systemHealth']) assert.ok(overview[section], section);
+  assert.doesNotMatch(JSON.stringify(overview), /sbp_platform_secret|AIzaGeminiTestKey/, 'no credential value leaves the server');
+  assert.equal(overview.codingAgent.supabaseTools.tokenConfigured, true);
+  assert.deepEqual(overview.codingAgent.supabaseTools.grants.map((grant) => `${grant.tool}=${grant.decision}`), ['supabase.query_read=auto', 'supabase.migration_apply=approval']);
+  assert.equal(overview.codingAgent.sessions.awaiting_approval, 1);
+  assert.equal(overview.approvals.length, 1);
+  assert.equal(overview.usage.budget.remainingUsd, 0.4);
+  assert.deepEqual(overview.officeAgents.map((role) => role.id), ['research', 'branding', 'content', 'seo', 'finance', 'development', 'qa_security']);
+  const gemini = overview.usage.freeQuota.find((entry) => entry.id.startsWith('gemini:'));
+  assert.equal(gemini.basis, 'EXACT QUOTA NOT AVAILABLE', 'Google does not publish the number, so none is shown');
+  assert.equal(gemini.percentRemaining, null);
+  assert.ok(overview.officeAgents.find((role) => role.id === 'content').freeModels.includes('gemini:gemini-flash-latest'));
+  const none = await platformOverview({ db: fakeDb(), workspaceId, env: {} });
+  assert.equal(none.codingAgent.supabaseTools.tokenConfigured, false);
 });

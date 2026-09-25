@@ -128,9 +128,13 @@ test('model pool marks missing credentials, unknown pricing and privacy truthful
     .find((entry) => entry.provider === 'openai');
   assert.deepEqual(unpriced.unavailableReasons, ['PRICING_UNKNOWN'], 'a paid model without a known price is never routed');
   assert.equal(byId['deepseek:deepseek-flash'].privacyApproved, false);
-  assert.ok(byId['gemini:gemini-2.5-flash'].unavailableReasons.includes('CREDENTIAL_MISSING'));
+  assert.ok(byId['gemini:gemini-flash-latest'].unavailableReasons.includes('CREDENTIAL_MISSING'));
   assert.ok(pool.find((entry) => entry.provider === 'minimax').privacyApproved === false);
-  assert.ok(pool.find((entry) => entry.provider === 'openrouter').unavailableReasons.includes('MODEL_NOT_CONFIGURED'));
+  const openrouter = pool.find((entry) => entry.provider === 'openrouter');
+  assert.equal(openrouter.billingClass, 'free', 'the default OpenRouter model is a :free model');
+  assert.deepEqual(openrouter.unavailableReasons, ['CREDENTIAL_MISSING']);
+  const mistral = createModelPool({ env: { MISTRAL_API_KEY: 'mistral-test-key-12345' } }).find((entry) => entry.provider === 'mistral');
+  assert.deepEqual(mistral.unavailableReasons, ['PRICING_UNKNOWN'], 'Mistral is not assumed free');
 });
 
 test('the Office ModelGateway shares outcomes with durable provider state without depending on it', async () => {
