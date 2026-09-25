@@ -218,8 +218,20 @@ canary passed. Remaining (root on the VPS, once):
    `coding-worker`; no restart), adds `COMPOSE_PROFILES=coding`, starts only the
    worker, waits for it to be healthy and runs `verify-isolation.js`. Later
    deployments recreate the worker with each new image automatically.
-3. Optional: `CODING_SUPABASE_ACCESS_TOKEN` (Supabase personal access token) in
-   `.env` enables the Supabase tools for sessions that allowlist a project.
+3. Optional Supabase tools: create a **scoped** personal access token at
+   https://supabase.com/dashboard/account/tokens. Limit it to project
+   `zkzibipinjeswhdxnfgf` with only the **Database: Read-write** permission;
+   write access is needed only for approval-gated migrations. If your account
+   cannot create scoped tokens yet, use a classic token. Then run
+   `sudo bash ops/set-secret.sh CODING_SUPABASE_ACCESS_TOKEN`. Sessions that
+   list the project under "Supabase projects" get the tools:
+   * `supabase_query` (AUTO) runs one validated SELECT through Supabase's
+     read-only endpoint, as `supabase_read_only_user`, so the database itself
+     refuses writes.
+   * `supabase_execute` and `supabase_apply_migration` always wait for your
+     approval in the Hub.
+   * Only allowlisted project references are accepted, and the token never
+     reaches the sandbox or the model.
 4. First task: Hub → Coding Agent → a small documentation change with
    “merge & deploy” unchecked.
 

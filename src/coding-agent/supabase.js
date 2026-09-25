@@ -58,7 +58,17 @@ export class SupabaseManagementClient {
     const statement = assertReadOnlySql(sql);
     // Wrapping as a subquery also rejects data-modifying CTEs at the database.
     const wrapped = `select coalesce(json_agg(t), '[]'::json) as rows from (select * from (${statement}) q limit ${Math.max(1, Math.min(1000, maxRows))}) t`;
-    const result = await this.post(`/v1/projects/${this.project(projectRef)}/database/query`, { query: wrapped });
+    // Preferred: Supabase's read-only endpoint, which runs the statement as
+    // supabase_read_only_user, so the database itself refuses writes. Older
+    // deployments without it (404) keep the validated, wrapped query.
+    const ref = this.project(projectRef);
+    let result;
+    try {
+      result = await this.post(`/v1/projects/${ref}/database/query/read-only`, { query: wrapped });
+    } catch (error) {
+      if (error.code !== 'SUPABASE_HTTP_404') throw error;
+      result = await this.post(`/v1/projects/${ref}/database/query`, { query: wrapped });
+    }
     const rows = Array.isArray(result) ? result[0]?.rows ?? [] : [];
     return { rows, rowCount: Array.isArray(rows) ? rows.length : 0 };
   }

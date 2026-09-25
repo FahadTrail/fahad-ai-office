@@ -23,7 +23,7 @@ COMPOSE=(docker compose -f "$APP/docker-compose.yml")
 for required in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
   grep -q "^$required=." "$ENV_FILE" || { echo "$required is missing from .env; nothing changed."; exit 1; }
 done
-grep -Eq '^(ANTHROPIC|OPENAI|DEEPSEEK|QWEN|KIMI|ZHIPU|MINIMAX|GEMINI|OPENROUTER|GROQ)_API_KEY=.' "$ENV_FILE" || { echo 'No model provider key in .env; nothing changed.'; exit 1; }
+grep -Eq '^(ANTHROPIC|OPENAI|DEEPSEEK|QWEN|KIMI|ZHIPU|MINIMAX|GEMINI|OPENROUTER|GROQ|CEREBRAS|MISTRAL)_API_KEY=.' "$ENV_FILE" || { echo 'No model provider key in .env; nothing changed.'; exit 1; }
 if grep -q '^COMPOSE_PROFILES=' "$ENV_FILE" && ! grep -Eq '^COMPOSE_PROFILES=(.*,)?coding(,.*)?$' "$ENV_FILE"; then
   echo 'COMPOSE_PROFILES is set without "coding"; add it manually. Nothing changed.'; exit 1
 fi

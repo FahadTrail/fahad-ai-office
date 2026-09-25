@@ -87,6 +87,16 @@ inside the built runtime image as root.
 * Not configured: `CODING_SUPABASE_ACCESS_TOKEN` (the agent's Supabase tools
   fail closed until it is added); the workspace budget is $2/month.
 
+* Platform expansion (2026-09-25): job-based routing over a capability registry
+  (`src/model-gateway/agentic/capabilities.js`), free-quota knowledge with
+  reset-aware rotation (`src/model-gateway/agentic/free-quota.js`), new
+  free-tier routes (GitHub Models, Cerebras, Z.ai GLM Flash, Mistral) plus
+  Gemini/Groq/OpenRouter defaults. The Hub → Platform dashboard has seven
+  sections. The Office role registry is `src/office-agents/roles.js`.
+  One-command credential setup: `ops/set-secret.sh`. Provider facts and the
+  JEV decision (not integrated) are in `docs/providers.md`; the Office
+  architecture is in `docs/office-agents.md`.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,

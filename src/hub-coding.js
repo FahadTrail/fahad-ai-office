@@ -9,6 +9,9 @@ import { createModelPool } from './model-gateway/agentic/model-pool.js';
 import { AgentTurnGateway } from './model-gateway/agentic/turn-gateway.js';
 import { exhaustedRoutes, normalizeRouting, resolveRouting, SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
 import { authorizedRoutes } from './coding-agent/runtime.js';
+import { JOB_PROFILES, capabilityGaps } from './model-gateway/agentic/capabilities.js';
+import { freeQuotaStatus } from './model-gateway/agentic/free-quota.js';
+import { OFFICE_ROLES } from './office-agents/roles.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -26,8 +29,13 @@ export function readDeployedVersion(path = process.env.HUB_DEPLOYED_SHA_FILE || 
 
 export async function handleCodingApi({ db, request, response, url, sendJson, readJson, actor, env = process.env, now = () => Date.now() }) {
   const path = url.pathname;
-  if (!path.startsWith('/api/coding') && !path.startsWith('/api/approvals') && !path.startsWith('/api/model-pool')) return false;
+  if (!path.startsWith('/api/coding') && !path.startsWith('/api/approvals') && !path.startsWith('/api/model-pool') && path !== '/api/platform') return false;
   try {
+    if (request.method === 'GET' && path === '/api/platform') {
+      const requested = url.searchParams.get('workspaceId');
+      const overview = await platformOverview({ db, env, now, workspaceId: requested ? uuid(requested, 'workspaceId') : null });
+      return sendJson(response, 200, { ok: true, ...overview }), true;
+    }
     if (request.method === 'GET' && path === '/api/model-pool') {
       const requested = url.searchParams.get('workspaceId');
       const snapshot = await modelPoolSnapshot({ db, env, now, workspaceId: requested ? uuid(requested, 'workspaceId') : null });
@@ -188,13 +196,15 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     minQualityTier,
     now,
   });
+  // The ranking shown is the Coding Agent's: private code, the coding job.
   const evaluations = await gateway.evaluate({
-    requiresPrivateData: true, allowPaid: routing.allowPaid, authorizedRouteIds,
+    requiresPrivateData: true, allowPaid: routing.allowPaid, authorizedRouteIds, job: 'coding',
     policyExcludedRouteIds: routing.excludedRoutes, budgetExhaustedRouteIds: exhaustedRoutes(routing, period),
   });
-  const order = gateway.order(evaluations).map((route) => route.id);
+  const order = gateway.order(evaluations, { job: 'coding' }).map((route) => route.id);
   const routes = evaluations.map(({ route, reasons }) => {
     const row = state.get(route.id) || null;
+    const usageToday = today.get(route.id);
     const rateLimit = row?.rate_limit || null;
     const limit = rateLimit?.requestsLimit ?? null;
     const remaining = rateLimit?.requestsRemaining ?? null;
@@ -205,14 +215,14 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     else if (cooling) availability = `${String(row.health || 'unavailable').toUpperCase().replace('_', ' ')} — RETRY AFTER ${formatRemaining(Date.parse(row.cooldown_until) - now())}`;
     else if (reasons.includes('WORKSPACE_NOT_AUTHORIZED')) availability = 'NOT AUTHORIZED FOR THIS PROJECT';
     else if (reasons.includes('PRIVACY_NOT_APPROVED')) availability = 'AVAILABLE FOR PUBLIC DATA ONLY — PRIVACY REVIEW PENDING';
-    else if (reasons.includes('BELOW_QUALITY_FLOOR')) availability = 'AVAILABLE — BELOW CODING QUALITY FLOOR';
+    else if (reasons.includes('BELOW_QUALITY_FLOOR') || reasons.some((reason) => /^(CAPABILITY_|TOOL_CALLING|CONTEXT_WINDOW)/.test(reason))) availability = 'AVAILABLE — NOT CAPABLE ENOUGH FOR CODING';
     else if (limit != null && remaining != null) availability = `AVAILABLE — ${remaining}/${limit} REQUESTS LEFT (PROVIDER-REPORTED)`;
     else availability = 'AVAILABLE — EXACT QUOTA NOT AVAILABLE';
     const verifiedAt = row?.verified_at || null;
     let status;
     if (!configured) status = 'NOT CONFIGURED';
     else if (route.unavailableReasons.length) status = 'NOT READY';
-    else if (cooling && row.health === 'rate_limited') status = 'RATE LIMITED';
+    else if (cooling && ['rate_limited', 'quota_exhausted'].includes(row.health)) status = 'RATE LIMITED';
     else if (cooling) status = 'OFFLINE';
     else if (row?.health === 'degraded') status = 'DEGRADED';
     else if (verifiedAt || row?.last_success_at) status = 'LIVE';
@@ -222,7 +232,6 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
         CREDENTIAL_MISSING: 'READY — CREDENTIAL REQUIRED', ENDPOINT_NOT_CONFIGURED: 'READY — ENDPOINT REQUIRED',
         MODEL_NOT_CONFIGURED: 'READY — MODEL ID REQUIRED', PRICING_UNKNOWN: 'READY — PRICING REQUIRED',
       })[reason] || reason).join(' · ');
-    const usageToday = today.get(route.id);
     const cap = routing.routeMonthlyBudgetUsd[route.id];
     return {
       id: route.id,
@@ -241,8 +250,14 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
       availability,
       reasons,
       codingSuitability: !route.toolCalling ? 'TEXT ONLY — NOT FOR CODING'
-        : route.qualityTier < minQualityTier ? 'BELOW CODING QUALITY FLOOR'
+        : route.qualityTier < minQualityTier || capabilityGaps(route.capabilities, 'coding').length ? 'NOT CAPABLE ENOUGH FOR CODING'
           : route.privacyApproved ? 'SUITABLE FOR PRIVATE CODE' : 'PUBLIC CODE ONLY — PRIVACY REVIEW PENDING',
+      capabilities: route.capabilities,
+      suitableJobs: Object.keys(JOB_PROFILES).filter((job) => capabilityGaps(route.capabilities, job).length === 0),
+      freeQuota: freeQuotaStatus(route, {
+        env, now: now(), rateLimit,
+        usedToday: usageToday ? { requests: Number(usageToday.requests || 0) } : { requests: 0 },
+      }),
       activeTasks: active.get(route.id) || 0,
       quota: limit != null && remaining != null
         ? { exact: true, source: 'provider response headers (rate-limit window)', requestsLimit: limit, requestsRemaining: remaining, resetsAt: rateLimit.requestsReset || null }
@@ -279,6 +294,86 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     routing: { ...routing, source: workspaceRouting ? 'workspace policy' : 'defaults' },
     routes,
     installed: true,
+  };
+}
+
+// One read-only overview for the platform dashboard: CODING AGENT, OFFICE
+// AGENTS, PROJECTS, MODEL POOL, USAGE & LIMITS, APPROVALS, SYSTEM HEALTH.
+// Built from the same durable state as the other views; credentials are only
+// ever reported as present/absent.
+export async function platformOverview({ db, env = process.env, now = () => Date.now(), workspaceId = null }) {
+  const optional = async (promise, fallback) => {
+    try {
+      return await promise;
+    } catch (error) {
+      if (error.notInstalled) return fallback;
+      throw error;
+    }
+  };
+  const pool = await modelPoolSnapshot({ db, env, now, workspaceId });
+  const [sessions, approvals, projects, policy, lastEvent, lastCanary, supabaseGrants] = await Promise.all([
+    workspaceId ? optional(rows(db.from('agent_sessions').select('id,title,status,phase,current_route,spent_usd,budget_usd,created_at,updated_at').eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(50)), []) : [],
+    workspaceId ? optional(rows(db.from('agent_approvals').select('id,session_id,tool_name,risk,summary,requested_at').eq('workspace_id', workspaceId).eq('status', 'pending').order('requested_at', { ascending: true })), []) : [],
+    optional(rows(db.from('projects').select('id,name').order('name', { ascending: true }).limit(50)), []),
+    workspaceId ? optional(one(db.from('workspace_policies').select('enabled,monthly_budget_usd,spent_usd,reserved_usd,budget_period_end').eq('workspace_id', workspaceId).maybeSingle()), null) : null,
+    optional(one(db.from('agent_events').select('created_at,type').order('id', { ascending: false }).limit(1).maybeSingle()), null),
+    optional(one(db.from('provider_canary_runs').select('status,requested_at,completed_at').order('requested_at', { ascending: false }).limit(1).maybeSingle()), null),
+    workspaceId ? optional(rows(db.from('workspace_tool_grants').select('tool_name,decision,enabled').eq('workspace_id', workspaceId).like('tool_name', 'supabase.%')), []) : [],
+  ]);
+  const byStatus = {};
+  for (const session of sessions) byStatus[session.status] = (byStatus[session.status] || 0) + 1;
+  const routes = pool.routes;
+  const count = (predicate) => routes.filter(predicate).length;
+  const today = routes.reduce((sum, route) => ({
+    requests: sum.requests + route.today.requests,
+    tokens: sum.tokens + route.today.inputTokens + route.today.outputTokens,
+    costUsd: Number((sum.costUsd + route.today.estimatedCostUsd).toFixed(6)),
+  }), { requests: 0, tokens: 0, costUsd: 0 });
+  const live = (route) => route.status === 'LIVE';
+  return {
+    generatedAt: new Date(now()).toISOString(),
+    codingAgent: {
+      sessions: byStatus,
+      recent: sessions.slice(0, 5).map((session) => ({ id: session.id, title: session.title, status: session.status, phase: session.phase, route: session.current_route, spentUsd: Number(session.spent_usd || 0), updatedAt: session.updated_at })),
+      supabaseTools: {
+        tokenConfigured: Boolean(String(env.CODING_SUPABASE_ACCESS_TOKEN || '').trim()),
+        grants: supabaseGrants.map((grant) => ({ tool: grant.tool_name, decision: grant.decision, enabled: grant.enabled })),
+        note: 'Reads run automatically through the read-only database role; writes and migrations always wait for your approval.',
+      },
+    },
+    officeAgents: OFFICE_ROLES.map((role) => ({
+      id: role.id, label: role.label, status: role.status, job: role.job, purpose: role.purpose,
+      liveModels: routes.filter((route) => live(route) && route.suitableJobs.includes(role.job)).map((route) => route.id),
+      freeModels: routes.filter((route) => route.billingClass !== 'PAID' && route.configured && route.suitableJobs.includes(role.job)).map((route) => route.id),
+    })),
+    projects: projects.map((project) => ({ id: project.id, name: project.name, selected: project.id === workspaceId })),
+    modelPool: {
+      total: routes.length,
+      live: count(live),
+      rateLimited: count((route) => route.status === 'RATE LIMITED'),
+      offline: count((route) => route.status === 'OFFLINE' || route.status === 'DEGRADED'),
+      notConfigured: count((route) => route.status === 'NOT CONFIGURED' || route.status === 'NOT READY'),
+      free: count((route) => route.billingClass !== 'PAID'),
+      codingOrder: routes.filter((route) => route.routingRank).toSorted((a, b) => a.routingRank - b.routingRank).map((route) => route.id),
+    },
+    usage: {
+      today,
+      budget: policy ? {
+        monthlyUsd: Number(policy.monthly_budget_usd || 0), spentUsd: Number(policy.spent_usd || 0), reservedUsd: Number(policy.reserved_usd || 0),
+        remainingUsd: Number(Math.max(0, Number(policy.monthly_budget_usd || 0) - Number(policy.spent_usd || 0) - Number(policy.reserved_usd || 0)).toFixed(6)),
+        periodEnd: policy.budget_period_end, basis: 'workspace budget ledger (estimated from published prices)',
+      } : null,
+      cooling: routes.filter((route) => route.cooldownUntil).map((route) => ({ id: route.id, status: route.status, until: route.cooldownUntil })),
+      freeQuota: routes.filter((route) => route.freeQuota && route.configured).map((route) => ({ id: route.id, ...route.freeQuota })),
+    },
+    approvals,
+    systemHealth: {
+      hub: 'ok',
+      version: readDeployedVersion(),
+      lastAgentActivityAt: lastEvent?.created_at || null,
+      lastCanary: lastCanary ? { status: lastCanary.status, requestedAt: lastCanary.requested_at, completedAt: lastCanary.completed_at } : null,
+      database: 'ok',
+    },
   };
 }
 
@@ -380,9 +475,9 @@ async function one(query) {
 
 // ------------------------------------------------------------------ UI
 // Injected into the existing Hub page script (the Hub keeps two scripts).
-export const CODING_STYLE = '<style>.coding-view{position:fixed;inset:0 0 0 270px;background:#0a1020;z-index:4;overflow:auto;padding:24px 30px}.coding-view h2{margin:0 0 4px}.coding-grid{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:18px;margin-top:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}.card h3{margin:0 0 10px;font-size:14px}.session-item{display:block;width:100%;text-align:left;background:transparent;color:var(--ink);padding:9px;border-radius:9px;border:1px solid transparent}.session-item:hover,.session-item.active{background:#1b2943;border-color:var(--line)}.session-item small{display:block;color:var(--muted);margin-top:3px}.kv{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.kv .metric strong{font-size:12px}.pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:700;background:#26375e;color:#cbd6ff}.pill.completed{background:#16432f;color:#8ff0c4}.pill.failed,.pill.cancelled{background:#4a2027;color:#ffb3b3}.pill.awaiting_approval,.pill.blocked{background:#4a3a18;color:#f5d68a}.feed{max-height:380px;overflow:auto;font-size:12px}.feed div{padding:6px 0;border-bottom:1px solid var(--line)}.feed .warning{color:#f5d68a}.feed .error{color:var(--danger);background:none;border:0;padding:6px 0;margin:0}.feed .success{color:var(--good)}.approval{border:1px solid #6b5a2a;background:#2a2412;border-radius:10px;padding:10px;margin-bottom:8px}.approval button{margin-right:6px;margin-top:6px;padding:6px 10px;border-radius:8px}.approve{background:#1f7a52;color:#fff}.reject{background:#7f3542;color:#fff}.report{white-space:pre-wrap;font-size:12px;background:#0d1525;border-radius:10px;padding:10px;max-height:340px;overflow:auto}.pool-table{width:100%;border-collapse:collapse;font-size:12px}.pool-table td,.pool-table th{border-bottom:1px solid var(--line);padding:7px 6px;text-align:left;vertical-align:top}.pool-table th{color:var(--muted);font-weight:600}.muted{color:var(--muted)}.row-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:7px 11px}.coding-form label{display:block;color:var(--muted);font-size:12px;margin-top:10px}.coding-form .field{margin-top:4px}.check{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:12px}.approvals-badge{background:#b7791f;color:#1a1204;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:800;margin-left:4px}@media(max-width:820px){.coding-view{inset:0;padding:16px}.coding-grid{grid-template-columns:1fr}.kv{grid-template-columns:repeat(2,1fr)}}</style>';
+export const CODING_STYLE = '<style>.platform-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:16px}.platform-grid h3{margin:0 0 8px;font-size:12px;letter-spacing:.12em;color:var(--muted)}.platform-grid .wide{grid-column:1/-1}.platform-grid li{margin:4px 0}.platform-grid ul{padding-left:18px;margin:6px 0}.coding-view{position:fixed;inset:0 0 0 270px;background:#0a1020;z-index:4;overflow:auto;padding:24px 30px}.coding-view h2{margin:0 0 4px}.coding-grid{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:18px;margin-top:16px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}.card h3{margin:0 0 10px;font-size:14px}.session-item{display:block;width:100%;text-align:left;background:transparent;color:var(--ink);padding:9px;border-radius:9px;border:1px solid transparent}.session-item:hover,.session-item.active{background:#1b2943;border-color:var(--line)}.session-item small{display:block;color:var(--muted);margin-top:3px}.kv{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.kv .metric strong{font-size:12px}.pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:700;background:#26375e;color:#cbd6ff}.pill.completed{background:#16432f;color:#8ff0c4}.pill.failed,.pill.cancelled{background:#4a2027;color:#ffb3b3}.pill.awaiting_approval,.pill.blocked{background:#4a3a18;color:#f5d68a}.feed{max-height:380px;overflow:auto;font-size:12px}.feed div{padding:6px 0;border-bottom:1px solid var(--line)}.feed .warning{color:#f5d68a}.feed .error{color:var(--danger);background:none;border:0;padding:6px 0;margin:0}.feed .success{color:var(--good)}.approval{border:1px solid #6b5a2a;background:#2a2412;border-radius:10px;padding:10px;margin-bottom:8px}.approval button{margin-right:6px;margin-top:6px;padding:6px 10px;border-radius:8px}.approve{background:#1f7a52;color:#fff}.reject{background:#7f3542;color:#fff}.report{white-space:pre-wrap;font-size:12px;background:#0d1525;border-radius:10px;padding:10px;max-height:340px;overflow:auto}.pool-table{width:100%;border-collapse:collapse;font-size:12px}.pool-table td,.pool-table th{border-bottom:1px solid var(--line);padding:7px 6px;text-align:left;vertical-align:top}.pool-table th{color:var(--muted);font-weight:600}.muted{color:var(--muted)}.row-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);border-radius:9px;padding:7px 11px}.coding-form label{display:block;color:var(--muted);font-size:12px;margin-top:10px}.coding-form .field{margin-top:4px}.check{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:12px}.approvals-badge{background:#b7791f;color:#1a1204;border-radius:999px;padding:2px 7px;font-size:11px;font-weight:800;margin-left:4px}@media(max-width:820px){.coding-view{inset:0;padding:16px}.coding-grid{grid-template-columns:1fr}.kv{grid-template-columns:repeat(2,1fr)}}</style>';
 
-export const CODING_MARKUP = '<div id="codingView" class="coding-view hidden"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2>Coding Agent</h2><div class="muted">Autonomous development: plan → edit → test → debug → PR → CI → deploy → verify. It keeps working across model switches and restarts.</div></div><div class="row-actions" style="margin:0"><button id="poolButton" class="ghost">Model pool</button><button id="codingClose" class="ghost">Back to chat</button></div></div><div id="codingError" class="error hidden"></div><div id="poolPanel" class="card hidden" style="margin-top:14px"></div><div class="coding-grid"><div><div class="card coding-form"><h3>New development task</h3><label>Repository<input id="cRepo" class="field" value="FahadTrail/fahad-ai-office"></label><label>Base branch<input id="cBase" class="field" value="main"></label><label>Development instruction<textarea id="cObjective" class="field" style="min-height:140px" placeholder="Paste the full specification…"></textarea></label><label>Budget (USD)<input id="cBudget" class="field" type="number" min="0.5" max="500" step="0.5" value="5"></label><label>Model routing<select id="cRouting" class="field"><option value="">Project default</option><option value="economy">Economy — free first, cheapest capable model</option><option value="balanced">Balanced — best model, then cheaper</option><option value="quality">Quality — strongest model first</option><option value="nopaid">Free / included only — never paid</option></select></label><label>Reasoning effort<select id="cEffort" class="field"><option value="">Model default</option><option value="low">Low — cheapest, simple tasks</option><option value="medium">Medium</option><option value="high">High — hard tasks</option></select></label><label>Test command (optional; auto-detected)<input id="cTest" class="field" placeholder="npm test"></label><div class="check"><input id="cDeploy" type="checkbox"><span>Merge &amp; deploy after CI passes (merge needs your approval unless your policy allows it)</span></div><label>Production health URL (optional)<input id="cVerify" class="field" placeholder="https://…/healthz"></label><button id="cStart" class="newchat" style="width:100%;margin-top:12px">Start Coding Agent</button></div><div class="card" style="margin-top:14px"><h3>Sessions</h3><div id="cSessions" class="muted">No sessions yet.</div></div></div><div id="cDetail" class="card"><div class="muted">Select or start a session. You can leave; the agent keeps working and this view updates live.</div></div></div></div>';
+export const CODING_MARKUP = '<div id="platformView" class="coding-view hidden"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2>Fahad AI Platform</h2><div class="muted">One place for every agent, model, limit and approval. Free and included capacity is used first; paid models only when needed and within budget.</div></div><div class="row-actions" style="margin:0"><button id="platformRefresh" class="ghost">Refresh</button><button id="platformClose" class="ghost">Back to chat</button></div></div><div id="platformError" class="error hidden"></div><div id="platformBody" class="platform-grid"></div></div><div id="codingView" class="coding-view hidden"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2>Coding Agent</h2><div class="muted">Autonomous development: plan → edit → test → debug → PR → CI → deploy → verify. It keeps working across model switches and restarts.</div></div><div class="row-actions" style="margin:0"><button id="poolButton" class="ghost">Model pool</button><button id="codingClose" class="ghost">Back to chat</button></div></div><div id="codingError" class="error hidden"></div><div id="poolPanel" class="card hidden" style="margin-top:14px"></div><div class="coding-grid"><div><div class="card coding-form"><h3>New development task</h3><label>Repository<input id="cRepo" class="field" value="FahadTrail/fahad-ai-office"></label><label>Base branch<input id="cBase" class="field" value="main"></label><label>Development instruction<textarea id="cObjective" class="field" style="min-height:140px" placeholder="Paste the full specification…"></textarea></label><label>Budget (USD)<input id="cBudget" class="field" type="number" min="0.5" max="500" step="0.5" value="5"></label><label>Model routing<select id="cRouting" class="field"><option value="">Project default</option><option value="economy">Economy — free first, cheapest capable model</option><option value="balanced">Balanced — best model, then cheaper</option><option value="quality">Quality — strongest model first</option><option value="nopaid">Free / included only — never paid</option></select></label><label>Reasoning effort<select id="cEffort" class="field"><option value="">Model default</option><option value="low">Low — cheapest, simple tasks</option><option value="medium">Medium</option><option value="high">High — hard tasks</option></select></label><label>Supabase projects (optional; read automatically, writes need approval)<input id="cSupabase" class="field" placeholder="project ref, e.g. zkzibipinjeswhdxnfgf"></label><label>Test command (optional; auto-detected)<input id="cTest" class="field" placeholder="npm test"></label><div class="check"><input id="cDeploy" type="checkbox"><span>Merge &amp; deploy after CI passes (merge needs your approval unless your policy allows it)</span></div><label>Production health URL (optional)<input id="cVerify" class="field" placeholder="https://…/healthz"></label><button id="cStart" class="newchat" style="width:100%;margin-top:12px">Start Coding Agent</button></div><div class="card" style="margin-top:14px"><h3>Sessions</h3><div id="cSessions" class="muted">No sessions yet.</div></div></div><div id="cDetail" class="card"><div class="muted">Select or start a session. You can leave; the agent keeps working and this view updates live.</div></div></div></div>';
 
 export const CODING_SCRIPT = String.raw`
   (function(){
@@ -392,11 +487,11 @@ export const CODING_SCRIPT = String.raw`
     const btn=document.createElement('button');btn.id='codingButton';btn.className='newchat';btn.style.background='linear-gradient(135deg,#34d399,#0e9f6e)';btn.innerHTML='⌘ Coding Agent <span id="approvalsBadge" class="approvals-badge hidden">0</span>';document.getElementById('newChat').after(btn);
     const cerr=m=>{const e=document.getElementById('codingError');e.textContent=m;e.classList.toggle('hidden',!m)};
     async function codingApi(p,o){try{return await api(p,o)}catch(e){if(/CODING_AGENT_NOT_INSTALLED/.test(e.message))throw new Error('The Coding Agent is not installed on this server yet (database migration and coding worker pending).');throw e}}
-    async function openCoding(){codingView.classList.remove('hidden');document.querySelector('.sidebar')?.classList.remove('open');await loadSessions()}
+    async function openCoding(){document.getElementById('platformView')?.classList.add('hidden');codingView.classList.remove('hidden');document.querySelector('.sidebar')?.classList.remove('open');await loadSessions()}
     function closeCoding(){codingView.classList.add('hidden');clearInterval(codingPoll)}
     async function loadSessions(){if(!ws())return;try{cerr('');const d=await codingApi('./api/coding/sessions?workspaceId='+encodeURIComponent(ws()));document.getElementById('cSessions').innerHTML=(d.sessions||[]).map(s=>'<button class="session-item '+(s.id===codingSession?'active':'')+'" data-session="'+s.id+'"><strong>'+esc(s.title)+'</strong> <span class="pill '+esc(s.status)+'">'+esc(s.status)+'</span><small>'+esc(s.repository)+' · '+esc(s.phase)+' · '+new Date(s.createdAt).toLocaleString()+'</small></button>').join('')||'No sessions yet.';document.querySelectorAll('[data-session]').forEach(b=>b.onclick=()=>openSession(b.dataset.session));await loadApprovalsBadge()}catch(e){cerr(e.message)}}
     async function loadApprovalsBadge(){if(!ws())return;try{const d=await codingApi('./api/approvals?workspaceId='+encodeURIComponent(ws()));const n=(d.approvals||[]).length;const b=document.getElementById('approvalsBadge');b.textContent=String(n);b.classList.toggle('hidden',!n)}catch{}}
-    async function startSession(){const objective=document.getElementById('cObjective').value.trim();if(objective.length<12)return cerr('Describe the development task (at least 12 characters).');const body={workspaceId:ws(),repository:document.getElementById('cRepo').value.trim(),baseBranch:document.getElementById('cBase').value.trim()||'main',objective,budgetUsd:Number(document.getElementById('cBudget').value||5),deploy:document.getElementById('cDeploy').checked};const rt=document.getElementById('cRouting').value;const ef=document.getElementById('cEffort').value;body.routing={};if(rt==='nopaid')body.routing.allowPaid=false;else if(rt)body.routing.strategy=rt;if(ef)body.routing.effort=ef;const t=document.getElementById('cTest').value.trim();if(t)body.testCommand=t;const v=document.getElementById('cVerify').value.trim();if(v){body.verifyUrl=v}document.getElementById('cStart').disabled=true;try{cerr('');const d=await codingApi('./api/coding/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.getElementById('cObjective').value='';await loadSessions();await openSession(d.session.id)}catch(e){cerr(e.message)}finally{document.getElementById('cStart').disabled=false}}
+    async function startSession(){const objective=document.getElementById('cObjective').value.trim();if(objective.length<12)return cerr('Describe the development task (at least 12 characters).');const body={workspaceId:ws(),repository:document.getElementById('cRepo').value.trim(),baseBranch:document.getElementById('cBase').value.trim()||'main',objective,budgetUsd:Number(document.getElementById('cBudget').value||5),deploy:document.getElementById('cDeploy').checked};const rt=document.getElementById('cRouting').value;const ef=document.getElementById('cEffort').value;body.routing={};if(rt==='nopaid')body.routing.allowPaid=false;else if(rt)body.routing.strategy=rt;if(ef)body.routing.effort=ef;const t=document.getElementById('cTest').value.trim();if(t)body.testCommand=t;const sp=document.getElementById('cSupabase').value.split(/[\s,]+/).filter(Boolean);if(sp.length)body.supabaseProjects=sp;const v=document.getElementById('cVerify').value.trim();if(v){body.verifyUrl=v}document.getElementById('cStart').disabled=true;try{cerr('');const d=await codingApi('./api/coding/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});document.getElementById('cObjective').value='';await loadSessions();await openSession(d.session.id)}catch(e){cerr(e.message)}finally{document.getElementById('cStart').disabled=false}}
     async function openSession(id){codingSession=id;clearInterval(codingPoll);await renderSession();codingPoll=setInterval(renderSession,4000);document.querySelectorAll('[data-session]').forEach(b=>b.classList.toggle('active',b.dataset.session===id))}
     async function decide(id,decision){try{await codingApi('./api/approvals/'+id,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({decision})});await renderSession();await loadApprovalsBadge()}catch(e){cerr(e.message)}}
     async function sessionAction(action){try{await codingApi('./api/coding/sessions/'+codingSession+'/'+action,{method:'POST'});await renderSession()}catch(e){cerr(e.message)}}
@@ -421,9 +516,28 @@ export const CODING_SCRIPT = String.raw`
       const canaryLine='<div class="row-actions" style="margin:0 0 10px"><button id="runCanary" class="ghost">Run live canary</button><span class="muted">'+(lc?('Last canary: '+esc(lc.status)+(lc.report?(' · verified: '+esc((lc.report.routes||[]).filter(x=>x.ok).map(x=>x.id).join(', ')||'none')+' · failover drill: '+(lc.report.failover?.ok?('passed'+(lc.report.failover.crossProvider?' ('+esc(lc.report.failover.primary)+' → '+esc(lc.report.failover.backup)+')':' (same provider)')):'not passed')+(lc.report.totalCostUsd!=null?' · cost '+usd(lc.report.totalCostUsd)+' ESTIMATED':'')):'')+' · '+new Date(lc.requested_at).toLocaleString()):'No live canary has run yet.')+'</span></div>';
       const routingForm='<div class="row-actions" style="margin:0 0 10px;flex-wrap:wrap"><span class="muted">Project routing:</span><select id="rStrategy" class="field" style="width:auto">'+['economy','balanced','quality'].map(v=>'<option value="'+v+'"'+(r.strategy===v?' selected':'')+'>'+v+'</option>').join('')+'</select><label class="check" style="margin:0"><input id="rPaid" type="checkbox"'+(r.allowPaid!==false?' checked':'')+'><span>allow paid models</span></label><button id="rSave" class="ghost">Save</button><span class="muted">Priority: '+esc((d.billingPriority||[]).join(' → '))+' · source: '+esc(r.source||'defaults')+'</span></div>';
       const cls=s=>/^LIVE/.test(s)?'completed':/RATE|OFFLINE|DEGRADED/.test(s)?'blocked':/NOT/.test(s)?'cancelled':'queued';
-      panel.innerHTML=canaryLine+routingForm+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong><br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.authorizedForProject===false?'<br><span class="muted">not authorized for this project</span>':'')+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+'</td><td>'+esc(x.billingClass)+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span></td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td></tr>').join('')+'</table></div><p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
+      panel.innerHTML=canaryLine+routingForm+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong><br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.authorizedForProject===false?'<br><span class="muted">not authorized for this project</span>':'')+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+'</td><td>'+esc(x.billingClass)+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span>'+((x.suitableJobs||[]).length?'<br><span class="muted">jobs: '+esc(x.suitableJobs.join(', '))+'</span>':'')+'</td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+(x.freeQuota?'<br><span class="muted">free: '+(x.freeQuota.requestsRemaining!=null?('≈'+x.freeQuota.requestsRemaining+' req left ('+esc(x.freeQuota.basis)+')'):esc(x.freeQuota.basis))+(x.freeQuota.published.requestsPerDay?' · published '+x.freeQuota.published.requestsPerDay+'/day':'')+(x.freeQuota.nextResetAt?' · resets '+new Date(x.freeQuota.nextResetAt).toLocaleString():' · '+esc(x.freeQuota.resetKind)+' window')+(x.freeQuota.estimatedExhaustionAt?' · est. exhausted '+new Date(x.freeQuota.estimatedExhaustionAt).toLocaleTimeString():'')+'</span>':'')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td></tr>').join('')+'</table></div><p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
       const rc=document.getElementById('runCanary');if(rc)rc.onclick=async()=>{rc.disabled=true;try{await codingApi('./api/model-pool/canary',{method:'POST'});rc.textContent='Queued — runs within a minute';}catch(e){cerr(e.message)}};
       const rs=document.getElementById('rSave');if(rs)rs.onclick=async()=>{if(!ws())return cerr('Select a project first.');rs.disabled=true;try{await codingApi('./api/model-pool/routing',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({workspaceId:ws(),strategy:document.getElementById('rStrategy').value,allowPaid:document.getElementById('rPaid').checked})});await renderPool()}catch(e){cerr(e.message);rs.disabled=false}}}catch(e){panel.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
+    const pbtn=document.createElement('button');pbtn.id='platformButton';pbtn.className='newchat';pbtn.style.background='linear-gradient(135deg,#a78bfa,#6d28d9)';pbtn.textContent='◎ Platform';btn.after(pbtn);
+    const platformView=document.getElementById('platformView');
+    const perr=m=>{const e=document.getElementById('platformError');e.textContent=m;e.classList.toggle('hidden',!m)};
+    const card=(title,body,wide)=>'<div class="card'+(wide?' wide':'')+'"><h3>'+title+'</h3>'+body+'</div>';
+    async function renderPlatform(){const body=document.getElementById('platformBody');body.innerHTML='<div class="muted">Loading…</div>';try{perr('');const d=await codingApi('./api/platform'+(ws()?'?workspaceId='+encodeURIComponent(ws()):''));const c=d.codingAgent,m=d.modelPool,u=d.usage,h=d.systemHealth;
+      const coding='<div class="kv">'+Object.entries(c.sessions).map(([k,v])=>'<div class="metric">'+esc(k.replace('_',' '))+'<strong>'+v+'</strong></div>').join('')+'</div>'+(c.recent.length?'<ul>'+c.recent.map(r=>'<li>'+esc(r.title)+' — <span class="pill '+esc(r.status)+'">'+esc(r.status)+'</span> <span class="muted">'+esc(r.route||'')+' · '+usd(r.spentUsd)+'</span></li>').join('')+'</ul>':'<div class="muted">No sessions in this project yet.</div>')+'<div class="muted">Supabase tools: '+(c.supabaseTools.tokenConfigured?'token configured':'READY — CREDENTIAL REQUIRED')+' · '+esc(c.supabaseTools.grants.map(g=>g.tool.replace('supabase.','')+'='+g.decision).join(', ')||'no grants')+'</div><button class="ghost" id="pOpenCoding" style="margin-top:8px">Open Coding Agent</button>';
+      const office='<ul>'+d.officeAgents.map(a=>'<li><strong>'+esc(a.label)+'</strong> — '+esc(a.status)+'<br><span class="muted">'+esc(a.purpose)+' · job '+esc(a.job)+' · live models: '+esc(a.liveModels.join(', ')||'none yet')+(a.freeModels.length?' · free candidates: '+esc(a.freeModels.join(', ')):'')+'</span></li>').join('')+'</ul>';
+      const projects=d.projects.length?'<ul>'+d.projects.map(p=>'<li>'+(p.selected?'<strong>':'')+esc(p.name)+(p.selected?'</strong> (selected)':'')+'</li>').join('')+'</ul>':'<div class="muted">No projects.</div>';
+      const pool='<div class="kv"><div class="metric">Live<strong>'+m.live+'/'+m.total+'</strong></div><div class="metric">Rate limited<strong>'+m.rateLimited+'</strong></div><div class="metric">Offline<strong>'+m.offline+'</strong></div><div class="metric">Not configured<strong>'+m.notConfigured+'</strong></div><div class="metric">Free / included<strong>'+m.free+'</strong></div></div><div class="muted" style="margin-top:8px">Coding order now: '+esc(m.codingOrder.join(' → ')||'no eligible model')+'</div><button class="ghost" id="pOpenPool" style="margin-top:8px">Open model pool</button>';
+      const b=u.budget;const usage='<div class="kv"><div class="metric">Requests today<strong>'+u.today.requests+'</strong></div><div class="metric">Tokens today<strong>'+Number(u.today.tokens).toLocaleString()+'</strong></div><div class="metric">Cost today (est.)<strong>'+usd(u.today.costUsd)+'</strong></div>'+(b?'<div class="metric">Budget left<strong>'+usd(b.remainingUsd)+' / $'+b.monthlyUsd+'</strong></div>':'')+'</div>'+(u.cooling.length?'<div style="margin-top:8px">Cooling down: '+u.cooling.map(x=>esc(x.id)+' until '+new Date(x.until).toLocaleString()).join('; ')+'</div>':'')+(u.freeQuota.length?'<ul>'+u.freeQuota.map(q=>'<li>'+esc(q.id)+': '+(q.requestsRemaining!=null?'≈'+q.requestsRemaining+' requests left':'EXACT QUOTA NOT AVAILABLE')+' <span class="muted">('+esc(q.basis)+(q.nextResetAt?' · resets '+new Date(q.nextResetAt).toLocaleString():'')+')</span></li>').join('')+'</ul>':'<div class="muted" style="margin-top:8px">No free-tier provider is configured yet.</div>');
+      const approvals=d.approvals.length?d.approvals.map(a=>'<div class="approval"><strong>'+esc(a.tool_name)+' ('+esc(a.risk)+')</strong><div>'+esc(a.summary)+'</div><button class="approve" data-papprove="'+a.id+'">Approve</button><button class="reject" data-preject="'+a.id+'">Reject</button></div>').join(''):'<div class="muted">Nothing waiting for you.</div>';
+      const health='<ul><li>Hub: '+esc(h.hub)+' · version '+esc(h.version||'unknown')+'</li><li>Database: '+esc(h.database)+'</li><li>Last agent activity: '+(h.lastAgentActivityAt?new Date(h.lastAgentActivityAt).toLocaleString():'none yet')+'</li><li>Last provider canary: '+(h.lastCanary?esc(h.lastCanary.status)+' · '+new Date(h.lastCanary.requestedAt).toLocaleString():'never')+'</li></ul>';
+      body.innerHTML=card('CODING AGENT',coding)+card('APPROVALS',approvals)+card('MODEL POOL',pool)+card('USAGE &amp; LIMITS',usage)+card('OFFICE AGENTS',office,true)+card('PROJECTS',projects)+card('SYSTEM HEALTH',health);
+      document.getElementById('pOpenCoding').onclick=()=>{closePlatform();openCoding()};document.getElementById('pOpenPool').onclick=async()=>{closePlatform();await openCoding();if(!poolOpen)await togglePool()};
+      document.querySelectorAll('[data-papprove]').forEach(x=>x.onclick=()=>pdecide(x.dataset.papprove,'approved'));document.querySelectorAll('[data-preject]').forEach(x=>x.onclick=()=>pdecide(x.dataset.preject,'rejected'))}catch(e){body.innerHTML='';perr(e.message)}}
+    async function pdecide(id,decision){try{await codingApi('./api/approvals/'+id,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({decision})});await renderPlatform();await loadApprovalsBadge()}catch(e){perr(e.message)}}
+    function openPlatform(){closeCoding();platformView.classList.remove('hidden');document.querySelector('.sidebar')?.classList.remove('open');renderPlatform()}
+    function closePlatform(){platformView.classList.add('hidden')}
+    pbtn.onclick=openPlatform;document.getElementById('platformClose').onclick=closePlatform;document.getElementById('platformRefresh').onclick=renderPlatform;
     btn.onclick=openCoding;document.getElementById('codingClose').onclick=closeCoding;document.getElementById('cStart').onclick=startSession;document.getElementById('poolButton').onclick=togglePool;
     window.addEventListener('hub-workspace-changed',()=>{codingSession='';if(!codingView.classList.contains('hidden'))loadSessions();else loadApprovalsBadge()});
     setInterval(loadApprovalsBadge,30000);

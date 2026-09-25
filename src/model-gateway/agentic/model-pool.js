@@ -9,6 +9,7 @@ import { AnthropicMessagesProtocol } from './anthropic-messages.js';
 import { OpenAIResponsesProtocol } from './openai-responses.js';
 import { ChatCompletionsProtocol } from './chat-completions.js';
 import { GeminiProtocol } from './gemini.js';
+import { capabilityProfile } from './capabilities.js';
 
 export const BILLING_CLASS = Object.freeze({
   INCLUDED: 'included',
@@ -101,6 +102,14 @@ export function modelPoolDefinitions(env = process.env) {
       privacyApproved: truthy(env.ZHIPU_API_PRIVATE_DATA_APPROVED), privacyFlag: 'ZHIPU_API_PRIVATE_DATA_APPROVED',
     },
     {
+      // Z.ai lists its Flash models at $0 (rate-limited). Below the coding
+      // floor: used for simple text jobs, never for autonomous coding.
+      provider: 'zhipu', model: env.ZHIPU_FREE_MODEL || 'glm-4.7-flash', protocol: 'chat-completions',
+      endpoint: 'https://api.z.ai/api/paas/v4/chat/completions', secretEnv: 'ZHIPU_API_KEY', secretRef: 'env://ZHIPU_API_KEY',
+      qualityTier: 3, costTier: 1, contextWindow: 128_000, billingClass: billing(env, 'ZHIPU_FREE_BILLING_CLASS', 'free'),
+      privacyApproved: truthy(env.ZHIPU_API_PRIVATE_DATA_APPROVED), privacyFlag: 'ZHIPU_API_PRIVATE_DATA_APPROVED',
+    },
+    {
       provider: 'minimax', model: env.MINIMAX_MODEL || 'MiniMax-M2.7', protocol: 'chat-completions',
       endpoint: 'https://api.minimax.io/v1/chat/completions', secretEnv: 'MINIMAX_API_KEY', secretRef: 'env://MINIMAX_API_KEY',
       qualityTier: 4, costTier: 1, contextWindow: 204_800, billingClass: billing(env, 'MINIMAX_BILLING_CLASS', 'paid'),
@@ -108,7 +117,9 @@ export function modelPoolDefinitions(env = process.env) {
       privacyApproved: false, privacyNote: 'Blocked for private data pending an API data-use policy review',
     },
     {
-      provider: 'gemini', model: env.GEMINI_MODEL || 'gemini-2.5-flash', protocol: 'gemini',
+      // `gemini-flash-latest` is Google's documented alias for the current
+      // Flash model, so the route survives model generations.
+      provider: 'gemini', model: env.GEMINI_MODEL || 'gemini-flash-latest', protocol: 'gemini',
       secretEnv: 'GEMINI_API_KEY', secretRef: 'env://GEMINI_API_KEY', qualityTier: 4, costTier: 2, contextWindow: 1_000_000,
       billingClass: billing(env, 'GEMINI_BILLING_CLASS', 'free'), pricing: readPricing(env, 'GEMINI_PRICING_JSON'),
       // Free-tier Gemini API traffic may be used to improve Google products; private
@@ -116,28 +127,58 @@ export function modelPoolDefinitions(env = process.env) {
       privacyApproved: truthy(env.GEMINI_API_PRIVATE_DATA_APPROVED), privacyFlag: 'GEMINI_API_PRIVATE_DATA_APPROVED',
     },
     {
-      provider: 'openrouter', model: env.OPENROUTER_MODEL || null, protocol: 'chat-completions',
+      provider: 'openrouter', model: env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free', protocol: 'chat-completions',
       endpoint: 'https://openrouter.ai/api/v1/chat/completions', secretEnv: 'OPENROUTER_API_KEY', secretRef: 'env://OPENROUTER_API_KEY',
       qualityTier: Number(env.OPENROUTER_QUALITY_TIER || 3), costTier: 1, contextWindow: Number(env.OPENROUTER_CONTEXT_WINDOW || 128_000),
-      billingClass: billing(env, 'OPENROUTER_BILLING_CLASS', /:free$/.test(env.OPENROUTER_MODEL || '') ? 'free' : 'paid'),
+      billingClass: billing(env, 'OPENROUTER_BILLING_CLASS', /:free$/.test(env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free') ? 'free' : 'paid'),
       pricing: readPricing(env, 'OPENROUTER_PRICING_JSON'),
       privacyApproved: truthy(env.OPENROUTER_API_PRIVATE_DATA_APPROVED), privacyFlag: 'OPENROUTER_API_PRIVATE_DATA_APPROVED',
       extraHeaders: { 'x-title': 'Fahad AI Office' },
     },
     {
-      provider: 'groq', model: env.GROQ_MODEL || null, protocol: 'chat-completions',
+      provider: 'groq', model: env.GROQ_MODEL || 'openai/gpt-oss-120b', protocol: 'chat-completions',
       endpoint: 'https://api.groq.com/openai/v1/chat/completions', secretEnv: 'GROQ_API_KEY', secretRef: 'env://GROQ_API_KEY',
       qualityTier: Number(env.GROQ_QUALITY_TIER || 3), costTier: 1, contextWindow: Number(env.GROQ_CONTEXT_WINDOW || 128_000),
       billingClass: billing(env, 'GROQ_BILLING_CLASS', 'free'), pricing: readPricing(env, 'GROQ_PRICING_JSON'),
       privacyApproved: truthy(env.GROQ_API_PRIVATE_DATA_APPROVED), privacyFlag: 'GROQ_API_PRIVATE_DATA_APPROVED',
     },
+    {
+      // GitHub Models (official inference API). Free, rate-limited, 8K input /
+      // 4K output per request: suited to short Office jobs, not to coding.
+      // Needs its own token (fine-grained PAT with "Models: read"); the Coding
+      // Agent's repository token is never reused for inference.
+      provider: 'github', model: env.GITHUB_MODELS_MODEL || 'openai/gpt-4.1', protocol: 'chat-completions',
+      endpoint: 'https://models.github.ai/inference/chat/completions', secretEnv: 'GITHUB_MODELS_TOKEN', secretRef: 'env://GITHUB_MODELS_TOKEN',
+      qualityTier: 4, costTier: 1, contextWindow: 8_000, maxOutputTokens: 4_000,
+      billingClass: billing(env, 'GITHUB_MODELS_BILLING_CLASS', 'free'), pricing: readPricing(env, 'GITHUB_MODELS_PRICING_JSON'),
+      privacyApproved: truthy(env.GITHUB_MODELS_PRIVATE_DATA_APPROVED), privacyFlag: 'GITHUB_MODELS_PRIVATE_DATA_APPROVED',
+      extraHeaders: { 'x-github-api-version': '2022-11-28' },
+    },
+    {
+      // Cerebras free tier: fast open-weight models, daily token allowance,
+      // small free context window.
+      provider: 'cerebras', model: env.CEREBRAS_MODEL || 'gpt-oss-120b', protocol: 'chat-completions',
+      endpoint: 'https://api.cerebras.ai/v1/chat/completions', maxTokensField: 'max_completion_tokens',
+      secretEnv: 'CEREBRAS_API_KEY', secretRef: 'env://CEREBRAS_API_KEY',
+      qualityTier: Number(env.CEREBRAS_QUALITY_TIER || 3), costTier: 1, contextWindow: Number(env.CEREBRAS_CONTEXT_WINDOW || 8_192),
+      billingClass: billing(env, 'CEREBRAS_BILLING_CLASS', 'free'), pricing: readPricing(env, 'CEREBRAS_PRICING_JSON'),
+      privacyApproved: truthy(env.CEREBRAS_API_PRIVATE_DATA_APPROVED), privacyFlag: 'CEREBRAS_API_PRIVATE_DATA_APPROVED',
+    },
+    {
+      // Mistral: free only on the Experiment plan (whose prompts may be used
+      // for training). Treated as paid until the owner states the plan
+      // (MISTRAL_BILLING_CLASS=free) or supplies MISTRAL_PRICING_JSON.
+      provider: 'mistral', model: env.MISTRAL_MODEL || 'mistral-medium-latest', protocol: 'chat-completions',
+      endpoint: 'https://api.mistral.ai/v1/chat/completions', secretEnv: 'MISTRAL_API_KEY', secretRef: 'env://MISTRAL_API_KEY',
+      qualityTier: 4, costTier: 2, contextWindow: 128_000,
+      billingClass: billing(env, 'MISTRAL_BILLING_CLASS', 'paid'), pricing: readPricing(env, 'MISTRAL_PRICING_JSON'),
+      privacyApproved: truthy(env.MISTRAL_API_PRIVATE_DATA_APPROVED), privacyFlag: 'MISTRAL_API_PRIVATE_DATA_APPROVED',
+    },
   ];
-  return defs.map((definition) => Object.freeze({
-    ...definition,
-    id: `${definition.provider}:${definition.model}`,
-    pricing: definition.pricing || PRICING[definition.model] || null,
-    toolCalling: true,
-  }));
+  return defs.map((definition) => {
+    const route = { ...definition, id: `${definition.provider}:${definition.model}`, pricing: definition.pricing || PRICING[definition.model] || null, toolCalling: definition.toolCalling !== false };
+    return Object.freeze({ ...route, capabilities: capabilityProfile(route, env) });
+  });
 }
 
 function credential(env, name) {

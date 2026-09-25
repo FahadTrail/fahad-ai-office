@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { FAILURE_CLASS, GatewayError, classifyProviderError } from '../contracts.js';
 import { DEFAULT_BILLING_PRIORITY } from './model-pool.js';
 import { isCoolingDown } from './provider-state.js';
+import { capabilityGaps, jobFit } from './capabilities.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -51,6 +52,7 @@ export class AgentTurnGateway {
     policyExcludedRouteIds = [],
     budgetExhaustedRouteIds = [],
     minQualityTier = this.minQualityTier,
+    job = null,
   } = {}) {
     const state = await this.stateStore.snapshot();
     const now = this.now();
@@ -60,6 +62,9 @@ export class AgentTurnGateway {
       if (authorizedRouteIds && !authorizedRouteIds.includes(route.id)) reasons.push('WORKSPACE_NOT_AUTHORIZED');
       if (requiresPrivateData && !route.privacyApproved) reasons.push('PRIVACY_NOT_APPROVED');
       if (route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
+      // Capability before price: a free model that cannot do the job is not
+      // offered the job.
+      reasons.push(...capabilityGaps(route.capabilities, job));
       const outputTokens = routeOutputTokens(route, maxOutputTokens);
       if (estimatedInputTokens + outputTokens > route.contextWindow) reasons.push('CONTEXT_TOO_LARGE');
       if (isCoolingDown(routeState, now)) reasons.push(`COOLDOWN_${String(routeState.health || 'unavailable').toUpperCase()}`);
@@ -76,16 +81,18 @@ export class AgentTurnGateway {
   // Billing class first (free → included → promo → paid by default), then the
   // strategy: economy = cheapest first, balanced/quality = best first. A
   // preferred route (the task's current model) keeps ownership while eligible.
-  order(evaluations, { preferredRouteId = null, billingPriority = this.billingPriority, strategy = this.strategy } = {}) {
+  // With a job, "quality" means fit for that job (capability registry).
+  order(evaluations, { preferredRouteId = null, billingPriority = this.billingPriority, strategy = this.strategy, job = null } = {}) {
     const rank = (route) => {
       const index = billingPriority.indexOf(route.billingClass);
       return index < 0 ? billingPriority.length : index;
     };
+    const fit = (route) => (job ? jobFit(route, job) : route.qualityTier);
     const within = strategy === 'economy'
-      ? (left, right) => left.costTier - right.costTier || right.qualityTier - left.qualityTier
+      ? (left, right) => left.costTier - right.costTier || fit(right) - fit(left)
       : strategy === 'quality'
-        ? (left, right) => right.qualityTier - left.qualityTier || right.contextWindow - left.contextWindow || left.costTier - right.costTier
-        : (left, right) => right.qualityTier - left.qualityTier || left.costTier - right.costTier;
+        ? (left, right) => fit(right) - fit(left) || right.contextWindow - left.contextWindow || left.costTier - right.costTier
+        : (left, right) => fit(right) - fit(left) || left.costTier - right.costTier;
     return evaluations.filter((entry) => entry.eligible)
       .map((entry) => entry.route)
       .toSorted((left, right) => {
@@ -126,6 +133,7 @@ export class AgentTurnGateway {
         preferredRouteId,
         billingPriority: routing.billingPriority || this.billingPriority,
         strategy: routing.strategy || this.strategy,
+        job: routing.job || null,
       });
       if (!route) {
         throw new GatewayError(lastError ? 'All eligible model routes are unavailable' : 'No model route satisfies the task policy', {
@@ -194,6 +202,7 @@ export class AgentTurnGateway {
           }
           const error = classifyProviderError(caught);
           if (!error.rateLimit && caught?.rateLimit) error.rateLimit = caught.rateLimit;
+          if (caught?.quotaScope) error.quotaScope = caught.quotaScope;
           if (caught?.injected) {
             error.code = caught.code || 'DRILL_INJECTED_FAILURE';
             error.injected = true;
@@ -206,7 +215,8 @@ export class AgentTurnGateway {
           await onAttempt(record);
           lastError = error;
           const retryAfterMs = Number.isFinite(Number(error.retryAfter)) ? Number(error.retryAfter) * 1000 : 1000 * attempt;
-          const retryHere = error.failureClass === FAILURE_CLASS.RETRY && attempt < this.maxAttemptsPerRoute &&
+          // A used-up daily allowance will not recover in seconds: rotate now.
+          const retryHere = error.failureClass === FAILURE_CLASS.RETRY && error.quotaScope !== 'day' && attempt < this.maxAttemptsPerRoute &&
             retryAfterMs <= this.maxInlineRetryMs;
           if (retryHere) {
             await this.sleepFn(retryAfterMs);
