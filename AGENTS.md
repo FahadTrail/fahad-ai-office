@@ -66,22 +66,27 @@ inside the built runtime image as root.
 
 ## Current status (2026-09-25)
 
-* Production runs `main` with P0 (reproducible migrations, non-fatal startup
-  canary). The Coding Agent code, migration, Hub UI and worker service are in
-  the open PR from branch `claude/fahad-audit-readonly-466kck`; activation
-  steps are in `docs/coding-agent.md` → *Activation runbook*.
-* Verified in this repository: end-to-end runs with scripted models over real
-  tools, real uid isolation, crash/restart resume, SQL scenarios. Not yet
-  verified: live model providers through the new agentic protocols (needs the
-  production keys), the worker in production, GitHub/Supabase tools against
-  real APIs with the Coding Agent's own tokens.
+* Production runs `main` (Office + Hub). Migrations through
+  `20260925190000_routing_policy_and_usage` are applied; the production schema
+  fingerprint equals `supabase/verify/schema-fingerprint.txt`.
+* Live provider canary (Hub → Model pool → *Run live canary*, executed by the
+  Office runtime) verified real tool-calling on Anthropic `claude-opus-5`,
+  `claude-sonnet-5`, OpenAI `gpt-5.3-codex` and DeepSeek `deepseek-flash`, and
+  a real cross-provider failover drill (DeepSeek → Sonnet from a
+  database-persisted checkpoint). Qwen has a key but the provider answers
+  `AccessDenied.Unpurchased` (model not activated in Alibaba Model Studio).
+  Kimi, GLM, MiniMax, Gemini, OpenRouter, Groq: no credentials configured.
+  Results live in `provider_canary_runs` and `provider_status`.
+* The Coding Agent worker is NOT running yet: it needs one root step on the VPS
+  (`ops/enable-coding-worker.sh`, see `docs/coding-agent.md` → *Activation
+  runbook*) and a fine-grained `CODING_GITHUB_TOKEN`.
+* Verified only with scripted models: the full Coding Agent lifecycle over real
+  tools, git, sandbox isolation, crash/restart resume (`node --test`).
 
 ## Next actions
 
-1. Owner: review/merge the PR, approve the migration, root-install the worker,
-   add `CODING_GITHUB_TOKEN` and `COMPOSE_PROFILES=coding`.
-2. Run `canary:agentic --record` in the worker container; record results.
-3. First low-risk Coding Agent task from the Hub; then enable more providers
-   (keys + privacy flags), each followed by the canary.
-4. Office specialties (Product/Tech, QA/Security, …) can reuse the agentic
-   gateway and Tool Broker when prioritized.
+1. Owner: run the activation runbook (token + one root command).
+2. First low-risk Coding Agent task from the Hub; then more providers (keys +
+   privacy flags), each followed by a live canary.
+3. Office specialties can reuse the agentic gateway, routing policy and Tool
+   Broker when prioritized.
