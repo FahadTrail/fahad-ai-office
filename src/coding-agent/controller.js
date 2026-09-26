@@ -16,7 +16,8 @@ import { pendingToolCalls, toolResult, transcriptChars, truncate, userText } fro
 import { estimateTokens } from '../model-gateway/agentic/turn-gateway.js';
 import { normalizeRouting } from '../model-gateway/agentic/routing-policy.js';
 import { CODING_BROKER, MODEL_TOOL_TO_BROKER, modelToolSpecs } from './tools.js';
-import { classifyChangedPaths, findSecretMaterial, redact, safeSlug } from './policy.js';
+import { classifyChangedPaths, findSecretMaterial, grantablePaths, redact, safeSlug } from './policy.js';
+import { PROTECTED_CHANGE_TOOL } from '../agent-state/session-store.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
 
 export const DEFAULT_LIMITS = Object.freeze({
@@ -108,6 +109,8 @@ class SessionRun {
     this.textOnlyTurns = 0;
     this.consecutiveToolErrors = 0;
     this.recentCalls = [];
+    this.grants = new Set();
+    this.ownerMessages = [];
     this.runStartedAt = controller.now();
   }
 
@@ -203,9 +206,40 @@ class SessionRun {
     }
     if (!this.state.git.baseHead) this.state.git.baseHead = prepared.head;
     this.broker = this.c.createBroker(this.session, this.sandbox);
+    await this.loadGrants();
     this.testCommand = this.config.testCommand ?? await detectTestCommand(this.sandbox);
     await this.refreshGitState();
     await this.event('session', `Sandbox ready on ${workBranch} (${existed ? 'existing worktree' : 'fresh clone'}).`, { branch: workBranch, head: prepared.head, testCommand: this.testCommand });
+  }
+
+  // Path-scoped protected-file grants come only from Fahad's decisions on
+  // repo.protected_change approvals, never from task text or model output.
+  async loadGrants() {
+    const paths = typeof this.c.store.listProtectedGrants === 'function' ? await this.c.store.listProtectedGrants(this.session.id) : [];
+    this.grants = new Set(paths);
+    this.sandbox?.setProtectedGrants?.(paths);
+    return this.grants;
+  }
+
+  // Replies Fahad sent from the Hub, taken once and checkpointed immediately
+  // so a crash cannot lose them.
+  async takeOwnerMessages() {
+    if (typeof this.c.store.consumeOwnerInputs !== 'function') return;
+    const inputs = await this.c.store.consumeOwnerInputs(this.session);
+    if (!inputs.length) return;
+    this.ownerMessages.push(...inputs.map((input) => input.message));
+    this.state.ownerMessages = [...(this.state.ownerMessages || []), ...inputs.map((input) => truncate(input.message, 600))].slice(-10);
+  }
+
+  // Delivers any owner message not already answered through request_human.
+  deliverOwnerMessages() {
+    if (!this.ownerMessages.length) return false;
+    const text = ownerMessageText(this.ownerMessages);
+    this.ownerMessages = [];
+    const last = this.transcript.messages.at(-1);
+    if (last?.role === 'user' && Array.isArray(last.content)) last.content.push({ type: 'text', text });
+    else this.transcript.messages.push(userText(text));
+    return true;
   }
 
   async refreshGitState() {
@@ -298,11 +332,18 @@ class SessionRun {
   // One model turn plus execution of the requested tool calls. Returns true
   // when the model called finish and the gate passed.
   async agentStep() {
-    // Finish any tool calls interrupted by an approval wait or a restart.
+    await this.takeOwnerMessages();
+    // Finish any tool calls interrupted by an approval wait, a question to
+    // the owner or a restart. A pending request_human receives the reply.
     if (this.transcript.pending) {
       const finished = await this.executeToolCalls(this.transcript.pending.calls, this.transcript.pending.results);
       if (finished) return true;
+      if (this.deliverOwnerMessages()) await this.checkpoint('resume');
       if (this.transcript.pending === null) return false;
+    }
+    if (this.deliverOwnerMessages()) {
+      await this.event('owner', 'Fahad\'s reply was delivered to the agent.', {});
+      await this.checkpoint('resume');
     }
     // Supabase tools are offered only when a project is allow-listed AND the
     // Management API token is configured; otherwise the model never sees
@@ -522,7 +563,15 @@ class SessionRun {
         await this.event('note', note);
         return { block: toolResult(call, 'Noted.') };
       }
+      case 'request_protected_change':
+        return this.requestProtectedChange(call, args);
       case 'request_human': {
+        if (this.ownerMessages.length) {
+          const answer = ownerMessageText(this.ownerMessages);
+          this.ownerMessages = [];
+          await this.event('owner', 'Fahad answered the agent\'s question; continuing the same task.', {});
+          return { block: toolResult(call, answer) };
+        }
         throw new Stop('blocked', `Agent needs the owner: ${String(args.reason || '').slice(0, 800)} — ${String(args.question || '').slice(0, 1200)}`, { code: 'HUMAN_INPUT_REQUIRED' });
       }
       case 'finish':
@@ -530,6 +579,38 @@ class SessionRun {
       default:
         return this.brokerToolCall(call, args);
     }
+  }
+
+  // Asks Fahad to approve changing exact protected files. The approval row
+  // carries the paths; only his decision in the Hub grants them.
+  async requestProtectedChange(call, args) {
+    let paths;
+    try {
+      paths = grantablePaths(args.paths);
+    } catch (error) {
+      await this.event('guard', `Protected-change request refused: ${error.message}`, { code: error.code }, 'warning');
+      return { block: toolResult(call, `${error.code || 'INVALID'}: ${error.message}`, { isError: true }) };
+    }
+    const reason = String(args.reason || '').trim().slice(0, 1500);
+    if (reason.length < 10) return { block: toolResult(call, 'REASON_REQUIRED: explain why these files must change.', { isError: true }) };
+    await this.loadGrants();
+    const missing = paths.filter((path) => !this.grants.has(path));
+    if (!missing.length) return { block: toolResult(call, `Approved by Fahad: ${paths.join(', ')}. You may change exactly these files.`) };
+    const callId = `protected-${createHash('sha256').update(missing.join('\n')).digest('hex').slice(0, 32)}`;
+    const existing = await this.c.store.findApproval(this.session.id, callId);
+    if (existing?.status === 'rejected') {
+      await this.event('approval', `Fahad rejected changes to ${missing.join(', ')}.`, { paths: missing }, 'warning');
+      return { block: toolResult(call, `Fahad rejected changing ${missing.join(', ')}${existing.note ? `: ${existing.note}` : ''}. Do not change these files; find another approach or explain the limitation in finish.`, { isError: true }) };
+    }
+    if (!existing) {
+      const preview = { paths: missing, reason };
+      await this.c.store.requestApproval(this.session, {
+        callId, broker: CODING_BROKER, tool: PROTECTED_CHANGE_TOOL, action: 'grant', risk: 'high',
+        summary: truncate(`Allow changes to protected file(s) ${missing.join(', ')}: ${reason}`, 1900),
+        argumentsSha256: argumentsSha256(preview), preview,
+      });
+    }
+    throw new Stop('awaiting_approval', `Waiting for Fahad's approval to change ${missing.join(', ')}`, { code: 'APPROVAL_REQUIRED' });
   }
 
   async brokerToolCall(call, args) {
@@ -614,8 +695,10 @@ class SessionRun {
     const classification = classifyChangedPaths(changedPaths);
     const failures = [];
     if (classification.hermes.length) failures.push(`Hermes paths were modified and must be reverted: ${classification.hermes.join(', ')}`);
-    if (classification.protected.length && !this.config.allowProtectedPaths) {
-      failures.push(`Protected paths changed without task permission: ${classification.protected.join(', ')}. Revert them or explain why they are required.`);
+    await this.loadGrants();
+    const ungranted = classification.protected.filter((path) => !this.grants.has(path));
+    if (ungranted.length && !this.config.allowProtectedPaths) {
+      failures.push(`Protected paths changed without Fahad's approval: ${ungranted.join(', ')}. Revert them, or call request_protected_change with these exact paths if they are required.`);
     }
     const diff = (await this.sandbox.fullPatch(4_000_000)) || (await this.sandbox.diff({ maxBytes: 4_000_000 })).diff;
     const secret = findSecretMaterial(diff, this.c.env);
@@ -845,6 +928,10 @@ class SessionRun {
     await this.checkpoint('compaction');
     await this.event('checkpoint', 'Transcript compacted into a durable continuation summary.', {});
   }
+}
+
+function ownerMessageText(messages) {
+  return ['MESSAGE FROM FAHAD (the owner), sent from the Hub. Follow it and continue the same task:', ...messages.map((message) => `> ${message}`)].join('\n');
 }
 
 // Failure counts printed by common test runners (node:test TAP and spec

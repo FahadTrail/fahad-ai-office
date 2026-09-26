@@ -106,7 +106,12 @@ export const CONTROL_TOOLS = Object.freeze([
     inputSchema: object({ note: str('The discovery, one or two sentences') }, ['note']) },
   { name: 'finish', description: 'Declare the implementation complete. The controller then runs the test gate, security checks, commits, publishes and follows CI.',
     inputSchema: object({ summary: str('What was changed and why'), tests_run: str('Commands you ran and their outcome') }, ['summary']) },
-  { name: 'request_human', description: 'Stop and ask the owner only when genuinely blocked (missing credential, ambiguous product decision, destructive action). Not for routine choices.',
+  { name: 'request_protected_change', description: 'Ask Fahad to approve changing specific protected files (workflows, deployment/ops scripts, migrations, Dockerfile, compose). Name every exact file path. The task pauses until he decides; after approval you may edit exactly those files. .env files, keys, secrets and Hermes can never be approved.',
+    inputSchema: object({
+      paths: { type: 'array', description: 'Exact repository-relative file paths (1-20)', items: { type: 'string' }, minItems: 1, maxItems: 20 },
+      reason: str('Why the change to these files is required for the objective, and what will change'),
+    }, ['paths', 'reason']) },
+  { name: 'request_human', description: 'Ask the owner one precise question only when genuinely blocked (ambiguous product decision, missing information, destructive action). The task pauses; his answer arrives as a MESSAGE FROM FAHAD and you continue. Not for routine choices or protected-file permission (use request_protected_change).',
     inputSchema: object({ reason: str('Why progress is impossible without a human'), question: str('The precise question or action needed') }, ['reason', 'question']) },
 ]);
 

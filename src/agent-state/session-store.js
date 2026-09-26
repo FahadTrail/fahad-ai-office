@@ -12,7 +12,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 // enforces the same lists to catch a new, unsupported event in tests.
 export const AGENT_EVENT_TYPES = Object.freeze([
   'session', 'phase', 'plan', 'model_turn', 'provider_switch', 'checkpoint', 'tool_call', 'tool_result',
-  'test', 'git', 'github', 'ci', 'deploy', 'verify', 'supabase', 'approval', 'guard', 'error', 'report', 'note',
+  'test', 'git', 'github', 'ci', 'deploy', 'verify', 'supabase', 'approval', 'guard', 'error', 'report', 'note', 'owner',
 ]);
 export const AGENT_EVENT_LEVELS = Object.freeze(['info', 'success', 'warning', 'error']);
 
@@ -117,6 +117,22 @@ export class SupabaseAgentSessionStore {
     });
     if (error) throw storeError('consume_agent_approval', error);
     return data === true;
+  }
+
+  // Protected paths the owner approved for this session (path-scoped grants).
+  // Only an owner decision on a repo.protected_change approval produces one.
+  async listProtectedGrants(sessionId) {
+    const { data, error } = await this.db.from('agent_approvals').select('arguments_preview,status')
+      .eq('session_id', sessionId).eq('tool_name', PROTECTED_CHANGE_TOOL).in('status', ['approved', 'consumed']);
+    if (error) throw storeError('agent_approvals', error);
+    return grantedPaths(data || []);
+  }
+
+  // The owner's replies, taken exactly once by the lease holder.
+  async consumeOwnerInputs(session) {
+    const { data, error } = await this.db.rpc('consume_agent_owner_inputs', { p_session: session.id, p_token: session.leaseToken });
+    if (error) throw storeError('consume_agent_owner_inputs', error);
+    return (data || []).map((row) => ({ id: row.id, message: row.message, createdAt: row.created_at }));
   }
 }
 
@@ -245,7 +261,8 @@ export class MemoryAgentSessionStore {
     this.fence(session);
     const key = `${session.id}:${approval.callId}`;
     this.data.approvals[key] ||= { id: randomUUID(), session_id: session.id, call_id: approval.callId, tool: approval.tool,
-      status: 'pending', arguments_sha256: approval.argumentsSha256, summary: approval.summary, requested_at: this.iso() };
+      status: 'pending', arguments_sha256: approval.argumentsSha256, summary: approval.summary, arguments_preview: approval.preview || {},
+      requested_at: this.iso() };
     this.persist();
     return this.data.approvals[key].id;
   }
@@ -277,6 +294,39 @@ export class MemoryAgentSessionStore {
     return true;
   }
 
+  async listProtectedGrants(sessionId) {
+    this.reload();
+    return grantedPaths(Object.values(this.data.approvals)
+      .filter((row) => row.session_id === sessionId && row.tool === PROTECTED_CHANGE_TOOL && ['approved', 'consumed'].includes(row.status)));
+  }
+
+  // Test/local equivalent of reply_agent_session.
+  async replyToSession(sessionId, message, createdBy = null) {
+    this.reload();
+    const row = this.data.sessions[sessionId];
+    const text = String(message || '').trim();
+    if (!text || text.length > 8000) throw new Error('AGENT_REPLY_INVALID');
+    if (!row) throw new Error('AGENT_SESSION_NOT_FOUND');
+    if (TERMINAL_STATUSES.includes(row.status) || row.cancel_requested) throw new Error('AGENT_SESSION_CLOSED');
+    this.data.ownerInputs ||= {};
+    const input = { id: randomUUID(), session_id: sessionId, message: text, created_by: createdBy, created_at: this.iso(), consumed_at: null };
+    (this.data.ownerInputs[sessionId] ||= []).push(input);
+    this.data.eventSeq += 1;
+    this.data.events[sessionId].push({ id: this.data.eventSeq, session_id: sessionId, type: 'owner', level: 'info',
+      message: `Fahad replied: ${text}`.slice(0, 2000), payload: { input_id: input.id }, created_at: this.iso() });
+    if (row.status === 'blocked') Object.assign(row, { status: 'queued', blocker: null, error_code: null });
+    this.persist();
+    return input;
+  }
+
+  async consumeOwnerInputs(session) {
+    this.fence(session);
+    const pending = (this.data.ownerInputs?.[session.id] || []).filter((input) => !input.consumed_at);
+    for (const input of pending) input.consumed_at = this.iso();
+    this.persist();
+    return pending.map((input) => ({ id: input.id, message: input.message, createdAt: input.created_at }));
+  }
+
   async requestCancel(sessionId) {
     this.reload();
     const row = this.data.sessions[sessionId];
@@ -297,6 +347,18 @@ export class MemoryAgentSessionStore {
     this.data.sessions[sessionId].lease_expires_at = new Date(this.now() - 1000).toISOString();
     this.persist();
   }
+}
+
+export const PROTECTED_CHANGE_TOOL = 'repo.protected_change';
+
+function grantedPaths(rows) {
+  const paths = new Set();
+  for (const row of rows) {
+    for (const path of Array.isArray(row.arguments_preview?.paths) ? row.arguments_preview.paths : []) {
+      if (typeof path === 'string' && path.length <= 500) paths.add(path);
+    }
+  }
+  return [...paths].sort();
 }
 
 export function fromSessionRow(row) {

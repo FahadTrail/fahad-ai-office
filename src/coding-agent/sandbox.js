@@ -245,8 +245,14 @@ export class Sandbox {
     }
   }
 
+  // Owner-approved protected files (path-scoped approvals). Only the
+  // controller sets them, from approval rows decided by the owner.
+  setProtectedGrants(paths = []) {
+    this.protectedGrants = new Set(paths);
+  }
+
   async writeFile(path, content, { allowProtected = false } = {}) {
-    const normalized = assertWritablePath(path, { allowProtected });
+    const normalized = assertWritablePath(path, { allowProtected, grants: this.protectedGrants });
     const { absolute } = await this.resolveInside(normalized, { mustExist: false });
     const existing = await lstat(absolute).catch(() => null);
     if (existing?.isSymbolicLink()) throw policyError('SYMLINK_WRITE', 'Refusing to write through a symbolic link');
@@ -263,7 +269,7 @@ export class Sandbox {
   }
 
   async editFile(path, oldText, newText, { replaceAll = false, allowProtected = false } = {}) {
-    const normalized = assertWritablePath(path, { allowProtected });
+    const normalized = assertWritablePath(path, { allowProtected, grants: this.protectedGrants });
     const { absolute } = await this.resolveInside(normalized);
     const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
     let current;

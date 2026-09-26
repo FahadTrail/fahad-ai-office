@@ -80,11 +80,39 @@ export function classifyChangedPaths(paths) {
   };
 }
 
-export function assertWritablePath(path, { allowProtected = false } = {}) {
+// Protected paths the owner may never grant to the agent, whatever the task
+// says: environment files, secret/credential directories, key material and
+// anything Hermes-related.
+const NEVER_GRANTABLE = Object.freeze([
+  /(^|\/)\.env(?:\.|$)/i,
+  /(^|\/)(?:secrets?|credentials?)(?:\/|$)/i,
+  /(^|\/)[^/]*\.(?:pem|key|p12|pfx)$/i,
+  HERMES_PATTERN,
+]);
+
+export function isProtectedPath(path) {
+  return PROTECTED_CHANGE_PATTERNS.some((pattern) => pattern.test(path));
+}
+
+// Validates an agent's request for owner approval to change protected files.
+// Returns the normalized paths, or throws with the reason the request is refused.
+export function grantablePaths(paths) {
+  const list = (Array.isArray(paths) ? paths : [paths]).map((path) => normalizeRepoPath(String(path || '')));
+  if (!list.length || list.length > 20) throw policyError('PROTECTED_REQUEST_INVALID', 'Request between 1 and 20 specific files');
+  for (const path of list) {
+    if (path === '.' || path.endsWith('/')) throw policyError('PROTECTED_REQUEST_INVALID', 'Request specific files, not directories');
+    if (NEVER_GRANTABLE.some((pattern) => pattern.test(path))) throw policyError('NEVER_GRANTABLE', `${path} can never be granted (environment, secret, key or Hermes resource)`);
+    if (!isProtectedPath(path)) throw policyError('NOT_PROTECTED', `${path} is not protected; edit it normally`);
+  }
+  return [...new Set(list)].sort();
+}
+
+export function assertWritablePath(path, { allowProtected = false, grants = null } = {}) {
   const normalized = normalizeRepoPath(path);
   if (HERMES_PATTERN.test(normalized)) throw policyError('HERMES_PROTECTED', 'Hermes paths are isolated and may not be modified');
-  if (!allowProtected && PROTECTED_CHANGE_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    throw policyError('PROTECTED_PATH', `${normalized} is protected; changing it requires explicit approval in the session configuration`);
+  const granted = Boolean(grants?.has?.(normalized)) && !NEVER_GRANTABLE.some((pattern) => pattern.test(normalized));
+  if (!allowProtected && !granted && isProtectedPath(normalized)) {
+    throw policyError('PROTECTED_PATH', `${normalized} is protected; call request_protected_change with this exact path to ask Fahad for approval`);
   }
   return normalized;
 }
