@@ -102,6 +102,22 @@ inside the built runtime image as root.
   JEV decision (not integrated) are in `docs/providers.md`; the Office
   architecture is in `docs/office-agents.md`.
 
+* Free capacity pass (2026-09-26):
+  * Provider facts were re-verified from official pages, with sources in
+    `src/model-gateway/agentic/provider-facts.js` and `docs/providers.md`:
+    * GitHub Models is retired;
+    * Cerebras is trial credits only (PROMO);
+    * Groq free is 8K tokens/min;
+    * Groq qwen3.8-27b, Groq gpt-oss-20b, Gemini Flash-Lite and Z.ai GLM-4.5-Flash were added.
+  * Global free-route guarantee (`free-guard.js`): a billed or silently
+    rerouted free call is charged to the ledger, the route is blocked for 24 h,
+    and the task fails over.
+  * Provider model catalogs (`provider-catalogs.js`).
+  * Named account blockers, with the Qwen diagnosis in owner canaries.
+  * Background qualification of free models (`qualification.js`) with
+    job-specific, evidence-based free ranking.
+  * Supabase tools are hidden when their token is absent.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,

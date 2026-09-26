@@ -333,6 +333,12 @@ export class OfficeWorkflow {
         onCheckpoint: execution.onCheckpoint,
         onProviderSwitch: execution.onProviderSwitch,
         onActivity: args.onActivity,
+        onIncident: (incident) => this.store.emit({
+          jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id,
+          type: 'activity', required: true, level: 'error',
+          message: `Free-route guard: ${incident.routeId} ${incident.kind === 'paid_on_free_route' ? `was billed $${Number(incident.costUsd).toFixed(6)}` : 'served a different model'}; the cost was recorded, the route is blocked for 24 h and the step moved to another route.`,
+          payload: { kind: 'free_route_incident', route: incident.routeId, incident: incident.kind, cost_usd: incident.costUsd, reported_model: incident.reportedModel },
+        }),
         onEscalation: (change) => this.store.emit({
           jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id,
           type: 'activity', required: true, level: 'warning',

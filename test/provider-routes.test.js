@@ -41,15 +41,23 @@ const expected = {
   'gemini:gemini-flash-latest': { url: /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-flash-latest:generateContent$/ },
   'openrouter:qwen/qwen3-coder:free': { url: 'https://openrouter.ai/api/v1/chat/completions', tokens: 'max_tokens' },
   'groq:openai/gpt-oss-120b': { url: 'https://api.groq.com/openai/v1/chat/completions', tokens: 'max_tokens' },
-  'github:openai/gpt-4.1': { url: 'https://models.github.ai/inference/chat/completions', tokens: 'max_tokens' },
+  'groq:qwen/qwen3.8-27b': { url: 'https://api.groq.com/openai/v1/chat/completions', tokens: 'max_tokens' },
+  'groq:openai/gpt-oss-20b': { url: 'https://api.groq.com/openai/v1/chat/completions', tokens: 'max_tokens' },
+  'gemini:gemini-flash-lite-latest': { url: /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-flash-lite-latest:generateContent$/ },
+  'zhipu:glm-4.5-flash': { url: 'https://api.z.ai/api/paas/v4/chat/completions', tokens: 'max_tokens' },
   'cerebras:gpt-oss-120b': { url: 'https://api.cerebras.ai/v1/chat/completions', tokens: 'max_completion_tokens' },
+  'cerebras:qwen-3.8-27b': { url: 'https://api.cerebras.ai/v1/chat/completions', tokens: 'max_completion_tokens' },
   'mistral:mistral-medium-latest': { url: 'https://api.mistral.ai/v1/chat/completions', tokens: 'max_tokens' },
 };
 
 test('every configured non-Anthropic route calls its endpoint with its key and normalizes tool calls', async () => {
   let current = null;
   const fetchFn = async (url, init) => { current.calls.push({ url: String(url), headers: init.headers, body: JSON.parse(init.body) }); return json(toolCallResponse(current.protocol)); };
-  const pool = createModelPool({ env, fetchFn }).filter((route) => route.provider !== 'anthropic');
+  const all = createModelPool({ env, fetchFn });
+  const github = all.find((route) => route.provider === 'github');
+  assert.deepEqual(github.unavailableReasons, ['PROVIDER_RETIRED'], 'GitHub Models was retired on 2026-07-30 and is never called');
+  assert.equal(github.protocolClient, null);
+  const pool = all.filter((route) => route.provider !== 'anthropic' && !route.retired);
   assert.deepEqual(pool.map((route) => route.id).toSorted(), Object.keys(expected).toSorted());
   for (const route of pool) {
     assert.deepEqual(route.unavailableReasons, [], `${route.id} is routable once configured`);
@@ -76,7 +84,7 @@ test('every configured non-Anthropic route calls its endpoint with its key and n
 test('provider HTTP errors classify into retry, failover or approval without leaking bodies', async () => {
   const cases = [[401, 'PROVIDER_AUTH', 'approval'], [403, 'PROVIDER_AUTH', 'approval'], [402, 'PROVIDER_CAPACITY', 'failover'],
     [404, 'PROVIDER_UNSUITABLE', 'failover'], [429, 'PROVIDER_RATE_LIMIT', 'retry'], [503, 'PROVIDER_TRANSIENT', 'retry']];
-  for (const route of createModelPool({ env, fetchFn: async () => json({}) }).filter((entry) => entry.provider !== 'anthropic')) {
+  for (const route of createModelPool({ env, fetchFn: async () => json({}) }).filter((entry) => entry.provider !== 'anthropic' && !entry.retired)) {
     for (const [status, code, failureClass] of cases) {
       const client = createModelPool({ env, fetchFn: async () => json({ error: { message: 'body with sk-live-secret', type: 'x' } }, status) })
         .find((entry) => entry.id === route.id).protocolClient;

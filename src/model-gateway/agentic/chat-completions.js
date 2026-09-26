@@ -58,13 +58,10 @@ export class ChatCompletionsProtocol {
       reasoningTokens: 0,
     };
     usage.costUsd = costUsd(usage, this.pricing);
-    // Free-only guard: a provider-reported cost on a free route means the
-    // request was billed. Record the real cost, refuse the result and let the
-    // gateway quarantine the route and fail over.
+    // A cost the provider itself reports (OpenRouter usage accounting). The
+    // gateway's free-route guard refuses any billed response on a free route.
     const reportedCost = Number(body.usage?.cost ?? body.usage?.total_cost ?? 0);
-    if (this.freeOnly && Number.isFinite(reportedCost) && reportedCost > 0) {
-      throw providerError(`${provider} billed a free-only route`, { status: 402, type: 'paid_on_free_route', usage: { ...usage, costUsd: Number(reportedCost.toFixed(8)) } });
-    }
+    if (Number.isFinite(reportedCost) && reportedCost > 0) usage.reportedCostUsd = Number(reportedCost.toFixed(8));
     if (choice.finish_reason === 'content_filter') {
       throw providerError(`${provider} filtered the request`, { status: 422, type: 'refusal', usage });
     }

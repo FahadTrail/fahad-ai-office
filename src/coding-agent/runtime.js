@@ -19,6 +19,7 @@ import { Sandbox, resolveSandboxMode } from './sandbox.js';
 // Route ids the workspace policy authorizes: provider enabled, model listed
 // and the same controller-side secret reference the route uses.
 // Shared with the Office runner and the Hub (workspace-policy/engine.js).
+import { chargeUnreserved } from '../office/pool-runner.js';
 import { authorizedRoutes } from '../workspace-policy/engine.js';
 export { authorizedRoutes };
 
@@ -79,7 +80,7 @@ export function createCodingRuntime({
   const authorizeRoute = async (route, session) => {
     const policy = await policyStore.getPolicy(session.workspaceId);
     new WorkspacePolicyEngine({ providerSecretRefs: { [route.provider]: route.secretRef } })
-      .authorizeProvider(policy, route.provider, route.model, { freeOnly: Boolean(route.freeOnly) });
+      .authorizeProvider(policy, route.provider, route.model, { freeOnly: Boolean(route.freeOnly), nonPaid: ['free', 'promo'].includes(route.billingClass) });
   };
 
   // Routing policy for the next turn: defaults < env < workspace < task. Per
@@ -111,6 +112,7 @@ export function createCodingRuntime({
       const reservation = await policyStore.reserveBudget({ workspaceId: session.workspaceId, idempotencyKey, amountUsd });
       return { ...reservation, idempotencyKey, route: route.id };
     },
+    charge: async (session, { amountUsd, attemptId }) => chargeUnreserved(policyStore, session.workspaceId, `agent-incident:${session.id}:${attemptId}`, amountUsd),
     settle: async (session, reservation, actualUsd) => {
       if (!reservation) return;
       await policyStore.settleBudget({

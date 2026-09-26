@@ -18,10 +18,25 @@ export const HEALTH = Object.freeze({
 
 const MINUTE = 60_000;
 const ROUTE_LEVEL_REASONS = new Set(['MODEL_NOT_FOUND', 'DATA_POLICY', 'NO_TOOL_SUPPORT', 'PROVIDER_FILTERED', 'PRICE_FILTERED']);
+// Account or credential problems only a human can fix: calling again in a few
+// minutes cannot succeed, so the route rests for a day (or until the runtime
+// restarts, which is what a credential change does; see releaseAuthCooldowns).
+export const ACCOUNT_BLOCKERS = Object.freeze({
+  ACCOUNT_NOT_ACTIVATED: 'Account/service not activated for this key or region',
+  ACCOUNT_OVERDUE: 'Account has an overdue balance',
+  REGION_NOT_SUPPORTED: 'Account or key region not supported',
+  MODEL_NOT_ENTITLED: 'Account is not entitled to this model',
+  PERMISSION_MISSING: 'Token lacks the required permission',
+  CREDENTIAL_INVALID: 'Credential rejected (invalid, expired or revoked)',
+  NO_CREDITS: 'No credits on the account',
+});
+const ACCOUNT_BLOCKER_COOLDOWN_MS = 24 * 60 * MINUTE;
+const SHORT_TRANSIENT_COOLDOWN_MS = MINUTE;
 
 // Stored codes follow provider_status.last_error_code (^[A-Z][A-Z0-9_]{2,80}$).
 function errorCode(error) {
   if (error.type === 'paid_on_free_route') return 'PAID_ON_FREE_ROUTE';
+  if (error.type === 'free_route_model_mismatch') return 'FREE_ROUTE_MODEL_MISMATCH';
   const base = error.code || 'PROVIDER_ERROR';
   return error.reason && /^[A-Z_]{3,40}$/.test(error.reason) ? `${base}_${error.reason}`.slice(0, 80) : base;
 }
@@ -35,9 +50,15 @@ export function failureOutcome(error, previous = {}, now = Date.now(), route = n
   const resetAt = parseReset(error.rateLimit?.requestsReset) || parseReset(error.rateLimit?.tokensReset);
   let health = previous.health && previous.health !== HEALTH.UNKNOWN ? previous.health : HEALTH.HEALTHY;
   let cooldownUntil = null;
-  if (error.failureClass === FAILURE_CLASS.APPROVAL) {
+  if (error.reason && ACCOUNT_BLOCKERS[error.reason]) {
+    health = HEALTH.AUTH_ERROR;
+    cooldownUntil = now + ACCOUNT_BLOCKER_COOLDOWN_MS;
+  } else if (error.failureClass === FAILURE_CLASS.APPROVAL) {
     health = HEALTH.AUTH_ERROR;
     cooldownUntil = now + 6 * 60 * MINUTE;
+  } else if (error.type === 'free_route_model_mismatch') {
+    health = HEALTH.UNAVAILABLE;
+    cooldownUntil = now + 24 * 60 * MINUTE;
   } else if (error.code === 'PROVIDER_RATE_LIMIT' && error.quotaScope === 'day') {
     health = HEALTH.QUOTA_EXHAUSTED;
     cooldownUntil = Date.parse(quotaCooldownUntil(route || { provider: previous.provider }, error, now));
@@ -57,9 +78,15 @@ export function failureOutcome(error, previous = {}, now = Date.now(), route = n
     health = HEALTH.RATE_LIMITED;
     cooldownUntil = retryAfterMs != null ? now + clamp(retryAfterMs, 5_000, 6 * 60 * MINUTE)
       : resetAt || now + Math.min(30 * MINUTE, MINUTE * 2 ** Math.max(0, consecutive - 1));
+    // A route that keeps answering 429 with a seconds-long retry-after (an
+    // upstream that is simply saturated) is not hammered: from the third
+    // consecutive limit the cooldown doubles, up to 30 minutes.
+    if (consecutive >= 3) cooldownUntil = Math.max(cooldownUntil, now + Math.min(30 * MINUTE, MINUTE * 2 ** (consecutive - 3)));
   } else if (error.failureClass === FAILURE_CLASS.RETRY) {
+    // Temporary 5xx/network: a short cooldown so the next turn prefers
+    // another route, growing if the route keeps failing.
     health = consecutive >= 2 ? HEALTH.UNAVAILABLE : HEALTH.DEGRADED;
-    cooldownUntil = consecutive >= 2 ? now + Math.min(30 * MINUTE, MINUTE * 2 ** (consecutive - 2)) : null;
+    cooldownUntil = consecutive >= 2 ? now + Math.min(30 * MINUTE, MINUTE * 2 ** (consecutive - 2)) : now + SHORT_TRANSIENT_COOLDOWN_MS;
   }
   // PROVIDER_UNSUITABLE / refusals are about one request, not the provider.
   return {
@@ -114,6 +141,17 @@ export class MemoryProviderStateStore {
     });
   }
 
+  async releaseAuthCooldowns() {
+    const released = [];
+    for (const [id, row] of this.rows) {
+      if (row.health === HEALTH.AUTH_ERROR && isCoolingDown(row, this.now())) {
+        this.rows.set(id, { ...row, cooldownUntil: new Date(this.now()).toISOString() });
+        released.push(id);
+      }
+    }
+    return released;
+  }
+
   async recordFailure(route, error) {
     const previous = this.rows.get(route.id) || {};
     this.rows.set(route.id, {
@@ -166,6 +204,18 @@ export class SupabaseProviderStateStore {
       p_output_tokens: 0,
       p_cost_usd: Number(error.usage?.costUsd || 0),
     });
+  }
+
+  // A credential or account fix reaches the runtime as a restart (set-secret
+  // reloads the containers), so on start every account/credential cooldown is
+  // lifted once: the next canary or real call re-checks the provider instead
+  // of waiting out a day-long cooldown. Rate-limit and quota cooldowns stay.
+  async releaseAuthCooldowns() {
+    const nowIso = new Date(this.now()).toISOString();
+    const { data, error } = await this.db.from('provider_status').update({ cooldown_until: nowIso })
+      .eq('health', HEALTH.AUTH_ERROR).gt('cooldown_until', nowIso).select('provider,model');
+    if (error) return [];
+    return (data || []).map((row) => `${row.provider}:${row.model}`);
   }
 
   async #record(route, values) {

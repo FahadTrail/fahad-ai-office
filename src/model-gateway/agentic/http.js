@@ -49,6 +49,14 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
 // operator can see WHY a route is unsuitable (e.g. OpenRouter's "No endpoints
 // found matching your data policy") without the provider text being stored.
 const REASON_HINTS = [
+  // Account-level blockers first: they explain a 401/403 better than any
+  // model-level wording in the same message.
+  ['ACCOUNT_NOT_ACTIVATED', /unpurchased|not (been )?activated|activate (the )?(service|model ?studio|product)|service.{0,20}not (enabled|opened|activated)|has not (been )?opened/i],
+  ['ACCOUNT_OVERDUE', /arrearage|overdue|in arrears|outstanding (bill|payment)|payment (is )?(overdue|required)/i],
+  ['REGION_NOT_SUPPORTED', /(country|region|territory|location).{0,30}(not supported|unsupported|not available)|unsupported (country|region|location)/i],
+  ['PERMISSION_MISSING', /models:read|missing (the )?(required )?permission|insufficient.{0,20}(scope|permission)|resource not accessible by/i],
+  ['MODEL_NOT_ENTITLED', /(not (eligible|entitled|authori[sz]ed)|no access|does not have access|access (to|for) (this |the )?model (is )?denied).{0,40}model|model access denied|not in (your|the) (allow|white)list/i],
+  ['CREDENTIAL_INVALID', /invalid.{0,20}(api.?key|token|credential|authentication)|incorrect api key|api key not valid|api key (is )?(invalid|expired|revoked)|authentication (failed|fails)|invalid_api_key|bad credentials/i],
   ['DATA_POLICY', /data policy|privacy setting|allow.*(training|logging)|free model (training|publication)/i],
   ['NO_TOOL_SUPPORT', /support(s)? tool|tool use|tool calling|tools are not supported|function calling is not supported/i],
   ['PRICE_FILTERED', /max[_ ]?price/i],

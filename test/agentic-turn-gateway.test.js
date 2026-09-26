@@ -123,7 +123,7 @@ test('failure outcomes map provider errors to durable health', () => {
   assert.equal(failureOutcome(classifyProviderError(failure(402)), {}, now).health, HEALTH.QUOTA_EXHAUSTED);
   const transient = failureOutcome(classifyProviderError(failure(500)), {}, now);
   assert.equal(transient.health, HEALTH.DEGRADED);
-  assert.equal(transient.cooldownUntil, null);
+  assert.equal(transient.cooldownUntil, new Date(now + 60_000).toISOString(), 'a first 5xx rests the route briefly');
   assert.equal(failureOutcome(classifyProviderError(failure(500)), transient, now).health, HEALTH.UNAVAILABLE);
   const refusal = failureOutcome(classifyProviderError(failure(422, { type: 'refusal' })), {}, now);
   assert.equal(refusal.cooldownUntil, null);
@@ -191,9 +191,11 @@ test('a failed pre-switch checkpoint prevents any call to the backup provider', 
   assert.equal(backup.calls.length, 0);
 });
 
-test('Qwen stays unroutable until its workspace endpoint is configured', () => {
+test('Qwen defaults to the international Model Studio endpoint; a workspace endpoint overrides it', () => {
   const env = { QWEN_API_KEY: 'qwen-test-key-123456', QWEN_API_PRIVATE_DATA_APPROVED: 'true' };
-  assert.ok(createModelPool({ env }).find((entry) => entry.provider === 'qwen').unavailableReasons.includes('ENDPOINT_NOT_CONFIGURED'));
+  const qwen = createModelPool({ env }).find((entry) => entry.provider === 'qwen');
+  assert.equal(qwen.endpoint, 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions');
+  assert.deepEqual(qwen.unavailableReasons, []);
   const configured = createModelPool({ env: { ...env, QWEN_API_ENDPOINT: 'https://ws-1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions' } });
   assert.deepEqual(configured.find((entry) => entry.provider === 'qwen').unavailableReasons, []);
 });

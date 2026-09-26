@@ -7,7 +7,7 @@ import { JOB_PROFILES, capabilityGaps, capabilityProfile } from '../src/model-ga
 import { FREE_ALLOWANCES, freeQuotaStatus, isDailyQuotaText, nextResetAt } from '../src/model-gateway/agentic/free-quota.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const chatReply = { model: 'm', choices: [{ finish_reason: 'stop', message: { content: 'ok' } }], usage: { prompt_tokens: 3, completion_tokens: 1 } };
+const chatReply = { choices: [{ finish_reason: 'stop', message: { content: 'ok' } }], usage: { prompt_tokens: 3, completion_tokens: 1 } };
 const geminiReply = { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'ok' }] } }], usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1 } };
 const env = {
   GEMINI_API_KEY: 'gemini-test-key-12345', ZHIPU_API_KEY: 'zhipu-test-key-1234', OPENROUTER_API_KEY: 'sk-or-test-123456789',
