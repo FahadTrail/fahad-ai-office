@@ -116,3 +116,21 @@ test('without CODING_SUPABASE_ACCESS_TOKEN the Supabase tools are never offered;
   assert.equal(byName['supabase.query_write'].risk, 'high');
   assert.equal(byName['supabase.migration_apply'].risk, 'high');
 });
+
+test('extra Gemini free models are added only when the key lists them, each with its own route', async () => {
+  const { setProviderCatalog: set } = await import('../src/model-gateway/agentic/provider-catalogs.js');
+  const env = { GEMINI_API_KEY: 'AIzaTestKey_0123456789abcdefghijklmn' };
+  assert.equal(createModelPool({ env }).filter((route) => route.provider === 'gemini').length, 2, 'no catalog yet: only the two alias routes');
+  set('gemini', { ok: true, models: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemma-4-31b-it'], contexts: { 'gemma-4-31b-it': 131072 } });
+  try {
+    const gemini = createModelPool({ env }).filter((route) => route.provider === 'gemini');
+    const byId = Object.fromEntries(gemini.map((route) => [route.id, route]));
+    assert.deepEqual(Object.keys(byId).toSorted(), ['gemini:gemini-2.5-flash', 'gemini:gemini-flash-latest', 'gemini:gemini-flash-lite-latest', 'gemini:gemma-4-31b-it']);
+    assert.equal(byId['gemini:gemma-4-31b-it'].contextWindow, 131072);
+    assert.equal(byId['gemini:gemma-4-31b-it'].discovered, true);
+    assert.equal(byId['gemini:gemma-4-31b-it'].billingClass, 'free');
+    assert.equal(byId['gemini:gemma-4-31b-it'].privacyApproved, false);
+  } finally {
+    set('gemini', null);
+  }
+});

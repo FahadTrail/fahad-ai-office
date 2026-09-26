@@ -18,7 +18,7 @@
 // router prefers the model with the best evidence for THAT job (qualified
 // skills, then observed reliability), never one universal ranking.
 
-import { assertFreeRouteHonest } from './free-guard.js';
+import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 import { isCoolingDown } from './provider-state.js';
 import { classifyProviderError } from '../contracts.js';
 
@@ -132,7 +132,7 @@ export async function qualifyRoute(route, { now = () => Date.now(), maxOutputTok
       }
     }
   } catch (error) {
-    return { ...base, status: 'error', errorCode: errorCode(error), durationMs: now() - startedAt, usage, incident: error?.type || null, error };
+    return { ...base, status: 'error', errorCode: errorCode(error), durationMs: now() - startedAt, usage, incident: FREE_ROUTE_INCIDENTS.has(error?.type) ? error.type : null, error };
   }
   const passed = SKILLS.filter((skill) => skills[skill]).length;
   const status = skills.structured && passed >= 5 ? 'qualified' : passed >= 3 ? 'partial' : 'failed';
