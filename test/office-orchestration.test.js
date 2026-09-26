@@ -187,3 +187,12 @@ test('the roster: every Office function has its own executable employee; models 
   assert.deepEqual(parseOutput('## Summary\nShort.\n\n## Work\nBody\n\n## Decisions for Fahad\nNone'), { summary: 'Short.', handoff: '', decisions: '' });
   assert.deepEqual(parseRevisionRequest('Plain final text', [{ id: 'a', agent: 'brand' }]), []);
 });
+
+test('language follows Fahad\'s message through plan, workstreams and synthesis', async () => {
+  const { readFileSync } = await import('node:fs');
+  const chief = readFileSync(new URL('../src/chief.js', import.meta.url), 'utf8');
+  const specialist = readFileSync(new URL('../src/office/specialist.js', import.meta.url), 'utf8');
+  assert.match(chief, /every workstream title and brief, and synthesis_brief in the language of Fahad/);
+  assert.match(specialist, /whole deliverable in the language of Fahad\\?'s ORIGINAL OBJECTIVE/);
+  assert.match(specialist, /whole result in the language of the ORIGINAL OBJECTIVE/);
+});

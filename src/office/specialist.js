@@ -30,6 +30,7 @@ export async function performOfficeWork({ agent, role, goal, brief, title, upstr
     prompt: [
       `You are ${employee.label} in Fahad's AI Office. Your scope: ${employee.scope}`,
       `The Chief of Staff assigned you this workstream: "${title}". Do the work yourself, completely; do not ask for permission.`,
+      'Write your whole deliverable in the language of Fahad\'s ORIGINAL OBJECTIVE below, whatever language the other inputs use.',
       webTools ? 'Use the web tools to verify current facts and cite sources.' : 'You have no web access in this task: rely on the inputs and label assumptions.',
       ...OUTPUT_CONTRACT,
       '',
@@ -58,7 +59,7 @@ export async function synthesizeWorkflow({ agent, goal, synthesisBrief, outputs,
       'their work; credit them by role where useful. Resolve conflicts between outputs explicitly.',
       'Structure: a short executive summary first, then the consolidated plan/answer, then',
       '"## Decisions for Fahad" (only what genuinely needs the owner) and "## Next steps".',
-      'Use the language of the original objective.',
+      'Write the whole result in the language of the ORIGINAL OBJECTIVE, even if some employee outputs used another language.',
       allowRevision ? [
         'If — and only if — an output is clearly wrong or missing something essential, you may instead return ONLY',
         'a JSON object {"revise":[{"workstream":"<id>","instruction":"what to fix"}]} (at most 3). Otherwise write the result.',
