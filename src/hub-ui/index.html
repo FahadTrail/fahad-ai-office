@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Fahad AI Office</title>
+<link rel="stylesheet" href="./ui/app.css">
+</head>
+<body>
+<div id="login" class="login hidden" role="dialog" aria-labelledby="loginTitle">
+  <form id="loginForm" class="login-card" autocomplete="on">
+    <div class="brand-mark" aria-hidden="true">F</div>
+    <h1 id="loginTitle">Fahad AI Office</h1>
+    <p class="muted" id="loginHint">Sign in with a one-time code sent to your email.</p>
+    <label class="field-label" for="loginEmail">Email</label>
+    <input id="loginEmail" class="input" type="email" autocomplete="email" required>
+    <div id="otpRow" class="hidden">
+      <label class="field-label" for="loginCode">6-digit code</label>
+      <input id="loginCode" class="input" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code">
+    </div>
+    <p id="loginError" class="form-error hidden" role="alert"></p>
+    <button id="loginSubmit" class="btn btn-primary btn-block" type="submit">Send code</button>
+  </form>
+</div>
+
+<div id="app" class="app hidden">
+  <aside id="sidebar" class="sidebar" aria-label="Navigation">
+    <div class="sidebar-top">
+      <a class="brand" href="#/">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-name">Fahad AI Office</span>
+      </a>
+      <button id="sidebarClose" class="icon-btn only-mobile" aria-label="Close menu">✕</button>
+    </div>
+    <label class="sr-only" for="projectSelect">Project</label>
+    <select id="projectSelect" class="input input-sm project-select"></select>
+    <a href="#/" class="btn btn-primary btn-block new-chat" id="newChat">＋ New chat</a>
+    <nav class="nav">
+      <div class="nav-group">Workspace</div>
+      <a class="nav-item" href="#/chats" data-nav="chats"><span class="nav-ico">💬</span>Chats</a>
+      <div id="recentChats" class="recent-chats"></div>
+      <a class="nav-item" href="#/tasks" data-nav="tasks"><span class="nav-ico">✔︎</span>Tasks<span id="runningCount" class="count hidden"></span></a>
+      <a class="nav-item" href="#/projects" data-nav="projects"><span class="nav-ico">▣</span>Projects</a>
+      <div class="nav-group">Tools</div>
+      <a class="nav-item" href="#/code" data-nav="code"><span class="nav-ico">⌘</span>Coding Agent</a>
+      <div class="nav-group">System</div>
+      <a class="nav-item" href="#/attention" data-nav="attention"><span class="nav-ico">●</span>Needs attention<span id="attentionCount" class="count count-alert hidden"></span></a>
+      <a class="nav-item" href="#/models" data-nav="models"><span class="nav-ico">◎</span>Models</a>
+      <a class="nav-item" href="#/settings" data-nav="settings"><span class="nav-ico">⚙︎</span>Settings</a>
+    </nav>
+  </aside>
+  <div id="scrim" class="scrim hidden"></div>
+  <main class="main">
+    <header class="topbar only-mobile">
+      <button id="menuButton" class="icon-btn" aria-label="Open menu">☰</button>
+      <span id="topTitle" class="topbar-title">Fahad AI Office</span>
+      <a href="#/attention" class="icon-btn attention-dot hidden" id="topAttention" aria-label="Needs attention">●</a>
+    </header>
+    <div id="view" class="view" tabindex="-1"></div>
+  </main>
+</div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+<script src="./ui/app.js" type="module"></script>
+</body>
+</html>

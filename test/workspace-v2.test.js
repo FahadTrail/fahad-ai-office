@@ -159,3 +159,27 @@ test('titles are short and readable; task view exposes efficiency metrics', () =
   assert.deepEqual([view.metrics.modelCalls, view.metrics.inputTokens, view.metrics.cachedInputTokens, view.metrics.modelSwitches, view.metrics.compactions], [1, 1000, 900, 1, 1]);
   assert.equal(view.currentModel, 'deepseek:deepseek-flash');
 });
+
+test('the Model Pool is shown in four owner-facing states; a blocked account never hides the others', async () => {
+  const { modelsView, simpleModelStatus } = await import('../src/hub-workspace.js');
+  assert.equal(simpleModelStatus({ status: 'BLOCKED — MODEL STUDIO ACTIVATION REQUIRED', accountBlocker: { text: 'Activate Model Studio' } }).status, 'ACCOUNT ACTION REQUIRED');
+  assert.equal(simpleModelStatus({ status: 'RATE LIMITED', cooldownUntil: '2026-09-26T20:00:00Z' }).status, 'COOLDOWN');
+  assert.equal(simpleModelStatus({ status: 'LIVE' }).status, 'AVAILABLE');
+  assert.equal(simpleModelStatus({ status: 'CONFIGURED — NOT YET VERIFIED' }).status, 'AVAILABLE');
+  assert.equal(simpleModelStatus({ status: 'NOT CONFIGURED' }).status, 'UNAVAILABLE');
+  const view = modelsView({ routes: [
+    { id: 'qwen:qwen3.8-flash', provider: 'qwen', model: 'qwen3.8-flash', status: 'BLOCKED — MODEL STUDIO ACTIVATION REQUIRED', billingClass: 'PAID' },
+    { id: 'deepseek:deepseek-flash', provider: 'deepseek', model: 'deepseek-flash', status: 'LIVE', billingClass: 'PAID', routingRank: 1 },
+    { id: 'github:x', provider: 'github', model: 'x', status: 'RETIRED', retired: true, billingClass: 'FREE' },
+  ] });
+  assert.equal(view.mode, 'AUTO');
+  assert.deepEqual(view.models.map((model) => model.id), ['deepseek:deepseek-flash', 'qwen:qwen3.8-flash']);
+  assert.deepEqual(view.counts, { AVAILABLE: 1, 'ACCOUNT ACTION REQUIRED': 1 });
+});
+
+test('chat progress is described in plain words', async () => {
+  const { chatStage } = await import('../src/hub-workspace.js');
+  assert.equal(chatStage({ status: 'planning' }), 'Thinking');
+  assert.equal(chatStage({ status: 'running' }, [{ title: 'Research the request', status: 'running' }]), 'Researching');
+  assert.equal(chatStage({ status: 'running' }, [{ title: 'Chief final review', status: 'assigned' }]), 'Reviewing the answer');
+});

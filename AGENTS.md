@@ -118,6 +118,19 @@ inside the built runtime image as root.
     job-specific, evidence-based free ranking.
   * Supabase tools are hidden when their token is absent.
 
+* UX & Workflow V2 (2026-09-27): the Hub's `/` is the Workspace V2 interface
+  (`src/hub-ui/`, API `src/hub-workspace.js`); the old Hub stays at `/classic`.
+  * Multi-turn chats (`conversations`).
+  * Chief routes `answer` / `delegate` / `development`.
+  * Project context and memory.
+  * Tasks in human language.
+  * Owner approvals for exact protected files (`request_protected_change`) and
+    Reply & Continue into the same session (`agent_owner_inputs`).
+  * Context budget (about 51% less input on a real session profile).
+
+  Details are in `docs/workspace-v2.md`; the migration is
+  `20260927090000_workspace_v2`.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,

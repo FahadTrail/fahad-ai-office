@@ -11,6 +11,18 @@ import {
 } from './config.js';
 import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi, readDeployedVersion } from './hub-coding.js';
 import { handleWorkspaceApi } from './hub-workspace.js';
+import { readFileSync } from 'node:fs';
+
+// Workspace V2 interface (static files shipped in src/hub-ui). The previous
+// single-page Hub stays available at /classic.
+const UI_FILES = Object.freeze({
+  '/ui/app.css': ['app.css', 'text/css; charset=utf-8'],
+  '/ui/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/ui/markdown.js': ['markdown.js', 'text/javascript; charset=utf-8'],
+});
+const uiFile = (name) => readFileSync(new URL(`./hub-ui/${name}`, import.meta.url), 'utf8');
+export const WORKSPACE_HTML = uiFile('index.html');
+const UI_ASSETS = Object.fromEntries(Object.entries(UI_FILES).map(([path, [name, type]]) => [path, { body: uiFile(name), type }]));
 
 const DEFAULT_PORT = 2132;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -33,7 +45,14 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
         return sendJson(response, 200, { ok: true, service: 'fahad-ai-hub', version: readDeployedVersion(), now: new Date().toISOString() });
       }
       if (request.method === 'GET' && (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html')) {
+        return send(response, 200, WORKSPACE_HTML, 'text/html; charset=utf-8');
+      }
+      if (request.method === 'GET' && (requestUrl.pathname === '/classic' || requestUrl.pathname === '/classic/')) {
         return send(response, 200, HUB_HTML, 'text/html; charset=utf-8');
+      }
+      if (request.method === 'GET' && UI_ASSETS[requestUrl.pathname]) {
+        const asset = UI_ASSETS[requestUrl.pathname];
+        return send(response, 200, asset.body, asset.type);
       }
       if (request.method === 'GET' && requestUrl.pathname === '/api/auth/config') {
         return sendJson(response, 200, { ok: true, enabled: authEnabled, emailHint: authEnabled ? maskEmail(ownerEmail) : null });

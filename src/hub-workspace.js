@@ -4,7 +4,7 @@
 // durable state (jobs, agent_sessions, agent_approvals, …); the engines
 // themselves (Chief workflow, Coding Agent controller) are unchanged.
 
-import { SESSION_FIELDS, publicSession, publicEvent } from './hub-coding.js';
+import { SESSION_FIELDS, modelPoolSnapshot, publicSession, publicEvent } from './hub-coding.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -96,8 +96,15 @@ export function taskNow(session, events = []) {
   if (latest?.type === 'ci') return 'Waiting for CI checks.';
   if (latest?.type === 'deploy') return 'Watching the deployment.';
   if (latest?.type === 'verify') return 'Verifying production.';
-  return session.next_action ? `Next: ${String(session.next_action).slice(0, 200)}` : 'Working.';
+  if (session.next_action) return `Next: ${String(session.next_action).slice(0, 200)}`;
+  return PHASE_NOW[session.phase] || 'Working.';
 }
+
+const PHASE_NOW = {
+  understand: 'Reading the code to understand the task.', plan: 'Planning the change.', implement: 'Making the change.', test: 'Testing the change.',
+  debug: 'Fixing a failing check.', review: 'Reviewing the change.', publish: 'Opening the pull request.', ci: 'Waiting for CI checks.',
+  deploy: 'Deploying.', verify: 'Verifying production.', report: 'Writing the summary.',
+};
 
 // "Agent needs the owner: <reason> — <question>" → structured question.
 export function parseOwnerQuestion(blocker) {
@@ -220,6 +227,38 @@ export function attentionFrom({ sessions = [], approvals = [], failedJobs = [] }
   return items.toSorted((left, right) => rank[left.severity] - rank[right.severity] || String(right.at).localeCompare(String(left.at)));
 }
 
+// ------------------------------------------------------------------ models
+
+// The Model Pool in four owner-facing states. The detailed status stays in
+// `detail`; nothing here claims quota a provider does not report.
+export function simpleModelStatus(route) {
+  const status = String(route.status || '');
+  if (status.startsWith('BLOCKED')) return { status: 'ACCOUNT ACTION REQUIRED', reason: route.accountBlocker?.text || route.accountBlocker?.label || status.replace(/^BLOCKED — /, '') };
+  if (status === 'RATE LIMITED' || status === 'COOLDOWN') return { status: 'COOLDOWN', reason: route.cooldownUntil ? `Rests until ${route.cooldownUntil}` : 'Resting after a provider limit' };
+  if (status === 'LIVE' || status.startsWith('CONFIGURED')) return { status: 'AVAILABLE', reason: status === 'LIVE' ? 'Verified with a real call' : 'Configured; not yet verified by a live call' };
+  if (status === 'NOT CONFIGURED') return { status: 'UNAVAILABLE', reason: 'No credential configured' };
+  if (status === 'RETIRED') return { status: 'UNAVAILABLE', reason: 'Retired by the provider' };
+  return { status: 'UNAVAILABLE', reason: (route.excludedBecause || []).join('; ') || status || 'Not ready' };
+}
+
+export function modelsView(snapshot) {
+  const routes = (snapshot?.routes || []).filter((route) => !route.retired);
+  const models = routes.map((route) => {
+    const simple = simpleModelStatus(route);
+    return {
+      id: route.id, provider: route.provider, model: route.model, status: simple.status, reason: simple.reason, detail: route.status,
+      billing: route.billingClass === 'PAID' ? 'Paid' : route.billingClass === 'PROMO' ? 'Trial credits' : 'Free',
+      health: route.health, cooldownUntil: route.cooldownUntil || null, order: route.routingRank || null,
+      roles: route.suitableJobs || [], coding: route.codingSuitability || null, privateCode: route.privateCode || null,
+    };
+  });
+  const rank = { AVAILABLE: 0, COOLDOWN: 1, 'ACCOUNT ACTION REQUIRED': 2, UNAVAILABLE: 3 };
+  models.sort((left, right) => rank[left.status] - rank[right.status] || (left.order || 999) - (right.order || 999) || left.id.localeCompare(right.id));
+  const counts = {};
+  for (const model of models) counts[model.status] = (counts[model.status] || 0) + 1;
+  return { mode: 'AUTO', counts, models };
+}
+
 // ------------------------------------------------------------------ helpers
 
 export function autoTitle(text) {
@@ -256,7 +295,19 @@ async function one(query) {
   return data;
 }
 
-function messageFromJob(job, { results = [], sessions = [], attempts = [] } = {}) {
+// Human words for what the Office is doing on an unfinished chat request.
+export function chatStage(job, steps = []) {
+  if (job.status === 'planning' || !steps.length) return 'Thinking';
+  const active = steps.find((step) => ['running', 'assigned'].includes(step.status)) || steps.find((step) => step.status === 'queued');
+  if (!active) return 'Finishing';
+  const title = String(active.title || '').toLowerCase();
+  if (/review|final/.test(title)) return 'Reviewing the answer';
+  if (/research|search|web/.test(title)) return 'Researching';
+  if (/plan/.test(title)) return 'Planning';
+  return 'Working on it';
+}
+
+function messageFromJob(job, { results = [], sessions = [], attempts = [], steps = [] } = {}) {
   const final = results.filter((result) => result.kind === 'final' || result.kind === 'task').at(-1);
   const routes = attempts.filter((attempt) => attempt.status === 'succeeded');
   const lastRoute = routes.at(-1);
@@ -271,6 +322,7 @@ function messageFromJob(job, { results = [], sessions = [], attempts = [] } = {}
       costUsd: Number(job.cost_usd || 0),
       tokens: Number(job.tokens_used || 0),
       progress: job.progress || 0,
+      stage: ['completed', 'failed', 'cancelled'].includes(job.status) ? null : chatStage(job, steps),
       tasks: sessions.map((session) => ({ id: session.id, title: session.title, status: session.status, phase: session.phase })),
     },
   };
@@ -280,7 +332,7 @@ function messageFromJob(job, { results = [], sessions = [], attempts = [] } = {}
 
 export async function handleWorkspaceApi({ db, request, response, url, sendJson, readJson, actor, store }) {
   const path = url.pathname;
-  if (!/^\/api\/(conversations|tasks|attention|projects)(\/|$)/.test(path)) return false;
+  if (!/^\/api\/(conversations|tasks|attention|projects|models)(\/|$)/.test(path)) return false;
   try {
     const method = request.method;
 
@@ -320,6 +372,8 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         const jobs = await rows(db.from('jobs').select('id,title,goal,status,progress,final_summary,cost_usd,tokens_used,created_at,completed_at')
           .eq('conversation_id', id).order('created_at', { ascending: true }).limit(200));
         const jobIds = jobs.map((job) => job.id);
+        const openIds = jobs.filter((job) => !['completed', 'failed', 'cancelled'].includes(job.status)).map((job) => job.id);
+        const stepRows = openIds.length ? await rows(db.from('tasks').select('job_id,title,status,sequence').in('job_id', openIds).order('sequence')) : [];
         const [results, sessions, attempts] = jobIds.length ? await Promise.all([
           rows(db.from('results').select('job_id,kind,content,created_at').in('job_id', jobIds).order('created_at')),
           rows(db.from('agent_sessions').select('id,title,status,phase,conversation_id,job_id,created_at').eq('conversation_id', id)),
@@ -335,6 +389,7 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
           results: results.filter((result) => result.job_id === job.id),
           sessions: launchedBy.get(job.id) || [],
           attempts: attempts.filter((attempt) => attempt.job_id === job.id),
+          steps: stepRows.filter((step) => step.job_id === job.id),
         }));
         return sendJson(response, 200, { ok: true, conversation: publicConversation(conversation), messages }), true;
       }
@@ -450,6 +505,13 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         if (error) throw Object.assign(new Error(`Could not cancel: ${error.message}`), { statusCode: 500 });
         return sendJson(response, 200, { ok: true }), true;
       }
+    }
+
+    // ---- models (simplified pool; AUTO routing)
+    if (method === 'GET' && path === '/api/models') {
+      const requested = url.searchParams.get('workspaceId');
+      const snapshot = await modelPoolSnapshot({ db, workspaceId: requested ? uuid(requested, 'workspaceId') : null });
+      return sendJson(response, 200, { ok: true, ...modelsView(snapshot) }), true;
     }
 
     // ---- needs attention
