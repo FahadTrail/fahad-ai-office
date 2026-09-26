@@ -11,8 +11,13 @@ import { FAILURE_CLASS, GatewayError, classifyProviderError } from '../contracts
 import { DEFAULT_BILLING_PRIORITY } from './model-pool.js';
 import { isCoolingDown } from './provider-state.js';
 import { capabilityGaps, jobFit } from './capabilities.js';
+import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
+import { qualificationGaps, evidenceScore } from './qualification.js';
+
+export { assertFreeRouteHonest, sameModelFamily, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 
 const CODING_JOBS = new Set(['coding', 'qa_security']);
+const KEY_WIDE_BLOCKERS = /_(CREDENTIAL_INVALID|ACCOUNT_NOT_ACTIVATED|ACCOUNT_OVERDUE|PERMISSION_MISSING|REGION_NOT_SUPPORTED)$/;
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class AgentTurnGateway {
@@ -54,9 +59,16 @@ export class AgentTurnGateway {
     budgetExhaustedRouteIds = [],
     minQualityTier = this.minQualityTier,
     job = null,
+    qualifications = null,
   } = {}) {
     const state = await this.stateStore.snapshot();
     const now = this.now();
+    // A rejected credential or blocked account affects every model behind
+    // the same key: one failure rests them all instead of each being tried.
+    const blockedSecrets = new Set(this.pool.filter((route) => {
+      const routeState = state.get(route.id);
+      return routeState?.health === 'auth_error' && isCoolingDown(routeState, now) && KEY_WIDE_BLOCKERS.test(String(routeState.lastErrorCode || ''));
+    }).map((route) => route.secretRef).filter(Boolean));
     return this.pool.map((route) => {
       const reasons = [...route.unavailableReasons];
       const routeState = state.get(route.id) || null;
@@ -68,9 +80,14 @@ export class AgentTurnGateway {
       // Capability before price: a free model that cannot do the job is not
       // offered the job.
       reasons.push(...capabilityGaps(route.capabilities, job));
-      const outputTokens = routeOutputTokens(route, maxOutputTokens);
+      // Evidence before claims: a free model's own qualification results can
+      // rule it out of a job, and critical jobs need a passed qualification.
+      reasons.push(...qualificationGaps(route, job, qualifications, now));
+      const outputTokens = routeOutputTokens(route, maxOutputTokens, estimatedInputTokens);
       if (estimatedInputTokens + outputTokens > route.contextWindow) reasons.push('CONTEXT_TOO_LARGE');
+      if (route.requestTokenLimit && outputTokens < Math.min(maxOutputTokens, MIN_USEFUL_OUTPUT_TOKENS)) reasons.push('REQUEST_ABOVE_FREE_TIER_LIMIT');
       if (isCoolingDown(routeState, now)) reasons.push(`COOLDOWN_${String(routeState.health || 'unavailable').toUpperCase()}`);
+      else if (route.secretRef && blockedSecrets.has(route.secretRef)) reasons.push('PROVIDER_CREDENTIAL_BLOCKED');
       if (excludedRouteIds.includes(route.id)) reasons.push('FAILED_THIS_TURN');
       if (policyExcludedRouteIds.includes(route.id)) reasons.push('EXCLUDED_BY_ROUTING_POLICY');
       if (budgetExhaustedRouteIds.includes(route.id)) reasons.push('ROUTE_BUDGET_EXHAUSTED');
@@ -85,7 +102,12 @@ export class AgentTurnGateway {
   // strategy: economy = cheapest first, balanced/quality = best first. A
   // preferred route (the task's current model) keeps ownership while eligible.
   // With a job, "quality" means fit for that job (capability registry).
-  order(evaluations, { preferredRouteId = null, billingPriority = this.billingPriority, strategy = this.strategy, job = null } = {}) {
+  //
+  // Within the non-paid classes cost is zero, so price tiers do not matter:
+  // when qualification evidence is available the order is job-specific —
+  // capability fit plus evidence (passed skills for this job, observed
+  // reliability, recent limits) — so each job has its own free preference.
+  order(evaluations, { preferredRouteId = null, billingPriority = this.billingPriority, strategy = this.strategy, job = null, qualifications = null } = {}) {
     const rank = (route) => {
       const index = billingPriority.indexOf(route.billingClass);
       return index < 0 ? billingPriority.length : index;
@@ -96,12 +118,19 @@ export class AgentTurnGateway {
       : strategy === 'quality'
         ? (left, right) => fit(right) - fit(left) || right.contextWindow - left.contextWindow || left.costTier - right.costTier
         : (left, right) => fit(right) - fit(left) || left.costTier - right.costTier;
+    const now = this.now();
+    const evidence = new Map(evaluations.map((entry) => [entry.route.id, qualifications ? evidenceScore(entry, job, qualifications, now) : 0]));
+    const freePreference = (left, right) => (fit(right) + evidence.get(right.id)) - (fit(left) + evidence.get(left.id))
+      || right.contextWindow - left.contextWindow || left.id.localeCompare(right.id);
     return evaluations.filter((entry) => entry.eligible)
       .map((entry) => entry.route)
       .toSorted((left, right) => {
         if (left.id === preferredRouteId) return -1;
         if (right.id === preferredRouteId) return 1;
-        return rank(left) - rank(right) || within(left, right);
+        const byClass = rank(left) - rank(right);
+        if (byClass) return byClass;
+        if (qualifications && left.billingClass !== 'paid' && right.billingClass !== 'paid') return freePreference(left, right);
+        return within(left, right);
       });
   }
 
@@ -121,6 +150,10 @@ export class AgentTurnGateway {
     const authorize = hooks.authorize || (async () => {});
     const reserve = hooks.reserve || (async () => null);
     const settle = hooks.settle || (async () => {});
+    // Charges a cost that had no reservation (a free route that was billed
+    // anyway) to the workspace budget ledger.
+    const charge = hooks.charge || (async () => {});
+    const onIncident = hooks.onIncident || (async () => {});
     // Test hook at the routing boundary (controlled failover drills). An error
     // it throws with `injected: true` is handled exactly like a provider
     // failure but is never recorded as real provider health.
@@ -137,6 +170,7 @@ export class AgentTurnGateway {
         billingPriority: routing.billingPriority || this.billingPriority,
         strategy: routing.strategy || this.strategy,
         job: routing.job || null,
+        qualifications: routing.qualifications || null,
       });
       if (!route) {
         throw new GatewayError(lastError ? 'All eligible model routes are unavailable' : 'No model route satisfies the task policy', {
@@ -169,7 +203,7 @@ export class AgentTurnGateway {
       for (let attempt = 1; attempt <= this.maxAttemptsPerRoute; attempt += 1) {
         const attemptId = randomUUID();
         const startedAt = this.now();
-        const outputTokens = routeOutputTokens(route, maxOutputTokens);
+        const outputTokens = routeOutputTokens(route, maxOutputTokens, routing.estimatedInputTokens || 0);
         const estimateUsd = estimateTurnCost(route, routing.estimatedInputTokens || 0, outputTokens);
         const reservation = await reserve({ route, estimateUsd, attemptId });
         await onAttempt({ id: attemptId, route, attempt, status: 'started', startedAt: new Date(startedAt).toISOString() });
@@ -191,6 +225,9 @@ export class AgentTurnGateway {
             clientRequestId: attemptId,
             ...(routing.effort ? { effort: routing.effort } : {}),
           });
+          // Free-route guarantee: a free route never silently becomes paid
+          // or silently serves another model.
+          assertFreeRouteHonest(route, result);
           await settle(reservation, result.usage.costUsd || 0);
           await this.stateStore.recordSuccess(route, result);
           const record = { id: attemptId, route, attempt, status: 'succeeded', usage: result.usage, requestId: result.requestId, durationMs: result.durationMs };
@@ -211,7 +248,12 @@ export class AgentTurnGateway {
             error.code = caught.code || 'DRILL_INJECTED_FAILURE';
             error.injected = true;
           }
-          await settle(reservation, Number(error.usage?.costUsd || 0));
+          const incurredUsd = Number(error.usage?.costUsd || 0);
+          await settle(reservation, incurredUsd);
+          if (!reservation && incurredUsd > 0) await charge({ route, amountUsd: incurredUsd, attemptId });
+          if (FREE_ROUTE_INCIDENTS.has(error.type)) {
+            await onIncident({ route, kind: error.type, costUsd: incurredUsd, reportedModel: caught?.reportedModel || null, attemptId });
+          }
           if (!error.injected) await this.stateStore.recordFailure(route, error);
           const record = { id: attemptId, route, attempt, status: 'failed', usage: error.usage || null,
             error: { code: error.code, failureClass: error.failureClass, status: error.status || null, ...(error.reason ? { reason: error.reason } : {}), ...(error.injected ? { injected: true } : {}) } };
@@ -242,10 +284,18 @@ export class AgentTurnGateway {
 
 // A route may declare the largest output its model accepts; requests are
 // clamped to it so a provider limit never turns into a failed turn.
-export function routeOutputTokens(route, requested) {
+export function routeOutputTokens(route, requested, estimatedInputTokens = 0) {
   const cap = Number(route.maxOutputTokens);
-  return Number.isFinite(cap) && cap > 0 ? Math.min(requested, cap) : requested;
+  let tokens = Number.isFinite(cap) && cap > 0 ? Math.min(requested, cap) : requested;
+  // Free tiers that count input + max output per request/minute (Groq free
+  // TPM, …): shrink the output reservation to what fits.
+  const limit = Number(route.requestTokenLimit);
+  if (Number.isFinite(limit) && limit > 0) tokens = Math.min(tokens, Math.max(0, limit - estimatedInputTokens));
+  return tokens;
 }
+
+// Smallest useful answer on a request-limited free route.
+const MIN_USEFUL_OUTPUT_TOKENS = 1024;
 
 export function estimateTurnCost(route, inputTokens, outputTokens) {
   if (!route.pricing || route.billingClass !== 'paid') return 0;

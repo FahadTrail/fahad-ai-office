@@ -31,6 +31,8 @@ const REGISTRY = [
   [/^gemini-.*pro/, { coding: 5, reasoning: 5, research: 5, writing: 5, speed: 2, vision: true, structuredOutput: true }],
   // Open-weight models served by free/low-cost hosts (Groq, Cerebras, GitHub
   // Models, OpenRouter). Strong for text; not trusted with autonomous coding.
+  // Qwen 3.8 27B (Groq free plan, Cerebras trial): strong reasoning for its size.
+  [/qwen-?3\.8-27b/i, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
   [/(^|\/)(openai\/)?gpt-oss-120b/, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
   [/(^|\/)(openai\/)?gpt-oss-20b/, { coding: 2, reasoning: 3, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
   [/llama-3\.3-70b|llama3\.3-70b/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 5, vision: false, structuredOutput: true }],
@@ -101,8 +103,12 @@ export function capabilityProfile(definition, env = {}) {
   const flags = definition.catalogFlags || {};
   profile.vision = typeof override?.vision === 'boolean' ? override.vision : known ? Boolean(known.vision) : Boolean(flags.vision);
   profile.structuredOutput = typeof override?.structuredOutput === 'boolean' ? override.structuredOutput : known ? Boolean(known.structuredOutput) : Boolean(flags.structuredOutput);
-  profile.contextWindow = definition.contextWindow;
-  profile.longContext = definition.contextWindow >= 200_000;
+  // A free tier that caps tokens per request/minute (Groq free: 8K TPM)
+  // limits what one request can carry, whatever the model's own window.
+  const requestLimit = Number(definition.requestTokenLimit);
+  profile.modelContextWindow = definition.contextWindow;
+  profile.contextWindow = Number.isFinite(requestLimit) && requestLimit > 0 ? Math.min(definition.contextWindow, requestLimit) : definition.contextWindow;
+  profile.longContext = profile.contextWindow >= 200_000;
   profile.costClass = definition.billingClass === 'paid' ? ['low', 'low', 'medium', 'high', 'premium'][Math.max(0, Math.min(4, (definition.costTier || 1) - 1))] : definition.billingClass;
   profile.privacyClass = definition.privacyApproved ? 'private-data-approved' : 'public-data-only';
   profile.source = override ? 'owner override' : known ? 'registry' : 'route default';
@@ -124,7 +130,7 @@ export const JOB_PROFILES = Object.freeze({
   // handoff) can run on capable free models; high-stakes synthesis (final
   // review, critical decisions) needs stronger reasoning and writing and
   // escalates automatically when no free model qualifies.
-  orchestration: { label: 'Chief orchestration', min: { reasoning: 3, writing: 3 }, minContext: 16_000, weights: { reasoning: 2, writing: 1, speed: 1 } },
+  orchestration: { label: 'Chief orchestration', min: { reasoning: 3, writing: 3 }, minContext: 8_000, weights: { reasoning: 2, writing: 1, speed: 1 } },
   synthesis: { label: 'High-stakes synthesis / final review', min: { reasoning: 4, writing: 4 }, minContext: 32_000, weights: { reasoning: 3, writing: 2 } },
 });
 

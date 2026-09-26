@@ -17,6 +17,9 @@ import { configureSharedProviderHealth } from './model-runner.js';
 import { SupabaseProviderStateStore } from './model-gateway/agentic/provider-state.js';
 import { CanaryRequestRunner } from './canary/canary-requests.js';
 import { refreshOpenRouterCatalog } from './model-gateway/agentic/openrouter-catalog.js';
+import { refreshProviderCatalogs } from './model-gateway/agentic/provider-catalogs.js';
+import { QualificationStore, AutoQualifier } from './model-gateway/agentic/qualification.js';
+import { createModelPool } from './model-gateway/agentic/model-pool.js';
 import { rankFreeModels } from './model-gateway/agentic/capabilities.js';
 import { OfficeModelRunner } from './office/pool-runner.js';
 import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
@@ -27,12 +30,29 @@ const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 const workspacePolicyStore = new SupabaseWorkspacePolicyStore(db);
 const providerStateStore = new SupabaseProviderStateStore(db);
 configureSharedProviderHealth(providerStateStore);
-const canaryRequests = new CanaryRequestRunner({ db, stateStore: providerStateStore, log, background: true });
+// A restart is how credential/account fixes arrive: re-check blocked providers once.
+providerStateStore.releaseAuthCooldowns()
+  .then((released) => { if (released.length) log('Re-checking providers blocked by account/credential errors:', released.join(', ')); })
+  .catch(() => {});
+
 // OpenRouter free models are discovered from OpenRouter's API at startup and
 // every 6 hours; the Hub and the canary read the in-process catalog.
-const refreshCatalog = () => refreshOpenRouterCatalog({ log, rank: (left, right) => rankFreeModels(left, right, process.env) }).catch(() => null);
+const refreshCatalog = () => Promise.all([
+  refreshOpenRouterCatalog({ log, rank: (left, right) => rankFreeModels(left, right, process.env) }).catch(() => null),
+  refreshProviderCatalogs({ log }).catch(() => null),
+]);
 refreshCatalog();
 setInterval(refreshCatalog, 6 * 60 * 60 * 1000).unref();
+// Free models are qualified in the background (a few $0 calls each) before
+// they take critical work; new credentials/models are absorbed automatically.
+const qualificationStore = new QualificationStore(db);
+const autoQualifier = /^(0|false|no)$/i.test(String(process.env.AUTO_QUALIFY_FREE_MODELS || '')) ? null : new AutoQualifier({
+  createPool: () => createModelPool(),
+  stateStore: providerStateStore,
+  store: qualificationStore,
+  log,
+});
+const canaryRequests = new CanaryRequestRunner({ db, stateStore: providerStateStore, log, background: true, qualifier: autoQualifier });
 const toolBrokerStore = new SupabaseToolBrokerStore(db);
 const { client: safeCanaryClient, transport: safeCanaryTransport } = createSafeCanaryMcpClient();
 const toolBroker = new ToolBroker({
@@ -49,6 +69,7 @@ const officeModelRunner = /^(0|false|no)$/i.test(String(process.env.OFFICE_MODEL
   stateStore: providerStateStore,
   policyStore: workspacePolicyStore,
   routingStore: new SupabaseRoutingPolicyStore(db),
+  qualificationStore,
 });
 const workflow = new OfficeWorkflow({
   store,
@@ -115,6 +136,7 @@ async function main() {
       const progressed = await workflow.runOnce();
       // Owner-requested live provider canaries (no-op unless one is queued).
       if (!progressed) await canaryRequests.maybeRun().catch((error) => log('WARN  canary runner:', error.message));
+      if (!progressed && autoQualifier) autoQualifier.maybeRun();
       lastPollAt = Date.now();
       busy = false;
       heartbeat();

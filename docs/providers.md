@@ -1,15 +1,13 @@
 # Model providers, free capacity and JEV
 
 This is the source of truth for which AI providers the platform can use, which
-of them are free, and why. It was researched on 2026-09-25 from each provider's
-official pages, cited below. Free tiers change often. The code treats every
+of them are free, and why. It was **re-verified on 2026-09-26**. The Office
+Research agent read each provider's official pages from the production server,
+and the results were cross-checked against official changelogs. The same facts,
+with their sources, live in `src/model-gateway/agentic/provider-facts.js` and
+appear on the dashboard. Free tiers change often, so the code treats every
 allowance here as **published, not guaranteed**. Only numbers a provider reports
 in its own response headers are shown as exact.
-
-Code: `src/model-gateway/agentic/model-pool.js` (routes),
-`src/model-gateway/agentic/capabilities.js` (what each model is good for),
-`src/model-gateway/agentic/free-quota.js` (free allowances and reset times),
-`src/model-gateway/agentic/turn-gateway.js` (routing and rotation).
 
 ## How a model is chosen
 
@@ -36,66 +34,125 @@ Code: `src/model-gateway/agentic/model-pool.js` (routes),
    eligible again on its own. A per-minute limit gives only a short cooldown.
    Nobody is asked which model to use.
 
-## Provider table
+## Provider table (checked 2026-09-26)
 
-Status legend: **LIVE** means a real canary or real traffic succeeded. **READY —
-CREDENTIAL REQUIRED** means the adapter is built and tested and only the key is
-missing.
+Status legend:
+* **LIVE**: a real canary or real traffic succeeded.
+* **READY — CREDENTIAL REQUIRED**: the adapter is built and tested; only the key is missing.
+* **BLOCKED — …**: the provider refuses the account; the exact reason is shown.
+* **RETIRED**: the provider shut the service down.
 
-| Provider | Default model | Billing class | Free allowance (published) | Reset | Tools | Coding job? | Private data | Status / blocker |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Anthropic | `claude-opus-5`, `claude-sonnet-5` | paid | none | — | yes | yes | approved | LIVE |
-| OpenAI | `gpt-5.3-codex` | paid | none | — | yes | yes | approved | LIVE (not authorized for the project) |
-| DeepSeek | `deepseek-flash` | paid (very low) | none | — | yes | yes | approved (opt-out verified) | LIVE |
-| Qwen (Alibaba Model Studio) | `qwen3.8-flash` | paid | 1M tokens per model, one-time, 90 days, Singapore region only | one-time | yes | yes | flag `QWEN_API_PRIVATE_DATA_APPROVED` | Key present; account not activated (`AccessDenied.Unpurchased`) |
-| Gemini API (AI Studio) | `gemini-flash-latest` | free | Per project/model; Google shows limits only in AI Studio (Flash is about 20 requests/day on the free tier) | midnight Pacific | yes | yes | flag `GEMINI_API_PRIVATE_DATA_APPROVED` (free-tier prompts may be used by Google) | READY — CREDENTIAL REQUIRED |
-| Groq | `openai/gpt-oss-120b` | free | Per org/model, e.g. 1,000 requests/day; exact values in response headers | rolling | yes | no (coding 3) | flag | READY — CREDENTIAL REQUIRED |
-| OpenRouter | discovered free catalog (17 free models on 2026-09-25, 16 tool-capable, up to 12 admitted) | free (free-only guard) | `:free` models: 20/min, 50/day shared by the key (1,000/day after $10 credit purchase) | midnight UTC | yes | no (public data only) | never for private code | LIVE (dots-3-note, ling-3.0-flash ×2 verified; free→free failover drill passed) |
-| GitHub Models | `openai/gpt-4.1` | free | About 150/day low-tier, 50/day high-tier, 10–15/min, 8K in / 4K out per request | rolling | yes | no (8K context) | flag | READY — CREDENTIAL REQUIRED |
-| Cerebras | `gpt-oss-120b` | free | 14,400 requests/day, 1M tokens/day, 30/min; small free context | rolling | yes | no (context) | flag | READY — CREDENTIAL REQUIRED |
-| Z.ai (GLM) free | `glm-4.7-flash` | free ($0 list price) | rate-limited, no daily cap published | — | yes | no (coding 3) | flag `ZHIPU_API_PRIVATE_DATA_APPROVED` | READY — CREDENTIAL REQUIRED |
-| Z.ai (GLM) paid | `glm-5.3-flash` | paid | none | — | yes | yes | flag | READY — CREDENTIAL REQUIRED |
-| Kimi (Moonshot) | `kimi-k2.7-code` | paid | none: minimum $1 top-up; $5 voucher after $5 of top-ups | — | yes | yes | flag | READY — CREDENTIAL REQUIRED |
-| MiniMax | `MiniMax-M2.7` | paid | none | — | yes | yes | **blocked in code** pending a written data-use policy | READY — CREDENTIAL REQUIRED (public data only) |
-| Mistral | `mistral-medium-latest` | paid until stated | Experiment plan is free but rate-limited, monthly cap shown only in the console, and prompts may be used for training | monthly | yes | yes | flag | READY — CREDENTIAL + PLAN REQUIRED |
+| Provider | Models in the pool | Class | Free allowance (published) | Reset | Tools | Private code | Status / blocker |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Anthropic | `claude-opus-5`, `claude-sonnet-5` | paid | none | — | yes | approved | LIVE |
+| OpenAI | `gpt-5.3-codex` | paid | none | — | yes | approved | LIVE (not authorized for the project) |
+| DeepSeek | `deepseek-flash` | paid (very low) | none | — | yes | approved | LIVE |
+| Gemini API | `gemini-flash-latest`, `gemini-flash-lite-latest` (new) | free | Per project/model, shown only in AI Studio; reported about 20 requests/day for Flash and about 500/day for Flash-Lite | midnight Pacific | yes | flag (free-tier prompts may be used by Google) | LIVE |
+| Groq | `openai/gpt-oss-120b`, `qwen/qwen3.8-27b` (new), `openai/gpt-oss-20b` (new) | free | Per model: 30 RPM, 1K requests/day, **8K tokens/min**, 200K tokens/day. Llama models are enterprise-only now | rolling (headers) | yes | flag | LIVE. Each request is capped at 8K tokens, so Groq takes short jobs such as orchestration and classification |
+| OpenRouter | discovered `:free` catalog (up to 12 admitted) | free (free-only guard) | 20/min and 50/day for the whole key (1,000/day after a one-time $10 purchase) | midnight UTC | yes | never | LIVE |
+| Cerebras | `gpt-oss-120b`, `qwen-3.8-27b` | **promo** | **No permanent free tier since 2026-08-17.** Free Trial: $5 of credits after adding a verified payment method, which expire after 30 days, then access stops (no automatic charge). Trial context: 65K / 64K | one-time | yes | flag | READY — CREDENTIAL REQUIRED |
+| GitHub Models | — | — | **Retired by GitHub on 2026-07-30** (playground, catalog and inference API) | — | — | — | RETIRED. Never called; no token needed |
+| Z.ai (GLM) | `glm-4.7-flash` (200K, function calling), `glm-4.5-flash` | free | $0, one concurrent request | — | yes | flag (Z.ai states it does not store API content) | READY — CREDENTIAL REQUIRED |
+| Z.ai (GLM) paid | `glm-5.3-flash` | paid | none | — | yes | flag | READY — CREDENTIAL REQUIRED |
+| Qwen (Model Studio) | `qwen3.8-flash` | paid | 1M tokens per model, one-time, 90 days, Singapore/International only | one-time | yes | flag | BLOCKED: `AccessDenied.Unpurchased` (see below) |
+| Kimi (Moonshot) | `kimi-k2.7-code` | paid | none (minimum $1 top-up; `kimi-k3` is the flagship; k2.5 and moonshot-v1 were retired on 2026-08-31) | — | yes | flag | READY — CREDENTIAL REQUIRED |
+| MiniMax | `MiniMax-M2.7` | paid | none (`MiniMax-M3` exists) | — | yes | **blocked in code** | READY — CREDENTIAL REQUIRED (public data only) |
+| Mistral | `mistral-medium-latest` | paid until stated | A free "Experiment" allowance could **not** be confirmed on official pages in 2026-09 | monthly | yes | flag | READY — CREDENTIAL REQUIRED |
 
 Notes:
 
-* **Gemini consumer subscription ≠ Gemini API.** Google AI Pro/Ultra (the
-  Gemini app) does not include API access. The API is a separate product: a key
-  from Google AI Studio (https://aistudio.google.com/apikey). Since 2026-05-28
-  AI Studio creates **auth keys** that start with `AQ.`; legacy standard keys
-  (`AIza…`) are being retired by Google. Both are accepted by
-  `ops/set-secret.sh`, and the adapter sends the key in the `x-goog-api-key`
-  header that auth keys require. It is free-tier
-  unless billing is enabled on its Cloud project. Free-tier prompts may be used
-  to improve Google products, so private repository data stays off it until a
-  reviewed **paid** project sets `GEMINI_API_PRIVATE_DATA_APPROVED=true` and
-  `GEMINI_BILLING_CLASS=paid` with `GEMINI_PRICING_JSON`.
-* **Qwen `AccessDenied.Unpurchased`.** The key is valid, but Model Studio has not
-  been activated for the account in the key's region. Fix: sign in to the
-  Alibaba Cloud Model Studio console in the **same region as the endpoint**
-  (Singapore for `dashscope-intl.aliyuncs.com`) and click *Activate Model
-  Studio* / accept the terms. Also confirm the account has no overdue balance
-  (Expenses and Costs). The API key must be created in that same region. Nothing
-  changes in code.
-* **OpenAI** is LIVE on the key but not authorized for the project. That is an
-  owner choice recorded in `workspace_provider_permissions`, not a defect.
-* Each free-tier provider needs its own key. The Coding Agent's GitHub token
-  (`CODING_GITHUB_TOKEN`) is never reused for GitHub Models inference.
+* **Qwen `AccessDenied.Unpurchased`.** Model Studio's code for "Access to model
+  denied. Please make sure you are eligible for using the model." The key is
+  accepted, but the account is not entitled to call models in that region.
+  Usually Model Studio has not been activated in the Singapore region, or the
+  free quota ended without pay-as-you-go enabled. An overdue balance returns
+  `Arrearage` instead. Each owner canary now runs a Qwen diagnosis: the key's
+  model list, a 1-token call to the configured model, and a 1-token call to a
+  second model. That tells *account not activated*, *model not entitled*, *key
+  from another region*, *overdue* and *wrong model id* apart. The canary report
+  (`qwenDiagnosis`) and the dashboard show the named blocker and the owner
+  action. The route rests for 24 hours per failure, and a restart (which is how
+  a credential or account fix arrives) triggers exactly one re-check.
+* **GitHub Models.** Retired, so no token and no permission can enable it. The
+  Coding Agent's `CODING_GITHUB_TOKEN` stays repository-only. It was never used
+  for inference and must not be broadened.
+* **Cerebras** is PROMO, not FREE. The trial credits end and then access stops.
+  Nothing is billed unless the owner buys credits.
+* **Mistral** stays paid unless the owner states a free plan with
+  `MISTRAL_BILLING_CLASS=free`. On a free plan, prompts may be used for training.
 
-Sources:
-[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing),
-[Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits),
-[Groq rate limits](https://console.groq.com/docs/rate-limits),
-[OpenRouter limits](https://openrouter.ai/docs/api-reference/limits),
-[GitHub Models rate limits](https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models#rate-limits),
-[Cerebras rate limits](https://inference-docs.cerebras.ai/support/rate-limits),
-[Z.ai pricing](https://docs.z.ai/guides/overview/pricing),
-[Mistral rate limits](https://help.mistral.ai/en/articles/698531-why-am-i-hitting-api-rate-limits-and-how-do-i-increase-them),
-[Model Studio free quota](https://www.alibabacloud.com/help/en/model-studio/new-free-quota),
-[Model Studio error codes](https://www.alibabacloud.com/help/en/model-studio/error-code),
-[Kimi pricing](https://platform.moonshot.ai/docs/pricing/chat).
+## Free capacity: what routes where
+
+Free routes and the jobs they may take (public/non-private data):
+
+| Route | Effective context | Office jobs (capability) |
+| --- | --- | --- |
+| `gemini-flash-latest` | 1M | research, content, branding, SEO, finance, orchestration, synthesis |
+| `gemini-flash-lite-latest` | 1M | research, content, branding, SEO, orchestration, classification |
+| `groq` gpt-oss-120b / qwen3.8-27b | 8K per request | orchestration, classification |
+| `groq` gpt-oss-20b | 8K per request | orchestration, classification |
+| OpenRouter free (e.g. nemotron-3-ultra/super) | 128K+ | research, content, SEO, branding, orchestration; synthesis/finance once qualified |
+| Z.ai GLM Flash (with a key) | 200K / 128K | research, content, branding, SEO, orchestration, classification |
+| Cerebras trial (with a key) | 65K | research, content, orchestration, classification |
+
+In each job, free models are ordered by capability plus evidence:
+qualification skills for that job, then observed reliability. Paid models are
+used only when no eligible free or promo model remains, and only within the
+workspace budget.
+
+## Free-route guarantee
+
+For every route classified FREE, PROMO or INCLUDED, whatever the provider:
+
+1. **Reported cost.** A response that reports any cost (OpenRouter usage
+   accounting, or any provider's `usage.cost`) is refused. Then:
+   * the real cost is charged to the workspace budget ledger (the budget is never raised);
+   * the route is blocked for 24 hours;
+   * the task is checkpointed and continues on the next eligible route;
+   * the incident is shown on the Platform dashboard (Office → Free-route incidents).
+2. **Silent reroute.** A response from a different vendor or model family
+   (a silent reroute or rename) gets the same treatment. Dated or aliased ids of
+   the same model (`gemini-flash-latest` → `gemini-3.8-flash`) are accepted.
+3. **Removed or renamed models.** Provider model catalogs (Groq, Cerebras,
+   Mistral; Gemini, Qwen and Kimi for diagnosis) are read at start, every 6
+   hours and before each canary. A model a provider no longer lists is marked
+   `CATALOG_MODEL_NOT_IN_PROVIDER_CATALOG` and never called. No guessed
+   replacement is used.
+4. **Paid fallbacks.** No paid fallback list is ever sent to a free endpoint.
+   Discovery never assigns a paid route to FREE. `*:free` workspace
+   authorization covers only non-paid routes.
+5. **Out of quota.** A free route whose quota is exhausted rests until the
+   provider's reset. A route that keeps answering 429 backs off up to 30
+   minutes. A first 5xx rests the route for 1 minute. A rejected key or blocked
+   account rests every model behind that key for 24 hours (or until the next
+   restart).
+
+## Qualification of free models
+
+`src/model-gateway/agentic/qualification.js` runs a small, $0 suite on each
+free or promo route: two or three calls, graded deterministically. The skills
+are:
+
+* instruction following (exact echo, JSON only);
+* structured output;
+* reasoning (word problem);
+* code reading (public snippet);
+* constrained writing;
+* reading comprehension;
+* tool calling with use of the result.
+
+Results are stored with their date and suite version as metadata-only rows
+(`provider_canary_runs`, `requested_by = auto-qualifier`). They stay valid for
+30 days.
+
+* A failed skill that a job needs rules the model out of that job.
+* **Critical jobs** (synthesis, finance, coding, QA/security) require a passed
+  qualification.
+* The runtime qualifies untested routes in the background, most capable first.
+  It checks every 20 minutes while a backlog exists, every 6 hours otherwise,
+  and at most 6 OpenRouter models a day because of the shared allowance. Each
+  owner canary also runs one cycle.
+* A newly added key or a newly discovered model is absorbed automatically.
 
 ## OpenRouter: one key, many free models
 
@@ -162,11 +219,22 @@ sudo bash ops/set-secret.sh GEMINI_API_KEY
 Allowed names: `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`,
 `GITHUB_MODELS_TOKEN`, `CEREBRAS_API_KEY`, `ZHIPU_API_KEY`, `KIMI_API_KEY`,
 `QWEN_API_KEY`, `MISTRAL_API_KEY`, `MINIMAX_API_KEY`,
-`CODING_SUPABASE_ACCESS_TOKEN`. After adding a key, run **Hub → Platform → Open
-model pool → Run live canary**. A route is only called verified after that
-canary succeeds. To let the Coding Agent's project use the new route, add the
-provider to the project's `workspace_provider_permissions`, which is an owner
-decision.
+`CODING_SUPABASE_ACCESS_TOKEN`. (`GITHUB_MODELS_TOKEN` is still accepted but
+unused, because GitHub Models is retired.)
+
+Adding a key needs nothing further. `set-secret` reloads the Office
+containers, and the restart:
+* refreshes the provider catalogs;
+* lifts account and credential cooldowns once;
+* makes the background qualifier call the new free routes within about two
+  minutes. That is the live verification: a successful qualification marks the
+  route LIVE and records its skills.
+
+Free and promo routes of a provider whose workspace permission lists `*:free`
+are then used by the Office at once. Paid providers still need the owner to add
+them to the project's `workspace_provider_permissions`. **Hub → Platform →
+Open model pool → Run live canary** remains available for an immediate full
+check.
 
 ## Capability registry
 

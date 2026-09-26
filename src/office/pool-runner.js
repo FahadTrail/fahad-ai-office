@@ -71,9 +71,10 @@ export class OfficeModelRunner {
     sleepFn,
     now,
     maxEscalations = 3,
+    qualificationStore = null,
   }) {
     if (!stateStore) throw new TypeError('A provider state store is required');
-    Object.assign(this, { env, stateStore, policyStore, routingStore, poolFactory, fetchFn, toolExecutorFactory, sleepFn, now, maxEscalations });
+    Object.assign(this, { env, stateStore, policyStore, routingStore, poolFactory, fetchFn, toolExecutorFactory, sleepFn, now, maxEscalations, qualificationStore });
   }
 
   async run({
@@ -107,6 +108,8 @@ export class OfficeModelRunner {
     // budget), now with free routes tried first.
     const remainingBudgetUsd = policy ? Math.max(0, Number(policy.budget.monthlyLimitUsd) - Number(policy.budget.spentUsd) - Number(policy.budget.reservedUsd)) : Infinity;
     const requiresPrivateData = dataClass !== DATA_CLASS.GENERAL;
+    // Qualification evidence for free models (job gates + job-specific order).
+    const qualifications = this.qualificationStore ? await this.qualificationStore.snapshot().catch(() => null) : null;
     const gateway = new AgentTurnGateway({
       pool, stateStore: this.stateStore, billingPriority: routing.billingPriority, strategy: routing.strategy,
       minQualityTier: Number(this.env.CODING_MIN_QUALITY_TIER || 4), ...(this.sleepFn ? { sleepFn: this.sleepFn } : {}), ...(this.now ? { now: this.now } : {}),
@@ -151,7 +154,7 @@ export class OfficeModelRunner {
       const evaluationRouting = {
         requiresPrivateData, estimatedInputTokens: estimateTokens(systemPrompt, messages, tools), authorizedRouteIds,
         allowPaid: routing.allowPaid, billingPriority: routing.billingPriority, strategy: routing.strategy, job,
-        policyExcludedRouteIds: [...routing.excludedRoutes, ...excluded], remainingBudgetUsd,
+        policyExcludedRouteIds: [...routing.excludedRoutes, ...excluded], remainingBudgetUsd, qualifications,
         ...(routing.effort ? { effort: routing.effort } : {}),
       };
       let result;
@@ -183,6 +186,14 @@ export class OfficeModelRunner {
             settle: async (reservation, actualUsd) => {
               if (!reservation) return;
               await this.policyStore.settleBudget({ workspaceId, reservationId: reservation.reservationId, idempotencyKey: reservation.idempotencyKey, actualUsd });
+            },
+            // A free route that was billed anyway: the real cost still lands
+            // in the workspace ledger (never raising the budget).
+            charge: async ({ amountUsd, attemptId }) => {
+              await chargeUnreserved(this.policyStore, workspaceId, `office-incident:${context.runId || 'none'}:${attemptId}`, amountUsd);
+            },
+            onIncident: async (incident) => {
+              await (hooks.onIncident || (async () => {}))({ routeId: incident.route.id, kind: incident.kind, costUsd: incident.costUsd, reportedModel: incident.reportedModel });
             },
           },
         });
@@ -291,4 +302,18 @@ function officeAttempt(record, context, job) {
     startedAt: record.startedAt || new Date().toISOString(),
     endedAt: record.status === 'started' ? null : new Date().toISOString(),
   };
+}
+
+// Charges an unexpected cost that had no reservation: a minimal reservation
+// is opened and settled at the real amount (settlement records the actual
+// cost even when it exceeds the reservation).
+export async function chargeUnreserved(policyStore, workspaceId, idempotencyKey, amountUsd) {
+  if (!(amountUsd > 0) || !workspaceId || typeof policyStore?.reserveBudget !== 'function') return false;
+  try {
+    const reservation = await policyStore.reserveBudget({ workspaceId, idempotencyKey, amountUsd: 0.000001 });
+    await policyStore.settleBudget({ workspaceId, reservationId: reservation.reservationId, idempotencyKey, actualUsd: amountUsd });
+    return true;
+  } catch {
+    return false;
+  }
 }

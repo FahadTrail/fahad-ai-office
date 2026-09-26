@@ -8,9 +8,15 @@ import { parseRouteId } from '../model-gateway/agentic/route-id.js';
 import { runtimeDiagnostics } from './runtime-diagnostics.js';
 import { refreshOpenRouterCatalog } from '../model-gateway/agentic/openrouter-catalog.js';
 import { rankFreeModels } from '../model-gateway/agentic/capabilities.js';
+import { refreshProviderCatalogs, providerCatalogSnapshot } from '../model-gateway/agentic/provider-catalogs.js';
+import { diagnoseQwen } from './qwen-diagnosis.js';
 
 export class CanaryRequestRunner {
-  constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now(), diagnostics = runtimeDiagnostics, refreshCatalog = refreshOpenRouterCatalog, background = false }) {
+  constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now(), diagnostics = runtimeDiagnostics, refreshCatalog = refreshOpenRouterCatalog, refreshProviderCatalogs: refreshProviders = refreshProviderCatalogs, qualifier = null, diagnoseQwen: qwenProbe = diagnoseQwen, background = false }) {
+    this.diagnoseQwen = qwenProbe;
+    // Optional: an owner canary also runs one free-model qualification cycle.
+    this.qualifier = qualifier;
+    this.refreshProviderCatalogs = refreshProviders;
     // background: the runtime loop starts a claimed canary and keeps
     // processing Office jobs while it runs (a live canary can take minutes).
     this.background = background;
@@ -76,12 +82,21 @@ export class CanaryRequestRunner {
       // Current OpenRouter free models before probing (keeps the last good
       // catalog when OpenRouter's catalog API is unavailable).
       await this.refreshCatalog({ env: this.env, log: this.log, rank: (left, right) => rankFreeModels(left, right, this.env) }).catch(() => null);
+      const providerCatalogs = await this.refreshProviderCatalogs({ env: this.env }).catch(() => null);
       const checkpointStore = this.checkpointStore(request.id);
       const report = await this.run({ env: this.env, stateStore: this.stateStore, log: () => {}, checkpointStore });
       const checkpoint = await checkpointStore.load().catch(() => null);
       if (checkpoint) {
         const { recentMessages, ...summary } = checkpoint;
         report.failoverCheckpoint = { ...summary, recentMessageCount: recentMessages?.length || 0, storedIn: 'provider_canary_runs.report' };
+      }
+      report.providerCatalogs = providerCatalogs ? providerCatalogSnapshot() : null;
+      report.qwenDiagnosis = await this.diagnoseQwen({ env: this.env }).catch(() => null);
+      if (this.qualifier) {
+        const qualified = await this.qualifier.runOnce().catch((error) => ({ error: String(error?.code || 'QUALIFICATION_FAILED').slice(0, 60) }));
+        report.qualification = Array.isArray(qualified)
+          ? { results: qualified.map((result) => ({ route: result.routeId, status: result.status, passed: result.passed ?? null, skills: result.skills || null, error: result.errorCode || null })), backlog: qualified.backlog || 0 }
+          : qualified;
       }
       report.runtimeDiagnostics = await this.diagnostics({ env: this.env }).catch((error) => ({ error: String(error?.code || 'DIAGNOSTICS_FAILED').slice(0, 60) }));
       const verified = report.routes.filter((route) => route.ok).map((route) => route.id);

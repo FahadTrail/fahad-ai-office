@@ -123,7 +123,7 @@ test('an OpenRouter 404 records WHY (data policy, no tools, unknown model) witho
 
   const pool = createModelPool({ env: { OPENROUTER_API_KEY: KEY, GROQ_API_KEY: 'gsk_test_key_12345678901234' }, openRouterCatalog: null, fetchFn: async (url) => (String(url).includes('openrouter')
     ? json({ error: { message: 'No endpoints found matching your data policy (Free model publication).', code: 404 } }, 404)
-    : json({ model: 'm', choices: [{ finish_reason: 'stop', message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })) })
+    : json({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })) })
     .filter((route) => ['openrouter', 'groq'].includes(route.provider));
   const now = { value: Date.parse('2026-09-26T00:00:00Z') };
   const store = new MemoryProviderStateStore({ now: () => now.value });
@@ -144,9 +144,9 @@ test('transient 5xx/overload: cooldown (never an auth error), checkpointed hando
     ? (geminiUp
       ? json({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'ok' }] } }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } })
       : json({ error: { code: 503, status: 'UNAVAILABLE', message: 'The model is overloaded. Please try again later.' } }, 503))
-    : json({ model: 'm', choices: [{ finish_reason: 'stop', message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+    : json({ choices: [{ finish_reason: 'stop', message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
   const pool = createModelPool({ env: { GEMINI_API_KEY: 'AIzaTestKey_0123456789abcdefghijklmn', GROQ_API_KEY: 'gsk_test_key_12345678901234' }, openRouterCatalog: null, fetchFn })
-    .filter((route) => ['gemini', 'groq'].includes(route.provider));
+    .filter((route) => route.id === 'gemini:gemini-flash-latest' || route.id === 'groq:openai/gpt-oss-120b');
   const store = new MemoryProviderStateStore({ now: () => now.value });
   const gateway = new AgentTurnGateway({ pool, stateStore: store, minQualityTier: 1, now: () => now.value, sleepFn: async () => {} });
   const events = [];

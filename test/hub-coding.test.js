@@ -152,7 +152,7 @@ test('model pool dashboard never invents quota and explains unavailability', asy
   assert.match(byId['gemini:gemini-flash-latest'].availability, /NOT CONFIGURED — CREDENTIAL_MISSING/);
   assert.equal(byId['gemini:gemini-flash-latest'].status, 'NOT CONFIGURED');
   assert.equal(byId['gemini:gemini-flash-latest'].integration, 'READY — CREDENTIAL REQUIRED');
-  assert.match(byId['qwen:qwen3.8-flash'].integration, /READY — ENDPOINT REQUIRED/);
+  assert.match(byId['qwen:qwen3.8-flash'].integration, /READY — CREDENTIAL REQUIRED/);
   assert.equal(byId['openai:gpt-5.3-codex'].enabled, false);
   assert.deepEqual(snapshot.billingPriority, ['free', 'included', 'promo', 'paid']);
   assert.equal(snapshot.routing.strategy, 'economy');

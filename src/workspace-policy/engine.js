@@ -39,10 +39,10 @@ export class WorkspacePolicyEngine {
     return Object.freeze({ policy, reservationUsd });
   }
 
-  authorizeProvider(policy, provider, model, { freeOnly = false } = {}) {
+  authorizeProvider(policy, provider, model, { freeOnly = false, nonPaid = false } = {}) {
     const permission = policy.providers.find((candidate) => candidate.provider === provider && candidate.enabled);
     if (!permission) throw denied('WORKSPACE_PROVIDER_DENIED', `Provider ${provider} is not authorized for this workspace`);
-    if (!modelAuthorized(permission.models, model, { freeOnly })) {
+    if (!modelAuthorized(permission.models, model, { freeOnly, nonPaid })) {
       throw denied('WORKSPACE_MODEL_DENIED', `Model ${model} is not authorized for this workspace`);
     }
     const expectedReference = this.providerSecretRefs[provider];
@@ -94,15 +94,21 @@ function roundUsd(value) {
 // every discovered free-variant model of that provider, and only routes that
 // are free-only guarded (OpenRouter's catalog changes; its free models never
 // bill). A bare "*" is rejected by the database and never matches here.
-export function modelAuthorized(models, model, { freeOnly = false } = {}) {
+// `*:free` authorizes every model of the provider that runs without charge:
+// OpenRouter `:free` variants behind the free-only guard, and routes whose
+// owner-stated billing class is free or promo (trial credits). It never
+// authorizes a paid route, so new free capacity of an already-approved
+// provider is usable without widening paid or private-data access.
+export function modelAuthorized(models, model, { freeOnly = false, nonPaid = false } = {}) {
   if (models.includes(model)) return true;
-  return freeOnly && models.includes('*:free') && /:free$/.test(String(model));
+  if (!models.includes('*:free')) return false;
+  return (freeOnly && /:free$/.test(String(model))) || nonPaid;
 }
 
 // Route ids a workspace policy authorizes: provider, model and the
 // controller-side secret reference must all match.
 export function authorizedRoutes(pool, policy) {
   return pool.filter((route) => (policy?.providers || []).some((permission) => permission.enabled
-    && permission.provider === route.provider && modelAuthorized(permission.models, route.model, { freeOnly: Boolean(route.freeOnly) })
+    && permission.provider === route.provider && modelAuthorized(permission.models, route.model, { freeOnly: Boolean(route.freeOnly), nonPaid: ['free', 'promo'].includes(route.billingClass) })
     && permission.secretRef === route.secretRef)).map((route) => route.id);
 }

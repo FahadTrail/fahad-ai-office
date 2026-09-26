@@ -9,13 +9,22 @@
 import { lookup } from 'node:dns/promises';
 
 const PLAIN_SETTINGS = ['HUB_ENABLED', 'HUB_BIND', 'HUB_PORT', 'HUB_AUTH_ENABLED', 'HUB_TRAEFIK_ENABLED', 'HUB_PUBLIC_HOST', 'COMPOSE_PROFILES', 'NODE_ENV'];
-const PRESENCE = ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'QWEN_API_KEY', 'HUB_ACCESS_TOKEN', 'HUB_OWNER_EMAIL', 'CODING_GITHUB_TOKEN', 'CODING_SUPABASE_ACCESS_TOKEN'];
+const PRESENCE = ['GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'QWEN_API_KEY', 'GROQ_API_KEY', 'OPENROUTER_API_KEY',
+  'CEREBRAS_API_KEY', 'ZHIPU_API_KEY', 'KIMI_API_KEY', 'MINIMAX_API_KEY', 'MISTRAL_API_KEY', 'GITHUB_MODELS_TOKEN',
+  'HUB_ACCESS_TOKEN', 'HUB_OWNER_EMAIL', 'CODING_GITHUB_TOKEN', 'CODING_SUPABASE_ACCESS_TOKEN'];
+// Endpoint/model settings are not secrets; only the host of a URL is shown.
+const ENDPOINT_HOSTS = ['QWEN_API_ENDPOINT'];
+const MODEL_SETTINGS = ['QWEN_MODEL', 'GEMINI_MODEL', 'GROQ_MODEL', 'OPENROUTER_MODEL', 'CEREBRAS_MODEL', 'ZHIPU_FREE_MODEL'];
 const KNOWN_PUBLIC_HOSTS = ['office.trimedia.me', 'fahad-ai-office.srv1964598.hstgr.cloud'];
 const HOST_RE = /^[a-z0-9.-]{1,253}$/i;
 
 export async function runtimeDiagnostics({ env = process.env, fetchFn = fetch, resolve = lookup, timeoutMs = 8000 } = {}) {
   const settings = Object.fromEntries(PLAIN_SETTINGS.map((name) => [name, env[name] === undefined ? null : String(env[name]).slice(0, 120)]));
   const credentials = Object.fromEntries(PRESENCE.map((name) => [name, Boolean(String(env[name] || '').trim())]));
+  for (const name of ENDPOINT_HOSTS) {
+    try { settings[`${name}_HOST`] = env[name] ? new URL(env[name]).host.slice(0, 120) : null; } catch { settings[`${name}_HOST`] = 'INVALID_URL'; }
+  }
+  for (const name of MODEL_SETTINGS) settings[name] = env[name] && /^[A-Za-z0-9._/:-]{1,120}$/.test(env[name]) ? env[name] : null;
   const port = /^\d{2,5}$/.test(String(env.HUB_PORT || '')) ? env.HUB_PORT : '2132';
   const hosts = [...new Set([env.HUB_PUBLIC_HOST, ...KNOWN_PUBLIC_HOSTS].filter((host) => host && HOST_RE.test(host)))];
   const probes = [{ name: 'hub-local', url: `http://127.0.0.1:${port}/healthz` },

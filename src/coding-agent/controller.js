@@ -175,6 +175,10 @@ class SessionRun {
     } else {
       this.transcript.messages = [userText(initialMessage(this.session))];
       await this.event('session', `Coding Agent session started by worker ${this.session.leaseOwner || 'unknown'}.`, { repository: this.session.repository, ...this.workerInfo() });
+      if (this.config.supabase.projects.length && !supabaseTokenConfigured(this.c.env)) {
+        await this.event('guard', 'Supabase tools are unavailable: CODING_SUPABASE_ACCESS_TOKEN is not configured. The task continues without database access.',
+          { code: 'SUPABASE_TOKEN_MISSING', projects: this.config.supabase.projects }, 'warning');
+      }
     }
     this.state.resumes = (this.state.resumes || 0) + (checkpoint ? 1 : 0);
   }
@@ -300,10 +304,14 @@ class SessionRun {
       if (finished) return true;
       if (this.transcript.pending === null) return false;
     }
-    const tools = modelToolSpecs({ supabase: this.config.supabase.projects.length > 0 });
+    // Supabase tools are offered only when a project is allow-listed AND the
+    // Management API token is configured; otherwise the model never sees
+    // tools that could only fail.
+    const supabaseReady = this.config.supabase.projects.length > 0 && supabaseTokenConfigured(this.c.env);
+    const tools = modelToolSpecs({ supabase: supabaseReady });
     const system = systemPrompt({
       repository: this.session.repository, baseBranch: this.session.baseBranch, workBranch: this.session.workBranch,
-      testCommand: this.testCommand, supabaseProjects: this.config.supabase.projects, verifyHosts: this.config.verify.hosts,
+      testCommand: this.testCommand, supabaseProjects: supabaseReady ? this.config.supabase.projects : [], verifyHosts: this.config.verify.hosts,
     });
     if (transcriptChars(this.transcript.messages) > this.c.limits.compactAtChars) await this.compact();
     const estimatedInputTokens = estimateTokens(system, this.transcript.messages, tools);
@@ -350,6 +358,9 @@ class SessionRun {
           authorize: (route) => this.c.authorizeRoute(route, this.session),
           reserve: (request) => this.c.budget.reserve(this.session, request),
           settle: (reservation, actualUsd) => this.c.budget.settle(this.session, reservation, actualUsd),
+          charge: (request) => (this.c.budget.charge ? this.c.budget.charge(this.session, request) : null),
+          onIncident: (incident) => this.event('guard', `Free-route guard blocked ${incident.route.id} (${incident.kind}); cost recorded and the task moved on.`,
+            { code: 'FREE_ROUTE_INCIDENT', route: incident.route.id, kind: incident.kind, costUsd: incident.costUsd }, 'error'),
           onSwitch: async ({ from, to, reason }) => {
             this.session.previousRoute = from;
             this.session.providerSwitches += 1;
@@ -937,3 +948,7 @@ function roundUsd(value) {
 }
 
 export { Stop, normalizeConfig };
+
+export function supabaseTokenConfigured(env = {}) {
+  return String(env.CODING_SUPABASE_ACCESS_TOKEN || '').trim().length > 0;
+}

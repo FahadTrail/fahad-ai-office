@@ -12,6 +12,10 @@ import { authorizedRoutes } from './coding-agent/runtime.js';
 import { JOB_PROFILES, capabilityGaps } from './model-gateway/agentic/capabilities.js';
 import { freeQuotaStatus } from './model-gateway/agentic/free-quota.js';
 import { getOpenRouterCatalog } from './model-gateway/agentic/openrouter-catalog.js';
+import { providerCatalogSnapshot } from './model-gateway/agentic/provider-catalogs.js';
+import { QualificationStore, qualificationValid, qualificationGaps } from './model-gateway/agentic/qualification.js';
+import { PROVIDER_FACTS, PROVIDER_FACTS_CHECKED, blockerLabel, blockerReason } from './model-gateway/agentic/provider-facts.js';
+import { ACCOUNT_BLOCKERS } from './model-gateway/agentic/provider-state.js';
 import { OFFICE_ROLES } from './office-agents/roles.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -171,6 +175,7 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     }
   };
   const routingStore = new SupabaseRoutingPolicyStore(db);
+  const qualifications = await new QualificationStore(db, { now }).snapshot().catch(() => new Map());
   const [statusRows, todayRows, periodRows, activeRows, workspaceRouting, permissionRows] = await Promise.all([
     optional(rows(db.from('provider_status').select('*')), []),
     optional(rpcRows(db, 'model_usage_summary', { p_since: null, p_workspace: null }), []),
@@ -220,9 +225,16 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     else if (limit != null && remaining != null) availability = `AVAILABLE — ${remaining}/${limit} REQUESTS LEFT (PROVIDER-REPORTED)`;
     else availability = 'AVAILABLE — EXACT QUOTA NOT AVAILABLE';
     const verifiedAt = row?.verified_at || null;
+    // Account/credential blockers are named, never shown as a generic outage.
+    const blocker = blockerReason(row?.last_error_code);
+    const blockerActive = Boolean(blocker) && (!row?.last_success_at || Date.parse(row.last_error_at) > Date.parse(row.last_success_at));
+    const genericAuth = !blocker && row?.health === 'auth_error' && (!row?.last_success_at || Date.parse(row.last_error_at) > Date.parse(row.last_success_at));
     let status;
     const unsuitableCode = /^(PROVIDER_UNSUITABLE|PAID_ON_FREE_ROUTE)/.test(row?.last_error_code || '');
-    if (!configured) status = 'NOT CONFIGURED';
+    if (route.retired) status = 'RETIRED';
+    else if (!configured) status = 'NOT CONFIGURED';
+    else if (blockerActive) status = `BLOCKED — ${blockerLabel(route.provider, blocker)}`;
+    else if (genericAuth) status = 'BLOCKED — CREDENTIAL OR ACCOUNT REJECTED';
     else if (route.unavailableReasons.some((reason) => reason.startsWith('CATALOG_'))) status = 'UNSUITABLE';
     else if (route.unavailableReasons.length) status = 'NOT READY';
     else if (cooling && ['rate_limited', 'quota_exhausted'].includes(row.health)) status = 'RATE LIMITED';
@@ -237,6 +249,22 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
         MODEL_NOT_CONFIGURED: 'READY — MODEL ID REQUIRED', PRICING_UNKNOWN: 'READY — PRICING REQUIRED',
       })[reason] || reason).join(' · ');
     const cap = routing.routeMonthlyBudgetUsd[route.id];
+    const record = qualifications.get(route.id);
+    const qualification = route.billingClass === 'paid' ? { status: 'NOT REQUIRED (paid, budgeted)' }
+      : qualificationValid(record, now()) ? { status: record.status.toUpperCase(), passed: record.passed, total: record.total, skills: record.skills, testedAt: record.testedAt, suiteVersion: record.suiteVersion }
+        : { status: 'NOT YET QUALIFIED' };
+    // Office jobs this route may take with non-private data (capability +
+    // qualification evidence); private work additionally needs privacy approval.
+    const officeJobs = Object.keys(JOB_PROFILES).filter((job) => !['coding', 'qa_security'].includes(job)
+      && capabilityGaps(route.capabilities, job).length === 0 && qualificationGaps(route, job, qualifications, now()).length === 0);
+    const credentialStatus = route.retired ? 'NOT APPLICABLE (RETIRED)'
+      : !configured ? 'MISSING'
+        : blockerActive && ['CREDENTIAL_INVALID', 'PERMISSION_MISSING'].includes(blocker) ? blockerLabel(route.provider, blocker)
+          : genericAuth ? 'REJECTED' : 'PRESENT';
+    const freeQuota = freeQuotaStatus(route, {
+      env, now: now(), rateLimit,
+      usedToday: usageToday ? { requests: Number(usageToday.requests || 0) } : { requests: 0 },
+    });
     return {
       id: route.id,
       provider: route.provider,
@@ -263,10 +291,14 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
           : route.privacyApproved ? 'SUITABLE FOR PRIVATE CODE' : 'PUBLIC CODE ONLY — PRIVACY REVIEW PENDING',
       capabilities: route.capabilities,
       suitableJobs: Object.keys(JOB_PROFILES).filter((job) => capabilityGaps(route.capabilities, job).length === 0),
-      freeQuota: freeQuotaStatus(route, {
-        env, now: now(), rateLimit,
-        usedToday: usageToday ? { requests: Number(usageToday.requests || 0) } : { requests: 0 },
-      }),
+      freeQuota,
+      qualification,
+      officeJobs,
+      credentialStatus,
+      accountBlocker: blockerActive ? { reason: blocker, label: blockerLabel(route.provider, blocker), text: ACCOUNT_BLOCKERS[blocker] } : genericAuth ? { reason: 'AUTH', label: 'CREDENTIAL OR ACCOUNT REJECTED', text: 'Rejected by the provider; the exact reason is recorded on the next call' } : null,
+      estimatedRemaining: freeQuota?.requestsRemaining != null ? { requests: freeQuota.requestsRemaining, basis: freeQuota.basis } : { requests: null, basis: 'EXACT QUOTA NOT AVAILABLE' },
+      requestTokenLimit: route.requestTokenLimit || null,
+      retired: Boolean(route.retired),
       activeTasks: active.get(route.id) || 0,
       quota: limit != null && remaining != null
         ? { exact: true, source: 'provider response headers (rate-limit window)', requestsLimit: limit, requestsRemaining: remaining, resetsAt: rateLimit.requestsReset || null }
@@ -300,6 +332,9 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
   });
   const catalog = getOpenRouterCatalog();
   return {
+    providers: providerSummary(routes),
+    factsChecked: PROVIDER_FACTS_CHECKED,
+    providerCatalogs: providerCatalogSnapshot(),
     openRouter: catalog ? {
       fetchedAt: catalog.fetchedAt, source: catalog.source, keyScopedList: catalog.keyScopedList,
       freeModels: catalog.freeModels, accessibleFreeModels: catalog.accessibleFreeModels, admitted: catalog.admitted,
@@ -311,6 +346,38 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
     routes,
     installed: true,
   };
+}
+
+// One line per provider: overall status, offer (FREE/PROMO/PAID/RETIRED),
+// live and qualified models, credential and the real blocker, plus the
+// checked facts. No percentage is shown unless a provider reports one.
+export function providerSummary(routes) {
+  const byProvider = new Map();
+  for (const route of routes) {
+    if (!byProvider.has(route.provider)) byProvider.set(route.provider, []);
+    byProvider.get(route.provider).push(route);
+  }
+  return [...byProvider].map(([provider, list]) => {
+    const facts = PROVIDER_FACTS[provider] || {};
+    const live = list.filter((route) => route.status === 'LIVE');
+    const blocked = list.find((route) => route.status.startsWith('BLOCKED'));
+    const qualified = list.filter((route) => route.qualification?.status === 'QUALIFIED');
+    let status;
+    if (list.every((route) => route.retired)) status = 'RETIRED';
+    else if (list.every((route) => route.credentialStatus === 'MISSING')) status = 'READY — CREDENTIAL REQUIRED';
+    else if (live.length) status = 'LIVE';
+    else if (blocked) status = blocked.status;
+    else if (list.some((route) => ['RATE LIMITED', 'COOLDOWN', 'DEGRADED'].includes(route.status))) status = 'TEMPORARILY LIMITED';
+    else status = 'CONFIGURED — NOT YET VERIFIED';
+    const classes = [...new Set(list.map((route) => route.billingClass))];
+    return {
+      provider, label: facts.label || provider, status, offer: facts.offer || classes.join('/'), billingClasses: classes,
+      models: list.length, liveModels: live.length, qualifiedModels: qualified.length,
+      credential: facts.credentialEnv ? { env: facts.credentialEnv, status: list.some((route) => route.credentialStatus === 'PRESENT') ? 'PRESENT' : list[0].credentialStatus, page: facts.credentialPage, scope: facts.scope } : null,
+      blocker: blocked?.accountBlocker || null,
+      freeTier: facts.freeTier || null, privacy: facts.privacy || null, source: facts.source || null,
+    };
+  });
 }
 
 // One read-only overview for the platform dashboard: CODING AGENT, OFFICE
@@ -360,6 +427,12 @@ export async function platformOverview({ db, env = process.env, now = () => Date
         tokenConfigured: Boolean(String(env.CODING_SUPABASE_ACCESS_TOKEN || '').trim()),
         grants: supabaseGrants.map((grant) => ({ tool: grant.tool_name, decision: grant.decision, enabled: grant.enabled })),
         note: 'Reads run automatically through the read-only database role; writes and migrations always wait for your approval.',
+        unavailableWithoutToken: String(env.CODING_SUPABASE_ACCESS_TOKEN || '').trim() ? [] : [
+          'supabase_query — read-only SQL on allow-listed projects (automatic)',
+          'supabase_execute — data changes (owner approval)',
+          'supabase_apply_migration — schema migrations (owner approval)',
+        ],
+        requiredToken: 'Supabase personal access token (sbp_…), scoped to project zkzibipinjeswhdxnfgf with Database: Read-write; stored with sudo bash ops/set-secret.sh CODING_SUPABASE_ACCESS_TOKEN',
       },
     },
     office: officeActivity(officeEvents, officeJobs, { workspaceId }),
@@ -400,7 +473,7 @@ export async function platformOverview({ db, env = process.env, now = () => Date
 }
 
 // ---------------------------------------------------------------- Office
-export const OFFICE_EVENT_KINDS = ['model_stage_started', 'model_route', 'model_escalation', 'provider_switch', 'model_checkpoint'];
+export const OFFICE_EVENT_KINDS = ['model_stage_started', 'model_route', 'model_escalation', 'provider_switch', 'model_checkpoint', 'free_route_incident'];
 const STAGE_ROLE = { chief_plan: 'Chief', chief_review: 'Chief review' };
 const JOB_ROLE = { research: 'Research', content: 'Content', branding: 'Branding', seo: 'SEO', finance: 'Finance' };
 const START_STAGE = { CHIEF_PLANNING: 'chief_plan', RESEARCH_WORKING: 'research', CHIEF_REVIEW_STARTED: 'chief_review' };
@@ -445,6 +518,8 @@ export function officeActivity(events, jobs = [], { workspaceId = null } = {}) {
           stageEntry.events.push({ kind: 'escalation', from: payload.from_route, code: payload.reason, injected: /^DRILL_/.test(payload.reason || '') });
         } else if (payload.kind === 'model_checkpoint') {
           stageEntry.events.push({ kind: 'checkpoint', sequence: payload.sequence });
+        } else if (payload.kind === 'free_route_incident') {
+          stageEntry.events.push({ kind: 'incident', route: payload.route, code: payload.incident, costUsd: Number(payload.cost_usd || 0) });
         }
       }
     }
@@ -468,6 +543,12 @@ export function officeActivity(events, jobs = [], { workspaceId = null } = {}) {
     roles: Object.values(roles),
     jobs: recentJobs.slice(0, 12),
     freeStages: completedStages.filter((stage) => stage.billingClass === 'FREE').length,
+    promoStages: completedStages.filter((stage) => ['PROMO', 'INCLUDED'].includes(stage.billingClass)).length,
+    // Free-route guard incidents: a free route that was billed or served
+    // another model (recorded, charged, blocked 24 h, failed over).
+    incidents: inScope.filter((event) => event.payload?.kind === 'free_route_incident').map((event) => ({
+      at: event.created_at, jobId: event.job_id, route: event.payload.route, kind: event.payload.incident, costUsd: Number(event.payload.cost_usd || 0),
+    })),
     paidStages: completedStages.filter((stage) => stage.billingClass === 'PAID').length,
     cost: {
       actualUsd: Number(actualUsd.toFixed(6)),
@@ -480,6 +561,8 @@ export function officeActivity(events, jobs = [], { workspaceId = null } = {}) {
 
 const REASON_TEXT = {
   CREDENTIAL_MISSING: 'API key not configured', PRICING_UNKNOWN: 'paid model without a known price',
+  PROVIDER_RETIRED: 'provider retired', NOT_YET_QUALIFIED: 'free model not yet qualified (critical job)',
+  NOT_QUALIFIED_FOR_CRITICAL_JOB: 'qualification not passed for critical work', REQUEST_ABOVE_FREE_TIER_LIMIT: 'request larger than the free tier allows',
   MODEL_NOT_CONFIGURED: 'model id not set', ENDPOINT_NOT_CONFIGURED: 'endpoint not set',
   WORKSPACE_NOT_AUTHORIZED: 'not authorized for this project', PRIVACY_NOT_APPROVED: 'not approved for private code',
   BELOW_QUALITY_FLOOR: 'below the coding quality floor', CONTEXT_TOO_LARGE: 'context window too small for this task',
@@ -492,7 +575,8 @@ export function explainReason(reason) {
   if (REASON_TEXT[reason]) return REASON_TEXT[reason];
   if (reason.startsWith('COOLDOWN_')) return `cooling down (${reason.slice(9).toLowerCase().replace(/_/g, ' ')})`;
   if (reason.startsWith('CAPABILITY_')) return `capability too low for coding (${reason.slice(11).toLowerCase().replace(/_/g, ' ')})`;
-  if (reason.startsWith('CATALOG_')) return `OpenRouter catalog: ${reason.slice(8).toLowerCase().replace(/_/g, ' ')}`;
+  if (reason.startsWith('CATALOG_')) return `provider catalog: ${reason.slice(8).toLowerCase().replace(/_/g, ' ')}`;
+  if (reason.startsWith('QUALIFICATION_FAILED_')) return `failed qualification (${reason.slice(21).toLowerCase()})`;
   return reason.toLowerCase().replace(/_/g, ' ');
 }
 
@@ -635,7 +719,9 @@ export const CODING_SCRIPT = String.raw`
       const canaryLine='<div class="row-actions" style="margin:0 0 10px"><button id="runCanary" class="ghost">Run live canary</button><span class="muted">'+(lc?('Last canary: '+esc(lc.status)+(lc.report?(' · verified: '+esc((lc.report.routes||[]).filter(x=>x.ok).map(x=>x.id).join(', ')||'none')+' · failover drill: '+(lc.report.failover?.ok?('passed'+(lc.report.failover.crossProvider?' ('+esc(lc.report.failover.primary)+' → '+esc(lc.report.failover.backup)+')':' (same provider)')):'not passed')+(lc.report.totalCostUsd!=null?' · cost '+usd(lc.report.totalCostUsd)+' ESTIMATED':'')):'')+' · '+new Date(lc.requested_at).toLocaleString()):'No live canary has run yet.')+'</span></div>';
       const routingForm='<div class="row-actions" style="margin:0 0 10px;flex-wrap:wrap"><span class="muted">Project routing:</span><select id="rStrategy" class="field" style="width:auto">'+['economy','balanced','quality'].map(v=>'<option value="'+v+'"'+(r.strategy===v?' selected':'')+'>'+v+'</option>').join('')+'</select><label class="check" style="margin:0"><input id="rPaid" type="checkbox"'+(r.allowPaid!==false?' checked':'')+'><span>allow paid models</span></label><button id="rSave" class="ghost">Save</button><span class="muted">Priority: '+esc((d.billingPriority||[]).join(' → '))+' · source: '+esc(r.source||'defaults')+'</span></div>';
       const cls=s=>/^LIVE/.test(s)?'completed':/RATE|COOLDOWN|DEGRADED|UNSUITABLE/.test(s)?'blocked':/NOT/.test(s)?'cancelled':'queued';
-      panel.innerHTML=canaryLine+routingForm+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th><th>Private code</th><th>Why excluded (coding)</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong>'+(x.discovered?' <span class="muted">(free catalog)</span>':'')+(x.freeOnly?' <span class="muted">free-only</span>':'')+'<br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.authorizedForProject===false?'<br><span class="muted">not authorized for this project</span>':'')+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+'</td><td>'+esc(x.billingClass)+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span>'+((x.suitableJobs||[]).length?'<br><span class="muted">jobs: '+esc(x.suitableJobs.join(', '))+'</span>':'')+'</td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+(x.freeQuota?'<br><span class="muted">free: '+(x.freeQuota.requestsRemaining!=null?('≈'+x.freeQuota.requestsRemaining+' req left ('+esc(x.freeQuota.basis)+')'):esc(x.freeQuota.basis))+(x.freeQuota.published.requestsPerDay?' · published '+x.freeQuota.published.requestsPerDay+'/day':'')+(x.freeQuota.nextResetAt?' · resets '+new Date(x.freeQuota.nextResetAt).toLocaleString():' · '+esc(x.freeQuota.resetKind)+' window')+(x.freeQuota.estimatedExhaustionAt?' · est. exhausted '+new Date(x.freeQuota.estimatedExhaustionAt).toLocaleTimeString():'')+'</span>':'')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td><td>'+(x.privateCode==='APPROVED'?'approved':'<span class="muted">public data only</span>')+'</td><td class="muted">'+esc((x.excludedBecause||[]).join('; ')||'—')+'</td></tr>').join('')+'</table></div>'+(d.openRouter?'<details style="margin-top:10px"><summary class="muted">OpenRouter free models — '+d.openRouter.freeModels+' free on OpenRouter'+(d.openRouter.accessibleFreeModels!=null?', '+d.openRouter.accessibleFreeModels+' accessible to this key':'')+', '+d.openRouter.admitted.length+' admitted · discovered '+new Date(d.openRouter.fetchedAt).toLocaleString()+'</summary><div class="muted">'+esc(d.openRouter.note)+' Source: '+esc(d.openRouter.source)+'.</div><table class="pool-table"><tr><th>Model</th><th>Context</th><th>Tools</th><th>Admitted</th><th>Why not</th></tr>'+d.openRouter.models.map(o=>'<tr><td>'+esc(o.id)+'</td><td>'+Math.round(o.contextLength/1000)+'K</td><td>'+(o.tools?'yes':'no')+'</td><td>'+(o.admitted?'yes':'no')+'</td><td class="muted">'+esc((o.reasons||[]).join(', ').toLowerCase().replace(/_/g,' '))+'</td></tr>').join('')+'</table></details>':'')+'<p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
+      const provCls=s=>/^LIVE/.test(s)?'completed':/BLOCKED|LIMITED/.test(s)?'blocked':/RETIRED/.test(s)?'cancelled':'queued';
+      const providers='<h3 style="margin:6px 0">Providers</h3><div style="overflow:auto"><table class="pool-table"><tr><th>Provider</th><th>Status</th><th>Offer</th><th>Models</th><th>Credential</th><th>Blocker</th><th>Free tier (checked '+esc(d.factsChecked||'')+')</th></tr>'+(d.providers||[]).map(p=>'<tr><td><strong>'+esc(p.label)+'</strong></td><td><span class="pill '+provCls(p.status)+'">'+esc(p.status)+'</span></td><td>'+esc(p.offer)+'</td><td>'+p.models+' model(s) · '+p.liveModels+' live · '+p.qualifiedModels+' qualified</td><td>'+(p.credential?esc(p.credential.env)+'<br><span class="muted">'+esc(p.credential.status)+'</span>':'—')+'</td><td>'+(p.blocker?'<strong>'+esc(p.blocker.label)+'</strong><br><span class="muted">'+esc(p.blocker.text)+'</span>':'—')+'</td><td class="muted">'+esc(p.freeTier||'')+(p.source?' <a href="'+esc(p.source)+'" target="_blank" rel="noopener">source</a>':'')+'</td></tr>').join('')+'</table></div><h3 style="margin:12px 0 6px">Models</h3>';
+      panel.innerHTML=canaryLine+routingForm+providers+'<div style="overflow:auto"><table class="pool-table"><tr><th>#</th><th>Provider / model</th><th>Status</th><th>Class</th><th>Qualification / Office jobs</th><th>Coding</th><th>Today</th><th>Lifetime (est.)</th><th>Quota / limits</th><th>Last success / error</th><th>Active</th><th>Private code</th><th>Why excluded (coding)</th></tr>'+(d.routes||[]).map(x=>'<tr><td>'+(x.routingRank||'–')+'</td><td><strong>'+esc(x.provider)+'</strong>'+(x.discovered?' <span class="muted">(free catalog)</span>':'')+(x.freeOnly?' <span class="muted">free-only</span>':'')+'<br><span class="muted">'+esc(x.model||'model not set')+'</span></td><td><span class="pill '+cls(x.status)+'">'+esc(x.status)+'</span><br><span class="muted">'+esc(x.integration)+'</span>'+(x.authorizedForProject===false?'<br><span class="muted">not authorized for this project</span>':'')+(x.cooldownUntil?'<br><span class="muted">cooldown until '+new Date(x.cooldownUntil).toLocaleTimeString()+'</span>':'')+(x.accountBlocker?'<br><strong>'+esc(x.accountBlocker.label)+'</strong>':'')+'<br><span class="muted">credential: '+esc(x.credentialStatus||'')+'</span></td><td>'+esc(x.billingClass)+(x.requestTokenLimit?'<br><span class="muted">≤'+Math.round(x.requestTokenLimit/1000)+'K tok/request</span>':'')+'</td><td>'+esc((x.qualification||{}).status||'')+((x.qualification||{}).passed!=null?' ('+x.qualification.passed+'/'+x.qualification.total+')':'')+((x.qualification||{}).testedAt?'<br><span class="muted">'+new Date(x.qualification.testedAt).toLocaleDateString()+'</span>':'')+((x.officeJobs||[]).length?'<br><span class="muted">'+esc(x.officeJobs.join(', '))+'</span>':'')+'</td><td>'+(x.toolCalling?'tools':'text only')+' · '+Math.round(x.contextWindow/1000)+'K<br><span class="muted">'+esc(x.codingSuitability)+'</span>'+((x.suitableJobs||[]).length?'<br><span class="muted">jobs: '+esc(x.suitableJobs.join(', '))+'</span>':'')+'</td><td>'+x.today.requests+' req'+(x.today.failures?' ('+x.today.failures+' failed)':'')+'<br><span class="muted">'+(x.today.inputTokens+x.today.outputTokens).toLocaleString()+' tok · '+usd(x.today.estimatedCostUsd)+'</span></td><td>'+(x.usage?(x.usage.requests+' req · '+usd(x.usage.estimatedCostUsd)):'<span class="muted">no traffic yet</span>')+(x.budgetCap?'<br><span class="muted">cap '+usd(x.budgetCap.spentThisPeriodUsd)+' / $'+x.budgetCap.monthlyUsd+'</span>':'')+'</td><td>'+(x.quota.exact?(x.quota.requestsRemaining+'/'+x.quota.requestsLimit+' req in window'+(x.quota.resetsAt?'<br><span class="muted">resets '+new Date(x.quota.resetsAt).toLocaleTimeString()+'</span>':'')):'<span class="muted">'+esc(x.quota.label)+'</span>')+(x.freeQuota?'<br><span class="muted">free: '+(x.freeQuota.requestsRemaining!=null?('≈'+x.freeQuota.requestsRemaining+' req left ('+esc(x.freeQuota.basis)+')'):esc(x.freeQuota.basis))+(x.freeQuota.published.requestsPerDay?' · published '+x.freeQuota.published.requestsPerDay+'/day':'')+(x.freeQuota.nextResetAt?' · resets '+new Date(x.freeQuota.nextResetAt).toLocaleString():' · '+esc(x.freeQuota.resetKind)+' window')+(x.freeQuota.estimatedExhaustionAt?' · est. exhausted '+new Date(x.freeQuota.estimatedExhaustionAt).toLocaleTimeString():'')+'</span>':'')+'</td><td>'+(x.lastSuccessAt?new Date(x.lastSuccessAt).toLocaleString():'—')+'<br><span class="muted">'+esc(x.lastErrorCode||'')+'</span></td><td>'+x.activeTasks+'</td><td>'+(x.privateCode==='APPROVED'?'approved':'<span class="muted">public data only</span>')+'</td><td class="muted">'+esc((x.excludedBecause||[]).join('; ')||'—')+'</td></tr>').join('')+'</table></div>'+(d.openRouter?'<details style="margin-top:10px"><summary class="muted">OpenRouter free models — '+d.openRouter.freeModels+' free on OpenRouter'+(d.openRouter.accessibleFreeModels!=null?', '+d.openRouter.accessibleFreeModels+' accessible to this key':'')+', '+d.openRouter.admitted.length+' admitted · discovered '+new Date(d.openRouter.fetchedAt).toLocaleString()+'</summary><div class="muted">'+esc(d.openRouter.note)+' Source: '+esc(d.openRouter.source)+'.</div><table class="pool-table"><tr><th>Model</th><th>Context</th><th>Tools</th><th>Admitted</th><th>Why not</th></tr>'+d.openRouter.models.map(o=>'<tr><td>'+esc(o.id)+'</td><td>'+Math.round(o.contextLength/1000)+'K</td><td>'+(o.tools?'yes':'no')+'</td><td>'+(o.admitted?'yes':'no')+'</td><td class="muted">'+esc((o.reasons||[]).join(', ').toLowerCase().replace(/_/g,' '))+'</td></tr>').join('')+'</table></details>':'')+'<p class="muted">LIVE = a real call succeeded (canary or traffic). Quota is shown only when a provider reports it; otherwise EXACT QUOTA NOT AVAILABLE. Costs are estimates from token counts and published list prices — the provider console is authoritative. Routing order: '+esc((d.billingPriority||[]).join(' → '))+', then '+esc(r.strategy||'economy')+'.</p>';
       const rc=document.getElementById('runCanary');if(rc)rc.onclick=async()=>{rc.disabled=true;try{await codingApi('./api/model-pool/canary',{method:'POST'});rc.textContent='Queued — runs within a minute';}catch(e){cerr(e.message)}};
       const rs=document.getElementById('rSave');if(rs)rs.onclick=async()=>{if(!ws())return cerr('Select a project first.');rs.disabled=true;try{await codingApi('./api/model-pool/routing',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({workspaceId:ws(),strategy:document.getElementById('rStrategy').value,allowPaid:document.getElementById('rPaid').checked})});await renderPool()}catch(e){cerr(e.message);rs.disabled=false}}}catch(e){panel.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
     const pbtn=document.createElement('button');pbtn.id='platformButton';pbtn.className='newchat';pbtn.style.background='linear-gradient(135deg,#a78bfa,#6d28d9)';pbtn.textContent='◎ Platform';btn.after(pbtn);
@@ -648,7 +734,7 @@ export const CODING_SCRIPT = String.raw`
       const rolesTable=o.roles.length?'<div style="overflow:auto"><table class="pool-table"><tr><th>Role</th><th>Status</th><th>Current task</th><th>Job type</th><th>Model</th><th>Provider</th><th>Free/Paid</th><th>Tools</th><th>Tokens</th><th>Cost</th><th>Started</th><th>Last activity</th></tr>'+o.roles.map(r=>'<tr><td><strong>'+esc(r.role)+'</strong></td><td><span class="pill '+(r.status==='COMPLETED'?'completed':'running')+'">'+esc(r.status)+'</span></td><td>'+esc(r.currentTask)+'</td><td>'+esc(r.job||'—')+'</td><td>'+esc(r.model||'routing…')+'</td><td>'+esc(r.provider||'—')+'</td><td>'+(r.billingClass?'<span class="pill '+cls2(r.billingClass)+'">'+esc(r.billingClass)+'</span>':'—')+'</td><td>'+esc((r.tools||[]).join(', ')||'—')+'</td><td>'+Number(r.tokens||0).toLocaleString()+'</td><td>'+money(r.costUsd)+'</td><td>'+new Date(r.startedAt).toLocaleString()+'</td><td>'+new Date(r.lastActivityAt).toLocaleTimeString()+'</td></tr>').join('')+'</table></div>':'<div class="muted">No Office work in the last 72 hours.</div>';
       const stageLine=st=>{const main=(st.path&&st.path.length?st.path:[{routeId:st.routeId||'routing…',billingClass:st.billingClass||''}]);const trail=[];(st.path||[]).forEach((p,i)=>{if(i>0){const ev=(st.events||[]).filter(e=>e.kind!=='checkpoint')[i-1];trail.push(ev?(ev.kind==='switch'?'→ '+esc(ev.code||'failure')+(ev.injected?' (SIMULATED)':' (genuine)')+' → checkpoint → ':'→ escalated ('+esc(ev.code)+(ev.injected?', SIMULATED':'')+') → checkpoint → '):'→ ')}trail.push('<strong>'+esc(p.routeId)+'</strong> '+esc(p.billingClass))});return '<div style="margin:3px 0"><strong>'+esc(st.role)+'</strong> <span class="muted">('+esc(st.job||'')+')</span>: '+(trail.length?trail.join(' '):esc(main[0].routeId))+' '+(st.status==='COMPLETED'?'✓':'<span class="muted">working…</span>')+'</div>'};
       const jobsList=o.jobs.length?o.jobs.map(j=>'<details style="margin-top:6px"><summary><strong>'+esc(j.title)+'</strong> <span class="muted">'+esc(j.status||'')+' · '+new Date(j.lastActivityAt).toLocaleString()+'</span></summary>'+j.stages.map(stageLine).join('<div class="muted" style="margin-left:12px">↓</div>')+'</details>').join(''):'';
-      const office='<div class="kv"><div class="metric">Free stages<strong>'+(o.freeStages||0)+'</strong></div><div class="metric">Paid stages<strong>'+(o.paidStages||0)+'</strong></div><div class="metric">Actual cost<strong>'+money(o.cost.actualUsd)+'</strong></div><div class="metric">Paid-route equivalent (est.)<strong>'+money(o.cost.paidEquivalentUsd)+'</strong></div><div class="metric">Estimated saving<strong>'+money(o.cost.estimatedSavingUsd)+'</strong></div></div><div class="muted" style="margin:6px 0">'+esc(o.cost.basis||'')+'</div>'+rolesTable+jobsList+'<details style="margin-top:8px"><summary class="muted">Role registry</summary><ul>'+d.officeAgents.map(a=>'<li><strong>'+esc(a.label)+'</strong> — '+esc(a.status)+'<br><span class="muted">'+esc(a.purpose)+' · job '+esc(a.job)+' · free candidates: '+esc(a.freeModels.join(', ')||'none')+'</span></li>').join('')+'</ul></details>';
+      const office='<div class="kv"><div class="metric">Free stages<strong>'+(o.freeStages||0)+'</strong></div><div class="metric">Paid stages<strong>'+(o.paidStages||0)+'</strong></div><div class="metric">Actual cost<strong>'+money(o.cost.actualUsd)+'</strong></div><div class="metric">Paid-route equivalent (est.)<strong>'+money(o.cost.paidEquivalentUsd)+'</strong></div><div class="metric">Estimated saving<strong>'+money(o.cost.estimatedSavingUsd)+'</strong></div><div class="metric">Free-route incidents<strong>'+((o.incidents||[]).length)+'</strong></div></div><div class="muted" style="margin:6px 0">'+esc(o.cost.basis||'')+'</div>'+((o.incidents||[]).length?'<div class="error" style="margin:6px 0">'+o.incidents.map(i=>esc(i.route)+' — '+esc(i.kind==='paid_on_free_route'?'billed '+money(i.costUsd)+' on a free route':'served a different model')+' · blocked 24 h, step moved on ('+new Date(i.at).toLocaleString()+')').join('<br>')+'</div>':'')+rolesTable+jobsList+'<details style="margin-top:8px"><summary class="muted">Role registry</summary><ul>'+d.officeAgents.map(a=>'<li><strong>'+esc(a.label)+'</strong> — '+esc(a.status)+'<br><span class="muted">'+esc(a.purpose)+' · job '+esc(a.job)+' · free candidates: '+esc(a.freeModels.join(', ')||'none')+'</span></li>').join('')+'</ul></details>';
       const projects=d.projects.length?'<ul>'+d.projects.map(p=>'<li>'+(p.selected?'<strong>':'')+esc(p.name)+(p.selected?'</strong> (selected)':'')+'</li>').join('')+'</ul>':'<div class="muted">No projects.</div>';
       const pool='<div class="kv"><div class="metric">Live<strong>'+m.live+'/'+m.total+'</strong></div><div class="metric">Rate limited<strong>'+m.rateLimited+'</strong></div><div class="metric">Offline<strong>'+m.offline+'</strong></div><div class="metric">Not configured<strong>'+m.notConfigured+'</strong></div><div class="metric">Free / included<strong>'+m.free+'</strong></div></div><div class="muted" style="margin-top:8px">Coding order now: '+esc(m.codingOrder.join(' → ')||'no eligible model')+'</div><button class="ghost" id="pOpenPool" style="margin-top:8px">Open model pool</button>';
       const b=u.budget;const usage='<div class="kv"><div class="metric">Requests today<strong>'+u.today.requests+'</strong></div><div class="metric">Tokens today<strong>'+Number(u.today.tokens).toLocaleString()+'</strong></div><div class="metric">Cost today (est.)<strong>'+usd(u.today.costUsd)+'</strong></div>'+(b?'<div class="metric">Budget left<strong>'+usd(b.remainingUsd)+' / $'+b.monthlyUsd+'</strong></div>':'')+'</div>'+(u.cooling.length?'<div style="margin-top:8px">Cooling down: '+u.cooling.map(x=>esc(x.id)+' until '+new Date(x.until).toLocaleString()).join('; ')+'</div>':'')+(u.freeQuota.length?'<ul>'+u.freeQuota.map(q=>'<li>'+esc(q.id)+': '+(q.requestsRemaining!=null?'≈'+q.requestsRemaining+' requests left':'EXACT QUOTA NOT AVAILABLE')+' <span class="muted">('+esc(q.basis)+(q.nextResetAt?' · resets '+new Date(q.nextResetAt).toLocaleString():'')+')</span></li>').join('')+'</ul>':'<div class="muted" style="margin-top:8px">No free-tier provider is configured yet.</div>');

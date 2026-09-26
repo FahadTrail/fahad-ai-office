@@ -11,6 +11,7 @@ import { ChatCompletionsProtocol } from './chat-completions.js';
 import { GeminiProtocol } from './gemini.js';
 import { capabilityProfile } from './capabilities.js';
 import { getOpenRouterCatalog } from './openrouter-catalog.js';
+import { getProviderCatalog } from './provider-catalogs.js';
 
 export const BILLING_CLASS = Object.freeze({
   INCLUDED: 'included',
@@ -84,7 +85,9 @@ export function modelPoolDefinitions(env = process.env, { openRouterCatalog = ge
     },
     {
       provider: 'qwen', model: env.QWEN_MODEL || 'qwen3.8-flash', protocol: 'chat-completions',
-      endpoint: env.QWEN_API_ENDPOINT || 'https://qwen.invalid/compatible-mode/v1/chat/completions',
+      // International (Singapore) Model Studio endpoint: the only region with
+      // a new-user free quota. The key must be created in the same region.
+      endpoint: env.QWEN_API_ENDPOINT || 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions',
       secretEnv: 'QWEN_API_KEY', secretRef: 'env://QWEN_API_KEY', qualityTier: 4, costTier: 2, contextWindow: 1_000_000,
       billingClass: billing(env, 'QWEN_BILLING_CLASS', 'paid'),
       privacyApproved: truthy(env.QWEN_API_PRIVATE_DATA_APPROVED), privacyFlag: 'QWEN_API_PRIVATE_DATA_APPROVED',
@@ -102,14 +105,15 @@ export function modelPoolDefinitions(env = process.env, { openRouterCatalog = ge
       qualityTier: 4, costTier: 1, contextWindow: 200_000, billingClass: billing(env, 'ZHIPU_BILLING_CLASS', 'paid'),
       privacyApproved: truthy(env.ZHIPU_API_PRIVATE_DATA_APPROVED), privacyFlag: 'ZHIPU_API_PRIVATE_DATA_APPROVED',
     },
-    {
-      // Z.ai lists its Flash models at $0 (rate-limited). Below the coding
-      // floor: used for simple text jobs, never for autonomous coding.
-      provider: 'zhipu', model: env.ZHIPU_FREE_MODEL || 'glm-4.7-flash', protocol: 'chat-completions',
+    // Z.ai lists GLM-4.7-Flash ("Completely Free", 200K context, function
+    // calling) and GLM-4.5-Flash at $0; free use is limited to one
+    // concurrent request. Below the coding floor: text jobs only.
+    ...[env.ZHIPU_FREE_MODEL || 'glm-4.7-flash', 'glm-4.5-flash'].filter((model, index, all) => all.indexOf(model) === index).map((model) => ({
+      provider: 'zhipu', model, protocol: 'chat-completions',
       endpoint: 'https://api.z.ai/api/paas/v4/chat/completions', secretEnv: 'ZHIPU_API_KEY', secretRef: 'env://ZHIPU_API_KEY',
-      qualityTier: 3, costTier: 1, contextWindow: 128_000, billingClass: billing(env, 'ZHIPU_FREE_BILLING_CLASS', 'free'),
+      qualityTier: 3, costTier: 1, contextWindow: /4\.5/.test(model) ? 128_000 : 200_000, billingClass: billing(env, 'ZHIPU_FREE_BILLING_CLASS', 'free'),
       privacyApproved: truthy(env.ZHIPU_API_PRIVATE_DATA_APPROVED), privacyFlag: 'ZHIPU_API_PRIVATE_DATA_APPROVED',
-    },
+    })),
     {
       provider: 'minimax', model: env.MINIMAX_MODEL || 'MiniMax-M2.7', protocol: 'chat-completions',
       endpoint: 'https://api.minimax.io/v1/chat/completions', secretEnv: 'MINIMAX_API_KEY', secretRef: 'env://MINIMAX_API_KEY',
@@ -127,6 +131,14 @@ export function modelPoolDefinitions(env = process.env, { openRouterCatalog = ge
       // data requires a reviewed paid project and this explicit flag.
       privacyApproved: truthy(env.GEMINI_API_PRIVATE_DATA_APPROVED), privacyFlag: 'GEMINI_API_PRIVATE_DATA_APPROVED',
     },
+    {
+      // Flash-Lite: the Gemini free tier's high-volume model (hundreds of
+      // requests/day versus ~20 for Flash). Same key, same privacy rule.
+      provider: 'gemini', model: env.GEMINI_LITE_MODEL || 'gemini-flash-lite-latest', protocol: 'gemini',
+      secretEnv: 'GEMINI_API_KEY', secretRef: 'env://GEMINI_API_KEY', qualityTier: 3, costTier: 1, contextWindow: 1_000_000,
+      billingClass: billing(env, 'GEMINI_BILLING_CLASS', 'free'), pricing: readPricing(env, 'GEMINI_LITE_PRICING_JSON'),
+      privacyApproved: truthy(env.GEMINI_API_PRIVATE_DATA_APPROVED), privacyFlag: 'GEMINI_API_PRIVATE_DATA_APPROVED',
+    },
     // Static OpenRouter route: an explicitly configured OPENROUTER_MODEL, or the
     // default free model until the free-model catalog has been discovered.
     ...(openRouterCatalog?.admitted?.length && !env.OPENROUTER_MODEL ? [] : [{
@@ -142,18 +154,27 @@ export function modelPoolDefinitions(env = process.env, { openRouterCatalog = ge
       extraHeaders: { 'x-title': 'Fahad AI Office' },
     }]),
     ...openRouterFreeRoutes(env, openRouterCatalog),
-    {
-      provider: 'groq', model: env.GROQ_MODEL || 'openai/gpt-oss-120b', protocol: 'chat-completions',
+    // Groq free plan (console.groq.com/docs/rate-limits, 2026-09-26): the
+    // chat models below are on the free plan at 30 RPM, 1K RPD, 8K TPM and
+    // 200K TPD each. 8K tokens per minute is also the most one request can
+    // carry, so Groq free serves short jobs; the Llama models are now
+    // enterprise-only. The runtime catalog check drops a model Groq removes.
+    ...groqModels(env).map((model) => ({
+      provider: 'groq', model, protocol: 'chat-completions',
       endpoint: 'https://api.groq.com/openai/v1/chat/completions', secretEnv: 'GROQ_API_KEY', secretRef: 'env://GROQ_API_KEY',
-      qualityTier: Number(env.GROQ_QUALITY_TIER || 3), costTier: 1, contextWindow: Number(env.GROQ_CONTEXT_WINDOW || 128_000),
+      qualityTier: Number(env.GROQ_QUALITY_TIER || 3), costTier: 1, contextWindow: Number(env.GROQ_CONTEXT_WINDOW || 131_072),
+      maxOutputTokens: /qwen/.test(model) ? 16_384 : 65_536,
       billingClass: billing(env, 'GROQ_BILLING_CLASS', 'free'), pricing: readPricing(env, 'GROQ_PRICING_JSON'),
+      ...(billing(env, 'GROQ_BILLING_CLASS', 'free') === 'free' ? { requestTokenLimit: Number(env.GROQ_FREE_TPM || 8_000) } : {}),
       privacyApproved: truthy(env.GROQ_API_PRIVATE_DATA_APPROVED), privacyFlag: 'GROQ_API_PRIVATE_DATA_APPROVED',
-    },
+      catalogBlocked: providerCatalogVerdict('groq', model),
+    })),
     {
-      // GitHub Models (official inference API). Free, rate-limited, 8K input /
-      // 4K output per request: suited to short Office jobs, not to coding.
-      // Needs its own token (fine-grained PAT with "Models: read"); the Coding
-      // Agent's repository token is never reused for inference.
+      // GitHub Models was fully retired by GitHub on 2026-07-30 (playground,
+      // catalog and inference API; github.blog changelog 2026-07-30). Kept
+      // only so the dashboard explains it; it is never called. The Coding
+      // Agent's repository token was never used for inference.
+      retired: 'PROVIDER_RETIRED',
       provider: 'github', model: env.GITHUB_MODELS_MODEL || 'openai/gpt-4.1', protocol: 'chat-completions',
       endpoint: 'https://models.github.ai/inference/chat/completions', secretEnv: 'GITHUB_MODELS_TOKEN', secretRef: 'env://GITHUB_MODELS_TOKEN',
       qualityTier: 4, costTier: 1, contextWindow: 8_000, maxOutputTokens: 4_000,
@@ -161,16 +182,21 @@ export function modelPoolDefinitions(env = process.env, { openRouterCatalog = ge
       privacyApproved: truthy(env.GITHUB_MODELS_PRIVATE_DATA_APPROVED), privacyFlag: 'GITHUB_MODELS_PRIVATE_DATA_APPROVED',
       extraHeaders: { 'x-github-api-version': '2022-11-28' },
     },
-    {
-      // Cerebras free tier: fast open-weight models, daily token allowance,
-      // small free context window.
-      provider: 'cerebras', model: env.CEREBRAS_MODEL || 'gpt-oss-120b', protocol: 'chat-completions',
+    // Cerebras (inference-docs.cerebras.ai, 2026-09-26): the permanent free
+    // tier ended on 2026-08-17. New accounts get a Free Trial: $5 of credits
+    // after adding a verified payment method, expiring after 30 days; API
+    // access then stops until credits are bought (no silent billing). So the
+    // routes are PROMO. Shared catalog: gpt-oss-120b (65K context on the
+    // trial) and qwen-3.8-27b (64K).
+    ...[env.CEREBRAS_MODEL || 'gpt-oss-120b', 'qwen-3.8-27b'].filter((model, index, all) => all.indexOf(model) === index).map((model) => ({
+      provider: 'cerebras', model, protocol: 'chat-completions',
       endpoint: 'https://api.cerebras.ai/v1/chat/completions', maxTokensField: 'max_completion_tokens',
       secretEnv: 'CEREBRAS_API_KEY', secretRef: 'env://CEREBRAS_API_KEY',
-      qualityTier: Number(env.CEREBRAS_QUALITY_TIER || 3), costTier: 1, contextWindow: Number(env.CEREBRAS_CONTEXT_WINDOW || 8_192),
-      billingClass: billing(env, 'CEREBRAS_BILLING_CLASS', 'free'), pricing: readPricing(env, 'CEREBRAS_PRICING_JSON'),
+      qualityTier: Number(env.CEREBRAS_QUALITY_TIER || 3), costTier: 1, contextWindow: Number(env.CEREBRAS_CONTEXT_WINDOW || (/qwen/.test(model) ? 64_000 : 65_000)),
+      billingClass: billing(env, 'CEREBRAS_BILLING_CLASS', 'promo'), pricing: readPricing(env, 'CEREBRAS_PRICING_JSON'),
       privacyApproved: truthy(env.CEREBRAS_API_PRIVATE_DATA_APPROVED), privacyFlag: 'CEREBRAS_API_PRIVATE_DATA_APPROVED',
-    },
+      catalogBlocked: providerCatalogVerdict('cerebras', model),
+    })),
     {
       // Mistral: free only on the Experiment plan (whose prompts may be used
       // for training). Treated as paid until the owner states the plan
@@ -216,6 +242,20 @@ function openRouterFreeRoutes(env, catalog) {
   }));
 }
 
+function groqModels(env) {
+  const configured = String(env.GROQ_FREE_MODELS || '').split(',').map((value) => value.trim()).filter((value) => /^[A-Za-z0-9._/:-]{2,120}$/.test(value));
+  const models = [env.GROQ_MODEL || 'openai/gpt-oss-120b', ...(configured.length ? configured : ['qwen/qwen3.8-27b', 'openai/gpt-oss-20b'])];
+  return models.filter((model, index) => models.indexOf(model) === index);
+}
+
+// A provider's own model list (fetched at runtime) rules out a model it no
+// longer serves, so a renamed or removed model is never called.
+function providerCatalogVerdict(provider, model) {
+  const catalog = getProviderCatalog(provider);
+  if (!catalog?.models?.length) return null;
+  return catalog.models.includes(model) ? null : 'MODEL_NOT_IN_PROVIDER_CATALOG';
+}
+
 function credential(env, name) {
   const value = env[name];
   return typeof value === 'string' && value.trim().length >= 12 && !/PASTE_HERE|YOUR_.*KEY/i.test(value) ? value.trim() : null;
@@ -232,6 +272,7 @@ export function createModelPool({ env = process.env, fetchFn = fetch, protocolFa
     if (definition.billingClass === BILLING_CLASS.PAID && !definition.pricing) reasons.push('PRICING_UNKNOWN');
     if (definition.endpoint && /\.invalid\//.test(definition.endpoint)) reasons.push('ENDPOINT_NOT_CONFIGURED');
     if (definition.catalogBlocked) reasons.push(`CATALOG_${definition.catalogBlocked}`);
+    if (definition.retired) reasons.push(definition.retired);
     const protocol = reasons.length ? null : protocolFactory(definition, { apiKey, fetchFn, env });
     return Object.freeze({ ...definition, protocolClient: protocol, unavailableReasons: Object.freeze(reasons) });
   });

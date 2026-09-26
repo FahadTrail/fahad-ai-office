@@ -156,6 +156,13 @@ test('workspace authorization: "*:free" admits only free-only guarded free varia
     { id: 'openrouter:a/paid', provider: 'openrouter', model: 'a/paid', freeOnly: false, secretRef: 'env://OPENROUTER_API_KEY' },
   ];
   assert.deepEqual(authorizedRoutes(pool, { providers: [{ provider: 'openrouter', models: ['*:free'], secretRef: 'env://OPENROUTER_API_KEY', enabled: true }] }), ['openrouter:a/b:free']);
+  // Owner-stated free/promo routes of an approved provider are covered; paid ones never.
+  const groq = [
+    { id: 'groq:qwen/qwen3.8-27b', provider: 'groq', model: 'qwen/qwen3.8-27b', billingClass: 'free', secretRef: 'env://GROQ_API_KEY' },
+    { id: 'groq:paid-model', provider: 'groq', model: 'paid-model', billingClass: 'paid', secretRef: 'env://GROQ_API_KEY' },
+    { id: 'groq:unknown', provider: 'groq', model: 'unknown', secretRef: 'env://GROQ_API_KEY' },
+  ];
+  assert.deepEqual(authorizedRoutes(groq, { providers: [{ provider: 'groq', models: ['*:free'], secretRef: 'env://GROQ_API_KEY', enabled: true }] }), ['groq:qwen/qwen3.8-27b']);
 });
 
 test('web tools refuse private, local, Hermes and non-web targets and extract readable text', async () => {
