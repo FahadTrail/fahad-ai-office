@@ -166,11 +166,15 @@ function toggleSidebar(open) {
 async function refreshSidebar() {
   if (!ws()) return;
   try {
-    const [{ conversations }, attention, { tasks }] = await Promise.all([
+    const [{ conversations }, attention, { tasks }, office] = await Promise.all([
       api(`/api/conversations${q({ workspaceId: ws() })}`),
       api(`/api/attention${q({ workspaceId: ws() })}`),
       api(`/api/tasks${q({ workspaceId: ws(), status: 'running' })}`),
+      api(`/api/office${q({ workspaceId: ws() })}`).catch(() => null),
     ]);
+    const working = office ? office.agents.filter((agent) => ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state)).length : 0;
+    $('#workingCount').textContent = working;
+    $('#workingCount').classList.toggle('hidden', !working);
     state.conversations = conversations;
     state.attention = attention.counts;
     const current = location.hash.match(/^#\/chat\/([\w-]+)/)?.[1];
@@ -198,8 +202,9 @@ async function route() {
   const routes = {
     '': () => renderChat(null), chat: () => renderChat(id), chats: renderChats, tasks: () => renderTasks(id || 'running'), task: () => renderTask(id),
     code: renderNewTask, attention: renderAttention, projects: renderProjects, project: () => renderProject(id), models: renderModels, settings: renderSettings,
+    office: renderOffice, agent: () => renderAgent(id), workflow: () => renderWorkflow(id), talk: () => renderChat(null, id),
   };
-  markNav({ '': 'chat', chat: 'chats', task: 'tasks', project: 'projects' }[section] ?? section);
+  markNav({ '': 'chat', chat: 'chats', task: 'tasks', project: 'projects', agent: 'office', workflow: 'office', talk: 'office' }[section] ?? section);
   document.querySelectorAll('#recentChats a').forEach((link) => link.classList.toggle('active', link.getAttribute('href') === `#/chat/${id}`));
   try {
     await (routes[section] || routes[''])();
@@ -217,19 +222,25 @@ const SUGGESTIONS = [
   'Draft a short project update for my team',
 ];
 
-async function renderChat(id) {
+async function renderChat(id, agentSlug = null) {
   let conversation = null;
   let messages = [];
   if (id) ({ conversation, messages } = await api(`/api/conversations/${id}`));
-  setTitle(conversation?.title || 'New chat');
+  const slug = conversation?.agent?.slug || agentSlug || 'chief-of-staff';
+  const who = await agentInfo(slug);
+  const direct = slug !== 'chief-of-staff';
+  setTitle(conversation?.title || (direct ? `Talk to ${who.label}` : 'New chat'));
   view.innerHTML = `<div class="chat">
+    <div class="chat-who">${avatar(who)}<div class="grow"><div class="who-name">${esc(who.label)}${direct ? ' <span class="pill st-available">Direct</span>' : ''}</div>
+      <div class="who-role">${esc(direct ? who.scope : 'Give me the objective — I coordinate the Office and bring back one result.')}</div></div>
+      <a class="btn btn-ghost btn-sm" href="#/agent/${esc(slug)}">Profile</a></div>
     ${conversation ? `<div class="chat-head">
       <div class="chat-title" dir="auto" id="chatTitle">${esc(conversation.title)}</div>
       <button class="btn btn-ghost btn-sm" id="renameChat">Rename</button>
       <button class="btn btn-ghost btn-sm" id="archiveChat">${conversation.archived ? 'Unarchive' : 'Archive'}</button>
       <button class="btn btn-ghost btn-sm" id="deleteChat">Delete</button>
     </div>` : ''}
-    <div class="chat-scroll" id="chatScroll">${conversation ? '<div class="messages" id="messages"></div>' : welcome()}</div>
+    <div class="chat-scroll" id="chatScroll">${conversation ? '<div class="messages" id="messages"></div>' : (direct ? welcomeAgent(who) : welcome())}</div>
     <div class="composer-wrap">
       <form class="composer" id="composer">
         <label class="sr-only" for="prompt">Message</label>
@@ -237,7 +248,7 @@ async function renderChat(id) {
         <button class="btn btn-danger hidden" type="button" id="stopButton">Stop</button>
         <button class="btn btn-primary" type="submit" id="sendButton">Send</button>
       </form>
-      <div class="composer-hint">The Chief of Staff decides who does the work. Development requests start a tracked task automatically.</div>
+      <div class="composer-hint">${direct ? `You are talking directly to ${esc(who.label)}. For work that needs several people, ask the <a href="#/">Chief of Staff</a>.` : 'The Chief of Staff decides who does the work, dispatches the team and consolidates the result.'}</div>
     </div>
   </div>`;
   const prompt = $('#prompt');
@@ -252,7 +263,7 @@ async function renderChat(id) {
     busy(button, true, 'Sending…');
     try {
       if (!conversation) {
-        const created = await api('/api/conversations', { method: 'POST', body: { workspaceId: ws(), message: text } });
+        const created = await api('/api/conversations', { method: 'POST', body: { workspaceId: ws(), message: text, ...(direct ? { agentSlug: slug } : {}) } });
         prompt.value = '';
         await refreshSidebar();
         location.hash = `#/chat/${created.conversation.id}`;
@@ -303,7 +314,7 @@ async function renderChat(id) {
   async function load() {
     const data = await api(`/api/conversations/${conversation.id}`);
     messages = data.messages;
-    const signature = JSON.stringify(messages.map((message) => [message.jobId, message.assistant.status, message.assistant.stage, message.assistant.text.length, message.assistant.tasks.map((task) => task.status + task.phase)]));
+    const signature = JSON.stringify(messages.map((message) => [message.jobId, message.assistant.status, message.assistant.stage, message.assistant.text.length, message.assistant.tasks.map((task) => task.status + task.phase), message.assistant.workflow]));
     const pending = messages.some((message) => !['completed', 'failed', 'cancelled'].includes(message.assistant.status));
     $('#stopButton').classList.toggle('hidden', !pending);
     if (signature === lastSignature) return pending;
@@ -335,6 +346,23 @@ function welcome() {
   </div>`;
 }
 
+function welcomeAgent(who) {
+  return `<div class="welcome">${avatar(who, 'avatar-lg')}
+    <h1>Talk to ${esc(who.label)}</h1>
+    <p class="muted">${esc(who.scope)}</p>
+    <p class="small faint">For an objective that needs several employees, <a href="#/">ask the Chief of Staff</a> instead.</p>
+  </div>`;
+}
+
+const FLOW_ICON = { done: '✓', working: '●', waiting: '○', ready: '○', failed: '✕', blocked: '✕' };
+function flowCard(flow, jobId) {
+  if (!flow) return '';
+  return `<a class="flow-card" href="#/workflow/${esc(jobId)}"><div class="small faint">Chief of Staff dispatched the team</div>
+    ${flow.streams.map((stream) => `<div class="flow-row st-${esc(stream.state)}"><span class="flow-icon">${FLOW_ICON[stream.state] || '○'}</span><strong>${esc(stream.agent)}</strong><span class="muted grow">${esc(stream.title)}</span><span class="xs faint">${esc(stream.state)}</span></div>`).join('')}
+    <div class="flow-row st-${esc(flow.synthesis)}"><span class="flow-icon">${FLOW_ICON[flow.synthesis] || '○'}</span><strong>Chief of Staff</strong><span class="muted grow">Consolidated result</span><span class="xs faint">${esc(flow.synthesis)}</span></div>
+    <div class="xs" style="margin-top:var(--s-2)">Open the workflow →</div></a>`;
+}
+
 function messageHtml(message) {
   const a = message.assistant;
   const user = `<div class="msg msg-user"><div class="bubble-col" style="max-width:82%"><div class="bubble" dir="auto">${esc(message.user.text)}</div><div class="msg-meta">${when(message.user.at)}</div></div></div>`;
@@ -345,7 +373,7 @@ function messageHtml(message) {
   else body = `<div class="thinking"><span class="dots"><i></i><i></i><i></i></span>${esc(a.stage || 'Thinking')}…</div>`;
   const tasks = a.tasks.map((task) => `<a class="task-chip" href="#/task/${esc(task.id)}"><div class="grow"><div class="title" dir="auto">${esc(task.title)}</div><div class="sub small muted">Development task · ${esc(stageWord(task.phase))}</div></div>${pill(taskGroup(task.status), STATUS_WORDS[task.status])}</a>`).join('');
   const meta = a.status === 'completed' ? `<div class="msg-meta">${when(a.at)}${a.model ? ` · <span title="${esc(a.model.provider)}">${esc(a.model.model)}</span>` : ''}${a.costUsd ? ` · ${usd(a.costUsd)}` : ''}<button class="btn btn-ghost btn-sm" data-copy="${esc(message.jobId)}">Copy</button></div>` : '';
-  return `${user}<div class="msg msg-office"><div class="bubble">${body}${tasks}${meta}</div></div>`;
+  return `${user}<div class="msg msg-office"><div class="bubble">${body}${flowCard(a.workflow, message.jobId)}${tasks}${meta}</div></div>`;
 }
 const PHASE_WORDS = { understand: 'Understanding', plan: 'Planning', implement: 'Editing', test: 'Testing', debug: 'Debugging', review: 'Reviewing', publish: 'Opening the pull request', ci: 'Waiting for CI', deploy: 'Deploying', verify: 'Verifying', report: 'Wrapping up', done: 'Done' };
 const stageWord = (phase) => PHASE_WORDS[phase] || phase || '';
@@ -532,6 +560,7 @@ function ownerCard(task, approvals) {
   if (!need) return '';
   if (need.kind === 'approval') {
     return `<section class="owner-card" aria-live="polite"><h2>${esc(need.title)}</h2>${need.items.map((item) => `<div class="owner-item">
+      <div class="small muted">${esc(item.who || 'An agent')} is asking</div>
       <div class="spread"><div class="what" dir="auto">${esc(item.what)}</div><span class="risk ${esc(item.risk)}">${esc(item.risk)} risk</span></div>
       ${item.why ? `<p class="small" dir="auto"><strong>Why:</strong> ${esc(item.why)}</p>` : ''}
       ${item.resources.length ? `<div class="small muted">Affects</div><div class="resources">${item.resources.map((resource) => `<code>${esc(resource)}</code>`).join('')}</div>` : ''}
@@ -546,6 +575,117 @@ function ownerCard(task, approvals) {
     <textarea id="replyText" class="input" rows="3" dir="auto" placeholder="${question ? 'Type your answer…' : 'e.g. try a smaller change, or skip the docs update'}"></textarea>
     <div class="row" style="margin-top:var(--s-3)"><button class="btn btn-primary" id="replySend">Reply &amp; Continue</button>${question ? '' : '<button class="btn" id="resumeTask">Resume without a message</button>'}</div>
   </section>`;
+}
+
+// ------------------------------------------------------------------ office
+const agentCache = new Map();
+async function agentInfo(slug) {
+  if (!agentCache.has(slug)) {
+    try { agentCache.set(slug, (await api(`/api/agents/${slug}${q({ workspaceId: ws() })}`)).agent); } catch { return { slug, label: slug, scope: '' }; }
+  }
+  return agentCache.get(slug);
+}
+function avatar(agent, extra = '') {
+  const initial = String(agent.label || '?').replace(/[^A-Za-z؀-ۿ]/g, '').slice(0, 1).toUpperCase() || '•';
+  return `<span class="avatar ${extra}" style="--agent:${esc(agent.color || 'var(--accent)')}" aria-hidden="true">${esc(initial)}</span>`;
+}
+const STATE_CLASS = { AVAILABLE: 'st-available', THINKING: 'st-working', WORKING: 'st-working', TESTING: 'st-working', REVIEWING: 'st-working', WAITING: 'st-waiting', BLOCKED: 'st-blocked', 'NEEDS FAHAD': 'st-needs', COMPLETED: 'st-completed' };
+const statePill = (value) => `<span class="pill ${STATE_CLASS[value] || 'st-available'}">${esc(value)}</span>`;
+
+async function renderOffice() {
+  setTitle('Office');
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>The Office</h1><p>Who is working on what right now. Every state comes from real work in progress.</p></div>
+    <a class="btn btn-primary" href="#/">Give the Chief an objective</a></div><div id="officeBody"><div class="muted">Loading…</div></div></div>`;
+  let signature = '';
+  const load = async () => {
+    const data = await api(`/api/office${q({ workspaceId: ws() })}`);
+    const next = JSON.stringify(data);
+    if (next === signature) return;
+    signature = next;
+    const chief = data.agents.find((agent) => agent.executor === 'chief');
+    const staff = data.agents.filter((agent) => agent.executor === 'office');
+    const coding = data.agents.find((agent) => agent.executor === 'coding');
+    const card = (agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}">
+      <div class="row">${avatar(agent)}<div class="grow"><div class="title">${esc(agent.label)}</div>${statePill(agent.state)}</div></div>
+      <div class="small agent-detail" dir="auto">${esc(agent.detail || '')}</div>
+      ${agent.assignment?.objective ? `<div class="xs faint" dir="auto">${esc(agent.assignment.objective)}</div>` : `<div class="xs faint">${esc(agent.scope)}</div>`}</a>`;
+    $('#officeBody').innerHTML = `
+      ${data.needsFahad ? `<a class="owner-banner" href="#/attention">● ${data.needsFahad} item${data.needsFahad === 1 ? '' : 's'} need you — open Needs attention</a>` : ''}
+      <h2 class="section-title">Chief of Staff</h2><div class="office-grid office-grid-1">${card(chief)}</div>
+      <h2 class="section-title">Specialists</h2><div class="office-grid">${staff.map(card).join('')}</div>
+      <h2 class="section-title">Engineering</h2><div class="office-grid office-grid-1">${card(coding)}</div>
+      <div class="office-columns">
+        <div><h2 class="section-title">Objectives in the office</h2>${data.workflows.length ? data.workflows.map((flow) => `<a class="list-item" href="#/workflow/${esc(flow.id)}"><div class="grow"><div class="title" dir="auto">${esc(flow.title)}</div><div class="sub">${esc(flow.status)} · ${flow.progress}% · ${when(flow.createdAt)}</div></div>${pill(flow.status === 'completed' ? 'completed' : flow.status === 'failed' ? 'failed' : 'running', flow.status === 'completed' ? 'Completed' : flow.status === 'failed' ? 'Failed' : 'In progress')}</a>`).join('') : '<div class="muted small">No multi-agent objective in the last week. Give the Chief one from the chat.</div>'}</div>
+        <div><h2 class="section-title">Recent handoffs</h2>${data.handoffs.length ? data.handoffs.map((handoff) => `<a class="handoff" href="#/workflow/${esc(handoff.jobId)}"><strong>${esc(handoff.from)}</strong> → <strong>${esc(handoff.to)}</strong><span class="xs faint">${when(handoff.at)}</span></a>`).join('') : '<div class="muted small">No handoffs in the last two hours.</div>'}</div>
+      </div>`;
+  };
+  await load();
+  every(4000, () => load().catch(() => {}));
+}
+
+async function renderAgent(slug) {
+  const load = async () => api(`/api/agents/${slug}${q({ workspaceId: ws() })}`);
+  const draw = (data) => {
+    const agent = data.agent;
+    agentCache.set(slug, agent);
+    setTitle(agent.label);
+    const cta = agent.directChat ? `<a class="btn btn-primary" href="#/talk/${esc(slug)}">Chat with ${esc(agent.label)}</a>`
+      : agent.executor === 'coding' ? '<a class="btn btn-primary" href="#/code">Give the Coding Agent a task</a>' : '<a class="btn btn-primary" href="#/">Give the Chief an objective</a>';
+    view.innerHTML = `<div class="page stack">
+      <div class="agent-head">${avatar(agent, 'avatar-lg')}<div class="grow"><h1>${esc(agent.label)}</h1><div class="muted">${esc(agent.tagline || '')}</div></div>${cta}</div>
+      <div class="card"><div class="row">${statePill(data.state.state)}<span dir="auto">${esc(data.state.detail || '')}</span></div>
+        ${data.state.assignment ? `<div class="small muted" style="margin-top:var(--s-2)" dir="auto">Current assignment: ${data.state.assignment.jobId ? `<a href="#/workflow/${esc(data.state.assignment.jobId)}">${esc(data.state.assignment.objective)}</a>` : `<a href="#/task/${esc(data.state.assignment.sessionId)}">${esc(data.state.assignment.objective)}</a>`}</div>` : ''}</div>
+      <div class="card"><h2 class="card-title">Role</h2><p>${esc(agent.scope)}</p>
+        <dl class="kv"><div><dt>Delivers</dt><dd>${esc(agent.deliverable)}</dd></div><div><dt>Model</dt><dd>AUTO · ${esc(agent.job)} work</dd></div><div><dt>Web access</dt><dd>${agent.webTools ? 'Yes' : 'No'}</dd></div><div><dt>Talk directly</dt><dd>${agent.directChat ? 'Yes' : agent.executor === 'coding' ? 'Via tasks' : 'Via the Chief'}</dd></div></dl></div>
+      ${data.codingSessions?.length ? `<div class="card"><h2 class="card-title">Engineering tasks</h2>${data.codingSessions.map((session) => `<a class="list-item" href="#/task/${esc(session.id)}"><div class="grow"><div class="title">${esc(session.title)}</div><div class="sub">${esc(stageWord(session.phase))}</div></div>${pill(taskGroup(session.status), STATUS_WORDS[session.status])}</a>`).join('')}</div>` : ''}
+      <div class="card"><h2 class="card-title">Recent work</h2>${data.recent.length ? data.recent.map((item) => `<a class="list-item" href="#/workflow/${esc(item.jobId)}"><div class="grow"><div class="title" dir="auto">${esc(item.title)}</div><div class="sub" dir="auto">${esc(item.objective)}</div>${item.summary ? `<div class="sub small" dir="auto">${esc(item.summary)}</div>` : ''}</div><div class="xs faint">${esc(item.status)}<br>${when(item.at)}</div></a>`).join('') : '<div class="muted small">No work in the last 30 days.</div>'}</div>
+      ${agent.directChat ? `<div class="card"><h2 class="card-title">Conversations</h2>${data.conversations.length ? data.conversations.map((conversation) => `<a class="list-item" href="#/chat/${esc(conversation.id)}"><div class="grow"><div class="title" dir="auto">${esc(conversation.title)}</div><div class="sub">${when(conversation.lastMessageAt)}</div></div></a>`).join('') : '<div class="muted small">No direct conversations yet.</div>'}</div>` : ''}
+    </div>`;
+  };
+  draw(await load());
+  let last = '';
+  every(5000, async () => { try { const data = await load(); const next = JSON.stringify(data); if (next !== last) { last = next; draw(data); } } catch {} });
+}
+
+const NODE_WORD = { done: 'Done', working: 'Working', waiting: 'Waiting', ready: 'Starting', failed: 'Failed', blocked: 'Blocked' };
+async function renderWorkflow(jobId) {
+  let signature = '';
+  const load = async () => {
+    const data = await api(`/api/workflows/${jobId}`);
+    const next = JSON.stringify(data);
+    if (next === signature) return data.job.status;
+    signature = next;
+    setTitle(data.job.title);
+    const byId = new Map(data.nodes.map((node) => [node.id, node]));
+    const streams = data.nodes.filter((node) => node.kind !== 'plan' && node.kind !== 'synthesis');
+    const plan = data.nodes.find((node) => node.kind === 'plan');
+    const syntheses = data.nodes.filter((node) => node.kind === 'synthesis');
+    const needs = (node) => node.dependsOn.map((id) => byId.get(id)).filter((dep) => dep && dep.kind !== 'plan' && dep.kind !== 'synthesis').map((dep) => dep.agentLabel);
+    const nodeRow = (node) => `<div class="flow-node st-${esc(node.state)}"><span class="flow-icon">${FLOW_ICON[node.state] || '○'}</span>
+      <div class="grow"><div><strong>${esc(node.agentLabel)}</strong> — ${esc(node.title)}${node.revision ? ' <span class="pill st-waiting">revision</span>' : ''}</div>
+      <div class="xs faint">${esc(NODE_WORD[node.state] || node.state)}${needs(node).length ? ` · after ${esc([...new Set(needs(node))].join(', '))}` : ''}${node.completedAt ? ` · ${when(node.completedAt)}` : ''}</div>
+      ${node.codingTask ? `<a class="xs" href="#/task/${esc(node.codingTask.id)}">Coding Agent task: ${esc(STATUS_WORDS[node.codingTask.status] || node.codingTask.status)} · ${esc(stageWord(node.codingTask.phase))}</a>` : ''}
+      ${node.output?.summary ? `<div class="small" dir="auto">${esc(node.output.summary)}</div>` : ''}</div></div>`;
+    view.innerHTML = `<div class="page stack">
+      <div class="page-head"><div><div class="row">${pill(data.job.status === 'completed' ? 'completed' : data.job.status === 'failed' ? 'failed' : 'running', data.job.status === 'completed' ? 'Completed' : data.job.status === 'failed' ? 'Failed' : 'In progress')}<span class="small muted">${data.job.progress}% · ${usd(data.job.costUsd)}</span>${data.job.conversationId ? `<a class="small" href="#/chat/${esc(data.job.conversationId)}">Open chat</a>` : ''}</div>
+        <h1 dir="auto">${esc(data.job.title)}</h1><p dir="auto">${esc(data.job.objective)}</p></div></div>
+      <div class="card"><h2 class="card-title">Workflow</h2>
+        <div class="flow-node st-done"><span class="flow-icon">✓</span><div class="grow"><strong>Fahad</strong> — gave the objective</div></div>
+        ${plan ? nodeRow({ ...plan, agentLabel: 'Chief of Staff', title: 'Split the objective into workstreams' }) : ''}
+        <div class="flow-branch">${streams.map(nodeRow).join('') || '<div class="muted small">No workstreams (the Chief answered alone).</div>'}</div>
+        ${syntheses.map((node) => nodeRow({ ...node, title: node.title === 'Chief final synthesis' ? 'Final synthesis after revisions' : 'Consolidate the team’s work' })).join('')}
+        <div class="flow-node st-${data.final ? 'done' : 'waiting'}"><span class="flow-icon">${data.final ? '✓' : '○'}</span><div class="grow"><strong>Fahad</strong> — ${data.final ? 'received the result' : 'will receive the result'}</div></div>
+        ${data.participants.length ? `<div class="xs faint" style="margin-top:var(--s-2)">Team: ${esc(data.participants.map((entry) => entry.label).join(', '))}</div>` : ''}</div>
+      ${data.decisions.length ? `<div class="owner-card"><h2>Decisions for Fahad</h2>${data.decisions.map((decision) => `<div class="owner-item"><div class="small muted">${esc(decision.from)}</div>${markdown(decision.text)}</div>`).join('')}</div>` : ''}
+      ${data.final ? `<div class="card"><h2 class="card-title">Final result — Chief of Staff</h2>${markdown(data.final.content)}</div>` : ''}
+      <div class="card"><h2 class="card-title">Outputs</h2>${data.nodes.filter((node) => node.output).map((node) => `<details class="disclosure"><summary>${esc(node.agentLabel)} — ${esc(node.title)}</summary><div class="disclosure-body">${markdown(node.output.content)}</div></details>`).join('') || '<div class="muted small">Outputs appear here as each employee delivers.</div>'}</div>
+      ${data.handoffs.length ? `<details class="disclosure"><summary>Handoffs (${data.handoffs.length})</summary><div class="disclosure-body">${data.handoffs.map((handoff) => `<div class="small">${esc(handoff.from)} → ${esc(handoff.to)} <span class="faint">${when(handoff.at)}</span></div>`).join('')}</div></details>` : ''}
+      ${data.revisions.length ? `<details class="disclosure"><summary>Revisions requested by the Chief (${data.revisions.length})</summary><div class="disclosure-body">${data.revisions.map((revision) => `<div class="small">${esc(revision.workstream)}: ${esc(revision.instruction)}</div>`).join('')}</div></details>` : ''}
+    </div>`;
+    return data.job.status;
+  };
+  const status = await load();
+  if (!['completed', 'failed', 'cancelled'].includes(status)) every(3000, () => load().catch(() => {}));
 }
 
 // ------------------------------------------------------------------ attention
@@ -575,9 +715,13 @@ async function renderProject(id) {
       <label class="field-label" for="pDesc">What this project is (the Chief reads this)</label><textarea id="pDesc" class="input" rows="4" dir="auto">${esc(project.description)}</textarea>
       <label class="field-label" for="pRepo">Default repository for tasks</label><input id="pRepo" class="input" value="${esc(project.defaultRepository)}" placeholder="owner/name">
       <div class="row" style="margin-top:var(--s-3)"><button class="btn btn-primary" type="submit">Save</button></div></form>
+    <div class="card"><h2 class="card-title">Objectives &amp; workflows</h2><div id="projectFlows" class="muted small">Loading…</div></div>
     <div class="card"><h2 class="card-title">Memory</h2><p class="small muted">Facts, decisions and preferences the Office reuses in new chats and tasks.</p>
       <form class="row" id="memoryForm"><select id="mKind" class="input input-sm" style="width:auto"><option value="fact">Fact</option><option value="decision">Decision</option><option value="preference">Preference</option></select><input id="mText" class="input input-sm grow" dir="auto" placeholder="e.g. Production runs on the Hostinger VPS"><button class="btn btn-sm" type="submit">Add</button></form>
       <div style="margin-top:var(--s-3)">${memory.map((item) => `<div class="list-item"><div class="grow"><div class="sub faint xs">${esc(item.kind)}</div><div dir="auto">${esc(item.content)}</div></div><button class="icon-btn" data-forget="${esc(item.id)}" aria-label="Remove">✕</button></div>`).join('') || '<div class="muted small">Nothing remembered yet.</div>'}</div></div></div>`;
+  api(`/api/workflows${q({ workspaceId: id })}`).then(({ workflows }) => {
+    $('#projectFlows').innerHTML = workflows.length ? workflows.slice(0, 10).map((flow) => `<a class="list-item" href="#/workflow/${esc(flow.id)}"><div class="grow"><div class="title" dir="auto">${esc(flow.title)}</div><div class="sub">${flow.workstreams} workstreams · ${when(flow.createdAt)}</div></div>${pill(flow.status === 'completed' ? 'completed' : flow.status === 'failed' ? 'failed' : 'running', flow.status)}</a>`).join('') : 'No multi-agent objectives yet.';
+  }).catch(() => {});
   $('#projectForm').onsubmit = async (event) => {
     event.preventDefault();
     try { await api(`/api/projects/${id}`, { method: 'PATCH', body: { description: $('#pDesc').value, defaultRepository: $('#pRepo').value } }); toast('Saved'); } catch (error) { toast(error.message); }
@@ -612,8 +756,13 @@ async function renderSettings() {
   try { health = await (await fetch('./healthz')).json(); } catch {}
   view.innerHTML = `<div class="page stack"><div class="page-head"><div><h1>Settings</h1></div></div>
     <div class="card"><h2 class="card-title">Account</h2><p class="small muted">Signed in as the owner. Sessions last 7 days.</p><button class="btn" id="logout">Sign out</button></div>
+    <div class="card"><h2 class="card-title">Tools &amp; connectors</h2><p class="small muted">"Connected" means a real successful use was recorded; configuration alone is not counted.</p><div id="capabilities" class="muted small">Checking…</div></div>
     <div class="card"><h2 class="card-title">System</h2><dl class="kv"><div><dt>Hub</dt><dd>${health?.ok ? 'Healthy' : 'Unknown'}</dd></div><div><dt>Version</dt><dd class="mono small">${esc(String(health?.version || '—').slice(0, 12))}</dd></div></dl>
       <p class="small muted" style="margin-top:var(--s-3)">Technical dashboards (Platform, detailed model pool, legacy Coding Agent form) remain in the <a href="./classic">classic view</a>.</p></div></div>`;
+  api('/api/capabilities').then(({ capabilities }) => {
+    const kind = (status) => (status.startsWith('Connected') || status === 'Available' ? 'st-completed' : status.startsWith('Configured') ? 'st-waiting' : status === 'Not configured' ? 'st-available' : 'st-blocked');
+    $('#capabilities').innerHTML = capabilities.map((item) => `<div class="list-item"><div class="grow"><div class="title">${esc(item.label)}</div><div class="sub">${esc(item.detail)}</div></div><span class="pill ${kind(item.status)}">${esc(item.status)}</span></div>`).join('');
+  }).catch((error) => { $('#capabilities').textContent = error.message; });
   $('#logout').onclick = async () => { await fetch('./api/auth/logout', { method: 'POST' }).catch(() => {}); location.reload(); };
 }
 

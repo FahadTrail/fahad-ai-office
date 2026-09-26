@@ -87,8 +87,9 @@ export function parseOutput(markdown) {
     return match ? match[1].trim() : '';
   };
   const decisions = section('Decisions for Fahad');
+  const plain = (value) => String(value || '').replace(/\*\*|__|`/g, '').trim();
   return {
-    summary: section('Summary') || text.split('\n').find((line) => line.trim() && !line.startsWith('#'))?.trim() || '',
+    summary: plain(section('Summary') || text.split('\n').find((line) => line.trim() && !line.startsWith('#'))?.trim() || ''),
     handoff: section('Handoff'),
     decisions: /^(none|n\/a|-|no decisions?)\.?$/i.test(decisions) ? '' : decisions,
   };

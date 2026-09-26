@@ -131,6 +131,18 @@ inside the built runtime image as root.
   Details are in `docs/workspace-v2.md`; the migration is
   `20260927090000_workspace_v2`.
 
+* Multi-agent Office (2026-09-28): the Chief orchestrates up to 8 workstreams
+  across employees on the existing task graph:
+  * parallel execution and handoffs;
+  * one bounded revision round;
+  * development workstreams handed to the Coding Agent;
+  * direct chats with employees;
+  * the Live Office, workflow and employee pages;
+  * evidence-based connector states.
+
+  Details are in `docs/office-workflow.md`; the migration is
+  `20260928090000_office_multi_agent`.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,
