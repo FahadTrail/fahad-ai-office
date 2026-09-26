@@ -10,6 +10,7 @@ import {
   ZHIPU_MODEL,
 } from './config.js';
 import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi, readDeployedVersion } from './hub-coding.js';
+import { handleWorkspaceApi } from './hub-workspace.js';
 
 const DEFAULT_PORT = 2132;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -52,6 +53,7 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
         return sendJson(response, 401, { ok: false, error: authEnabled ? 'HUB_UNAUTHORIZED' : 'HUB_AUTH_NOT_CONFIGURED' });
       }
       if (await handleCodingApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
+      if (await handleWorkspaceApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null, store })) return;
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/workspaces') {
         const workspaces = await listWorkspaces(db);
