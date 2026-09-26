@@ -80,6 +80,16 @@ test('short transient errors retry the same route before switching', async () =>
   assert.equal(primary.calls.length, 2);
 });
 
+test('a timed-out request fails over at once instead of retrying the slow route', async () => {
+  const timeout = Object.assign(new Error('x network request failed'), { code: 'NETWORK', networkCode: 'TimeoutError' });
+  const primary = scripted([timeout, 'too late']);
+  const backup = scripted(['ok']);
+  const gateway = new AgentTurnGateway({ pool: [route('a:m', { protocolClient: primary }), route('b:m', { protocolClient: backup })], stateStore: new MemoryProviderStateStore(), sleepFn: async () => {} });
+  const result = await gateway.turn({ tools: [], preferredRouteId: 'a:m', prepare: async () => ({ system: 'S', messages: [] }) });
+  assert.equal(primary.calls.length, 1);
+  assert.equal(result.route.id, 'b:m');
+});
+
 test('routing honors billing priority, privacy, quality floor and budget', async () => {
   const gateway = new AgentTurnGateway({
     pool: [

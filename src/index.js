@@ -27,7 +27,7 @@ const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 const workspacePolicyStore = new SupabaseWorkspacePolicyStore(db);
 const providerStateStore = new SupabaseProviderStateStore(db);
 configureSharedProviderHealth(providerStateStore);
-const canaryRequests = new CanaryRequestRunner({ db, stateStore: providerStateStore, log });
+const canaryRequests = new CanaryRequestRunner({ db, stateStore: providerStateStore, log, background: true });
 // OpenRouter free models are discovered from OpenRouter's API at startup and
 // every 6 hours; the Hub and the canary read the in-process catalog.
 const refreshCatalog = () => refreshOpenRouterCatalog({ log, rank: (left, right) => rankFreeModels(left, right, process.env) }).catch(() => null);

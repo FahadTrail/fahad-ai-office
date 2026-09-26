@@ -62,3 +62,20 @@ test('the failover checkpoint is persisted to the run row and read back from it'
   assert.equal(done.values.report.failoverCheckpoint.recentMessageCount, 1);
   assert.equal('recentMessages' in done.values.report.failoverCheckpoint, false);
 });
+
+test('background mode returns immediately and never runs two canaries at once', async () => {
+  const db = fakeDb({ queued: { id: 'r3' } });
+  let release;
+  let runs = 0;
+  const run = () => { runs += 1; return new Promise((resolve) => { release = () => resolve({ routes: [] }); }); };
+  const runner = new CanaryRequestRunner({ db, stateStore: {}, run, intervalMs: 0, background: true, diagnostics: async () => ({ probes: [] }), refreshCatalog: async () => null });
+  assert.equal(await runner.maybeRun(), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(runs, 1);
+  assert.ok(runner.active, 'the canary is still running after maybeRun returned');
+  assert.equal(await runner.maybeRun(), false, 'a second claim waits for the running canary');
+  release();
+  await runner.active;
+  assert.equal(runner.active, null);
+  assert.ok(db.updates.some((entry) => entry.table === 'provider_canary_runs' && entry.values.status === 'completed'));
+});
