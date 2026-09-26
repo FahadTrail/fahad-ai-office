@@ -73,15 +73,29 @@ Notes:
   (`qwenDiagnosis`) and the dashboard show the named blocker and the owner
   action. The route rests for 24 hours per failure, and a restart (which is how
   a credential or account fix arrives) triggers exactly one re-check.
-* **Qwen key formats.** Model Studio now issues **workspace-scoped keys**
-  (`sk-ws-…`) that belong to one workspace and region, such as the Singapore
-  workspace. `ops/set-secret.sh QWEN_API_KEY` accepts them, together with legacy
-  account keys (`sk-` followed by letters and digits). Before 2026-09-26 the
-  validator accepted only the legacy shape, so a new workspace key was refused
-  before it reached `.env`. A workspace key must be paired with the same
-  workspace's endpoint (`QWEN_API_ENDPOINT`, e.g.
-  `https://ws-….ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions`).
-  Both key shapes are redacted from logs, transcripts and tool output.
+* **Qwen key formats.** Alibaba documents only that keys created after the
+  workspace upgrade "start with sk-ws", and that legacy keys start with `sk-`.
+  Token/Coding Plan keys (`sk-sp-`) are a different product and are refused.
+  The rest of the format is not published, and PR #49's `sk-ws-` +
+  `[A-Za-z0-9_-]` guess refused a real 52-character workspace key. So
+  `ops/set-secret.sh QWEN_API_KEY` now:
+  1. removes invisible characters that web consoles copy along with a key
+     (non-breaking and zero-width spaces, byte-order marks, tabs);
+  2. applies a **safety** shape only: `sk-ws…` or legacy `sk-…`, characters
+     `[A-Za-z0-9._-]`, at most 256 after the prefix, so no whitespace, quotes
+     or shell characters get through;
+  3. **verifies the key with Model Studio** before changing anything: it
+     requests the key's own model list on the configured `QWEN_API_ENDPOINT`,
+     with the key sent as a header on stdin, never on a command line.
+     * HTTP 200: the key is stored.
+     * HTTP 401: the key is refused. It is invalid, or it belongs to a
+       different workspace or region than the endpoint.
+     * Provider unreachable: a well-formed key is stored, and the next canary
+       checks it.
+
+  A rejection prints only the length and the number of characters outside the
+  safe set, never the value. A workspace key must be paired with the same
+  workspace's endpoint (`https://ws-….ap-southeast-1.maas.aliyuncs.com/…`).
 * **GitHub Models.** Retired, so no token and no permission can enable it. The
   Coding Agent's `CODING_GITHUB_TOKEN` stays repository-only. It was never used
   for inference and must not be broadened.
