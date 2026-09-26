@@ -19,6 +19,7 @@ const UI_FILES = Object.freeze({
   '/ui/app.css': ['app.css', 'text/css; charset=utf-8'],
   '/ui/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/ui/markdown.js': ['markdown.js', 'text/javascript; charset=utf-8'],
+  '/ui/auth.js': ['auth.js', 'text/javascript; charset=utf-8'],
 });
 const uiFile = (name) => readFileSync(new URL(`./hub-ui/${name}`, import.meta.url), 'utf8');
 export const WORKSPACE_HTML = uiFile('index.html');
@@ -58,10 +59,10 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
         return sendJson(response, 200, { ok: true, enabled: authEnabled, emailHint: authEnabled ? maskEmail(ownerEmail) : null });
       }
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/request-otp') {
-        return requestOtp({ authClient, request, response, authEnabled, ownerEmail });
+        return await requestOtp({ authClient, request, response, authEnabled, ownerEmail });
       }
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/verify-otp') {
-        return verifyOtp({ authClient, request, response, authEnabled, ownerEmail });
+        return await verifyOtp({ authClient, request, response, authEnabled, ownerEmail });
       }
       if (request.method === 'POST' && requestUrl.pathname === '/api/auth/logout') {
         response.setHeader('set-cookie', clearSessionCookie());

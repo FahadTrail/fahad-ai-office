@@ -1,10 +1,11 @@
 // Fahad AI Office — Workspace V2 client. No framework: hash routes render
 // views from the Hub's JSON API; polling keeps running work live.
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
+import { loginErrorMessage } from './auth.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const view = $('#view');
-const state = { workspaceId: null, workspaces: [], conversations: [], timers: [], attention: { action: 0, total: 0 } };
+const state = { workspaceId: null, workspaces: [], conversations: [], timers: [], attention: { action: 0, total: 0 }, sidebarTimer: null, signedOut: false };
 
 // ------------------------------------------------------------------ api
 class ApiError extends Error {}
@@ -81,7 +82,15 @@ function busy(button, on, label) {
 }
 
 // ------------------------------------------------------------------ auth
+// Shown once per signed-out state. Background polling keeps receiving 401s
+// after a session expires; each must NOT re-run this setup, or the form
+// would fall back to the "send code" step while the code field is visible
+// and a submitted code would request a new one instead of verifying it.
 async function showLogin() {
+  clearTimers();
+  clearInterval(state.sidebarTimer);
+  if (state.signedOut) return;
+  state.signedOut = true;
   $('#app').classList.add('hidden');
   $('#login').classList.remove('hidden');
   const form = $('#loginForm');
@@ -100,7 +109,7 @@ async function showLogin() {
     try {
       if (step === 'email') {
         const response = await fetch('./api/auth/request-otp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) });
-        if (!response.ok) throw new Error('That email cannot sign in.');
+        if (!response.ok) throw new Error(loginErrorMessage(response.status, await response.json().catch(() => ({}))));
         step = 'code';
         $('#otpRow').classList.remove('hidden');
         $('#loginCode').focus();
@@ -147,7 +156,7 @@ async function boot() {
   $('#scrim').onclick = () => toggleSidebar(false);
   window.addEventListener('hashchange', route);
   await refreshSidebar();
-  setInterval(refreshSidebar, 20_000);
+  state.sidebarTimer = setInterval(refreshSidebar, 20_000);
   route();
 }
 function toggleSidebar(open) {
