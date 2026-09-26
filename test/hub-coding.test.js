@@ -8,11 +8,15 @@ import { modelPoolSnapshot } from '../src/hub-coding.js';
 const workspaceId = '2ae856da-00cb-4594-a7e6-710f2011d0c3';
 const sessionId = '5b7a6f0e-3a8f-4a38-9d1d-0a4a4c1b2c3d';
 
+// Supports PostgREST JSON paths such as payload->>kind.
+const field = (row, key) => (key.includes('->>') ? row[key.split('->>')[0]]?.[key.split('->>')[1]] : row[key]);
+
 class Query {
   constructor(rows, error = null) { this.rows = rows; this.filters = []; this.maybe = false; this.error = error; }
   select() { return this; }
-  eq(key, value) { this.filters.push((row) => row[key] === value); return this; }
-  in(key, values) { this.filters.push((row) => values.includes(row[key])); return this; }
+  eq(key, value) { this.filters.push((row) => field(row, key) === value); return this; }
+  in(key, values) { this.filters.push((row) => values.includes(field(row, key))); return this; }
+  gte(key, value) { this.filters.push((row) => String(field(row, key)) >= String(value)); return this; }
   like(key, pattern) { const re = new RegExp(`^${pattern.replace(/[.]/g, '\\.').replace(/%/g, '.*')}$`); this.filters.push((row) => re.test(String(row[key]))); return this; }
   order() { return this; }
   limit() { return this; }
@@ -194,7 +198,8 @@ test('platform overview covers every dashboard section and reports credentials o
   assert.equal(overview.codingAgent.sessions.awaiting_approval, 1);
   assert.equal(overview.approvals.length, 1);
   assert.equal(overview.usage.budget.remainingUsd, 0.4);
-  assert.deepEqual(overview.officeAgents.map((role) => role.id), ['research', 'branding', 'content', 'seo', 'finance', 'development', 'qa_security']);
+  assert.deepEqual(overview.officeAgents.map((role) => role.id), ['chief', 'research', 'branding', 'content', 'seo', 'finance', 'development', 'qa_security']);
+  assert.ok(overview.office && Array.isArray(overview.office.roles));
   const gemini = overview.usage.freeQuota.find((entry) => entry.id.startsWith('gemini:'));
   assert.equal(gemini.basis, 'EXACT QUOTA NOT AVAILABLE', 'Google does not publish the number, so none is shown');
   assert.equal(gemini.percentRemaining, null);
@@ -239,4 +244,31 @@ test('model pool dashboard lists each discovered OpenRouter free model, why it i
   } finally {
     setOpenRouterCatalog(null);
   }
+});
+
+test('Office activity shows each role, the real model path with failovers, and estimated savings', async () => {
+  const { officeActivity } = await import('../src/hub-coding.js');
+  const t = (minute) => `2026-09-26T10:${String(minute).padStart(2, '0')}:00Z`;
+  const events = [
+    { job_id: 'j1', task_id: 't1', created_at: t(0), payload: { kind: 'model_stage_started', stage: 'CHIEF_PLANNING', job: 'orchestration', data_class: 'general' } },
+    { job_id: 'j1', task_id: 't1', created_at: t(1), payload: { kind: 'model_route', job: 'orchestration', route_id: 'gemini:gemini-flash-latest', provider: 'gemini', model: 'gemini-flash-latest', billing_class: 'free', tokens_in: 900, tokens_out: 100, cost_usd: 0, tools_used: [], path: [{ routeId: 'gemini:gemini-flash-latest', billingClass: 'free', turns: 1 }], savings: { paidEquivalentUsd: 0.0028 } } },
+    { job_id: 'j1', task_id: 't2', created_at: t(2), payload: { kind: 'model_stage_started', stage: 'RESEARCH_WORKING', job: 'research', role: 'research' } },
+    { job_id: 'j1', task_id: 't2', created_at: t(3), payload: { kind: 'model_checkpoint', sequence: 1 } },
+    { job_id: 'j1', task_id: 't2', created_at: t(3), payload: { kind: 'provider_switch', fromProvider: 'openrouter:a:free', toProvider: 'groq:openai/gpt-oss-120b', reason: { code: 'DRILL_INJECTED_RATE_LIMIT', injected: true }, injected: true } },
+    { job_id: 'j1', task_id: 't2', created_at: t(4), payload: { kind: 'model_route', job: 'research', route_id: 'groq:openai/gpt-oss-120b', provider: 'groq', model: 'openai/gpt-oss-120b', billing_class: 'free', tokens_in: 4000, tokens_out: 600, cost_usd: 0, tools_used: ['web_search'], path: [{ routeId: 'openrouter:a:free', billingClass: 'free' }, { routeId: 'groq:openai/gpt-oss-120b', billingClass: 'free' }], savings: { paidEquivalentUsd: 0.014 } } },
+    { job_id: 'j1', task_id: 't3', created_at: t(5), payload: { kind: 'model_stage_started', stage: 'CHIEF_REVIEW_STARTED', job: 'synthesis' } },
+  ];
+  const activity = officeActivity(events.toReversed(), [{ id: 'j1', title: 'Launch research', status: 'running', project_id: 'w1' }], { workspaceId: 'w1' });
+  const roles = Object.fromEntries(activity.roles.map((role) => [role.role, role]));
+  assert.equal(roles['Chief review'].status, 'WORKING');
+  assert.equal(roles.Research.model, 'openai/gpt-oss-120b');
+  assert.deepEqual(roles.Research.tools, ['web_search']);
+  assert.equal(roles.Chief.billingClass, 'FREE');
+  const research = activity.jobs[0].stages.find((stage) => stage.role === 'Research');
+  assert.deepEqual(research.path.map((step) => step.routeId), ['openrouter:a:free', 'groq:openai/gpt-oss-120b']);
+  assert.deepEqual(research.events.map((event) => event.kind), ['checkpoint', 'switch']);
+  assert.equal(research.events[1].injected, true, 'simulated failures are labelled as such');
+  assert.deepEqual([activity.cost.actualUsd, activity.cost.paidEquivalentUsd, activity.cost.estimatedSavingUsd], [0, 0.0168, 0.0168]);
+  assert.match(activity.cost.basis, /^ESTIMATE/);
+  assert.equal(activity.freeStages, 2);
 });

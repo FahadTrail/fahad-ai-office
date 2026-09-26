@@ -120,6 +120,12 @@ export const JOB_PROFILES = Object.freeze({
   branding: { label: 'Branding', min: { writing: 3, reasoning: 3 }, minContext: 16_000, weights: { writing: 3, reasoning: 1 } },
   seo: { label: 'SEO', min: { research: 3, writing: 3 }, minContext: 16_000, weights: { research: 2, writing: 2 } },
   classification: { label: 'Classification / routing', min: { reasoning: 2 }, structuredOutput: true, minContext: 8_000, weights: { speed: 2, reasoning: 1 } },
+  // Chief of Staff. Simple orchestration (classify, choose agent, write the
+  // handoff) can run on capable free models; high-stakes synthesis (final
+  // review, critical decisions) needs stronger reasoning and writing and
+  // escalates automatically when no free model qualifies.
+  orchestration: { label: 'Chief orchestration', min: { reasoning: 3, writing: 3 }, minContext: 16_000, weights: { reasoning: 2, writing: 1, speed: 1 } },
+  synthesis: { label: 'High-stakes synthesis / final review', min: { reasoning: 4, writing: 4 }, minContext: 32_000, weights: { reasoning: 3, writing: 2 } },
 });
 
 export function jobProfile(job) {

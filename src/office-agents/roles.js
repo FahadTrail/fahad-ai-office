@@ -15,28 +15,33 @@ import { JOB_PROFILES } from '../model-gateway/agentic/capabilities.js';
 
 export const OFFICE_ROLES = Object.freeze([
   {
+    id: 'chief', label: 'Chief of Staff', job: 'orchestration', runtime: 'office-workflow',
+    tools: [], approvals: [], status: 'ACTIVE — plans (orchestration) and reviews (synthesis) on the shared Model Pool',
+    purpose: 'Classifies the request, picks the specialist, writes the handoff and reviews the result; escalates high-stakes work.',
+  },
+  {
     id: 'research', label: 'Research', job: 'research', runtime: 'office-workflow',
-    tools: ['web.search', 'web.fetch'], approvals: [], status: 'ACTIVE — Chief → Research workflow',
+    tools: ['web_search', 'web_fetch'], approvals: [], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
     purpose: 'Evidence gathering and analysis with cited sources.',
   },
   {
     id: 'branding', label: 'Branding', job: 'branding', runtime: 'office-agent',
-    tools: ['web.search', 'files.write_draft'], approvals: ['publish'], status: 'READY — NOT ACTIVE',
+    tools: [], approvals: ['publish'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
     purpose: 'Names, positioning, tone of voice and brand guidelines.',
   },
   {
     id: 'content', label: 'Content', job: 'content', runtime: 'office-agent',
-    tools: ['web.search', 'files.write_draft'], approvals: ['publish'], status: 'READY — NOT ACTIVE',
+    tools: [], approvals: ['publish'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
     purpose: 'Articles, posts and copy drafts; nothing is published without approval.',
   },
   {
     id: 'seo', label: 'SEO', job: 'seo', runtime: 'office-agent',
-    tools: ['web.search', 'web.fetch'], approvals: ['publish'], status: 'READY — NOT ACTIVE',
+    tools: ['web_search', 'web_fetch'], approvals: ['publish'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
     purpose: 'Keyword research, on-page audits and content briefs.',
   },
   {
     id: 'finance', label: 'Finance', job: 'finance', runtime: 'office-agent',
-    tools: ['files.read', 'sheets.read'], approvals: ['any_payment', 'external_send'], status: 'READY — NOT ACTIVE',
+    tools: ['web_search', 'web_fetch'], approvals: ['any_payment', 'external_send'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
     purpose: 'Budgets, forecasts and cost analysis; never moves money.',
   },
   {
