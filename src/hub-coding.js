@@ -21,7 +21,7 @@ import { OFFICE_ROLES } from './office-agents/roles.js';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 const BRANCH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
-const SESSION_FIELDS = 'id,workspace_id,job_id,title,objective,repository,base_branch,work_branch,status,phase,plan,state,config,next_action,current_route,previous_route,provider_switches,iteration,budget_usd,spent_usd,tokens_in,tokens_out,result,blocker,error_code,cancel_requested,created_at,updated_at,started_at,completed_at';
+export const SESSION_FIELDS = 'id,workspace_id,job_id,title,objective,repository,base_branch,work_branch,status,phase,plan,state,config,next_action,current_route,previous_route,provider_switches,iteration,budget_usd,spent_usd,tokens_in,tokens_out,result,blocker,error_code,cancel_requested,created_at,updated_at,started_at,completed_at';
 
 export function readDeployedVersion(path = process.env.HUB_DEPLOYED_SHA_FILE || '/app/logs/deployed-sha') {
   try {
@@ -594,7 +594,7 @@ function formatRemaining(ms) {
   return `${hours}:${minutes}:${seconds}`;
 }
 
-function publicSession(session) {
+export function publicSession(session) {
   if (!session) return null;
   const state = session.state || {};
   return {
@@ -636,7 +636,7 @@ function publicSession(session) {
   };
 }
 
-function publicEvent(event) {
+export function publicEvent(event) {
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
   const safe = Object.fromEntries(Object.entries(payload).filter(([key]) => !/secret|token|credential|authorization|key|prompt/i.test(key)));
   return { id: event.id, type: event.type, level: event.level, message: event.message, payload: safe, createdAt: event.created_at };

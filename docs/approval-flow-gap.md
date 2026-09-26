@@ -1,7 +1,9 @@
 # Coding Agent: why a protected-file approval cannot be granted (2026-09-26)
 
-Status: **documented, not yet fixed**. The fix belongs to the UX & Workflow V2
-phase. Observed in sessions `bff739a0` and `99bf6998`, the Qwen `sk-ws-` key
+Status: **fixed in UX & Workflow V2** (see `docs/workspace-v2.md` → *Owner
+input and approvals*): path-scoped `repo.protected_change` approvals, grants
+enforced by the edit tools and the finish gate, and Reply & Continue into the
+same session. The analysis below is kept for the record. Observed in sessions `bff739a0` and `99bf6998`, the Qwen `sk-ws-` key
 fix. Both agents correctly found that `ops/set-secret.sh` had to change,
 stopped with `HUMAN_INPUT_REQUIRED`, and could not continue. The owner had no
 way to grant the permission.

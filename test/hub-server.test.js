@@ -160,9 +160,35 @@ test('Hub shows the complete Chief result before the short job summary', async (
   assert.equal(snapshot.tasks[0].result.content, 'Full final answer with source link');
   const server = createHubServer({ db, store: { createJob: async () => ({}) }, port: 0 });
   await once(server, 'listening');
-  const html = await fetch(`http://127.0.0.1:${server.address().port}/`).then((response) => response.text());
-  assert.match(html, /done\?\.result\?\.content\|\|s\.job\.final_summary/);
-  await new Promise((resolve) => server.close(resolve));
+  try {
+    const html = await fetch(`http://127.0.0.1:${server.address().port}/classic`).then((response) => response.text());
+    assert.match(html, /done\?\.result\?\.content\|\|s\.job\.final_summary/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('the Workspace V2 page and its assets are served; the classic Hub stays available', async () => {
+  const server = createHubServer({ db: fakeDb(), store: { createJob: async () => ({}) }, port: 0 });
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const page = await fetch(`${base}/`);
+    const html = await page.text();
+    assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
+    assert.match(html, /<script src="\.\/ui\/app\.js" type="module"><\/script>/);
+    assert.match(html, /id="loginForm"/);
+    for (const [path, type] of [['/ui/app.js', 'text/javascript'], ['/ui/markdown.js', 'text/javascript'], ['/ui/app.css', 'text/css']]) {
+      const response = await fetch(`${base}${path}`);
+      assert.equal(response.status, 200, path);
+      assert.ok(response.headers.get('content-type').startsWith(type), path);
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    }
+    assert.match(await fetch(`${base}/classic`).then((response) => response.text()), /id="codingView"/);
+    assert.equal((await fetch(`${base}/ui/../hub-server.js`)).status, 404, 'only the listed assets are served');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 

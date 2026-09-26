@@ -133,14 +133,20 @@ export class OfficeWorkflow {
     } else {
       await this.startStage(task, agent, 'CHIEF_PLANNING', model, 'Chief of Staff is planning.', preference);
     }
+    // Conversation + project context so follow-ups need no re-explaining.
+    const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.plan({
       agent,
       goal: request.goal,
+      context: context?.text || '',
       onActivity,
       execution: this.modelExecution(task, STAGES.PLAN, preference, model),
       toolBroker: this.toolSession(task, STAGES.PLAN),
       ...(this.modelRunner ? { run: this.poolRun(task, STAGES.PLAN, { job, request, preference, validate: request.drills.escalate ? escalationDrill(validatePlan) : validatePlan }) } : {}),
     }));
+
+    if (outcome.plan.route === 'answer') return this.finishWithAnswer(task, outcome, outcome.plan.answer, 'Chief answered directly.');
+    if (outcome.plan.route === 'development') return this.launchDevelopment(task, outcome, context, request);
 
     const specialist = specialistFor(outcome.plan.specialist);
     const researchTask = await this.store.ensureTask({
@@ -186,6 +192,52 @@ export class OfficeWorkflow {
       message: 'Chief is waiting for Research.',
       payload: { status: 'WAITING', stage: 'RESEARCH' },
     });
+  }
+
+  // The Chief's own reply completes the request in one step (no specialist).
+  async finishWithAnswer(task, outcome, text, message) {
+    const answered = { ...outcome, text };
+    await this.recordOutcome(task, answered, message);
+    await this.store.completeTask(task, answered, String(text).slice(0, 300));
+    await this.store.emit({
+      jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id,
+      type: 'status_changed', message, payload: { status: 'COMPLETED', stage: 'CHIEF_ANSWERED' },
+    });
+  }
+
+  // "Build/fix/check this": the Chief hands the request to the Coding Agent as
+  // a durable task linked to this conversation, then replies with what it did.
+  async launchDevelopment(task, outcome, context, request) {
+    const plan = outcome.plan;
+    const repository = context?.project?.defaultRepository || null;
+    if (!repository || typeof this.store.createCodingSession !== 'function') {
+      return this.finishWithAnswer(task, outcome, [
+        `This needs development work: **${plan.development_title}**.`,
+        '',
+        'This project has no repository set yet, so I could not start the Coding Agent. Set the project repository in **Projects → Settings** (for example `owner/name`) and send the request again.',
+      ].join('\n'), 'Development requested, but the project has no repository.');
+    }
+    const session = await this.store.createCodingSession({
+      workspaceId: context.project.id,
+      title: plan.development_title,
+      objective: [plan.development_objective, '', `Original request from Fahad: ${request.goal}`].join('\n').slice(0, 40_000),
+      repository,
+      conversationId: context.conversationId || null,
+      createdBy: 'chief-of-staff',
+    });
+    const text = [
+      `I've started a development task: **${plan.development_title}**`,
+      '',
+      plan.plan_summary,
+      '',
+      `The Coding Agent is working on \`${repository}\`. You can leave this page — progress appears in **Tasks**, and I'll flag it under **Needs attention** if I need an answer or your approval.`,
+    ].join('\n');
+    await this.store.emit({
+      jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id,
+      type: 'activity', message: `Chief launched a Coding Agent task: ${plan.development_title}`,
+      payload: { kind: 'task_launched', session_id: session.id, repository },
+    });
+    return this.finishWithAnswer(task, outcome, text, 'Chief started a Coding Agent task.');
   }
 
   async executeResearch(task, brief) {

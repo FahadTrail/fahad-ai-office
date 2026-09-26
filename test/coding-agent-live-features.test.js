@@ -124,10 +124,18 @@ test('a failing routing hook is not recorded as a provider failure and releases 
 });
 
 test('every event type the controller emits is accepted by the agent_events table', async () => {
-  const { readFileSync } = await import('node:fs');
+  const { readFileSync, readdirSync } = await import('node:fs');
   const { AGENT_EVENT_TYPES } = await import('../src/agent-state/session-store.js');
-  const migration = readFileSync(new URL('../supabase/migrations/20260925160000_coding_agent_foundation.sql', import.meta.url), 'utf8');
-  const check = migration.match(/create table public\.agent_events[\s\S]*?type text not null check \(type in \(([\s\S]*?)\)\)/)[1];
+  // The latest migration that defines the constraint is the one in force.
+  const directory = new URL('../supabase/migrations/', import.meta.url);
+  let check = null;
+  for (const file of readdirSync(directory).filter((name) => name.endsWith('.sql')).sort()) {
+    const sql = readFileSync(new URL(file, directory), 'utf8');
+    const created = sql.match(/create table public\.agent_events[\s\S]*?type text not null check \(type in \(([\s\S]*?)\)\)/);
+    const altered = sql.match(/add constraint agent_events_type_check check \(type in \(([\s\S]*?)\)\)/);
+    if (altered) check = altered[1];
+    else if (created) check = created[1];
+  }
   const allowed = [...check.matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
   assert.deepEqual([...AGENT_EVENT_TYPES].sort(), allowed.sort(), 'the store mirrors the database constraint');
   const controller = readFileSync(new URL('../src/coding-agent/controller.js', import.meta.url), 'utf8');
