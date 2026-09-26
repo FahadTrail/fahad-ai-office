@@ -8,7 +8,7 @@ import { escapeHtml, renderMarkdown } from '../src/hub-ui/markdown.js';
 const file = (name) => fileURLToPath(new URL(`../src/hub-ui/${name}`, import.meta.url));
 
 test('the Workspace V2 scripts are valid modules', () => {
-  for (const name of ['app.js', 'markdown.js']) execFileSync(process.execPath, ['--check', file(name)]);
+  for (const name of ['app.js', 'markdown.js', 'auth.js']) execFileSync(process.execPath, ['--check', file(name)]);
 });
 
 test('markdown renders the common constructs', () => {
@@ -44,4 +44,22 @@ test('the V2 interface uses the centralized design tokens and covers the owner f
   for (const phrase of ['What do you want me to build or fix?', 'Reply &amp; Continue', 'data-decide="approved"', 'data-decide="rejected"', 'View details', 'Needs attention', '/api/tasks/${id}/reply']) {
     assert.ok(js.includes(phrase), phrase);
   }
+});
+
+test('sign-in errors are honest: only a 403 says the email cannot sign in', async () => {
+  const { loginErrorMessage } = await import('../src/hub-ui/auth.js');
+  assert.equal(loginErrorMessage(403, { error: 'EMAIL_NOT_ALLOWED' }), 'That email cannot sign in.');
+  assert.match(loginErrorMessage(500, { error: 'Could not send verification code: For security purposes, you can only request this after 55 seconds.' }), /code was sent recently/);
+  assert.match(loginErrorMessage(429, {}), /code was sent recently/);
+  assert.doesNotMatch(loginErrorMessage(500, { error: 'boom' }), /cannot sign in/);
+});
+
+test('the sign-in form is set up once per signed-out state and stops background polling', () => {
+  const js = readFileSync(file('app.js'), 'utf8');
+  const body = js.slice(js.indexOf('async function showLogin()'), js.indexOf("$('#app').classList.add('hidden')", js.indexOf('async function showLogin()')));
+  assert.match(body, /clearTimers\(\)/);
+  assert.match(body, /clearInterval\(state\.sidebarTimer\)/);
+  assert.match(body, /if \(state\.signedOut\) return;/);
+  assert.match(js, /state\.sidebarTimer = setInterval\(refreshSidebar/);
+  assert.match(js, /loginErrorMessage\(response\.status/);
 });

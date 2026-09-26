@@ -178,7 +178,7 @@ test('the Workspace V2 page and its assets are served; the classic Hub stays ava
     assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
     assert.match(html, /<script src="\.\/ui\/app\.js" type="module"><\/script>/);
     assert.match(html, /id="loginForm"/);
-    for (const [path, type] of [['/ui/app.js', 'text/javascript'], ['/ui/markdown.js', 'text/javascript'], ['/ui/app.css', 'text/css']]) {
+    for (const [path, type] of [['/ui/app.js', 'text/javascript'], ['/ui/markdown.js', 'text/javascript'], ['/ui/auth.js', 'text/javascript'], ['/ui/app.css', 'text/css']]) {
       const response = await fetch(`${base}${path}`);
       assert.equal(response.status, 200, path);
       assert.ok(response.headers.get('content-type').startsWith(type), path);
@@ -214,4 +214,34 @@ test('OTP verification cannot replace the service-role project session', async (
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).workspaces, [{ id: workspaceId, name: 'Fahad AI Office' }]);
   await new Promise((resolve) => server.close(resolve));
+});
+
+test('a rate-limited or failed OTP request is answered, never crashes the Hub', async () => {
+  const db = fakeDb();
+  db.auth = {
+    signInWithOtp: async () => ({ error: { message: 'For security purposes, you can only request this after 55 seconds.' } }),
+    verifyOtp: async () => { throw new Error('auth service unavailable'); },
+    getUser: async () => ({ error: new Error('invalid'), data: null }),
+  };
+  const server = createHubServer({ db, store: { createJob: async () => ({}) }, port: 0, authEnabled: true, ownerEmail: 'owner@example.com' });
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const post = (path, body) => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const limited = await post('/api/auth/request-otp', { email: 'owner@example.com' });
+    assert.equal(limited.status, 500);
+    assert.match((await limited.json()).error, /only request this after/);
+    const failed = await post('/api/auth/verify-otp', { email: 'owner@example.com', token: '123456' });
+    assert.equal(failed.status, 500);
+    const stranger = await post('/api/auth/request-otp', { email: 'someone@example.com' });
+    assert.equal(stranger.status, 403);
+    assert.equal((await fetch(`${base}/healthz`)).status, 200, 'the Hub is still serving');
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
