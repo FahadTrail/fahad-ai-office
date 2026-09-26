@@ -183,3 +183,10 @@ test('chat progress is described in plain words', async () => {
   assert.equal(chatStage({ status: 'running' }, [{ title: 'Research the request', status: 'running' }]), 'Researching');
   assert.equal(chatStage({ status: 'running' }, [{ title: 'Chief final review', status: 'assigned' }]), 'Reviewing the answer');
 });
+
+test('the Chief answers in the language of the current message', async () => {
+  const { readFileSync } = await import('node:fs');
+  const chief = readFileSync(new URL('../src/chief.js', import.meta.url), 'utf8');
+  assert.match(chief, /same language as Fahad\\'s current message/);
+  assert.doesNotMatch(chief, /in Fahad\\'s language\)/);
+});
