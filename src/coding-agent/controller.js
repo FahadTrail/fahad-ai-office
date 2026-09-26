@@ -18,6 +18,7 @@ import { normalizeRouting } from '../model-gateway/agentic/routing-policy.js';
 import { CODING_BROKER, MODEL_TOOL_TO_BROKER, modelToolSpecs } from './tools.js';
 import { classifyChangedPaths, findSecretMaterial, grantablePaths, redact, safeSlug } from './policy.js';
 import { PROTECTED_CHANGE_TOOL } from '../agent-state/session-store.js';
+import { ReadTracker, elideOldToolResults } from './context-budget.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
 
 export const DEFAULT_LIMITS = Object.freeze({
@@ -28,7 +29,9 @@ export const DEFAULT_LIMITS = Object.freeze({
   maxConsecutiveToolErrors: 10,
   maxGateFailures: 6,
   maxCiRounds: 3,
-  compactAtChars: 360_000,
+  // Old tool output is elided first (context-budget.js); compaction into a
+  // continuation summary is the backstop for very long sessions.
+  compactAtChars: 240_000,
   maxOutputTokens: 16_000,
   ciPollMs: 30_000,
   ciTimeoutMs: 45 * 60 * 1000,
@@ -111,6 +114,7 @@ class SessionRun {
     this.recentCalls = [];
     this.grants = new Set();
     this.ownerMessages = [];
+    this.reads = new ReadTracker();
     this.runStartedAt = controller.now();
   }
 
@@ -354,6 +358,12 @@ class SessionRun {
       repository: this.session.repository, baseBranch: this.session.baseBranch, workBranch: this.session.workBranch,
       testCommand: this.testCommand, supabaseProjects: supabaseReady ? this.config.supabase.projects : [], verifyHosts: this.config.verify.hosts,
     });
+    const elided = elideOldToolResults(this.transcript.messages, this.c.limits.context || {});
+    if (elided.results) {
+      this.state.efficiency.elidedChars += elided.savedChars;
+      this.state.efficiency.elisions += 1;
+      await this.event('checkpoint', `Context trimmed: ${elided.results} old tool outputs shortened (${elided.savedChars} characters).`, { elided: elided.results, savedChars: elided.savedChars });
+    }
     if (transcriptChars(this.transcript.messages) > this.c.limits.compactAtChars) await this.compact();
     const estimatedInputTokens = estimateTokens(system, this.transcript.messages, tools);
     const policy = await this.c.routingFor(this.session, this.config.routing) || {};
@@ -625,6 +635,14 @@ class SessionRun {
     await this.observe(mapping.tool, args, outcome);
     const toolError = outcome.structured?.error;
     await this.event('tool_result', `${call.name}${toolError ? ` → ${toolError}` : ' ok'}`, summarizeToolEvent(mapping.tool, args, outcome), toolError ? 'warning' : 'info');
+    if (mapping.tool === 'repo.read' && !toolError && outcome.text.length > 400) {
+      const earlier = this.reads.check(args, outcome.text, call.id, this.transcript.messages);
+      if (earlier) {
+        this.state.efficiency.dedupedReads += 1;
+        this.state.efficiency.dedupedChars += outcome.text.length;
+        return { block: toolResult(call, `Unchanged: ${args.path} is identical to your earlier read_file result (call ${earlier}) still in this conversation. Use that content.`) };
+      }
+    }
     return { block: toolResult(call, truncate(outcome.text, 20_000), { isError: Boolean(toolError) }) };
   }
 
@@ -982,6 +1000,7 @@ function normalizeState(state) {
     git: state.git && typeof state.git === 'object' ? state.git : {},
     gateFailures: Number(state.gateFailures || 0),
     ciRounds: Number(state.ciRounds || 0),
+    efficiency: { elidedChars: 0, elisions: 0, dedupedReads: 0, dedupedChars: 0, ...(state.efficiency || {}) },
   };
 }
 
