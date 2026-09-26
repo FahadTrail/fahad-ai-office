@@ -1,4 +1,6 @@
-import { chiefJob, planJob, reviewResearch, validatePlan } from './chief.js';
+import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validatePlan } from './chief.js';
+import { officeAgent } from './office/agents.js';
+import { converseDirect, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
 import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
 import { EscalationRequired, classifyOfficeData } from './office/pool-runner.js';
 import {
@@ -13,8 +15,13 @@ import { ScopedToolBrokerSession } from './tool-broker/session.js';
 
 export const WORKFLOW = 'chief-research-chief';
 export const WORKFLOW_VERSION = 1;
-export const STAGES = Object.freeze({ PLAN: 'chief_plan', RESEARCH: 'research', REVIEW: 'chief_review' });
-export const SEQUENCES = Object.freeze({ PLAN: 10, RESEARCH: 20, REVIEW: 30 });
+export const STAGES = Object.freeze({
+  PLAN: 'chief_plan', RESEARCH: 'research', REVIEW: 'chief_review',
+  // Multi-agent Office: one task per workstream, the Chief's synthesis, a
+  // hand-off to the Coding Agent, and direct conversations with an employee.
+  SPECIALIST: 'specialist', SYNTHESIS: 'synthesis', LAUNCH_DEV: 'launch_dev', DIRECT: 'direct',
+});
+export const SEQUENCES = Object.freeze({ PLAN: 10, RESEARCH: 20, REVIEW: 30, WORKSTREAM: 100, REVISION: 500, SYNTHESIS: 900, SYNTHESIS_FINAL: 950 });
 
 export class OfficeWorkflow {
   constructor({
@@ -22,6 +29,10 @@ export class OfficeWorkflow {
     plan = planJob,
     research = performSpecialist,
     review = reviewResearch,
+    specialist = performOfficeWork,
+    synthesize = synthesizeWorkflow,
+    direct = converseDirect,
+    parallelTasks = 1,
     staleMinutes = STALE_TASK_MINUTES,
     maxAttempts = TASK_MAX_ATTEMPTS,
     recoveryIntervalMs = 60_000,
@@ -38,7 +49,9 @@ export class OfficeWorkflow {
     this.modelRunner = modelRunner;
     this.env = env;
     this.store = store;
-    this.executors = { plan, research, review };
+    this.executors = { plan, research, review, specialist, synthesize, direct };
+    // Independent workstreams are claimed together and run concurrently.
+    this.parallelTasks = Math.max(1, Math.min(6, Number(parallelTasks) || 1));
     this.staleMinutes = staleMinutes;
     this.maxAttempts = maxAttempts;
     this.recoveryIntervalMs = recoveryIntervalMs;
@@ -63,13 +76,21 @@ export class OfficeWorkflow {
       progressed = true;
     }
 
-    const task = await this.store.claimNextTask();
-    if (!task) return progressed;
-    await this.execute(task);
+    const claimed = [];
+    while (claimed.length < this.parallelTasks) {
+      const task = await this.store.claimNextTask();
+      if (!task) break;
+      claimed.push(task);
+    }
+    if (!claimed.length) return progressed;
+    await Promise.all(claimed.map((task) => this.execute(task)));
     return true;
   }
 
   async bootstrap(job) {
+    // A conversation held directly with one employee skips the Chief.
+    const direct = typeof this.store.conversationAgent === 'function' ? officeAgent(await this.store.conversationAgent(job.id).catch(() => null)) : null;
+    if (direct && direct.executor === 'office') return this.bootstrapDirect(job, direct);
     await this.store.emit({
       jobId: job.id,
       type: 'job_created',
@@ -95,12 +116,29 @@ export class OfficeWorkflow {
     });
   }
 
+  async bootstrapDirect(job, employee) {
+    const task = await this.store.ensureTask({
+      jobId: job.id, agentSlug: employee.slug, title: `Conversation with ${employee.label}`,
+      brief: encodeBrief(STAGES.DIRECT, { agent: employee.key }), sequence: SEQUENCES.PLAN, maxAttempts: this.maxAttempts,
+    });
+    await this.store.emit({
+      jobId: job.id, taskId: task.id, agentId: task.agent_id, type: 'status_changed',
+      message: `Fahad is talking directly to ${employee.label}.`,
+      payload: { status: 'WORKING', stage: 'DIRECT_CONVERSATION', agent_slug: employee.slug },
+    });
+  }
+
   async execute(task) {
-    const brief = decodeBrief(task.brief);
+    let brief;
     try {
+      brief = decodeBrief(task.brief);
       if (brief.stage === STAGES.PLAN) await this.executePlan(task);
       else if (brief.stage === STAGES.RESEARCH) await this.executeResearch(task, brief);
       else if (brief.stage === STAGES.REVIEW) await this.executeReview(task, brief);
+      else if (brief.stage === STAGES.SPECIALIST) await this.executeSpecialist(task, brief);
+      else if (brief.stage === STAGES.SYNTHESIS) await this.executeSynthesis(task, brief);
+      else if (brief.stage === STAGES.LAUNCH_DEV) await this.executeLaunchDev(task, brief);
+      else if (brief.stage === STAGES.DIRECT) await this.executeDirect(task, brief);
       else throw new Error('Unsupported workflow stage');
     } catch (error) {
       const safe = safeError(error);
@@ -147,6 +185,7 @@ export class OfficeWorkflow {
 
     if (outcome.plan.route === 'answer') return this.finishWithAnswer(task, outcome, outcome.plan.answer, 'Chief answered directly.');
     if (outcome.plan.route === 'development') return this.launchDevelopment(task, outcome, context, request);
+    if (outcome.plan.route === 'orchestrate') return this.dispatchWorkflow(task, outcome);
 
     const specialist = specialistFor(outcome.plan.specialist);
     const researchTask = await this.store.ensureTask({
@@ -294,6 +333,185 @@ export class OfficeWorkflow {
       ...(this.modelRunner ? { run: this.poolRun(task, STAGES.REVIEW, { job, request, preference }) } : {}),
     }));
     await this.recordOutcome(task, outcome, 'Chief final result is ready to save.');
+    await this.store.completeTask(task, outcome, summarize(outcome.text));
+  }
+
+  // The Chief's plan becomes durable tasks: one per workstream (dependencies
+  // are task dependencies, so independent work runs in parallel and each
+  // employee receives the outputs it depends on), then the Chief's synthesis
+  // over every output. Idempotent by sequence, so a restart resumes it.
+  async dispatchWorkflow(task, outcome) {
+    const plan = outcome.plan;
+    const created = new Map();
+    for (const [index, stream] of plan.workstreams.entries()) {
+      const employee = officeAgent(stream.agent);
+      const dependsOn = stream.dependsOn.map((id) => created.get(id).id);
+      const row = await this.store.ensureTask({
+        jobId: task.job_id, agentSlug: employee.slug, title: stream.title,
+        brief: encodeBrief(employee.executor === 'coding' ? STAGES.LAUNCH_DEV : STAGES.SPECIALIST, {
+          workstream: stream.id, agent: employee.key, title: stream.title, brief: stream.brief,
+        }),
+        sequence: SEQUENCES.WORKSTREAM + index,
+        dependsOn: dependsOn.length ? dependsOn : [task.task_id],
+        maxAttempts: this.maxAttempts,
+      });
+      created.set(stream.id, row);
+    }
+    const streams = plan.workstreams.map((stream) => ({ id: stream.id, agent: stream.agent, title: stream.title, brief: stream.brief, taskId: created.get(stream.id).id }));
+    const synthesis = await this.store.ensureTask({
+      jobId: task.job_id, agentSlug: 'chief-of-staff', title: 'Chief synthesis',
+      brief: encodeBrief(STAGES.SYNTHESIS, { round: 1, synthesisBrief: plan.synthesis_brief, workstreams: streams }),
+      sequence: SEQUENCES.SYNTHESIS, dependsOn: streams.map((stream) => stream.taskId), maxAttempts: this.maxAttempts,
+    });
+    const planText = workflowPlanMarkdown(plan);
+    await this.recordOutcome(task, outcome, 'Chief plan is ready to save.');
+    await this.store.emit({
+      jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'plan_created',
+      message: `Chief dispatched ${streams.length} workstream${streams.length === 1 ? '' : 's'}: ${streams.map((stream) => `${officeAgent(stream.agent).label} (${stream.title})`).join(', ')}.`,
+      payload: {
+        status: 'COMPLETED', kind: 'workflow_planned', synthesis_task_id: synthesis.id,
+        workstreams: streams.map((stream) => ({ id: stream.id, agent: stream.agent, title: stream.title, task_id: stream.taskId,
+          depends_on: plan.workstreams.find((entry) => entry.id === stream.id).dependsOn })),
+      },
+    });
+    await this.store.completeTask(task, { ...outcome, text: planText }, plan.plan_summary);
+  }
+
+  async executeSpecialist(task, brief) {
+    const employee = officeAgent(brief.agent);
+    if (!employee || employee.executor !== 'office') throw new Error(`Unknown Office employee ${brief.agent}`);
+    assertAgent(task, employee.slug);
+    const agent = await this.store.getAgent(employee.slug);
+    const webTools = employee.webTools && hasWebTools(agent.allowed_tools);
+    const request = officeRequest(task.goal, this.env);
+    await this.startStage(task, agent, 'SPECIALIST_WORKING', `shared-pool:${employee.job}`, `${employee.label} is working on: ${brief.title}${brief.revision ? ' (revision)' : ''}.`, MODEL_PROVIDER,
+      { job: employee.job, dataClass: request.dataClass, role: employee.key });
+    const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
+    const upstream = (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content);
+    const previous = brief.revision ? upstream.find((entry) => entry.task_id === brief.revisesTaskId)?.content : null;
+    const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.specialist({
+      agent, role: employee.key, goal: request.goal, brief: brief.brief, title: brief.title,
+      upstream: brief.revision ? upstream.filter((entry) => entry.task_id !== brief.revisesTaskId) : upstream,
+      context: context?.project ? projectLine(context) : '', revision: brief.revision || null, previous, webTools, onActivity,
+      execution: this.modelExecution(task, STAGES.SPECIALIST),
+      toolBroker: this.toolSession(task, STAGES.SPECIALIST),
+      ...(this.modelRunner ? { run: this.poolRun(task, STAGES.SPECIALIST, { job: employee.job, request, preference: MODEL_PROVIDER }) } : {}),
+    }));
+    const parsed = parseOutputSummary(outcome.text);
+    await this.recordOutcome(task, outcome, `${employee.label} finished: ${brief.title}.`);
+    await this.store.emit({
+      jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity',
+      message: `${employee.label} delivered: ${brief.title}.`,
+      payload: { kind: 'output_ready', agent: employee.key, workstream: brief.workstream, deliverable: brief.title,
+        summary: parsed.summary.slice(0, 600), has_decisions: Boolean(parsed.decisions), revision: Boolean(brief.revision) },
+    });
+    await this.store.completeTask(task, outcome, parsed.summary.slice(0, 300) || summarize(outcome.text));
+  }
+
+  async executeSynthesis(task, brief) {
+    assertAgent(task, 'chief-of-staff');
+    const agent = await this.store.getAgent('chief-of-staff');
+    const request = officeRequest(task.goal, this.env);
+    const job = chiefJob(request.goal, { stage: 'review' });
+    await this.startStage(task, agent, 'CHIEF_SYNTHESIS', this.modelRunner ? `shared-pool:${job}` : CHIEF_MODEL, 'Chief is reviewing the employees’ work and consolidating the result.', MODEL_PROVIDER,
+      this.modelRunner ? { job, dataClass: request.dataClass } : null);
+    const outputs = (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content);
+    if (!outputs.length) throw new Error('Chief synthesis received no employee outputs');
+    const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
+    const streams = Array.isArray(brief.workstreams) ? brief.workstreams : [];
+    const revisable = brief.round === 1 && streams.filter((stream) => stream.agent !== 'coding').length >= 1;
+    const synthesize = (allowRevision) => this.withHeartbeat(task, (onActivity) => this.executors.synthesize({
+      agent, goal: request.goal, synthesisBrief: brief.synthesisBrief, outputs, allowRevision, workstreams: streams,
+      context: context?.project ? projectLine(context) : '', onActivity,
+      execution: this.modelExecution(task, `${STAGES.SYNTHESIS}:${allowRevision ? 1 : 2}`),
+      toolBroker: this.toolSession(task, STAGES.SYNTHESIS),
+      ...(this.modelRunner ? { run: this.poolRun(task, `${STAGES.SYNTHESIS}:${allowRevision ? 1 : 2}`, { job, request, preference: MODEL_PROVIDER }) } : {}),
+    }));
+    let outcome = await synthesize(revisable);
+    const revisions = revisable ? parseRevisionRequest(outcome.text, streams, WORKFLOW_LIMITS.maxRevisions) : [];
+    if (revisions.length) return this.requestRevisions(task, outcome, brief, streams, revisions);
+    // A malformed revision request is never shown to Fahad as the answer.
+    if (/^\s*(```(?:json)?\s*)?\{\s*"revise"/.test(outcome.text)) outcome = await synthesize(false);
+    await this.recordOutcome(task, outcome, 'Chief final result is ready to save.');
+    await this.store.completeTask(task, outcome, summarize(outcome.text));
+  }
+
+  // One bounded revision round: the named employees redo their workstream
+  // with the Chief's instruction, then a final synthesis runs over everything.
+  async requestRevisions(task, outcome, brief, streams, revisions) {
+    const revisionTasks = [];
+    for (const [index, revision] of revisions.entries()) {
+      const stream = streams.find((entry) => entry.id === revision.workstream);
+      const employee = officeAgent(stream.agent);
+      revisionTasks.push(await this.store.ensureTask({
+        jobId: task.job_id, agentSlug: employee.slug, title: `${stream.title} (revision)`,
+        brief: encodeBrief(STAGES.SPECIALIST, { workstream: stream.id, agent: employee.key, title: stream.title, brief: stream.brief, revision: revision.instruction, revisesTaskId: stream.taskId }),
+        sequence: SEQUENCES.REVISION + index, dependsOn: [stream.taskId, task.task_id], maxAttempts: this.maxAttempts,
+      }));
+    }
+    const revised = new Map(revisions.map((revision, index) => [revision.workstream, revisionTasks[index].id]));
+    const finalStreams = streams.map((stream) => ({ ...stream, taskId: revised.get(stream.id) || stream.taskId }));
+    await this.store.ensureTask({
+      jobId: task.job_id, agentSlug: 'chief-of-staff', title: 'Chief final synthesis',
+      brief: encodeBrief(STAGES.SYNTHESIS, { round: 2, synthesisBrief: brief.synthesisBrief, workstreams: finalStreams }),
+      sequence: SEQUENCES.SYNTHESIS_FINAL, dependsOn: finalStreams.map((stream) => stream.taskId), maxAttempts: this.maxAttempts,
+    });
+    const text = ['Revisions requested before the final result:', ...revisions.map((revision) => `- ${officeAgent(streams.find((entry) => entry.id === revision.workstream).agent).label}: ${revision.instruction}`)].join('\n');
+    await this.recordOutcome(task, { ...outcome, text }, 'Chief requested revisions.');
+    await this.store.emit({
+      jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity',
+      message: `Chief asked for ${revisions.length} revision${revisions.length === 1 ? '' : 's'} before the final result.`,
+      payload: { kind: 'revision_requested', revisions: revisions.map((revision) => ({ workstream: revision.workstream, instruction: revision.instruction })) },
+    });
+    await this.store.completeTask(task, { ...outcome, text }, `Revisions requested (${revisions.length}).`);
+  }
+
+  // A development workstream: the Coding Agent receives the Chief's brief plus
+  // the outputs it depends on, as its own durable engineering task.
+  async executeLaunchDev(task, brief) {
+    assertAgent(task, 'coding-agent');
+    const agent = await this.store.getAgent('coding-agent');
+    await this.startStage(task, agent, 'DEV_HANDOFF', 'coding-agent', `Handing "${brief.title}" to the Coding Agent.`);
+    const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
+    const repository = context?.project?.defaultRepository || null;
+    const upstream = (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content);
+    let text;
+    let payload;
+    if (!repository || typeof this.store.createCodingSession !== 'function') {
+      text = `## Summary\nThe development workstream "${brief.title}" was not started: this project has no repository set.\n\n## Handoff\nSet the project repository in Projects, then ask the Chief again.\n\n## Decisions for Fahad\nChoose the repository for this project.`;
+      payload = { kind: 'task_launch_skipped', reason: 'NO_REPOSITORY' };
+    } else {
+      const inputs = upstream.map((entry) => `### ${officeAgent(entry.agent_slug)?.label || entry.agent_slug} — ${entry.title}\n${String(entry.content).slice(0, 6000)}`).join('\n\n');
+      const session = await this.store.createCodingSession({
+        workspaceId: context.project.id, title: brief.title, repository, conversationId: context.conversationId || null, createdBy: 'chief-of-staff',
+        objective: [brief.brief, inputs ? `\nINPUTS FROM THE OFFICE:\n${inputs}` : '', `\nOriginal objective from Fahad: ${officeRequest(task.goal, this.env).goal}`].join('\n').slice(0, 40_000),
+      });
+      text = `## Summary\nThe Coding Agent started the development task "${brief.title}" on \`${repository}\`.\n\n## Work\nTask: [${brief.title}](#/task/${session.id}) — it plans, edits, tests, opens a pull request and follows CI on its own.\n\n## Handoff\nProgress is visible under Tasks; approvals it needs appear under Needs attention.\n\n## Decisions for Fahad\nNone now; the Coding Agent will ask if it needs approval.`;
+      payload = { kind: 'task_launched', session_id: session.id, repository };
+    }
+    await this.store.emit({
+      jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity',
+      message: payload.kind === 'task_launched' ? `Chief handed "${brief.title}" to the Coding Agent.` : `Development workstream "${brief.title}" not started (no repository).`, payload,
+    });
+    await this.store.completeTask(task, { text, tokensIn: 0, tokensOut: 0, costUsd: 0 }, parseOutputSummary(text).summary);
+  }
+
+  async executeDirect(task, brief) {
+    const employee = officeAgent(brief.agent);
+    if (!employee || employee.executor !== 'office') throw new Error(`Unknown Office employee ${brief.agent}`);
+    assertAgent(task, employee.slug);
+    const agent = await this.store.getAgent(employee.slug);
+    const request = officeRequest(task.goal, this.env);
+    await this.startStage(task, agent, 'DIRECT_WORKING', `shared-pool:${employee.job}`, `${employee.label} is answering Fahad.`, MODEL_PROVIDER,
+      { job: employee.job, dataClass: request.dataClass, role: employee.key });
+    const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
+    const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
+      agent, role: employee.key, goal: request.goal, context: context?.text || '', webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
+      execution: this.modelExecution(task, STAGES.DIRECT),
+      toolBroker: this.toolSession(task, STAGES.DIRECT),
+      ...(this.modelRunner ? { run: this.poolRun(task, STAGES.DIRECT, { job: employee.job, request, preference: MODEL_PROVIDER }) } : {}),
+    }));
+    await this.recordOutcome(task, outcome, `${employee.label} answered.`);
     await this.store.completeTask(task, outcome, summarize(outcome.text));
   }
 
@@ -527,6 +745,32 @@ export function decodeBrief(value) {
     throw new Error('Task does not belong to the supported Step 3C workflow');
   }
   return brief;
+}
+
+function hasWebTools(tools = []) {
+  const normalized = tools.map((tool) => String(tool).toLowerCase());
+  return normalized.includes('web_search') && normalized.includes('web_fetch');
+}
+
+function projectLine(context) {
+  return String(context.text || '').slice(0, 3000);
+}
+
+function parseOutputSummary(text) {
+  const match = String(text || '').match(/^##\s*Summary[^\n]*\n([\s\S]*?)(?=^##\s|$(?![\s\S]))/mi);
+  const summary = match ? match[1].trim() : summarize(text);
+  const decisions = String(text || '').match(/^##\s*Decisions for Fahad[^\n]*\n([\s\S]*?)(?=^##\s|$(?![\s\S]))/mi)?.[1]?.trim() || '';
+  return { summary, decisions: /^(none|n\/a|-)\b/i.test(decisions) ? '' : decisions };
+}
+
+export function workflowPlanMarkdown(plan) {
+  const lines = [`**Plan:** ${plan.plan_summary}`, '', '| Workstream | Employee | Needs |', '|---|---|---|'];
+  for (const stream of plan.workstreams) {
+    const needs = stream.dependsOn.map((id) => plan.workstreams.find((entry) => entry.id === id)?.title || id).join(', ') || '—';
+    lines.push(`| ${stream.title} | ${officeAgent(stream.agent)?.label || stream.agent} | ${needs} |`);
+  }
+  lines.push('', `**Final result will cover:** ${plan.synthesis_brief}`);
+  return lines.join('\n');
 }
 
 function assertAgent(task, expected) {

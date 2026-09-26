@@ -198,6 +198,15 @@ export class SupabaseStore {
     return data;
   }
 
+  // The employee a conversation is held with directly (null = the Chief).
+  async conversationAgent(jobId) {
+    const { data: job } = await this.db.from('jobs').select('conversation_id').eq('id', jobId).maybeSingle();
+    if (!job?.conversation_id) return null;
+    const { data, error } = await this.db.from('conversations').select('agent_slug').eq('id', job.conversation_id).maybeSingle();
+    if (error) throw new Error('Could not read the conversation: ' + error.message);
+    return data?.agent_slug || null;
+  }
+
   // Compact context for the Chief: project facts, owner memory, the earlier
   // turns of this conversation and the project's recent tasks.
   async jobContext(jobId) {

@@ -78,6 +78,7 @@ column|356e0a4ff1a5b33b8f9ebe62d010edfa|public.continuity_events.provider text n
 column|35dc40e996c76916785f363030431fec|public.tool_executions.scopes ARRAY null=NO default='{}'::text[]
 column|362307f072cbefcc8dd241f839b8b91e|public.tool_executions.created_at timestamp with time zone null=NO default=now()
 column|362fa29e7e57ce50179fa2b39981a90e|public.agents.created_at timestamp with time zone null=NO default=now()
+column|36d02ba94c99c717ca141045b1a594a3|public.conversations.agent_slug text null=YES default=
 column|37164527276b08f0c5cbe7d09ddb16ff|public.results.agent_id uuid null=YES default=
 column|3772e4d14be75d46623e8e57b06bf9d5|public.model_attempts.updated_at timestamp with time zone null=NO default=now()
 column|3773ddefb9d0869552a863fff12e727a|public.jobs.title text null=YES default=
@@ -590,6 +591,7 @@ constraint|bbf0f76631412b5a133767312bbcdef8|public.agent_approvals agent_approva
 constraint|bca0545e29fd0ee174bd7f068d509a0c|public.runs runs_pkey PRIMARY KEY (id)
 constraint|bd96ef4c7146427035a4ba21ca8d2009|public.model_attempts model_attempts_output_tokens_check CHECK ((output_tokens >= 0))
 constraint|c06a2ee7ceda1f0d3b4d6f3dfcafab8c|public.agent_checkpoints agent_checkpoints_session_id_sequence_key UNIQUE (session_id, sequence)
+constraint|c0da34484f6e2a47285f5c15ddd5b704|public.conversations conversations_agent_slug_check CHECK (((agent_slug IS NULL) OR (agent_slug ~ '^[a-z][a-z0-9-]{1,40}$'::text)))
 constraint|c23c2534a18d6c139e7757ee35a0833c|public.events events_to_agent_id_fkey FOREIGN KEY (to_agent_id) REFERENCES agents(id)
 constraint|c2931db28c3af3d0e184853e72f211b0|public.agent_approvals agent_approvals_note_check CHECK (((note IS NULL) OR (char_length(note) <= 2000)))
 constraint|c437565c32b1fcaee1a05977d4a418fa|public.tool_executions tool_executions_check CHECK ((((status = 'running'::text) AND (decision = 'auto'::text) AND (ended_at IS NULL)) OR ((status = ANY (ARRAY[
