@@ -5,6 +5,7 @@
 // themselves (Chief workflow, Coding Agent controller) are unchanged.
 
 import { SESSION_FIELDS, modelPoolSnapshot, publicSession, publicEvent } from './hub-coding.js';
+import { officeAgent } from './office/agents.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -151,7 +152,7 @@ export function approvalCard(approval) {
   const preview = approval.arguments_preview || {};
   if (approval.tool_name === 'repo.protected_change') {
     return {
-      id: approval.id, kind: 'protected_change', risk: approval.risk,
+      id: approval.id, kind: 'protected_change', risk: approval.risk, who: 'Coding Agent',
       what: `Change protected file${(preview.paths || []).length === 1 ? '' : 's'}`,
       why: String(preview.reason || approval.summary || '').slice(0, 1200),
       resources: Array.isArray(preview.paths) ? preview.paths.slice(0, 20) : [],
@@ -164,7 +165,7 @@ export function approvalCard(approval) {
     'supabase.migration_apply': 'Apply a database migration',
   };
   return {
-    id: approval.id, kind: 'tool', risk: approval.risk,
+    id: approval.id, kind: 'tool', risk: approval.risk, who: 'Coding Agent',
     what: labels[approval.tool_name] || approval.summary,
     why: approval.summary,
     resources: [preview.project_ref, preview.name, preview.number ? `PR #${preview.number}` : null].filter(Boolean),
@@ -295,9 +296,36 @@ async function one(query) {
   return data;
 }
 
+// The workstreams of a multi-agent request, for the chat card (null when the
+// Chief answered alone or a single agent replied).
+export function workflowSummary(steps = []) {
+  const stage = (step) => { try { return JSON.parse(step.brief || '{}').stage; } catch { return null; } };
+  if (!steps.some((step) => stage(step) === 'synthesis')) return null;
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const streams = steps.filter((step) => ['specialist', 'launch_dev'].includes(stage(step)));
+  const state = (step) => {
+    if (step.status === 'running') return 'working';
+    if (['done', 'skipped'].includes(step.status)) return 'done';
+    if (['failed', 'blocked'].includes(step.status)) return step.status;
+    return (step.depends_on || []).some((id) => !['done', 'skipped'].includes(byId.get(id)?.status)) ? 'waiting' : 'ready';
+  };
+  const synthesis = steps.filter((step) => stage(step) === 'synthesis').at(-1);
+  return {
+    streams: streams.map((step) => ({ agent: officeAgent(step.agent_slug)?.label || 'Agent', title: step.title, state: state(step) })),
+    synthesis: synthesis ? state(synthesis) : 'waiting',
+  };
+}
+
 // Human words for what the Office is doing on an unfinished chat request.
 export function chatStage(job, steps = []) {
   if (job.status === 'planning' || !steps.length) return 'Thinking';
+  const flow = workflowSummary(steps);
+  if (flow) {
+    const done = flow.streams.filter((stream) => stream.state === 'done').length;
+    const working = flow.streams.filter((stream) => stream.state === 'working').map((stream) => stream.agent);
+    if (flow.synthesis === 'working') return 'The Chief is consolidating the team’s work';
+    return `${working.length ? `${[...new Set(working)].join(' and ')} working` : 'Coordinating'} · ${done} of ${flow.streams.length} workstreams done`;
+  }
   const active = steps.find((step) => ['running', 'assigned'].includes(step.status)) || steps.find((step) => step.status === 'queued');
   if (!active) return 'Finishing';
   const title = String(active.title || '').toLowerCase();
@@ -323,6 +351,7 @@ function messageFromJob(job, { results = [], sessions = [], attempts = [], steps
       tokens: Number(job.tokens_used || 0),
       progress: job.progress || 0,
       stage: ['completed', 'failed', 'cancelled'].includes(job.status) ? null : chatStage(job, steps),
+      workflow: workflowSummary(steps),
       tasks: sessions.map((session) => ({ id: session.id, title: session.title, status: session.status, phase: session.phase })),
     },
   };
@@ -341,7 +370,7 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
       const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
       const archived = url.searchParams.get('archived') === 'true';
       const q = String(url.searchParams.get('q') || '').trim().slice(0, 200);
-      let query = db.from('conversations').select('id,title,archived,created_at,updated_at,last_message_at')
+      let query = db.from('conversations').select('id,title,archived,agent_slug,created_at,updated_at,last_message_at')
         .eq('project_id', workspaceId).eq('archived', archived).order('last_message_at', { ascending: false }).limit(200);
       let list = await rows(query);
       if (q) {
@@ -357,8 +386,11 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
       const body = await readJson(request);
       const workspaceId = uuid(body.workspaceId, 'workspaceId');
       const message = text(body.message, 'Message', { min: 1, max: 8000 });
+      // Optional: talk directly to one employee instead of the Chief.
+      const employee = body.agentSlug ? officeAgent(body.agentSlug) : null;
+      if (body.agentSlug && (!employee || employee.executor !== 'office' || !employee.directChat)) throw input('That employee cannot be chatted with directly');
       const { data: conversation, error } = await db.from('conversations')
-        .insert({ project_id: workspaceId, title: autoTitle(message) }).select('id,title,archived,created_at,updated_at,last_message_at').single();
+        .insert({ project_id: workspaceId, title: autoTitle(message), ...(employee ? { agent_slug: employee.slug } : {}) }).select('id,title,archived,agent_slug,created_at,updated_at,last_message_at').single();
       if (error) throw Object.assign(new Error(`Could not start the conversation: ${error.message}`), { statusCode: 500 });
       const job = await store.createJob({ title: autoTitle(message), goal: message, projectId: workspaceId, requestedProvider: 'auto', conversationId: conversation.id });
       return sendJson(response, 201, { ok: true, conversation: publicConversation(conversation), jobId: job.id }), true;
@@ -366,14 +398,16 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
     const conversationMatch = path.match(/^\/api\/conversations\/([0-9a-f-]{36})(?:\/(messages|stop))?$/i);
     if (conversationMatch) {
       const id = uuid(conversationMatch[1], 'conversationId');
-      const conversation = await one(db.from('conversations').select('id,project_id,title,archived,created_at,updated_at,last_message_at').eq('id', id).maybeSingle());
+      const conversation = await one(db.from('conversations').select('id,project_id,title,archived,agent_slug,created_at,updated_at,last_message_at').eq('id', id).maybeSingle());
       if (!conversation) return sendJson(response, 404, { ok: false, error: 'CONVERSATION_NOT_FOUND' }), true;
       if (method === 'GET' && !conversationMatch[2]) {
         const jobs = await rows(db.from('jobs').select('id,title,goal,status,progress,final_summary,cost_usd,tokens_used,created_at,completed_at')
           .eq('conversation_id', id).order('created_at', { ascending: true }).limit(200));
         const jobIds = jobs.map((job) => job.id);
-        const openIds = jobs.filter((job) => !['completed', 'failed', 'cancelled'].includes(job.status)).map((job) => job.id);
-        const stepRows = openIds.length ? await rows(db.from('tasks').select('job_id,title,status,sequence').in('job_id', openIds).order('sequence')) : [];
+        const stepRows = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,sequence,brief,depends_on').in('job_id', jobIds).order('sequence')) : [];
+        const agentRows = stepRows.length ? await rows(db.from('agents').select('id,slug')) : [];
+        const slugById = new Map(agentRows.map((agent) => [agent.id, agent.slug]));
+        for (const step of stepRows) step.agent_slug = slugById.get(step.agent_id) || null;
         const [results, sessions, attempts] = jobIds.length ? await Promise.all([
           rows(db.from('results').select('job_id,kind,content,created_at').in('job_id', jobIds).order('created_at')),
           rows(db.from('agent_sessions').select('id,title,status,phase,conversation_id,job_id,created_at').eq('conversation_id', id)),
@@ -416,7 +450,7 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         const patch = { updated_at: new Date().toISOString() };
         if (body.title !== undefined) Object.assign(patch, { title: text(body.title, 'Title', { min: 1, max: 200 }), title_source: 'owner' });
         if (body.archived !== undefined) patch.archived = Boolean(body.archived);
-        const { data, error } = await db.from('conversations').update(patch).eq('id', id).select('id,title,archived,created_at,updated_at,last_message_at').single();
+        const { data, error } = await db.from('conversations').update(patch).eq('id', id).select('id,title,archived,agent_slug,created_at,updated_at,last_message_at').single();
         if (error) throw Object.assign(new Error(`Could not update the conversation: ${error.message}`), { statusCode: 500 });
         return sendJson(response, 200, { ok: true, conversation: publicConversation(data) }), true;
       }
@@ -579,5 +613,7 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
 }
 
 function publicConversation(row) {
-  return { id: row.id, title: row.title, archived: row.archived, createdAt: row.created_at, updatedAt: row.updated_at, lastMessageAt: row.last_message_at };
+  const employee = row.agent_slug ? officeAgent(row.agent_slug) : officeAgent('chief-of-staff');
+  return { id: row.id, title: row.title, archived: row.archived, agent: { slug: employee?.slug || row.agent_slug, label: employee?.label || row.agent_slug, key: employee?.key || null },
+    createdAt: row.created_at, updatedAt: row.updated_at, lastMessageAt: row.last_message_at };
 }

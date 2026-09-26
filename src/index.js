@@ -77,6 +77,8 @@ const workflow = new OfficeWorkflow({
   workspacePolicyStore,
   enforceLegacyWorkspacePolicy: WORKSPACE_POLICY_ENFORCEMENT_ENABLED,
   toolBroker,
+  // Independent workstreams of a multi-agent objective run side by side.
+  parallelTasks: Number(process.env.OFFICE_PARALLEL_TASKS || 3),
 });
 let running = true;
 let busy = false;
@@ -124,8 +126,8 @@ async function main() {
   });
   heartbeatTimer = setInterval(heartbeat, 5000);
   log('------------------------------------------------------------');
-  log('Fahad AI Office - Runtime v2 (Chief -> Research -> Chief)');
-  log('Agents online: Chief of Staff, Research & Strategy');
+  log('Fahad AI Office - Runtime v3 (Chief -> specialist workstreams -> Chief synthesis)');
+  log('Employees: Chief of Staff, Research, Business Strategy, Finance, Brand & Creative, Content & Media, Product & Tech, Operations, QA & Review; Coding Agent separately');
   log('Models: Chief=' + CHIEF_MODEL + ', Research=' + RESEARCH_MODEL);
   log('Idle check every ' + IDLE_MS + 'ms. Hub provides the protected task interface.');
   log('------------------------------------------------------------');

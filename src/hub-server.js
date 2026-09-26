@@ -11,6 +11,7 @@ import {
 } from './config.js';
 import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi, readDeployedVersion } from './hub-coding.js';
 import { handleWorkspaceApi } from './hub-workspace.js';
+import { handleOfficeApi } from './hub-office.js';
 import { readFileSync } from 'node:fs';
 
 // Workspace V2 interface (static files shipped in src/hub-ui). The previous
@@ -74,6 +75,7 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
       }
       if (await handleCodingApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
       if (await handleWorkspaceApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null, store })) return;
+      if (await handleOfficeApi({ db, request, response, url: requestUrl, sendJson })) return;
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/workspaces') {
         const workspaces = await listWorkspaces(db);

@@ -10,6 +10,13 @@ export class MemoryStore {
       'chief-of-staff': { id: 'chief', slug: 'chief-of-staff', system_prompt: 'Chief '.repeat(30), allowed_tools: [] },
       'research-strategy': { id: 'research', slug: 'research-strategy', system_prompt: 'Research '.repeat(30), allowed_tools: ['web_search', 'web_fetch'] },
       'business-finance': { id: 'finance', slug: 'business-finance', system_prompt: 'Finance '.repeat(30), allowed_tools: ['web_search', 'web_fetch'] },
+      'business-strategy': { id: 'strategy', slug: 'business-strategy', system_prompt: 'Strategy '.repeat(30), allowed_tools: ['web_search', 'web_fetch'] },
+      'brand-creative': { id: 'brand', slug: 'brand-creative', system_prompt: 'Brand '.repeat(30), allowed_tools: [] },
+      'content-media': { id: 'content', slug: 'content-media', system_prompt: 'Content '.repeat(30), allowed_tools: ['web_search', 'web_fetch'] },
+      'product-tech': { id: 'product', slug: 'product-tech', system_prompt: 'Product '.repeat(30), allowed_tools: ['web_search'] },
+      operations: { id: 'operations', slug: 'operations', system_prompt: 'Operations '.repeat(30), allowed_tools: [] },
+      'qa-security': { id: 'qa', slug: 'qa-security', system_prompt: 'QA '.repeat(30), allowed_tools: [] },
+      'coding-agent': { id: 'coding', slug: 'coding-agent', system_prompt: 'Coding', allowed_tools: [] },
     };
     this.jobs = [{ id: 'job-1', title: 'Cost research', goal, project_id: projectId, status: 'planning', priority: 'normal', tokens_used: 0, cost_usd: 0 }];
     this.tasks = [];

@@ -1,4 +1,5 @@
-// Office Agent roles — architecture registry (not yet executing).
+// Office Agent roles — the Platform dashboard's view of the roster.
+// The executable roster (who runs what, and how) is src/office/agents.js.
 //
 // Every role is a configuration over the SAME shared infrastructure the
 // Coding Agent already uses; nothing here duplicates it:
@@ -25,12 +26,17 @@ export const OFFICE_ROLES = Object.freeze([
     purpose: 'Evidence gathering and analysis with cited sources.',
   },
   {
-    id: 'branding', label: 'Branding', job: 'branding', runtime: 'office-agent',
+    id: 'strategy', label: 'Business Strategy', job: 'research', runtime: 'office-workflow',
+    tools: ['web_search', 'web_fetch'], approvals: [], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
+    purpose: 'Business model, product strategy, MVP scope and go-to-market.',
+  },
+  {
+    id: 'branding', label: 'Brand & Creative', job: 'branding', runtime: 'office-workflow',
     tools: [], approvals: ['publish'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
     purpose: 'Names, positioning, tone of voice and brand guidelines.',
   },
   {
-    id: 'content', label: 'Content', job: 'content', runtime: 'office-agent',
+    id: 'content', label: 'Content & Media', job: 'content', runtime: 'office-workflow',
     tools: [], approvals: ['publish'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
     purpose: 'Articles, posts and copy drafts; nothing is published without approval.',
   },
@@ -50,9 +56,19 @@ export const OFFICE_ROLES = Object.freeze([
     status: 'ACTIVE — Fahad Coding Agent', purpose: 'Autonomous development through PR, CI, merge approval and deployment.',
   },
   {
-    id: 'qa_security', label: 'QA / Security', job: 'qa_security', runtime: 'coding-agent',
-    tools: ['repo.read', 'shell.run', 'github.read'], approvals: ['any_write'], status: 'READY — NOT ACTIVE',
-    purpose: 'Test and security review of changes; read-only by default.',
+    id: 'product', label: 'Product & Tech', job: 'research', runtime: 'office-workflow',
+    tools: ['web_search'], approvals: [], status: 'ACTIVE — delegated by Chief (written plans; code goes to the Coding Agent)',
+    purpose: 'Technical requirements, architecture options and build plans.',
+  },
+  {
+    id: 'operations', label: 'Operations', job: 'content', runtime: 'office-workflow',
+    tools: [], approvals: [], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
+    purpose: 'Launch checklists, timelines, processes and follow-ups.',
+  },
+  {
+    id: 'qa_security', label: 'QA & Review', job: 'orchestration', runtime: 'office-workflow',
+    tools: [], approvals: [], status: 'ACTIVE — reviews Office work when the Chief adds a review workstream',
+    purpose: 'Accuracy, gaps, risks and consistency review before work reaches Fahad; code changes are gated by the Coding Agent tests and CI.',
   },
 ].map((role) => Object.freeze({ ...role, jobProfile: JOB_PROFILES[role.job] })));
 
