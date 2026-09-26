@@ -1,5 +1,6 @@
-import { planJob, reviewResearch } from './chief.js';
-import { performResearch } from './research.js';
+import { chiefJob, planJob, reviewResearch, validatePlan } from './chief.js';
+import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
+import { EscalationRequired, classifyOfficeData } from './office/pool-runner.js';
 import {
   CHIEF_MODEL,
   DEEPSEEK_MODEL,
@@ -19,7 +20,7 @@ export class OfficeWorkflow {
   constructor({
     store,
     plan = planJob,
-    research = performResearch,
+    research = performSpecialist,
     review = reviewResearch,
     staleMinutes = STALE_TASK_MINUTES,
     maxAttempts = TASK_MAX_ATTEMPTS,
@@ -28,7 +29,14 @@ export class OfficeWorkflow {
     workspacePolicyStore = null,
     enforceLegacyWorkspacePolicy = false,
     toolBroker = null,
+    modelRunner = null,
+    env = process.env,
   }) {
+    // modelRunner: the shared Model Pool runner (office/pool-runner.js). When
+    // present every stage asks for a job type and the shared router picks the
+    // model; without it the legacy Anthropic-first gateway is used.
+    this.modelRunner = modelRunner;
+    this.env = env;
     this.store = store;
     this.executors = { plan, research, review };
     this.staleMinutes = staleMinutes;
@@ -118,20 +126,28 @@ export class OfficeWorkflow {
     const agent = await this.store.getAgent('chief-of-staff');
     const preference = await this.providerPreference(task, STAGES.PLAN);
     const model = preference === 'deepseek' ? DEEPSEEK_MODEL : CHIEF_MODEL;
-    await this.startStage(task, agent, 'CHIEF_PLANNING', model, 'Chief of Staff is planning.', preference);
+    const request = officeRequest(task.goal, this.env);
+    const job = chiefJob(request.goal);
+    if (this.modelRunner) {
+      await this.startStage(task, agent, 'CHIEF_PLANNING', `shared-pool:${job}`, `Chief of Staff is planning (job: ${job}; free-first shared Model Pool).`, preference, { job, dataClass: request.dataClass });
+    } else {
+      await this.startStage(task, agent, 'CHIEF_PLANNING', model, 'Chief of Staff is planning.', preference);
+    }
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.plan({
       agent,
-      goal: task.goal,
+      goal: request.goal,
       onActivity,
       execution: this.modelExecution(task, STAGES.PLAN, preference, model),
       toolBroker: this.toolSession(task, STAGES.PLAN),
+      ...(this.modelRunner ? { run: this.poolRun(task, STAGES.PLAN, { job, request, preference, validate: request.drills.escalate ? escalationDrill(validatePlan) : validatePlan }) } : {}),
     }));
 
+    const specialist = specialistFor(outcome.plan.specialist);
     const researchTask = await this.store.ensureTask({
       jobId: task.job_id,
-      agentSlug: 'research-strategy',
-      title: 'Research & Strategy investigation',
-      brief: encodeBrief(STAGES.RESEARCH, { researchBrief: outcome.plan.research_brief }),
+      agentSlug: this.modelRunner ? specialist.agentSlug : 'research-strategy',
+      title: this.modelRunner ? `${specialist.label} (job: ${specialist.job})` : 'Research & Strategy investigation',
+      brief: encodeBrief(STAGES.RESEARCH, { researchBrief: outcome.plan.research_brief, ...(this.modelRunner ? { role: outcome.plan.specialist } : {}) }),
       sequence: SEQUENCES.RESEARCH,
       dependsOn: [task.task_id],
       maxAttempts: this.maxAttempts,
@@ -173,17 +189,26 @@ export class OfficeWorkflow {
   }
 
   async executeResearch(task, brief) {
-    assertAgent(task, 'research-strategy');
-    const agent = await this.store.getAgent('research-strategy');
-    assertAuthorizedResearchTools(agent.allowed_tools || []);
-    await this.startStage(task, agent, 'RESEARCH_WORKING', RESEARCH_MODEL, 'Research & Strategy is working.');
+    const role = this.modelRunner && SPECIALISTS[brief.role] ? brief.role : 'research';
+    const specialist = specialistFor(role);
+    assertAgent(task, specialist.agentSlug);
+    const agent = await this.store.getAgent(specialist.agentSlug);
+    if (specialist.webTools) assertAuthorizedResearchTools(agent.allowed_tools || []);
+    const request = officeRequest(task.goal, this.env);
+    if (this.modelRunner) {
+      await this.startStage(task, agent, 'RESEARCH_WORKING', `shared-pool:${specialist.job}`, `${specialist.label} is working (job: ${specialist.job}; free-first shared Model Pool).`, MODEL_PROVIDER, { job: specialist.job, dataClass: request.dataClass, role });
+    } else {
+      await this.startStage(task, agent, 'RESEARCH_WORKING', RESEARCH_MODEL, 'Research & Strategy is working.');
+    }
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.research({
       agent,
-      goal: task.goal,
+      goal: request.goal,
       brief: brief.researchBrief,
+      role,
       onActivity,
       execution: this.modelExecution(task, STAGES.RESEARCH),
       toolBroker: this.toolSession(task, STAGES.RESEARCH),
+      ...(this.modelRunner ? { run: this.poolRun(task, STAGES.RESEARCH, { job: specialist.job, request, preference: MODEL_PROVIDER, drillFailover: request.drills.failover }) } : {}),
     }));
     await this.recordOutcome(task, outcome, 'Research result is ready to save.');
     await this.store.completeTask(task, outcome, summarize(outcome.text));
@@ -192,27 +217,35 @@ export class OfficeWorkflow {
   async executeReview(task, brief) {
     assertAgent(task, 'chief-of-staff');
     const upstream = Array.isArray(task.upstream) ? task.upstream : [];
-    if (upstream.length !== 1 || upstream[0].agent_slug !== 'research-strategy' || !upstream[0].content) {
+    const specialistSlugs = new Set(Object.values(SPECIALISTS).map((entry) => entry.agentSlug));
+    if (upstream.length !== 1 || !specialistSlugs.has(upstream[0].agent_slug) || !upstream[0].content) {
       throw new Error('Chief review received an invalid Research handoff');
     }
     const agent = await this.store.getAgent('chief-of-staff');
     const preference = await this.providerPreference(task, STAGES.REVIEW);
     const model = preference === 'deepseek' ? DEEPSEEK_MODEL : CHIEF_MODEL;
-    await this.startStage(task, agent, 'CHIEF_REVIEW_STARTED', model, 'Chief is reviewing Research.', preference);
+    const request = officeRequest(task.goal, this.env);
+    const job = chiefJob(request.goal, { stage: 'review' });
+    if (this.modelRunner) {
+      await this.startStage(task, agent, 'CHIEF_REVIEW_STARTED', `shared-pool:${job}`, `Chief is reviewing the specialist result (job: ${job}; free-first shared Model Pool).`, preference, { job, dataClass: request.dataClass });
+    } else {
+      await this.startStage(task, agent, 'CHIEF_REVIEW_STARTED', model, 'Chief is reviewing Research.', preference);
+    }
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.review({
       agent,
-      goal: task.goal,
+      goal: request.goal,
       reviewBrief: brief.reviewBrief,
       research: upstream[0],
       onActivity,
       execution: this.modelExecution(task, STAGES.REVIEW, preference, model),
       toolBroker: this.toolSession(task, STAGES.REVIEW),
+      ...(this.modelRunner ? { run: this.poolRun(task, STAGES.REVIEW, { job, request, preference }) } : {}),
     }));
     await this.recordOutcome(task, outcome, 'Chief final result is ready to save.');
     await this.store.completeTask(task, outcome, summarize(outcome.text));
   }
 
-  async startStage(task, agent, stage, model, message, provider = MODEL_PROVIDER) {
+  async startStage(task, agent, stage, model, message, provider = MODEL_PROVIDER, routing = null) {
     await this.store.setRunModel(task.run_id, model);
     await this.store.emit({
       jobId: task.job_id,
@@ -222,13 +255,31 @@ export class OfficeWorkflow {
       type: 'status_changed',
       message,
       payload: {
-        status: 'WORKING', stage, provider, model,
+        status: 'WORKING', stage, provider: routing ? 'shared-pool' : provider, model,
         attempt: task.attempt_no, max_attempts: task.max_attempts,
+        ...(routing ? { kind: 'model_stage_started', job: routing.job, data_class: routing.dataClass, role: routing.role || null, agent_slug: agent.slug || task.agent_slug } : {}),
       },
     });
   }
 
   async recordOutcome(task, outcome, message) {
+    if (outcome.path) {
+      await this.store.emit({
+        jobId: task.job_id,
+        taskId: task.task_id,
+        runId: task.run_id,
+        agentId: task.agent_id,
+        type: 'activity',
+        message: `${task.agent_slug} ran on ${outcome.path.map((step) => `${step.routeId} (${step.billingClass.toUpperCase()})`).join(' → ')}.`,
+        payload: {
+          kind: 'model_route', agent_slug: task.agent_slug, stage: decodeBrief(task.brief).stage, job: outcome.job, data_class: outcome.dataClass,
+          route_id: outcome.routeId, provider: outcome.provider, model: outcome.model, billing_class: outcome.billingClass,
+          path: outcome.path, switches: outcome.switches, escalations: outcome.escalations, tools_used: outcome.toolsUsed,
+          checkpoints: outcome.checkpoints, tokens_in: outcome.tokensIn, tokens_out: outcome.tokensOut, cost_usd: outcome.costUsd,
+          duration_ms: outcome.durationMs, savings: outcome.savings,
+        },
+      });
+    }
     await this.store.setRunModel(
       task.run_id,
       outcome.model || (task.agent_slug === 'research-strategy' ? RESEARCH_MODEL : CHIEF_MODEL),
@@ -259,6 +310,37 @@ export class OfficeWorkflow {
     const requested = job.requested_provider || 'auto';
     if (!['auto', 'anthropic', 'deepseek'].includes(requested)) throw new Error('Unsupported job provider preference');
     return requested === 'auto' ? MODEL_PROVIDER : requested;
+  }
+
+  // A stage run on the shared Model Pool: the stage names its job type; the
+  // shared router chooses the model. Audit, checkpoints and provider switches
+  // go to the same durable records as before.
+  poolRun(task, stage, { job, request, preference = MODEL_PROVIDER, validate = null, drillFailover = false }) {
+    const execution = this.modelExecution(task, stage);
+    return async (args) => this.modelRunner.run({
+      job,
+      systemPrompt: args.systemPrompt,
+      prompt: args.prompt,
+      useWebTools: (args.allowedTools || []).length > 0,
+      maxTurns: args.maxTurns,
+      dataClass: request.dataClass,
+      onlyProvider: preference && preference !== MODEL_PROVIDER ? preference : null,
+      context: execution.gatewayContext,
+      validate,
+      beforeCall: drillFailover ? failoverDrill() : null,
+      hooks: {
+        onAttempt: execution.onAttempt,
+        onCheckpoint: execution.onCheckpoint,
+        onProviderSwitch: execution.onProviderSwitch,
+        onActivity: args.onActivity,
+        onEscalation: (change) => this.store.emit({
+          jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id,
+          type: 'activity', required: true, level: 'warning',
+          message: `Escalated: ${change.fromRoute} could not complete this ${job} step (${change.reason}); checkpoint ${change.checkpointSequence} saved, choosing the next suitable model.`,
+          payload: { kind: 'model_escalation', job, from_route: change.fromRoute, reason: change.reason, checkpoint: change.checkpointSequence },
+        }),
+      },
+    });
   }
 
   modelExecution(task, stage, provider = MODEL_PROVIDER, model = null) {
@@ -416,4 +498,52 @@ export function safeError(error) {
     .replace(/\b(?:sk[-_]|ghp_|github_pat_)[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED]')
     .slice(0, 500);
+}
+
+// The request as Office sees it: owner drill markers and the confidential
+// marker are removed from what models receive; the data class is decided
+// once per job (office/pool-runner.js classifyOfficeData).
+export function officeRequest(goal, env = process.env) {
+  const raw = String(goal || '');
+  const drillsEnabled = !/^(0|false|no)$/i.test(String(env.OFFICE_DRILLS_ENABLED || ''));
+  const drills = {
+    failover: drillsEnabled && /\[drill:failover\]/i.test(raw),
+    escalate: drillsEnabled && /\[drill:escalate\]/i.test(raw),
+  };
+  const { dataClass, reason } = classifyOfficeData(raw, { env });
+  const cleaned = raw.replace(/\[drill:(failover|escalate)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').trim();
+  return { goal: cleaned || raw, dataClass, dataClassReason: reason, drills };
+}
+
+// Controlled failover drill (owner marker [drill:failover]): after the first
+// model has completed one real step, ONE simulated rate limit is injected on
+// its next call. The gateway treats it like a real 429 (checkpoint, switch)
+// but never records it as provider health. Reported as injected.
+export function failoverDrill() {
+  let firstRoute = null;
+  let calls = 0;
+  let injected = false;
+  return async ({ route }) => {
+    firstRoute ||= route.id;
+    if (route.id !== firstRoute || injected) return;
+    calls += 1;
+    if (calls === 2) {
+      injected = true;
+      throw Object.assign(new Error('DRILL: injected rate limit for the Office failover drill'), { status: 429, type: 'rate_limit_error', retryAfter: '600', injected: true, code: 'DRILL_INJECTED_RATE_LIMIT' });
+    }
+  };
+}
+
+// Controlled escalation drill (owner marker [drill:escalate]): the first
+// model's valid plan is treated ONCE as insufficient, so the stage escalates
+// to the next suitable model from its checkpoint. Reported as injected.
+export function escalationDrill(validate) {
+  let used = false;
+  return async (text) => {
+    if (!used) {
+      used = true;
+      throw new EscalationRequired('DRILL: first plan treated as insufficient', 'DRILL_INJECTED_INSUFFICIENT');
+    }
+    return validate(text);
+  };
 }

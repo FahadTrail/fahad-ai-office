@@ -18,6 +18,8 @@ import { SupabaseProviderStateStore } from './model-gateway/agentic/provider-sta
 import { CanaryRequestRunner } from './canary/canary-requests.js';
 import { refreshOpenRouterCatalog } from './model-gateway/agentic/openrouter-catalog.js';
 import { rankFreeModels } from './model-gateway/agentic/capabilities.js';
+import { OfficeModelRunner } from './office/pool-runner.js';
+import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
@@ -40,8 +42,17 @@ const toolBroker = new ToolBroker({
   clients: [safeCanaryClient],
   definitions: SAFE_CANARY_TOOL_DEFINITIONS,
 });
+// Office agents run on the SHARED Model Pool (job-typed, free-first routing,
+// cooldown-aware failover, workspace authorization and budget). Rollback:
+// OFFICE_MODEL_POOL=false restores the legacy Anthropic-first gateway.
+const officeModelRunner = /^(0|false|no)$/i.test(String(process.env.OFFICE_MODEL_POOL || '')) ? null : new OfficeModelRunner({
+  stateStore: providerStateStore,
+  policyStore: workspacePolicyStore,
+  routingStore: new SupabaseRoutingPolicyStore(db),
+});
 const workflow = new OfficeWorkflow({
   store,
+  modelRunner: officeModelRunner,
   workspacePolicyStore,
   enforceLegacyWorkspacePolicy: WORKSPACE_POLICY_ENFORCEMENT_ENABLED,
   toolBroker,

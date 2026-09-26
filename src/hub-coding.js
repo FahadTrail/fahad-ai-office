@@ -327,7 +327,8 @@ export async function platformOverview({ db, env = process.env, now = () => Date
     }
   };
   const pool = await modelPoolSnapshot({ db, env, now, workspaceId });
-  const [sessions, approvals, projects, policy, lastEvent, lastCanary, supabaseGrants] = await Promise.all([
+  const since = new Date(now() - 72 * 3600_000).toISOString();
+  const [sessions, approvals, projects, policy, lastEvent, lastCanary, supabaseGrants, officeEvents] = await Promise.all([
     workspaceId ? optional(rows(db.from('agent_sessions').select('id,title,status,phase,current_route,spent_usd,budget_usd,created_at,updated_at').eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(50)), []) : [],
     workspaceId ? optional(rows(db.from('agent_approvals').select('id,session_id,tool_name,risk,summary,requested_at').eq('workspace_id', workspaceId).eq('status', 'pending').order('requested_at', { ascending: true })), []) : [],
     optional(rows(db.from('projects').select('id,name').order('name', { ascending: true }).limit(50)), []),
@@ -335,7 +336,11 @@ export async function platformOverview({ db, env = process.env, now = () => Date
     optional(one(db.from('agent_events').select('created_at,type').order('id', { ascending: false }).limit(1).maybeSingle()), null),
     optional(one(db.from('provider_canary_runs').select('status,requested_at,completed_at').order('requested_at', { ascending: false }).limit(1).maybeSingle()), null),
     workspaceId ? optional(rows(db.from('workspace_tool_grants').select('tool_name,decision,enabled').eq('workspace_id', workspaceId).like('tool_name', 'supabase.%')), []) : [],
+    optional(rows(db.from('events').select('job_id,task_id,type,level,message,payload,created_at')
+      .in('payload->>kind', OFFICE_EVENT_KINDS).gte('created_at', since).order('created_at', { ascending: false }).limit(400)), []),
   ]);
+  const officeJobIds = [...new Set(officeEvents.map((event) => event.job_id).filter(Boolean))].slice(0, 40);
+  const officeJobs = officeJobIds.length ? await optional(rows(db.from('jobs').select('id,title,status,project_id,created_at').in('id', officeJobIds)), []) : [];
   const byStatus = {};
   for (const session of sessions) byStatus[session.status] = (byStatus[session.status] || 0) + 1;
   const routes = pool.routes;
@@ -357,6 +362,7 @@ export async function platformOverview({ db, env = process.env, now = () => Date
         note: 'Reads run automatically through the read-only database role; writes and migrations always wait for your approval.',
       },
     },
+    office: officeActivity(officeEvents, officeJobs, { workspaceId }),
     officeAgents: OFFICE_ROLES.map((role) => ({
       id: role.id, label: role.label, status: role.status, job: role.job, purpose: role.purpose,
       liveModels: routes.filter((route) => live(route) && route.suitableJobs.includes(role.job)).map((route) => route.id),
@@ -389,6 +395,85 @@ export async function platformOverview({ db, env = process.env, now = () => Date
       lastAgentActivityAt: lastEvent?.created_at || null,
       lastCanary: lastCanary ? { status: lastCanary.status, requestedAt: lastCanary.requested_at, completedAt: lastCanary.completed_at } : null,
       database: 'ok',
+    },
+  };
+}
+
+// ---------------------------------------------------------------- Office
+export const OFFICE_EVENT_KINDS = ['model_stage_started', 'model_route', 'model_escalation', 'provider_switch', 'model_checkpoint'];
+const STAGE_ROLE = { chief_plan: 'Chief', chief_review: 'Chief review' };
+const JOB_ROLE = { research: 'Research', content: 'Content', branding: 'Branding', seo: 'SEO', finance: 'Finance' };
+const START_STAGE = { CHIEF_PLANNING: 'chief_plan', RESEARCH_WORKING: 'research', CHIEF_REVIEW_STARTED: 'chief_review' };
+
+function roleName(stage, job) {
+  return STAGE_ROLE[stage] || JOB_ROLE[job] || 'Specialist';
+}
+
+// What Office agents are actually doing, from the durable event log: the
+// current stage of each role, and for completed jobs the real model path
+// (with failovers and escalations) plus actual cost and the ESTIMATED cost
+// of the previous paid route. No credentials or prompts are involved.
+export function officeActivity(events, jobs = [], { workspaceId = null } = {}) {
+  const jobById = new Map(jobs.map((job) => [job.id, job]));
+  const inScope = events.filter((event) => !workspaceId || !jobById.get(event.job_id) || jobById.get(event.job_id).project_id === workspaceId);
+  // Same-instant events keep their causal order: start, checkpoint, switch/escalation, result.
+  const order = { model_stage_started: 0, model_checkpoint: 1, provider_switch: 2, model_escalation: 2, model_route: 3 };
+  const chronological = inScope.toSorted((left, right) => String(left.created_at).localeCompare(String(right.created_at))
+    || (order[left.payload?.kind] ?? 9) - (order[right.payload?.kind] ?? 9));
+  const byJob = new Map();
+  for (const event of chronological) {
+    const payload = event.payload || {};
+    const entry = byJob.get(event.job_id) || { jobId: event.job_id, title: jobById.get(event.job_id)?.title || 'Office job', status: jobById.get(event.job_id)?.status || null, stages: [], startedAt: event.created_at, lastActivityAt: event.created_at };
+    entry.lastActivityAt = event.created_at;
+    if (payload.kind === 'model_stage_started') {
+      const stage = START_STAGE[payload.stage] || payload.stage;
+      entry.stages.push({ taskId: event.task_id, stage, role: roleName(stage, payload.job), job: payload.job, dataClass: payload.data_class, status: 'WORKING', startedAt: event.created_at, lastActivityAt: event.created_at, events: [] });
+    } else {
+      const stageEntry = [...entry.stages].reverse().find((candidate) => candidate.taskId === event.task_id);
+      if (stageEntry) {
+        stageEntry.lastActivityAt = event.created_at;
+        if (payload.kind === 'model_route') {
+          Object.assign(stageEntry, {
+            status: 'COMPLETED', routeId: payload.route_id, provider: payload.provider, model: payload.model, billingClass: String(payload.billing_class || '').toUpperCase(),
+            tools: payload.tools_used || [], tokens: Number(payload.tokens_in || 0) + Number(payload.tokens_out || 0), costUsd: Number(payload.cost_usd || 0),
+            path: (payload.path || []).map((step) => ({ routeId: step.routeId, billingClass: String(step.billingClass || '').toUpperCase(), turns: step.turns })),
+            switches: payload.switches || [], escalations: payload.escalations || [], savings: payload.savings || null,
+          });
+        } else if (payload.kind === 'provider_switch') {
+          stageEntry.events.push({ kind: 'switch', from: payload.fromProvider, to: payload.toProvider, code: payload.reason?.code || null, injected: Boolean(payload.injected || payload.reason?.injected) });
+        } else if (payload.kind === 'model_escalation') {
+          stageEntry.events.push({ kind: 'escalation', from: payload.from_route, code: payload.reason, injected: /^DRILL_/.test(payload.reason || '') });
+        } else if (payload.kind === 'model_checkpoint') {
+          stageEntry.events.push({ kind: 'checkpoint', sequence: payload.sequence });
+        }
+      }
+    }
+    byJob.set(event.job_id, entry);
+  }
+  const recentJobs = [...byJob.values()].toSorted((left, right) => String(right.lastActivityAt).localeCompare(String(left.lastActivityAt)));
+  const roles = {};
+  for (const job of recentJobs) {
+    for (const stage of [...job.stages].reverse()) {
+      if (roles[stage.role]) continue;
+      roles[stage.role] = { role: stage.role, status: stage.status, currentTask: job.title, jobId: job.jobId, job: stage.job, routeId: stage.routeId || null,
+        provider: stage.provider || null, model: stage.model || null, billingClass: stage.billingClass || null, tools: stage.tools || [], tokens: stage.tokens || 0,
+        costUsd: stage.costUsd || 0, startedAt: stage.startedAt, lastActivityAt: stage.lastActivityAt };
+    }
+  }
+  const completedStages = recentJobs.flatMap((job) => job.stages.filter((stage) => stage.status === 'COMPLETED'));
+  const actualUsd = completedStages.reduce((sum, stage) => sum + stage.costUsd, 0);
+  const equivalentUsd = completedStages.reduce((sum, stage) => sum + Number(stage.savings?.paidEquivalentUsd || 0), 0);
+  return {
+    window: 'last 72 hours',
+    roles: Object.values(roles),
+    jobs: recentJobs.slice(0, 12),
+    freeStages: completedStages.filter((stage) => stage.billingClass === 'FREE').length,
+    paidStages: completedStages.filter((stage) => stage.billingClass === 'PAID').length,
+    cost: {
+      actualUsd: Number(actualUsd.toFixed(6)),
+      paidEquivalentUsd: Number(equivalentUsd.toFixed(6)),
+      estimatedSavingUsd: Number(Math.max(0, equivalentUsd - actualUsd).toFixed(6)),
+      basis: 'ESTIMATE — the same tokens priced at the previous Office route (claude-sonnet-5 published list price)',
     },
   };
 }
@@ -559,7 +644,11 @@ export const CODING_SCRIPT = String.raw`
     const card=(title,body,wide)=>'<div class="card'+(wide?' wide':'')+'"><h3>'+title+'</h3>'+body+'</div>';
     async function renderPlatform(){const body=document.getElementById('platformBody');body.innerHTML='<div class="muted">Loading…</div>';try{perr('');const d=await codingApi('./api/platform'+(ws()?'?workspaceId='+encodeURIComponent(ws()):''));const c=d.codingAgent,m=d.modelPool,u=d.usage,h=d.systemHealth;
       const coding='<div class="kv">'+Object.entries(c.sessions).map(([k,v])=>'<div class="metric">'+esc(k.replace('_',' '))+'<strong>'+v+'</strong></div>').join('')+'</div>'+(c.recent.length?'<ul>'+c.recent.map(r=>'<li>'+esc(r.title)+' — <span class="pill '+esc(r.status)+'">'+esc(r.status)+'</span> <span class="muted">'+esc(r.route||'')+' · '+usd(r.spentUsd)+'</span></li>').join('')+'</ul>':'<div class="muted">No sessions in this project yet.</div>')+'<div class="muted">Supabase tools: '+(c.supabaseTools.tokenConfigured?'token configured':'READY — CREDENTIAL REQUIRED')+' · '+esc(c.supabaseTools.grants.map(g=>g.tool.replace('supabase.','')+'='+g.decision).join(', ')||'no grants')+'</div><button class="ghost" id="pOpenCoding" style="margin-top:8px">Open Coding Agent</button>';
-      const office='<ul>'+d.officeAgents.map(a=>'<li><strong>'+esc(a.label)+'</strong> — '+esc(a.status)+'<br><span class="muted">'+esc(a.purpose)+' · job '+esc(a.job)+' · live models: '+esc(a.liveModels.join(', ')||'none yet')+(a.freeModels.length?' · free candidates: '+esc(a.freeModels.join(', ')):'')+'</span></li>').join('')+'</ul>';
+      const o=d.office||{roles:[],jobs:[],cost:{}};const money=v=>'$'+Number(v||0).toFixed(4);const cls2=b=>b==='FREE'?'completed':b==='PAID'?'blocked':'queued';
+      const rolesTable=o.roles.length?'<div style="overflow:auto"><table class="pool-table"><tr><th>Role</th><th>Status</th><th>Current task</th><th>Job type</th><th>Model</th><th>Provider</th><th>Free/Paid</th><th>Tools</th><th>Tokens</th><th>Cost</th><th>Started</th><th>Last activity</th></tr>'+o.roles.map(r=>'<tr><td><strong>'+esc(r.role)+'</strong></td><td><span class="pill '+(r.status==='COMPLETED'?'completed':'running')+'">'+esc(r.status)+'</span></td><td>'+esc(r.currentTask)+'</td><td>'+esc(r.job||'—')+'</td><td>'+esc(r.model||'routing…')+'</td><td>'+esc(r.provider||'—')+'</td><td>'+(r.billingClass?'<span class="pill '+cls2(r.billingClass)+'">'+esc(r.billingClass)+'</span>':'—')+'</td><td>'+esc((r.tools||[]).join(', ')||'—')+'</td><td>'+Number(r.tokens||0).toLocaleString()+'</td><td>'+money(r.costUsd)+'</td><td>'+new Date(r.startedAt).toLocaleString()+'</td><td>'+new Date(r.lastActivityAt).toLocaleTimeString()+'</td></tr>').join('')+'</table></div>':'<div class="muted">No Office work in the last 72 hours.</div>';
+      const stageLine=st=>{const main=(st.path&&st.path.length?st.path:[{routeId:st.routeId||'routing…',billingClass:st.billingClass||''}]);const trail=[];(st.path||[]).forEach((p,i)=>{if(i>0){const ev=(st.events||[]).filter(e=>e.kind!=='checkpoint')[i-1];trail.push(ev?(ev.kind==='switch'?'→ '+esc(ev.code||'failure')+(ev.injected?' (SIMULATED)':' (genuine)')+' → checkpoint → ':'→ escalated ('+esc(ev.code)+(ev.injected?', SIMULATED':'')+') → checkpoint → '):'→ ')}trail.push('<strong>'+esc(p.routeId)+'</strong> '+esc(p.billingClass))});return '<div style="margin:3px 0"><strong>'+esc(st.role)+'</strong> <span class="muted">('+esc(st.job||'')+')</span>: '+(trail.length?trail.join(' '):esc(main[0].routeId))+' '+(st.status==='COMPLETED'?'✓':'<span class="muted">working…</span>')+'</div>'};
+      const jobsList=o.jobs.length?o.jobs.map(j=>'<details style="margin-top:6px"><summary><strong>'+esc(j.title)+'</strong> <span class="muted">'+esc(j.status||'')+' · '+new Date(j.lastActivityAt).toLocaleString()+'</span></summary>'+j.stages.map(stageLine).join('<div class="muted" style="margin-left:12px">↓</div>')+'</details>').join(''):'';
+      const office='<div class="kv"><div class="metric">Free stages<strong>'+(o.freeStages||0)+'</strong></div><div class="metric">Paid stages<strong>'+(o.paidStages||0)+'</strong></div><div class="metric">Actual cost<strong>'+money(o.cost.actualUsd)+'</strong></div><div class="metric">Paid-route equivalent (est.)<strong>'+money(o.cost.paidEquivalentUsd)+'</strong></div><div class="metric">Estimated saving<strong>'+money(o.cost.estimatedSavingUsd)+'</strong></div></div><div class="muted" style="margin:6px 0">'+esc(o.cost.basis||'')+'</div>'+rolesTable+jobsList+'<details style="margin-top:8px"><summary class="muted">Role registry</summary><ul>'+d.officeAgents.map(a=>'<li><strong>'+esc(a.label)+'</strong> — '+esc(a.status)+'<br><span class="muted">'+esc(a.purpose)+' · job '+esc(a.job)+' · free candidates: '+esc(a.freeModels.join(', ')||'none')+'</span></li>').join('')+'</ul></details>';
       const projects=d.projects.length?'<ul>'+d.projects.map(p=>'<li>'+(p.selected?'<strong>':'')+esc(p.name)+(p.selected?'</strong> (selected)':'')+'</li>').join('')+'</ul>':'<div class="muted">No projects.</div>';
       const pool='<div class="kv"><div class="metric">Live<strong>'+m.live+'/'+m.total+'</strong></div><div class="metric">Rate limited<strong>'+m.rateLimited+'</strong></div><div class="metric">Offline<strong>'+m.offline+'</strong></div><div class="metric">Not configured<strong>'+m.notConfigured+'</strong></div><div class="metric">Free / included<strong>'+m.free+'</strong></div></div><div class="muted" style="margin-top:8px">Coding order now: '+esc(m.codingOrder.join(' → ')||'no eligible model')+'</div><button class="ghost" id="pOpenPool" style="margin-top:8px">Open model pool</button>';
       const b=u.budget;const usage='<div class="kv"><div class="metric">Requests today<strong>'+u.today.requests+'</strong></div><div class="metric">Tokens today<strong>'+Number(u.today.tokens).toLocaleString()+'</strong></div><div class="metric">Cost today (est.)<strong>'+usd(u.today.costUsd)+'</strong></div>'+(b?'<div class="metric">Budget left<strong>'+usd(b.remainingUsd)+' / $'+b.monthlyUsd+'</strong></div>':'')+'</div>'+(u.cooling.length?'<div style="margin-top:8px">Cooling down: '+u.cooling.map(x=>esc(x.id)+' until '+new Date(x.until).toLocaleString()).join('; ')+'</div>':'')+(u.freeQuota.length?'<ul>'+u.freeQuota.map(q=>'<li>'+esc(q.id)+': '+(q.requestsRemaining!=null?'≈'+q.requestsRemaining+' requests left':'EXACT QUOTA NOT AVAILABLE')+' <span class="muted">('+esc(q.basis)+(q.nextResetAt?' · resets '+new Date(q.nextResetAt).toLocaleString():'')+')</span></li>').join('')+'</ul>':'<div class="muted" style="margin-top:8px">No free-tier provider is configured yet.</div>');

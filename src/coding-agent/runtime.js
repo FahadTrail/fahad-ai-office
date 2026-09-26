@@ -18,11 +18,9 @@ import { Sandbox, resolveSandboxMode } from './sandbox.js';
 
 // Route ids the workspace policy authorizes: provider enabled, model listed
 // and the same controller-side secret reference the route uses.
-export function authorizedRoutes(pool, policy) {
-  return pool.filter((route) => (policy?.providers || []).some((permission) => permission.enabled
-    && permission.provider === route.provider && permission.models.includes(route.model)
-    && permission.secretRef === route.secretRef)).map((route) => route.id);
-}
+// Shared with the Office runner and the Hub (workspace-policy/engine.js).
+import { authorizedRoutes } from '../workspace-policy/engine.js';
+export { authorizedRoutes };
 
 export function billingPriority(env = process.env) {
   return [...resolveRouting({ env }).billingPriority];
@@ -81,7 +79,7 @@ export function createCodingRuntime({
   const authorizeRoute = async (route, session) => {
     const policy = await policyStore.getPolicy(session.workspaceId);
     new WorkspacePolicyEngine({ providerSecretRefs: { [route.provider]: route.secretRef } })
-      .authorizeProvider(policy, route.provider, route.model);
+      .authorizeProvider(policy, route.provider, route.model, { freeOnly: Boolean(route.freeOnly) });
   };
 
   // Routing policy for the next turn: defaults < env < workspace < task. Per

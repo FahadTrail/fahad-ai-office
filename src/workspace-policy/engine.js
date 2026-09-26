@@ -39,10 +39,10 @@ export class WorkspacePolicyEngine {
     return Object.freeze({ policy, reservationUsd });
   }
 
-  authorizeProvider(policy, provider, model) {
+  authorizeProvider(policy, provider, model, { freeOnly = false } = {}) {
     const permission = policy.providers.find((candidate) => candidate.provider === provider && candidate.enabled);
     if (!permission) throw denied('WORKSPACE_PROVIDER_DENIED', `Provider ${provider} is not authorized for this workspace`);
-    if (!permission.models.includes(model)) {
+    if (!modelAuthorized(permission.models, model, { freeOnly })) {
       throw denied('WORKSPACE_MODEL_DENIED', `Model ${model} is not authorized for this workspace`);
     }
     const expectedReference = this.providerSecretRefs[provider];
@@ -88,4 +88,21 @@ function denied(code, message) {
 
 function roundUsd(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100_000_000) / 100_000_000;
+}
+
+// A permission lists exact model ids. The single pattern "*:free" authorizes
+// every discovered free-variant model of that provider, and only routes that
+// are free-only guarded (OpenRouter's catalog changes; its free models never
+// bill). A bare "*" is rejected by the database and never matches here.
+export function modelAuthorized(models, model, { freeOnly = false } = {}) {
+  if (models.includes(model)) return true;
+  return freeOnly && models.includes('*:free') && /:free$/.test(String(model));
+}
+
+// Route ids a workspace policy authorizes: provider, model and the
+// controller-side secret reference must all match.
+export function authorizedRoutes(pool, policy) {
+  return pool.filter((route) => (policy?.providers || []).some((permission) => permission.enabled
+    && permission.provider === route.provider && modelAuthorized(permission.models, route.model, { freeOnly: Boolean(route.freeOnly) })
+    && permission.secretRef === route.secretRef)).map((route) => route.id);
 }
