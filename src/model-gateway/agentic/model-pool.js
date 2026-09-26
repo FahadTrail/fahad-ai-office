@@ -11,7 +11,7 @@ import { ChatCompletionsProtocol } from './chat-completions.js';
 import { GeminiProtocol } from './gemini.js';
 import { capabilityProfile } from './capabilities.js';
 import { getOpenRouterCatalog } from './openrouter-catalog.js';
-import { getProviderCatalog } from './provider-catalogs.js';
+import { getProviderCatalog, getProviderCatalogEntry } from './provider-catalogs.js';
 
 export const BILLING_CLASS = Object.freeze({
   INCLUDED: 'included',
@@ -139,6 +139,7 @@ export function modelPoolDefinitions(env = process.env, { openRouterCatalog = ge
       billingClass: billing(env, 'GEMINI_BILLING_CLASS', 'free'), pricing: readPricing(env, 'GEMINI_LITE_PRICING_JSON'),
       privacyApproved: truthy(env.GEMINI_API_PRIVATE_DATA_APPROVED), privacyFlag: 'GEMINI_API_PRIVATE_DATA_APPROVED',
     },
+    ...geminiExtraRoutes(env),
     // Static OpenRouter route: an explicitly configured OPENROUTER_MODEL, or the
     // default free model until the free-model catalog has been discovered.
     ...(openRouterCatalog?.admitted?.length && !env.OPENROUTER_MODEL ? [] : [{
@@ -239,6 +240,27 @@ function openRouterFreeRoutes(env, catalog) {
     privacyApproved: false, privacyNote: 'OpenRouter free endpoints may log or train on prompts: public/non-private data only',
     extraHeaders: { 'x-title': 'Fahad AI Office' },
     catalogFlags: { structuredOutput: entry.structuredOutput, vision: entry.vision },
+  }));
+}
+
+// Gemini free-tier limits are per model, so other free models on the same key
+// add separate daily capacity. Only ids the key's own model list contains are
+// added (discovered), and each still has to pass capability, qualification,
+// health and quota checks like any route. Aliased current models
+// (…-latest) are not duplicated.
+const GEMINI_EXTRA_DEFAULT = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'];
+function geminiExtraRoutes(env) {
+  const catalog = getProviderCatalogEntry('gemini');
+  if (!catalog) return [];
+  const configured = String(env.GEMINI_EXTRA_FREE_MODELS || '').split(',').map((value) => value.trim()).filter((value) => /^[A-Za-z0-9._-]{2,80}$/.test(value));
+  const wanted = configured.length ? configured : GEMINI_EXTRA_DEFAULT;
+  const primary = new Set([env.GEMINI_MODEL || 'gemini-flash-latest', env.GEMINI_LITE_MODEL || 'gemini-flash-lite-latest']);
+  return wanted.filter((model) => catalog.models.includes(model) && !primary.has(model)).map((model) => ({
+    provider: 'gemini', model, protocol: 'gemini', discovered: true,
+    secretEnv: 'GEMINI_API_KEY', secretRef: 'env://GEMINI_API_KEY', qualityTier: 3, costTier: 1,
+    contextWindow: Math.min(Number(catalog.contexts?.[model]) || 128_000, 1_000_000),
+    billingClass: billing(env, 'GEMINI_BILLING_CLASS', 'free'), pricing: null,
+    privacyApproved: truthy(env.GEMINI_API_PRIVATE_DATA_APPROVED), privacyFlag: 'GEMINI_API_PRIVATE_DATA_APPROVED',
   }));
 }
 

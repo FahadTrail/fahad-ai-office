@@ -32,6 +32,12 @@ export function getProviderCatalog(provider) {
   return entry.ok ? entry : null;
 }
 
+// The raw last-good entry, for discovery (non-authoritative lists included).
+export function getProviderCatalogEntry(provider) {
+  const entry = CATALOGS.get(provider);
+  return entry?.ok ? entry : null;
+}
+
 export function providerCatalogSnapshot() {
   return Object.fromEntries([...CATALOGS].map(([provider, entry]) => [provider, {
     ok: entry.ok, status: entry.status, fetchedAt: entry.fetchedAt, count: entry.models?.length || 0,
