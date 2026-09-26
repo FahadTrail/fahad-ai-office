@@ -220,7 +220,9 @@ export class AgentTurnGateway {
           lastError = error;
           const retryAfterMs = Number.isFinite(Number(error.retryAfter)) ? Number(error.retryAfter) * 1000 : 1000 * attempt;
           // A used-up daily allowance will not recover in seconds: rotate now.
-          const retryHere = error.failureClass === FAILURE_CLASS.RETRY && error.quotaScope !== 'day' && attempt < this.maxAttemptsPerRoute &&
+          // A request that already ran into its timeout is not retried on the same route.
+          const timedOut = /timeout/i.test(String(caught?.networkCode || ''));
+          const retryHere = error.failureClass === FAILURE_CLASS.RETRY && error.quotaScope !== 'day' && !timedOut && attempt < this.maxAttemptsPerRoute &&
             retryAfterMs <= this.maxInlineRetryMs;
           if (retryHere) {
             await this.sleepFn(retryAfterMs);

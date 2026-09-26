@@ -10,7 +10,11 @@ import { refreshOpenRouterCatalog } from '../model-gateway/agentic/openrouter-ca
 import { rankFreeModels } from '../model-gateway/agentic/capabilities.js';
 
 export class CanaryRequestRunner {
-  constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now(), diagnostics = runtimeDiagnostics, refreshCatalog = refreshOpenRouterCatalog }) {
+  constructor({ db, stateStore, env = process.env, log = () => {}, run = runAgenticCanary, intervalMs = 60_000, now = () => Date.now(), diagnostics = runtimeDiagnostics, refreshCatalog = refreshOpenRouterCatalog, background = false }) {
+    // background: the runtime loop starts a claimed canary and keeps
+    // processing Office jobs while it runs (a live canary can take minutes).
+    this.background = background;
+    this.active = null;
     this.refreshCatalog = refreshCatalog;
     this.diagnostics = diagnostics;
     this.db = db;
@@ -44,7 +48,7 @@ export class CanaryRequestRunner {
 
   // Called from the runtime loop; cheap when nothing is queued.
   async maybeRun() {
-    if (this.unavailable || this.now() - this.lastCheck < this.intervalMs) return false;
+    if (this.active || this.unavailable || this.now() - this.lastCheck < this.intervalMs) return false;
     this.lastCheck = this.now();
     const { data, error } = await this.db.rpc('claim_provider_canary_run');
     if (error) {
@@ -59,6 +63,15 @@ export class CanaryRequestRunner {
     const request = Array.isArray(data) ? data[0] : data;
     if (!request?.id) return false;
     this.log('Running requested live provider canary', request.id);
+    const execution = this.execute(request)
+      .catch((error) => this.log('WARN  provider canary bookkeeping failed:', error?.code || error?.message))
+      .finally(() => { this.active = null; });
+    this.active = execution;
+    if (!this.background) await execution;
+    return true;
+  }
+
+  async execute(request) {
     try {
       // Current OpenRouter free models before probing (keeps the last good
       // catalog when OpenRouter's catalog API is unavailable).
@@ -87,6 +100,5 @@ export class CanaryRequestRunner {
       }).eq('id', request.id);
       this.log('WARN  provider canary failed:', error?.code || error?.message);
     }
-    return true;
   }
 }

@@ -237,15 +237,28 @@ export function createModelPool({ env = process.env, fetchFn = fetch, protocolFa
   });
 }
 
+// Free routes get a shorter per-request timeout so one slow free model cannot
+// hold an Office stage (or a canary) for ten minutes; a timeout is a network
+// failure and the gateway fails over to the next eligible route.
+export const FREE_ROUTE_TIMEOUT_MS = 150_000;
+
+export function routeTimeoutMs(definition, env = {}) {
+  if (definition.billingClass !== 'free' && !definition.freeOnly) return undefined;
+  const configured = Number(env.FREE_ROUTE_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured >= 10_000 && configured <= 600_000 ? configured : FREE_ROUTE_TIMEOUT_MS;
+}
+
 export function defaultProtocolFactory(definition, { apiKey, fetchFn, env }) {
   const pricing = definition.pricing;
+  const timeout = routeTimeoutMs(definition, env);
+  const timeoutOption = timeout ? { timeoutMs: timeout } : {};
   if (definition.protocol === 'anthropic-messages') {
     return new AnthropicMessagesProtocol({ apiKey, pricing, effort: env.CODING_ANTHROPIC_EFFORT || 'high' });
   }
-  if (definition.protocol === 'openai-responses') return new OpenAIResponsesProtocol({ apiKey, pricing, fetchFn });
-  if (definition.protocol === 'gemini') return new GeminiProtocol({ apiKey, pricing, fetchFn });
+  if (definition.protocol === 'openai-responses') return new OpenAIResponsesProtocol({ apiKey, pricing, fetchFn, ...timeoutOption });
+  if (definition.protocol === 'gemini') return new GeminiProtocol({ apiKey, pricing, fetchFn, ...timeoutOption });
   return new ChatCompletionsProtocol({
-    apiKey, pricing, fetchFn, endpoint: definition.endpoint,
+    apiKey, pricing, fetchFn, endpoint: definition.endpoint, ...timeoutOption,
     maxTokensField: definition.maxTokensField || 'max_tokens', extraHeaders: definition.extraHeaders || {},
     // Free-only routes ask OpenRouter for usage accounting and refuse any
     // response that reports a cost (see ChatCompletionsProtocol).
