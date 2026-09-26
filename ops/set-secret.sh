@@ -29,7 +29,9 @@ declare -A SHAPE=(
   [GITHUB_MODELS_TOKEN]='^github_pat_[A-Za-z0-9_]{20,}$'
   [KIMI_API_KEY]='^sk-[A-Za-z0-9]{20,}$'
   [ZHIPU_API_KEY]='^[A-Za-z0-9._-]{20,128}$'
-  [QWEN_API_KEY]='^sk-[A-Za-z0-9]{20,}$'
+  # Alibaba Cloud Model Studio: current workspace-scoped keys (sk-ws-…, issued
+  # per workspace, e.g. Singapore) and legacy account keys (sk- + alphanumerics).
+  [QWEN_API_KEY]='^sk-(ws-[A-Za-z0-9_-]{20,256}|[A-Za-z0-9]{20,256})$'
   [MINIMAX_API_KEY]='^[A-Za-z0-9._-]{20,512}$'
 )
 if [[ -z $NAME || -z ${SHAPE[$NAME]+x} ]]; then

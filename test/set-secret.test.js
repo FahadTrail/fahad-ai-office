@@ -92,3 +92,31 @@ test('set-secret accepts current Google AI Studio auth keys (AQ.) and legacy AIz
     assert.match(result.stdout, /received \d+ characters; expected pattern/, `${why}: explains the expected format without the value`);
   }
 });
+
+test('set-secret accepts Model Studio workspace keys (sk-ws-) and legacy Qwen keys, and rejects look-alikes', { skip }, () => {
+  // Fake values are assembled at runtime so no credential-shaped literal is committed.
+  const workspaceKey = ['sk', 'ws', 'Ab3dE' + 'f9_G-h'.repeat(6)].join('-');
+  const ok = run({ name: 'QWEN_API_KEY', input: `${workspaceKey}\n` });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.ok(ok.finalEnv.endsWith(`\nQWEN_API_KEY=${workspaceKey}\n`));
+  assert.ok(!ok.stdout.includes(workspaceKey) && !ok.stderr.includes(workspaceKey), 'the value is never printed');
+  assert.match(ok.commands, /up -d --no-deps runtime/);
+
+  const legacy = ['sk', 'a1B2c3D4'.repeat(4)].join('-');
+  assert.equal(run({ name: 'QWEN_API_KEY', input: `${legacy}\n` }).status, 0, 'legacy account keys are still accepted');
+
+  for (const [value, why] of [
+    [['sk', 'ws', 'short'].join('-'), 'workspace key too short'],
+    [['sk', 'ws', 'x'.repeat(24) + ' y'].join('-'), 'embedded space'],
+    [['sk', 'ws', 'x'.repeat(24) + ';rm'].join('-'), 'shell metacharacter'],
+    [['sk', 'ab-cd'.repeat(6)].join('-'), 'legacy keys contain no hyphens'],
+    [['sk', 'or', 'x'.repeat(30)].join('-').replace('sk-or-', 'sk-or_'), 'other provider shape'],
+    [['pk', 'ws', 'x'.repeat(30)].join('-'), 'wrong prefix'],
+    [['sk', 'ws', 'x'.repeat(300)].join('-'), 'absurdly long'],
+  ]) {
+    const result = run({ name: 'QWEN_API_KEY', input: `${value}\n` });
+    assert.equal(result.status, 1, why);
+    assert.equal(result.finalEnv, BASE_ENV, `${why}: .env unchanged`);
+    assert.ok(!result.stdout.includes(value), `${why}: the value is never echoed`);
+  }
+});

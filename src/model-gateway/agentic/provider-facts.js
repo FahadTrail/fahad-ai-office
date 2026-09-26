@@ -51,7 +51,7 @@ export const PROVIDER_FACTS = Object.freeze({
   },
   qwen: {
     label: 'Qwen (Alibaba Cloud Model Studio)', offer: 'PAID (one-time free quota)', credentialEnv: 'QWEN_API_KEY',
-    credentialPage: 'https://modelstudio.console.alibabacloud.com/', scope: 'API key created in the Singapore (International) region, same as the endpoint',
+    credentialPage: 'https://modelstudio.console.alibabacloud.com/', scope: 'Workspace API key (sk-ws-…; legacy sk- keys still accepted) from the Singapore (International) workspace whose endpoint is QWEN_API_ENDPOINT',
     freeTier: 'New users: 1M free tokens per model for 90 days after activating Model Studio, Singapore/International only; then pay-as-you-go.',
     privacy: 'Private code needs the owner\'s explicit approval (QWEN_API_PRIVATE_DATA_APPROVED).',
     source: 'https://www.alibabacloud.com/help/en/model-studio/new-free-quota',

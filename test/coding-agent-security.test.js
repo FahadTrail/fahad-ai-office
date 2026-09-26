@@ -166,3 +166,11 @@ test('Google AI Studio auth keys (AQ.) are recognised and redacted even when not
   assert.equal(findSecretMaterial(`GOOGLE=${key}`, {}), 'credential-shaped token');
   assert.equal(redact(`key: ${key} end`, {}), 'key: [REDACTED] end');
 });
+
+test('Model Studio workspace keys (sk-ws-) are recognised and redacted even when not configured', async () => {
+  const { redact, findSecretMaterial } = await import('../src/coding-agent/policy.js');
+  // Assembled at runtime so no credential-shaped literal is committed.
+  const key = ['sk', 'ws', 'Ab3dE' + 'f9_G-h'.repeat(6)].join('-');
+  assert.doesNotMatch(redact(`QWEN_API_KEY=${key}`, {}), new RegExp(key.slice(6, 20)));
+  assert.ok(findSecretMaterial(`const k = "${key}";`, {}).length > 0);
+});
