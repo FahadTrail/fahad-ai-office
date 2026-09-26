@@ -238,6 +238,14 @@ canary passed. Remaining (root on the VPS, once):
 Undo: `sudo docker compose -f /opt/fahad-ai-office/docker-compose.yml stop coding-worker`
 and remove the `COMPOSE_PROFILES`/`CODING_GITHUB_TOKEN` lines from `.env`.
 
+## Known limitation: protected-file approvals
+
+The Coding Agent cannot currently be granted permission to change a protected
+file such as `ops/`, workflows or migrations: `request_human` blocks, and
+**Resume** does not carry a grant. Until the path-scoped approval described in
+[`approval-flow-gap.md`](approval-flow-gap.md) exists, changes to protected
+files are made by a developer through a normal pull request.
+
 ## Troubleshooting (production)
 
 Everything a session does is in Supabase; no server access is needed.
