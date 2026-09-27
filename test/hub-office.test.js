@@ -58,14 +58,14 @@ test('the workflow view shows who did what, the handoffs and the decisions', () 
   const view = workflowView({ job, tasks, agents, results, handoffs, events: [] });
   assert.equal(view.multiAgent, true);
   assert.deepEqual(view.nodes.map((node) => `${node.agentLabel}:${node.kind}:${node.state}`), [
-    'Chief of Staff:plan:done', 'Research:workstream:done', 'Business Strategy:workstream:working', 'Finance:workstream:waiting', 'Chief of Staff:synthesis:waiting',
+    'CHIEF:plan:done', 'RESEARCH:workstream:done', 'Business Strategy:workstream:working', 'FINANCE:workstream:waiting', 'CHIEF:synthesis:waiting',
   ]);
   assert.equal(view.nodes[1].output.summary, 'The market is growing.');
-  assert.deepEqual(view.decisions, [{ from: 'Research', text: 'Pick the district.' }]);
-  assert.deepEqual(view.handoffs.map((handoff) => `${handoff.from}→${handoff.to}`), ['Research→Business Strategy']);
-  assert.deepEqual(view.participants.map((entry) => entry.label), ['Research', 'Business Strategy', 'Finance']);
+  assert.deepEqual(view.decisions, [{ from: 'RESEARCH', text: 'Pick the district.' }]);
+  assert.deepEqual(view.handoffs.map((handoff) => `${handoff.from}→${handoff.to}`), ['RESEARCH→Business Strategy']);
+  assert.deepEqual(view.participants.map((entry) => entry.label), ['RESEARCH', 'Business Strategy', 'FINANCE']);
   const summary = workflowSummary(tasks.map((task) => ({ ...task, agent_slug: agents.find((agent) => agent.id === task.agent_id).slug })));
-  assert.deepEqual(summary.streams.map((stream) => `${stream.agent}:${stream.state}`), ['Research:done', 'Business Strategy:working', 'Finance:waiting']);
+  assert.deepEqual(summary.streams.map((stream) => `${stream.agent}:${stream.state}`), ['RESEARCH:done', 'Business Strategy:working', 'FINANCE:waiting']);
 });
 
 test('connectors are "Connected" only with evidence of a real successful use', () => {

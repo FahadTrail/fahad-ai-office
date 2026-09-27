@@ -1,6 +1,7 @@
 import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validatePlan } from './chief.js';
 import { officeAgent } from './office/agents.js';
-import { converseDirect, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
+import { converseDirect, parseConsultRequest, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
+import { parseArtifacts, parseSources } from './office/artifacts.js';
 import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
 import { EscalationRequired, classifyOfficeData } from './office/pool-runner.js';
 import {
@@ -20,8 +21,13 @@ export const STAGES = Object.freeze({
   // Multi-agent Office: one task per workstream, the Chief's synthesis, a
   // hand-off to the Coding Agent, and direct conversations with an employee.
   SPECIALIST: 'specialist', SYNTHESIS: 'synthesis', LAUNCH_DEV: 'launch_dev', DIRECT: 'direct',
+  // An employee asking a colleague (e.g. FINANCE asking CODING) during a
+  // direct conversation, without Fahad relaying anything.
+  CONSULT: 'consult',
 });
-export const SEQUENCES = Object.freeze({ PLAN: 10, RESEARCH: 20, REVIEW: 30, WORKSTREAM: 100, REVISION: 500, SYNTHESIS: 900, SYNTHESIS_FINAL: 950 });
+export const SEQUENCES = Object.freeze({ PLAN: 10, RESEARCH: 20, REVIEW: 30, WORKSTREAM: 100, CONSULT: 300, DIRECT_FOLLOWUP: 400, REVISION: 500, SYNTHESIS: 900, SYNTHESIS_FINAL: 950 });
+// How long web-sourced knowledge stays trusted before it must be re-checked.
+const KNOWLEDGE_DAYS = Object.freeze({ legal: 180, social: 30, research: 90, finance: 60, product: 120 });
 
 export class OfficeWorkflow {
   constructor({
@@ -139,6 +145,7 @@ export class OfficeWorkflow {
       else if (brief.stage === STAGES.SYNTHESIS) await this.executeSynthesis(task, brief);
       else if (brief.stage === STAGES.LAUNCH_DEV) await this.executeLaunchDev(task, brief);
       else if (brief.stage === STAGES.DIRECT) await this.executeDirect(task, brief);
+      else if (brief.stage === STAGES.CONSULT) await this.executeConsult(task, brief);
       else throw new Error('Unsupported workflow stage');
     } catch (error) {
       const safe = safeError(error);
@@ -389,21 +396,24 @@ export class OfficeWorkflow {
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     const upstream = (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content);
     const previous = brief.revision ? upstream.find((entry) => entry.task_id === brief.revisesTaskId)?.content : null;
+    const knowledge = await this.knowledgeFor(context, employee);
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.specialist({
       agent, role: employee.key, goal: request.goal, brief: brief.brief, title: brief.title,
       upstream: brief.revision ? upstream.filter((entry) => entry.task_id !== brief.revisesTaskId) : upstream,
-      context: context?.project ? projectLine(context) : '', revision: brief.revision || null, previous, webTools, onActivity,
+      context: context?.project ? projectLine(context) : '', knowledge, revision: brief.revision || null, previous, webTools, onActivity,
       execution: this.modelExecution(task, STAGES.SPECIALIST),
       toolBroker: this.toolSession(task, STAGES.SPECIALIST),
       ...(this.modelRunner ? { run: this.poolRun(task, STAGES.SPECIALIST, { job: employee.job, request, preference: MODEL_PROVIDER }) } : {}),
     }));
     const parsed = parseOutputSummary(outcome.text);
     await this.recordOutcome(task, outcome, `${employee.label} finished: ${brief.title}.`);
+    const stored = await this.persistOutputs(task, employee, outcome.text, context);
     await this.store.emit({
       jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity',
       message: `${employee.label} delivered: ${brief.title}.`,
       payload: { kind: 'output_ready', agent: employee.key, workstream: brief.workstream, deliverable: brief.title,
-        summary: parsed.summary.slice(0, 600), has_decisions: Boolean(parsed.decisions), revision: Boolean(brief.revision) },
+        summary: parsed.summary.slice(0, 600), has_decisions: Boolean(parsed.decisions), revision: Boolean(brief.revision),
+        artifacts: stored.artifacts, sources: stored.sources },
     });
     await this.store.completeTask(task, outcome, parsed.summary.slice(0, 300) || summarize(outcome.text));
   }
@@ -433,6 +443,7 @@ export class OfficeWorkflow {
     // A malformed revision request is never shown to Fahad as the answer.
     if (/^\s*(```(?:json)?\s*)?\{\s*"revise"/.test(outcome.text)) outcome = await synthesize(false);
     await this.recordOutcome(task, outcome, 'Chief final result is ready to save.');
+    await this.persistOutputs(task, officeAgent('chief'), outcome.text, context);
     await this.store.completeTask(task, outcome, summarize(outcome.text));
   }
 
@@ -502,17 +513,106 @@ export class OfficeWorkflow {
     assertAgent(task, employee.slug);
     const agent = await this.store.getAgent(employee.slug);
     const request = officeRequest(task.goal, this.env);
-    await this.startStage(task, agent, 'DIRECT_WORKING', `shared-pool:${employee.job}`, `${employee.label} is answering Fahad.`, MODEL_PROVIDER,
-      { job: employee.job, dataClass: request.dataClass, role: employee.key });
+    const consults = brief.followUp ? (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content) : [];
+    await this.startStage(task, agent, 'DIRECT_WORKING', `shared-pool:${employee.job}`,
+      consults.length ? `${employee.label} is answering Fahad with input from ${consults.map((entry) => officeAgent(entry.agent_slug)?.label || entry.agent_slug).join(', ')}.` : `${employee.label} is answering Fahad.`,
+      MODEL_PROVIDER, { job: employee.job, dataClass: request.dataClass, role: employee.key });
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
+    const knowledge = await this.knowledgeFor(context, employee);
+    const allowConsult = !brief.followUp;
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
-      agent, role: employee.key, goal: request.goal, context: context?.text || '', webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
-      execution: this.modelExecution(task, STAGES.DIRECT),
+      agent, role: employee.key, goal: request.goal, context: context?.text || '', knowledge, consults, allowConsult,
+      webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
+      execution: this.modelExecution(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT),
       toolBroker: this.toolSession(task, STAGES.DIRECT),
-      ...(this.modelRunner ? { run: this.poolRun(task, STAGES.DIRECT, { job: employee.job, request, preference: MODEL_PROVIDER }) } : {}),
+      ...(this.modelRunner ? { run: this.poolRun(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT, { job: employee.job, request, preference: MODEL_PROVIDER }) } : {}),
     }));
+    const requests = allowConsult ? parseConsultRequest(outcome.text, employee.key) : [];
+    if (requests.length) return this.requestConsults(task, outcome, employee, requests);
     await this.recordOutcome(task, outcome, `${employee.label} answered.`);
+    await this.persistOutputs(task, employee, outcome.text, context);
     await this.store.completeTask(task, outcome, summarize(outcome.text));
+  }
+
+  // The employee asked colleagues first: one consult task per colleague, then
+  // the same employee answers Fahad with their input (no further consults).
+  async requestConsults(task, outcome, employee, requests) {
+    const consultTasks = [];
+    for (const [index, entry] of requests.entries()) {
+      const colleague = officeAgent(entry.employee);
+      consultTasks.push(await this.store.ensureTask({
+        jobId: task.job_id, agentSlug: colleague.slug, title: `${employee.label} asks ${colleague.label}`,
+        brief: encodeBrief(STAGES.CONSULT, { agent: colleague.key, from: employee.key, question: entry.question }),
+        sequence: SEQUENCES.CONSULT + index, dependsOn: [task.task_id], maxAttempts: this.maxAttempts,
+      }));
+    }
+    await this.store.ensureTask({
+      jobId: task.job_id, agentSlug: employee.slug, title: `Conversation with ${employee.label}`,
+      brief: encodeBrief(STAGES.DIRECT, { agent: employee.key, followUp: true }),
+      sequence: SEQUENCES.DIRECT_FOLLOWUP, dependsOn: consultTasks.map((row) => row.id), maxAttempts: this.maxAttempts,
+    });
+    const text = [`${employee.label} is asking colleagues before answering:`, ...requests.map((entry) => `- ${officeAgent(entry.employee).label}: ${entry.question}`)].join('\n');
+    await this.recordOutcome(task, { ...outcome, text }, `${employee.label} consulted colleagues.`);
+    await this.store.emit({
+      jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity',
+      message: `${employee.label} asked ${requests.map((entry) => officeAgent(entry.employee).label).join(' and ')} for input.`,
+      payload: { kind: 'consult_requested', agent: employee.key, consults: requests },
+    });
+    await this.store.completeTask(task, { ...outcome, text }, `Consulting ${requests.map((entry) => officeAgent(entry.employee).label).join(', ')}.`);
+  }
+
+  async executeConsult(task, brief) {
+    const employee = officeAgent(brief.agent);
+    const asker = officeAgent(brief.from);
+    if (!employee || employee.retired || employee.executor === 'chief' || !asker) throw new Error(`Invalid consult ${brief.from} → ${brief.agent}`);
+    assertAgent(task, employee.slug);
+    const agent = await this.store.getAgent(employee.slug);
+    const request = officeRequest(task.goal, this.env);
+    // Advice from CODING is analysis, not engineering: route it as research.
+    const job = employee.executor === 'coding' ? 'research' : employee.job;
+    await this.startStage(task, agent, 'CONSULT_WORKING', `shared-pool:${job}`, `${employee.label} is answering ${asker.label}.`, MODEL_PROVIDER,
+      { job, dataClass: request.dataClass, role: employee.key });
+    const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
+    // A consult is advice only: CODING answers from its expertise and never
+    // starts engineering work (no repository or tools here).
+    const webTools = employee.executor === 'office' && employee.webTools && hasWebTools(agent.allowed_tools);
+    const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
+      agent, role: employee.key, goal: String(brief.question || '').slice(0, 2000), consultFrom: asker.label,
+      context: context?.project ? projectLine(context) : '', allowConsult: false, webTools, onActivity,
+      execution: this.modelExecution(task, STAGES.CONSULT),
+      toolBroker: this.toolSession(task, STAGES.CONSULT),
+      ...(this.modelRunner ? { run: this.poolRun(task, STAGES.CONSULT, { job, request, preference: MODEL_PROVIDER }) } : {}),
+    }));
+    await this.recordOutcome(task, outcome, `${employee.label} answered ${asker.label}.`);
+    await this.store.completeTask(task, outcome, summarize(outcome.text));
+  }
+
+  // Artifacts (structured outputs the Hub renders) and cited sources (curated
+  // knowledge with an expiry) are saved beside the result. Never fatal.
+  async persistOutputs(task, employee, text, context) {
+    const saved = { artifacts: 0, sources: 0 };
+    const base = { project_id: context?.project?.id || task.project_id || null, job_id: task.job_id, task_id: task.task_id, agent_slug: employee.slug };
+    const { artifacts } = parseArtifacts(text);
+    if (artifacts.length && typeof this.store.saveArtifacts === 'function') {
+      saved.artifacts = await this.store.saveArtifacts(artifacts.map((entry) => ({ ...base, conversation_id: context?.conversationId || null, ...entry })))
+        .then(() => artifacts.length).catch(() => 0);
+    }
+    const sources = employee.webTools ? parseSources(text) : [];
+    if (sources.length && base.project_id && typeof this.store.saveKnowledge === 'function') {
+      const days = KNOWLEDGE_DAYS[employee.key] || 90;
+      const expires = new Date(this.now() + days * 86_400_000).toISOString();
+      const today = new Date(this.now()).toISOString().slice(0, 10);
+      saved.sources = await this.store.saveKnowledge(sources.map((source) => ({
+        project_id: base.project_id, agent_slug: employee.slug, job_id: task.job_id, title: source.title, source_url: source.url,
+        source_date: today, scope: 'project', expires_at: expires,
+      }))).then(() => sources.length).catch(() => 0);
+    }
+    return saved;
+  }
+
+  async knowledgeFor(context, employee) {
+    if (!context?.project?.id || typeof this.store.knowledgeFor !== 'function') return [];
+    return this.store.knowledgeFor(context.project.id, employee.slug).catch(() => []);
   }
 
   async startStage(task, agent, stage, model, message, provider = MODEL_PROVIDER, routing = null) {

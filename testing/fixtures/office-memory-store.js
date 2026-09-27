@@ -17,6 +17,7 @@ export class MemoryStore {
       operations: { id: 'operations', slug: 'operations', system_prompt: 'Operations '.repeat(30), allowed_tools: [] },
       'qa-security': { id: 'qa', slug: 'qa-security', system_prompt: 'QA '.repeat(30), allowed_tools: [] },
       'coding-agent': { id: 'coding', slug: 'coding-agent', system_prompt: 'Coding', allowed_tools: [] },
+      'legal-compliance': { id: 'legal', slug: 'legal-compliance', system_prompt: 'Legal '.repeat(30), allowed_tools: ['web_search', 'web_fetch'] },
     };
     this.jobs = [{ id: 'job-1', title: 'Cost research', goal, project_id: projectId, status: 'planning', priority: 'normal', tokens_used: 0, cost_usd: 0 }];
     this.tasks = [];
@@ -25,6 +26,8 @@ export class MemoryStore {
     this.handoffs = [];
     this.modelAttempts = [];
     this.events = [];
+    this.artifacts = [];
+    this.knowledge = [];
   }
 
   id(prefix) { this.serial += 1; return `${prefix}-${this.serial}`; }
@@ -123,6 +126,15 @@ export class MemoryStore {
     }
     return stale.length;
   }
+
+  async saveArtifacts(rows) { this.artifacts.push(...structuredClone(rows)); }
+  async saveKnowledge(rows) {
+    for (const row of rows) {
+      const index = this.knowledge.findIndex((entry) => entry.project_id === row.project_id && entry.agent_slug === row.agent_slug && entry.source_url === row.source_url);
+      if (index >= 0) this.knowledge[index] = structuredClone(row); else this.knowledge.push(structuredClone(row));
+    }
+  }
+  async knowledgeFor(projectId, agentSlug) { return this.knowledge.filter((entry) => entry.project_id === projectId && entry.agent_slug === agentSlug).slice(0, 8); }
 
   async setRunModel(runId, model) { this.runs.find((run) => run.id === runId).model = model; }
   async recordModelAttempt(attempt) {
