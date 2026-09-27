@@ -512,6 +512,7 @@ export class OfficeWorkflow {
       const inputs = upstream.map((entry) => `### ${officeAgent(entry.agent_slug)?.label || entry.agent_slug} — ${entry.title}\n${String(entry.content).slice(0, 6000)}`).join('\n\n');
       const session = await this.store.createCodingSession({
         workspaceId: context.project.id, title: brief.title, repository, conversationId: context.conversationId || null, createdBy: 'chief-of-staff',
+        ...(officeRequest(task.goal, this.env).freeOnly ? { routing: { allowPaid: false } } : {}),
         objective: [brief.brief, inputs ? `\nINPUTS FROM THE OFFICE:\n${inputs}` : '', `\nOriginal objective from Fahad: ${officeRequest(task.goal, this.env).goal}`].join('\n').slice(0, 40_000),
       });
       text = `## Summary\nThe Coding Agent started the development task "${brief.title}" on \`${repository}\`.\n\n## Work\nTask: [${brief.title}](#/task/${session.id}) — it plans, edits, tests, opens a pull request and follows CI on its own.\n\n## Handoff\nProgress is visible under Tasks; approvals it needs appear under Needs attention.\n\n## Decisions for Fahad\nNone now; the Coding Agent will ask if it needs approval.`;
@@ -723,6 +724,7 @@ export class OfficeWorkflow {
       ...(String(stage).startsWith(STAGES.SYNTHESIS) ? { maxOutputTokens: 8000 } : {}),
       dataClass: request.dataClass,
       onlyProvider: preference && preference !== MODEL_PROVIDER ? preference : null,
+      ...(request.freeOnly ? { allowPaid: false } : {}),
       context: execution.gatewayContext,
       validate,
       beforeCall: drillFailover ? failoverDrill() : null,
@@ -931,6 +933,9 @@ export function safeError(error) {
     .slice(0, 500);
 }
 
+const FREE_ONLY_MARKER = /\[(free-only|مجاني فقط)\]/i;
+const FREE_ONLY_MARKERS = /\[(free-only|مجاني فقط)\]/gi;
+
 // The request as Office sees it: owner drill markers and the confidential
 // marker are removed from what models receive; the data class is decided
 // once per job (office/pool-runner.js classifyOfficeData).
@@ -941,9 +946,14 @@ export function officeRequest(goal, env = process.env) {
     failover: drillsEnabled && /\[drill:failover\]/i.test(raw),
     escalate: drillsEnabled && /\[drill:escalate\]/i.test(raw),
   };
-  const { dataClass, reason } = classifyOfficeData(raw, { env });
-  const cleaned = raw.replace(/\[drill:(failover|escalate)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').trim();
-  return { goal: cleaned || raw, dataClass, dataClassReason: reason, drills };
+  // [free-only] keeps this one objective on free routes; it only narrows
+  // routing (the workspace policy and every other job are unaffected).
+  // It is removed before classification so it never hides [confidential].
+  const freeOnly = FREE_ONLY_MARKER.test(raw);
+  const text = freeOnly ? raw.replace(FREE_ONLY_MARKERS, ' ').replace(/[ \t]{2,}/g, ' ').trim() : raw;
+  const { dataClass, reason } = classifyOfficeData(text, { env });
+  const cleaned = text.replace(/\[drill:(failover|escalate)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').replace(/[ \t]{2,}/g, ' ').trim();
+  return { goal: cleaned || raw, dataClass, dataClassReason: reason, drills, freeOnly };
 }
 
 // Controlled failover drill (owner marker [drill:failover]): after the first

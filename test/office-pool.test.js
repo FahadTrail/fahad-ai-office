@@ -237,3 +237,24 @@ test('an answer cut off by the output limit is continued, never saved half-finis
   assert.match(calls[1].last, /cut off by the output limit\. Continue exactly where you stopped/);
   assert.equal(calls[0].maxOutputTokens, 8000);
 });
+
+test('[free-only] keeps one objective on free routes without touching the workspace policy', async () => {
+  const request = officeRequest('[free-only] Plan a launch [drill:escalate]');
+  assert.equal(request.freeOnly, true);
+  assert.equal(request.goal, 'Plan a launch');
+  assert.equal(officeRequest('[مجاني فقط] خطة إطلاق').freeOnly, true);
+  assert.equal(officeRequest('Plan a launch').freeOnly, false);
+
+  // Confidential work can only go to the paid, privacy-approved route: a
+  // normal objective uses it, a [free-only] one never does and waits instead.
+  const normal = officeFixture({ goal: '[confidential] Summarize the board notes', plan: 'research' });
+  await drain(normal.workflow);
+  assert.ok(normal.log.some((entry) => entry.route.startsWith('anthropic:')), 'without the marker the paid route is allowed');
+
+  const free = officeFixture({ goal: '[free-only] [confidential] Summarize the board notes', plan: 'research' });
+  await drain(free.workflow);
+  assert.ok(!free.log.some((entry) => entry.route.startsWith('anthropic:')), 'the paid route is never called');
+  assert.ok(free.store.events.some((event) => event.payload?.data_class === 'confidential'), 'the marker never hides [confidential]');
+  assert.notEqual(free.store.jobs[0].status, 'completed');
+  assert.ok(!free.log.some((entry) => /\[free-only\]/.test(entry.prompt)), 'the marker never reaches a model');
+});

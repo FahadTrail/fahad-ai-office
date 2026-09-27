@@ -37,6 +37,17 @@ cost and job fit.
 * Confidential requests only reach providers approved for private data, and
   web search is disabled for them.
 
+**Free-only objective.** Putting `[free-only]` (or `[مجاني فقط]`) anywhere in
+a request keeps that one objective on free, included and promo routes.
+* This covers every step of the objective, and any Coding Agent task it
+  starts.
+* The marker only narrows routing. The workspace routing policy and every
+  other conversation keep their normal free-first order with paid fallback.
+* When no free route is available, the step waits for capacity
+  (`WAITING_FOR_CAPACITY`) instead of paying.
+* The marker is removed before a model sees the request, and it never hides
+  `[confidential]`.
+
 **Web tools.** Any tool-capable model can use them.
 * `web_search` uses Google Search grounding through the existing Gemini key
   (Flash-Lite).
