@@ -241,10 +241,10 @@ export class SupabaseStore {
     });
   }
 
-  async createCodingSession({ workspaceId, title, objective, repository, conversationId = null, createdBy = null, budgetUsd = 2 }) {
+  async createCodingSession({ workspaceId, title, objective, repository, conversationId = null, createdBy = null, budgetUsd = 2, routing = null }) {
     const { data, error } = await this.db.rpc('create_coding_session', {
       p_workspace: workspaceId, p_title: title, p_objective: objective, p_repository: repository,
-      p_base_branch: 'main', p_budget_usd: budgetUsd, p_config: { publish: 'pull_request' }, p_created_by: createdBy,
+      p_base_branch: 'main', p_budget_usd: budgetUsd, p_config: { publish: 'pull_request', ...(routing ? { routing } : {}) }, p_created_by: createdBy,
     });
     if (error) throw new Error('Could not start the Coding Agent task: ' + error.message);
     const session = Array.isArray(data) ? data[0] : data;

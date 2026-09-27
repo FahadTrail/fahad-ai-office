@@ -95,6 +95,9 @@ export class OfficeModelRunner {
     resume = null,
     // 'ar' when the answer is in Arabic: prefer models that write it well.
     language = null,
+    // false keeps this call on free/included/promo routes. It only narrows:
+    // the workspace policy can still forbid paid routes on its own.
+    allowPaid = true,
   }) {
     const started = Date.now();
     const pool = this.poolFactory({ env: this.env, fetchFn: this.fetchFn });
@@ -169,7 +172,7 @@ export class OfficeModelRunner {
       }
       const evaluationRouting = {
         requiresPrivateData, estimatedInputTokens: estimateTokens(systemPrompt, messages, tools), authorizedRouteIds,
-        allowPaid: routing.allowPaid, billingPriority: routing.billingPriority, strategy: routing.strategy, job, language,
+        allowPaid: routing.allowPaid && allowPaid !== false, billingPriority: routing.billingPriority, strategy: routing.strategy, job, language,
         policyExcludedRouteIds: [...routing.excludedRoutes, ...excluded], remainingBudgetUsd, qualifications,
         ...(routing.effort ? { effort: routing.effort } : {}),
       };
