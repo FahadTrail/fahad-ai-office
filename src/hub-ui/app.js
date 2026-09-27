@@ -3,6 +3,7 @@
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 import { loginErrorMessage } from './auth.js';
 import { ARTIFACT_LABELS, renderArtifact, splitArtifacts } from './artifacts.js';
+import { errorBlock, humanError } from './humanize.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 function applyTheme(theme) {
@@ -33,7 +34,7 @@ const q = (params) => `?${new URLSearchParams(params)}`;
 // ------------------------------------------------------------------ helpers
 function toast(message) {
   const element = $('#toast');
-  element.textContent = message;
+  element.textContent = humanError(message);
   element.classList.remove('hidden');
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => element.classList.add('hidden'), 3200);
@@ -140,7 +141,7 @@ async function boot() {
     state.workspaces = workspaces;
   } catch (error) {
     if (error instanceof ApiError && /sign in/.test(error.message)) return;
-    view.innerHTML = `<div class="page"><div class="error-note">${esc(error.message)}</div></div>`;
+    view.innerHTML = `<div class="page">${errorBlock(error.message, esc)}</div>`;
   }
   $('#login').classList.add('hidden');
   $('#app').classList.remove('hidden');
@@ -162,6 +163,11 @@ async function boot() {
   $('#sidebarClose').onclick = () => toggleSidebar(false);
   $('#scrim').onclick = () => toggleSidebar(false);
   window.addEventListener('hashchange', route);
+  $('#searchOpen').onclick = openSearch;
+  document.addEventListener('keydown', (event) => {
+    const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '') || document.activeElement?.isContentEditable;
+    if ((event.key === 'k' && (event.metaKey || event.ctrlKey)) || (event.key === '/' && !typing)) { event.preventDefault(); openSearch(); }
+  });
   await refreshSidebar();
   connectLive();
   state.sidebarTimer = setInterval(refreshSidebar, 60_000);
@@ -201,15 +207,61 @@ function markNav(key) {
   document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.nav === key));
 }
 
+// ------------------------------------------------------------------ search
+// One palette for conversations, projects, objectives, tasks, artifacts,
+// employees and memory. Debounced; a few results per kind from the server.
+const SEARCH_KIND = { employee: 'Employee', project: 'Project', conversation: 'Chat', objective: 'Objective', task: 'Task', artifact: 'Artifact', memory: 'Memory' };
+function openSearch() {
+  if ($('.palette')) return;
+  const previous = document.activeElement;
+  const element = document.createElement('div');
+  element.className = 'palette';
+  element.innerHTML = `<div class="palette-scrim"></div><div class="palette-panel" role="dialog" aria-modal="true" aria-label="Search the Office">
+    <input class="palette-input" id="paletteInput" dir="auto" placeholder="Search chats, projects, tasks, artifacts, employees, memory…" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="paletteList">
+    <ul class="palette-list" id="paletteList" role="listbox"><li class="palette-hint">Type at least two letters. Enter opens, Esc closes.</li></ul></div>`;
+  document.body.append(element);
+  const input = element.querySelector('#paletteInput');
+  const list = element.querySelector('#paletteList');
+  let results = [];
+  let active = 0;
+  let timer = null;
+  let seq = 0;
+  const close = () => { element.remove(); previous?.focus?.(); };
+  const paint = () => {
+    list.innerHTML = results.length ? results.map((result, index) => `<li role="option" id="opt-${index}" aria-selected="${index === active}" class="palette-item" data-index="${index}"><span class="palette-kind">${esc(SEARCH_KIND[result.kind] || result.kind)}</span><span class="grow" dir="auto">${esc(result.title)}</span>${result.detail ? `<span class="xs faint" dir="auto">${esc(result.detail)}</span>` : ''}</li>`).join('')
+      : `<li class="palette-hint">${input.value.trim().length < 2 ? 'Type at least two letters. Enter opens, Esc closes.' : 'Nothing found in this project.'}</li>`;
+    input.setAttribute('aria-activedescendant', results.length ? `opt-${active}` : '');
+    list.querySelectorAll('.palette-item').forEach((item) => { item.onclick = () => go(Number(item.dataset.index)); });
+  };
+  const go = (index) => { const result = results[index]; if (!result) return; close(); location.hash = result.href; };
+  input.oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const mine = ++seq;
+      const term = input.value.trim();
+      if (term.length < 2) { results = []; paint(); return; }
+      try { const data = await api(`/api/search${q({ workspaceId: ws(), q: term })}`); if (mine === seq) { results = data.results; active = 0; paint(); } } catch (error) { toast(error.message); }
+    }, 200);
+  };
+  input.onkeydown = (event) => {
+    if (event.key === 'Escape') close();
+    if (event.key === 'ArrowDown') { event.preventDefault(); active = Math.min(results.length - 1, active + 1); paint(); }
+    if (event.key === 'ArrowUp') { event.preventDefault(); active = Math.max(0, active - 1); paint(); }
+    if (event.key === 'Enter') { event.preventDefault(); go(active); }
+  };
+  element.querySelector('.palette-scrim').onclick = close;
+  input.focus();
+}
+
 // ------------------------------------------------------------------ router
 async function route() {
   clearTimers();
   toggleSidebar(false);
   const hash = location.hash || '#/';
-  const [, section = '', id = ''] = hash.match(/^#\/([\w-]*)\/?([\w-]*)/) || [];
+  const [, section = '', id = '', sub = ''] = hash.match(/^#\/([\w-]*)\/?([\w-]*)\/?([\w-]*)/) || [];
   const routes = {
     '': () => renderChat(null), chat: () => renderChat(id), chats: renderChats, tasks: () => renderTasks(id || 'running'), task: () => renderTask(id),
-    code: renderNewTask, attention: renderAttention, projects: renderProjects, project: () => renderProject(id), models: renderModels, settings: renderSettings,
+    code: renderNewTask, attention: renderAttention, projects: renderProjects, project: () => renderProject(id, sub), models: renderModels, settings: renderSettings,
     office: renderOffice, agent: async () => { await renderOffice(); await openEmployee(id); }, workflow: () => renderWorkflow(id), talk: () => renderChat(null, id),
     artifacts: () => renderArtifacts(id), employees: renderEmployees, integrations: renderIntegrations,
   };
@@ -218,17 +270,17 @@ async function route() {
   try {
     await (routes[section] || routes[''])();
   } catch (error) {
-    view.innerHTML = `<div class="page"><div class="error-note">${esc(error.message)}</div></div>`;
+    view.innerHTML = `<div class="page">${errorBlock(error.message, esc)}</div>`;
   }
   view.focus({ preventScroll: true });
 }
 
 // ------------------------------------------------------------------ chat
 const SUGGESTIONS = [
-  'Summarize what changed in the Office this week',
-  'Fix a bug: describe it and I will start a development task',
-  'Research the best free models for coding right now',
-  'Draft a short project update for my team',
+  'خل Legal يراجع شروط الاستخدام قبل الإطلاق',
+  'حولها للفاينانس: كم تكلفة التشغيل الشهرية؟',
+  'Plan the launch: research, MVP, budget, brand and content',
+  'خل Coding يصلح الخطأ في صفحة الدخول',
 ];
 
 async function renderChat(id, agentSlug = null) {
@@ -288,7 +340,7 @@ async function renderChat(id, agentSlug = null) {
       busy(button, false);
     }
   };
-  if (!conversation) { prompt.focus(); return; }
+  if (!conversation) { prompt.focus(); if (!direct) { fillChiefHome(); onLiveChange(fillChiefHome); } return; }
 
   bind(view, {
     '#renameChat': async () => {
@@ -346,13 +398,42 @@ async function renderChat(id, agentSlug = null) {
   every(2500, async () => { try { await load(); } catch {} });
 }
 
+// CHIEF home: ask, then everything that matters at a glance — what needs
+// Fahad, what is moving, who is working, what just finished, what to decide.
 function welcome() {
-  return `<div class="welcome">
-    <div class="brand-mark" style="width:48px;height:48px;margin:auto;font-size:22px">F</div>
-    <h1>What can I do for you, Fahad?</h1>
-    <p class="muted">Ask a question, get research or writing done, or describe a change to your code. I'll pick the right agents and models.</p>
-    <div class="suggestions">${SUGGESTIONS.map((text) => `<button class="suggestion" type="button" data-text="${esc(text)}">${esc(text)}</button>`).join('')}</div>
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  return `<div class="chief-home">
+    <div class="ch-hero"><h1>${greeting}, Fahad</h1><p class="muted">Tell CHIEF what you need — in Arabic or English. CHIEF picks the right employees and brings back one result.</p>
+      <div class="suggestions">${SUGGESTIONS.map((text) => `<button class="suggestion" type="button" data-text="${esc(text)}" dir="auto">${esc(text)}</button>`).join('')}</div></div>
+    <div class="ch-grid" id="chiefHome" aria-live="polite"><div class="drawer-loading"></div></div>
   </div>`;
+}
+async function fillChiefHome() {
+  const holder = $('#chiefHome');
+  if (!holder || !ws()) return;
+  try {
+    const [center, attention, office] = await Promise.all([
+      api(`/api/command-center${q({ workspaceId: ws() })}`),
+      api(`/api/attention${q({ workspaceId: ws() })}`),
+      api(`/api/office${q({ workspaceId: ws() })}`),
+    ]);
+    const needs = attention.items.filter((item) => item.priority !== 'INFO');
+    const done = attention.items.filter((item) => item.priority === 'INFO').slice(0, 4);
+    const working = office.agents.filter((agent) => agent.state && agent.state !== 'AVAILABLE');
+    const card = (title, body, href = '', extra = '') => `<section class="ch-card ${extra}"><div class="ch-card-head"><h2>${title}</h2>${href ? `<a class="small" href="${href}">Open</a>` : ''}</div>${body}</section>`;
+    holder.innerHTML = [
+      card('Needs you', needs.length ? needs.slice(0, 4).map((item) => `<a class="ch-row" href="${item.taskId ? `#/task/${esc(item.taskId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="ch-kind k-${esc(item.kind)}">${esc(item.category || item.kind)}</span><span class="grow" dir="auto">${esc(item.title)}</span></a>`).join('') : '<p class="muted small">Nothing needs you. The Office will ask here and on Telegram when it does.</p>', '#/attention', needs.length ? 'ch-alert' : ''),
+      card('In progress', center.objectives.active.length ? center.objectives.active.map((job) => `<a class="ch-row" href="#/workflow/${esc(job.id)}"><span class="grow" dir="auto">${esc(job.title)}</span><span class="ch-pct num">${job.progress}%</span></a><span class="progress" aria-hidden="true"><span style="width:${Math.max(3, job.progress)}%"></span></span>`).join('') : '<p class="muted small">No objective running.</p>', `#/project/${esc(ws())}`),
+      card('Team now', working.length ? `<div class="ch-team">${working.map((agent) => `<button type="button" class="ch-member" data-employee="${esc(agent.slug)}"><span class="ch-dot st-dot-${esc(String(agent.state).toLowerCase().replace(/\s+/g, '-'))}"></span><strong>${esc(agent.label)}</strong><span class="xs muted" dir="auto">${esc(agent.detail || '')}</span></button>`).join('')}</div>` : '<p class="muted small">Everyone is available.</p>', '#/office'),
+      card('Recently completed', done.length ? done.map((item) => `<a class="ch-row" href="${item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="ch-kind k-completed">Done</span><span class="grow" dir="auto">${esc(item.title)}</span><span class="xs faint">${when(item.at)}</span></a>`).join('') : '<p class="muted small">Nothing finished in the last 3 days.</p>'),
+      card('Decisions', center.decisionsForFahad.length ? center.decisionsForFahad.slice(0, 3).map((decision) => `<div class="ch-decision"><span class="xs faint">${esc(decision.from)}</span><div dir="auto">${esc(decision.text)}</div></div>`).join('')
+        : center.memory.decisions.length ? center.memory.decisions.slice(0, 3).map((item) => `<div class="ch-decision"><span class="xs faint">Decided</span><div dir="auto">${esc(item.content)}</div></div>`).join('') : '<p class="muted small">No decisions waiting.</p>', `#/project/${esc(ws())}`),
+    ].join('');
+    holder.querySelectorAll('[data-employee]').forEach((button) => { button.onclick = () => openEmployee(button.dataset.employee); });
+  } catch (error) {
+    holder.innerHTML = `<p class="muted small">${esc(humanError(error.message))}</p>`;
+  }
 }
 
 function welcomeAgent(who) {
@@ -542,7 +623,7 @@ function taskPage({ task, events, approvals }) {
   const result = t.result || {};
   const pr = t.pr || result.pr;
   const outcome = `<div class="card"><h2 class="card-title">${closed ? 'Result' : 'Progress so far'}</h2>
-    ${result.summary ? markdown(result.summary) : t.blocker && t.status === 'failed' ? `<div class="error-note">${esc(t.blocker)}</div>` : '<p class="muted small">The summary appears here when the task finishes.</p>'}
+    ${result.summary ? markdown(result.summary) : t.blocker && t.status === 'failed' ? errorBlock(t.blocker, esc) : '<p class="muted small">The summary appears here when the task finishes.</p>'}
     <dl class="kv" style="margin-top:var(--s-3)">
       <div><dt>Pull request</dt><dd>${pr?.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">#${esc(pr.number)}</a>` : '—'}</dd></div>
       <div><dt>CI</dt><dd>${esc(t.ci?.state || result.ci?.state || '—')}</dd></div>
@@ -700,105 +781,88 @@ async function renderWorkflow(jobId) {
 }
 
 // ------------------------------------------------------------------ attention
+// Needs Fahad: an executive interruption centre. URGENT first, then what
+// needs an action, then information (major completions) — nothing routine.
 async function renderAttention() {
-  setTitle('Needs attention');
-  const { items } = await api(`/api/attention${q({ workspaceId: ws() })}`);
-  const labels = { approval: 'Approval waiting', question: 'Question for you', blocked: 'Paused', failed: 'Failed', completed: 'Completed' };
-  const pillKind = { approval: 'attention', question: 'attention', blocked: 'attention', failed: 'failed', completed: 'completed' };
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Needs attention</h1><p>What is waiting for you, and what finished recently (last 3 days).</p></div></div>
-    ${items.length ? items.map((item) => `<a class="list-item" href="${item.taskId ? `#/task/${esc(item.taskId)}` : `#/chat/${esc(item.conversationId || '')}`}"><div class="grow"><div class="title" dir="auto">${esc(item.title)}</div><div class="sub" dir="auto">${esc(item.detail || '')}</div><div class="sub faint xs">${when(item.at)}</div></div>${pill(pillKind[item.kind] || 'cancelled', labels[item.kind] || item.kind)}</a>`).join('')
-      : '<div class="empty"><h3>All clear</h3><p>Nothing needs you right now.</p></div>'}</div>`;
-  every(10_000, async () => { if (location.hash === '#/attention') { clearTimers(); renderAttention().catch(() => {}); } });
+  setTitle('Needs Fahad');
+  const draw = async () => {
+    const { items } = await api(`/api/attention${q({ workspaceId: ws() })}`);
+    const href = (item) => (item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`);
+    const group = (priority, title, hint) => {
+      const list = items.filter((item) => item.priority === priority);
+      if (!list.length) return '';
+      return `<section class="nf-group nf-${esc(priority.toLowerCase().replace(/\s+/g, '-'))}"><h2><span class="nf-level">${esc(priority)}</span><span class="small muted">${esc(hint)}</span></h2>
+        ${list.map((item) => `<a class="nf-item" href="${href(item)}"><span class="nf-cat">${esc(item.category || item.kind)}</span><span class="grow"><span class="nf-title" dir="auto">${esc(item.title)}</span>${item.detail ? `<span class="nf-detail" dir="auto">${esc(humanError(item.detail))}</span>` : ''}</span><time class="xs faint" datetime="${esc(item.at)}">${when(item.at)}</time></a>`).join('')}</section>`;
+    };
+    view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Needs Fahad</h1><p>Only what genuinely needs you: approvals, answers, legal and security decisions, failures and major completions.</p></div></div>
+      ${items.some((item) => item.priority !== 'INFO') ? '' : '<div class="nf-clear"><strong>All clear.</strong> Nothing needs you right now — the Office asks here and on Telegram when it does.</div>'}
+      ${group('URGENT', 'Urgent', 'high-risk approvals and critical security findings')}${group('ACTION NEEDED', 'Action needed', 'a decision or an answer unblocks the work')}${group('INFO', 'For your information', 'major work that finished in the last 3 days')}</div>`;
+  };
+  await draw();
+  onLiveChange(() => { if (location.hash === '#/attention') draw().catch(() => {}); });
 }
 
-// ------------------------------------------------------------------ projects
 async function renderProjects() {
   setTitle('Projects');
   view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Projects</h1><p>Each project keeps its chats, tasks, repository and memory together.</p></div></div>
     ${state.workspaces.map((workspace) => `<a class="list-item" href="#/project/${esc(workspace.id)}"><div class="grow"><div class="title">${esc(workspace.name)}</div></div>${workspace.id === ws() ? pill('available', 'Current') : ''}</a>`).join('')}</div>`;
 }
 
-async function renderProject(id) {
-  const { project, memory, stats } = await api(`/api/projects/${id}`);
-  setTitle(project.name);
-  view.innerHTML = `<div class="page stack"><div class="page-head"><div><h1>${esc(project.name)}</h1><p>${stats.conversations} chats · ${stats.tasks} tasks (${stats.completedTasks} completed)</p></div>${id !== ws() ? '<button class="btn" id="useProject">Switch to this project</button>' : ''}</div>
-    <div id="commandCenter" class="command-center"><div class="skeleton-floor" aria-hidden="true"></div></div>
-    <form class="card" id="projectForm"><h2 class="card-title">Context</h2>
-      <label class="field-label" for="pDesc">What this project is (CHIEF reads this)</label><textarea id="pDesc" class="input" rows="4" dir="auto">${esc(project.description)}</textarea>
-      <label class="field-label" for="pRepo">Default repository for tasks</label><input id="pRepo" class="input" value="${esc(project.defaultRepository)}" placeholder="owner/name">
-      <div class="row" style="margin-top:var(--s-3)"><button class="btn btn-primary" type="submit">Save</button></div></form>
-    <div class="card"><h2 class="card-title">Objectives &amp; workflows</h2><div id="projectFlows" class="muted small">Loading…</div></div>
-    <div class="card"><h2 class="card-title">Memory</h2><p class="small muted">Facts, decisions, constraints and assumptions the Office reuses in new chats and tasks.</p>
-      <form class="row" id="memoryForm"><select id="mKind" class="input input-sm" style="width:auto">${MEMORY_KINDS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select><input id="mText" class="input input-sm grow" dir="auto" placeholder="e.g. Production runs on the Hostinger VPS"><button class="btn btn-sm" type="submit">Add</button></form>
-      <div style="margin-top:var(--s-3)">${memory.map((item) => `<div class="list-item"><div class="grow"><div class="sub faint xs">${esc(item.kind)}</div><div dir="auto">${esc(item.content)}</div></div><button class="icon-btn" data-forget="${esc(item.id)}" aria-label="Remove">✕</button></div>`).join('') || '<div class="muted small">Nothing remembered yet.</div>'}</div></div></div>`;
-  api(`/api/command-center${q({ workspaceId: id })}`).then((center) => { $('#commandCenter').innerHTML = commandCenterHtml(center); }).catch((error) => { $('#commandCenter').innerHTML = `<div class="error-note">${esc(error.message)}</div>`; });
-  api(`/api/workflows${q({ workspaceId: id })}`).then(({ workflows }) => {
-    $('#projectFlows').innerHTML = workflows.length ? workflows.slice(0, 10).map((flow) => `<a class="list-item" href="#/workflow/${esc(flow.id)}"><div class="grow"><div class="title" dir="auto">${esc(flow.title)}</div><div class="sub">${flow.workstreams} workstreams · ${when(flow.createdAt)}</div></div>${pill(flow.status === 'completed' ? 'completed' : flow.status === 'failed' ? 'failed' : 'running', flow.status)}</a>`).join('') : 'No multi-agent objectives yet.';
-  }).catch(() => {});
-  $('#projectForm').onsubmit = async (event) => {
-    event.preventDefault();
-    try { await api(`/api/projects/${id}`, { method: 'PATCH', body: { description: $('#pDesc').value, defaultRepository: $('#pRepo').value } }); toast('Saved'); } catch (error) { toast(error.message); }
-  };
-  $('#memoryForm').onsubmit = async (event) => {
-    event.preventDefault();
-    try { await api(`/api/projects/${id}/memory`, { method: 'POST', body: { kind: $('#mKind').value, content: $('#mText').value } }); renderProject(id); } catch (error) { toast(error.message); }
-  };
-  bind(view, {
-    '[data-forget]': async (_, element) => { await api(`/api/projects/${id}/memory/${element.dataset.forget}`, { method: 'DELETE' }); renderProject(id); },
-    '#useProject': () => { $('#projectSelect').value = id; $('#projectSelect').onchange(); },
-  });
+// Command Center (and the project map) live in their own module.
+async function renderProject(id, sub = '') {
+  const module = await import('./project.js?v=__UI_VERSION__');
+  return module.renderProject({ ...officeContext(), usd, confirmDialog, ask, memoryKinds: MEMORY_KINDS, memoryLabel: (kind) => MEMORY_LABEL[kind] || kind, openEmployee }, id, sub === 'map' ? 'map' : 'center');
 }
-
 const MEMORY_LABEL = Object.fromEntries(MEMORY_KINDS);
-function commandCenterHtml(center) {
-  const verdict = center.latestAudit ? `<span class="audit-verdict v-${esc(String(center.latestAudit.verdict || '').replace(/\s+/g, '-').toLowerCase())}">${esc(center.latestAudit.verdict)}</span>` : '<span class="muted small">No audit yet</span>';
-  return `<div class="cc-kpis">
-      <div class="cc-kpi"><span>Objectives in progress</span><strong>${center.objectives.active.length}</strong><em>${center.objectives.completed} completed · ${center.objectives.failed} failed (30 days)</em></div>
-      <div class="cc-kpi"><span>Needs Fahad</span><strong>${center.needsFahad}</strong><em><a href="#/attention">Open</a></em></div>
-      <div class="cc-kpi"><span>Latest audit</span><strong>${verdict}</strong><em>${center.latestAudit ? when(center.latestAudit.at) : ''}</em></div>
-      <div class="cc-kpi"><span>AI spend (30 days)</span><strong>${usd(center.costUsd)}</strong><em>Office objectives</em></div>
-    </div>
-    <div class="cc-grid">
-      <div class="card"><h2 class="card-title">On it now</h2>${center.team.length ? center.team.map((member) => `<div class="list-item"><div class="grow"><div class="title">${esc(member.label)}</div><div class="sub" dir="auto">${esc(member.detail || '')}</div></div>${statePill(member.state)}</div>`).join('') : '<div class="muted small">Nobody is working on this project right now.</div>'}
-        ${center.objectives.active.map((job) => `<a class="list-item" href="#/workflow/${esc(job.id)}"><div class="grow"><div class="title" dir="auto">${esc(job.title)}</div><div class="progress"><i style="width:${Math.max(0, Math.min(100, Number(job.progress) || 0))}%"></i></div></div></a>`).join('')}
-        ${center.coding.map((session) => `<a class="list-item" href="#/task/${esc(session.id)}"><div class="grow"><div class="title" dir="auto">CODING — ${esc(session.title)}</div><div class="sub">${esc(stageWord(session.phase))}</div></div>${pill(taskGroup(session.status), STATUS_WORDS[session.status])}</a>`).join('')}</div>
-      <div class="card"><h2 class="card-title">Open risks</h2>${center.risks.length ? center.risks.map((risk) => `<div class="issue sev-${esc(risk.severity)}"><div class="row"><span class="tag ${risk.severity === 'critical' || risk.severity === 'high' ? 'bad' : 'warn'}">${esc(risk.severity)}</span><span class="xs faint">${esc(risk.from || '')}${risk.owner ? ` → ${esc(risk.owner)}` : ''}</span></div><div dir="auto">${esc(risk.text)}</div></div>`).join('') : '<div class="muted small">No high risks recorded by AUDIT, LEGAL or a risk matrix.</div>'}</div>
-      <div class="card"><h2 class="card-title">Decisions &amp; memory</h2>${Object.keys(center.memory.byKind).length ? `<div class="row" style="margin-bottom:var(--s-2)">${Object.entries(center.memory.byKind).map(([kind, count]) => `<span class="tag muted">${esc(MEMORY_LABEL[kind] || kind)} · ${count}</span>`).join('')}</div>` : ''}
-        ${center.memory.decisions.map((item) => `<div class="small" dir="auto">• ${esc(item.content)} <span class="xs faint">${esc(MEMORY_LABEL[item.kind] || item.kind)}</span></div>`).join('') || '<div class="muted small">No decisions saved yet.</div>'}</div>
-      <div class="card"><h2 class="card-title">Knowledge</h2><div class="small muted">${center.knowledge.fresh} current source${center.knowledge.fresh === 1 ? '' : 's'} of ${center.knowledge.total} (expired ones are re-checked)</div>
-        ${center.knowledge.recent.map((item) => `<div class="small"><span class="xs faint">${esc(item.agent)}</span> <a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" dir="auto">${esc(item.title)}</a></div>`).join('')}</div>
-    </div>
-    ${center.artifacts.length ? `<div class="card"><div class="spread"><h2 class="card-title">Latest artifacts</h2><a class="small" href="#/artifacts">All artifacts</a></div><div class="artifact-grid">${center.artifacts.slice(0, 4).map(renderArtifact).join('')}</div></div>` : ''}`;
-}
 
 // ------------------------------------------------------------------ artifacts
+// The artifact library (and its viewer/exports) is its own module.
+const DIRECT_SLUGS = Object.freeze({ research: 'research-strategy', creative: 'brand-creative', product: 'product-tech', finance: 'business-finance', audit: 'qa-security', social: 'content-media', legal: 'legal-compliance' });
+function libraryContext() { return { ...officeContext(), labels: ARTIFACT_LABELS, workspaces: () => state.workspaces, directSlugs: DIRECT_SLUGS, confirmDialog }; }
 async function renderArtifacts(type = '') {
-  setTitle('Artifacts');
-  const data = await api(`/api/artifacts${q({ workspaceId: ws(), ...(type ? { type } : {}) })}`);
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Artifacts</h1><p>Everything the employees produced as visuals: tables, charts, boards, moodboards, models, matrices and reports.</p></div></div>
-    <div class="chips" role="tablist"><a class="chip ${type ? '' : 'active'}" href="#/artifacts">All</a>${data.types.map((entry) => `<a class="chip ${entry === type ? 'active' : ''}" href="#/artifacts/${esc(entry)}">${esc(ARTIFACT_LABELS[entry] || entry)}</a>`).join('')}</div>
-    ${data.artifacts.length ? `<div class="artifact-grid">${data.artifacts.map((artifact) => `<div>${renderArtifact(artifact)}<div class="xs faint artifact-meta">${when(artifact.at)}${artifact.jobId ? ` · <a href="#/workflow/${esc(artifact.jobId)}">open objective</a>` : ''}${artifact.conversationId ? ` · <a href="#/chat/${esc(artifact.conversationId)}">open chat</a>` : ''}</div></div>`).join('')}</div>`
-      : '<div class="empty"><h3>No artifacts yet</h3><p>Ask CHIEF for a plan, budget, brand direction or review — the employees will produce visual outputs here.</p></div>'}</div>`;
+  return (await import('./library.js?v=__UI_VERSION__')).renderLibrary(libraryContext(), ARTIFACT_LABELS[type] ? type : '');
 }
 
 // ------------------------------------------------------------------ integrations
+// Reality only: CONNECTED means a real successful use was recorded.
+const CONNECTION = Object.freeze({ CONNECTED: 'CONNECTED', CONFIGURED: 'CONFIGURED', NOT_CONFIGURED: 'NOT CONFIGURED', ACCOUNT: 'ACCOUNT ACTION REQUIRED', UNAVAILABLE: 'UNAVAILABLE' });
+function connection(status = '') {
+  if (/^Connected|^Available/.test(status)) return CONNECTION.CONNECTED;
+  if (/^Configured/.test(status)) return CONNECTION.CONFIGURED;
+  if (/account/i.test(status)) return CONNECTION.ACCOUNT;
+  if (/^Not configured/.test(status)) return CONNECTION.NOT_CONFIGURED;
+  return CONNECTION.UNAVAILABLE;
+}
+const CONNECTION_TONE = { CONNECTED: 'ok', CONFIGURED: 'configured', 'NOT CONFIGURED': 'off', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
 async function renderIntegrations() {
   setTitle('Integrations');
-  view.innerHTML = `<div class="page stack"><div class="page-head"><div><h1>Integrations</h1><p>Tools and connectors per employee. "Connected" means a real successful use was recorded; configuration alone never counts.</p></div></div>
-    <div id="capabilities" class="muted small">Checking…</div></div>`;
-  const { capabilities } = await api('/api/capabilities');
-  const kind = (status) => (status.startsWith('Connected') || status === 'Available' ? 'st-completed' : status.startsWith('Configured') ? 'st-waiting' : status === 'Not configured' ? 'st-available' : 'st-blocked');
-  $('#capabilities').innerHTML = `<div class="card">${capabilities.map((item) => `<div class="list-item"><div class="grow"><div class="title">${esc(item.label)}</div><div class="sub">${esc(item.detail)}</div>${item.employees?.length ? `<div class="row" style="margin-top:4px">${item.employees.map((label) => `<span class="tag muted">${esc(label)}</span>`).join('')}</div>` : ''}</div><span class="pill ${kind(item.status)}">${esc(item.status)}</span></div>`).join('')}</div>`;
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Integrations</h1><p>What the Office can actually use. <strong>Connected</strong> means a real successful use was recorded — configuration alone never counts.</p></div></div>
+    <div class="conn-legend">${Object.values(CONNECTION).map((value) => `<span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span>`).join('')}</div><div id="capabilities"><div class="drawer-loading"></div></div></div>`;
+  const [{ capabilities }, models] = await Promise.all([api('/api/capabilities'), api(`/api/models${q({ workspaceId: ws() })}`).catch(() => null)]);
+  const groups = [['Work tools', ['github', 'repository', 'pull_requests', 'ci', 'deployment', 'supabase_tools', 'tool_broker']], ['Research', ['web_search', 'web_fetch']], ['Channels', ['telegram']], ['Office data', ['database', 'memory']]];
+  const card = (item) => { const value = connection(item.status); return `<div class="int-card"><div class="int-top"><strong>${esc(item.label)}</strong><span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span></div><div class="small muted">${esc(item.detail)}</div>${item.employees?.length ? `<div class="row">${item.employees.map((label) => `<span class="tag muted">${esc(label)}</span>`).join('')}</div>` : ''}</div>`; };
+  const providers = new Map();
+  for (const model of models?.models || []) {
+    const current = providers.get(model.provider) || { provider: model.provider, statuses: [], reasons: [] };
+    current.statuses.push(model.status); current.reasons.push(model.reason);
+    providers.set(model.provider, current);
+  }
+  const providerState = (entry) => (entry.statuses.includes('AVAILABLE') || entry.statuses.includes('COOLDOWN') ? CONNECTION.CONNECTED : entry.statuses.includes('ACCOUNT ACTION REQUIRED') ? CONNECTION.ACCOUNT
+    : entry.reasons.some((reason) => /No credential/i.test(reason)) ? CONNECTION.NOT_CONFIGURED : CONNECTION.UNAVAILABLE);
+  $('#capabilities').innerHTML = groups.map(([title, ids]) => `<section class="int-group"><h2 class="int-title">${esc(title)}</h2><div class="int-grid">${capabilities.filter((item) => ids.includes(item.id)).map(card).join('')}</div></section>`).join('')
+    + (providers.size ? `<section class="int-group"><h2 class="int-title">Model providers</h2><div class="int-grid">${[...providers.values()].map((entry) => { const value = providerState(entry); return `<div class="int-card"><div class="int-top"><strong>${esc(entry.provider)}</strong><span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span></div><div class="small muted">${entry.statuses.length} model${entry.statuses.length === 1 ? '' : 's'} · ${esc(humanError(entry.reasons.find((reason) => reason) || ''))}</div></div>`; }).join('')}</div><p class="xs muted">Details per model: <a href="#/models">Models</a>.</p></section>` : '');
 }
 
 // ------------------------------------------------------------------ models
 async function renderModels() {
   setTitle('Models');
-  const data = await api(`/api/models${q({ workspaceId: ws() })}`);
+  const [data, office] = await Promise.all([api(`/api/models${q({ workspaceId: ws() })}`), api(`/api/office${q({ workspaceId: ws() })}`).catch(() => null)]);
   const kind = { AVAILABLE: 'available', COOLDOWN: 'cooldown', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
+  const waiting = (office?.agents || []).filter((agent) => agent.state === 'WAITING' && /free model capacity/i.test(agent.detail || ''));
   const counts = Object.entries(data.counts).map(([status, count]) => `${pill(kind[status], `${count} ${status.toLowerCase()}`)}`).join(' ');
   view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Models</h1><p>Routing is <strong>AUTO</strong>: the Office picks the best available model for each job, free first where suitable, and fails over automatically. You never have to choose.</p></div></div>
     <div class="row" style="margin-bottom:var(--s-4)">${counts}</div>
+    ${waiting.length ? `<div class="capacity-banner" role="status"><strong>WAITING_FOR_CAPACITY</strong> · ${waiting.map((agent) => `${esc(agent.label)}${agent.assignment?.resumesAt ? ` (~${esc(new Date(agent.assignment.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))})` : ''}`).join(', ')} — Waiting for free model capacity — will resume automatically.</div>` : ''}
     <details class="disclosure" open><summary>Model pool (advanced)</summary><div class="disclosure-body"><div class="table-wrap"><table class="table"><thead><tr><th>Model</th><th>Status</th><th class="hide-sm">Cost</th><th class="hide-sm">Order</th><th class="hide-sm">Health</th><th class="hide-sm">Why</th></tr></thead><tbody>
     ${data.models.map((model) => { const reason = esc(model.reason.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, (iso) => new Date(iso).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }))); return `<tr><td><div class="mono small" style="overflow-wrap:anywhere">${esc(model.model)}</div><div class="xs faint">${esc(model.provider)} · ${esc(model.billing)}</div><div class="xs muted show-sm">${reason}</div></td><td>${pill(kind[model.status], model.status)}</td><td class="hide-sm">${esc(model.billing)}</td><td class="hide-sm">${model.order || '—'}</td><td class="hide-sm">${esc(model.health)}</td><td class="small muted hide-sm" style="min-width:180px">${reason}</td></tr>`; }).join('')}
     </tbody></table></div><p class="xs muted" style="margin-top:var(--s-2)">An unavailable or account-blocked model never blocks the others. The full technical dashboard is under <a href="./classic">Classic view → Platform</a>.</p></div></details></div>`;

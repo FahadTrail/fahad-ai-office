@@ -170,6 +170,6 @@ export function parseOutput(markdown) {
   return {
     summary: plain(section('Summary') || text.split('\n').find((line) => line.trim() && !line.startsWith('#'))?.trim() || ''),
     handoff: section('Handoff'),
-    decisions: /^(none|n\/a|-|no decisions?)\.?$/i.test(decisions) ? '' : decisions,
+    decisions: /^(none|n\/a|-|no decisions?|nothing)( (yet|for now|needed|required|at this stage))?\.?$/i.test(decisions) || /^(لا يوجد|لا شيء|ما في)/.test(decisions) ? '' : decisions,
   };
 }

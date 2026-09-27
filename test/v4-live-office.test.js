@@ -156,7 +156,8 @@ test('the Live Office is lazy-loaded, honours reduced motion and uses tokens onl
   assert.doesNotMatch(app, /^import .*office\.js/m, 'not in the initial bundle');
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*animation: none !important/);
   assert.match(css, /data-motion="full"/, 'motion only when allowed');
-  assert.deepEqual(css.match(/#[0-9a-f]{3,8}\b/gi) || [], [], 'no raw colours outside the token blocks');
+  for (const sheet of ['office.css', 'project.css']) assert.deepEqual(file(sheet).match(/#[0-9a-f]{3,8}\b/gi) || [], [], `${sheet}: no raw colours outside the token blocks`);
+  assert.match(file('project.css'), /prefers-reduced-motion/);
   assert.match(css, /animation: attention 1\.6s var\(--ease-in-out\) 4;/, 'attention pulses a few times, not forever');
   for (const state of ['THINKING', 'WORKING', 'TESTING', 'WAITING', 'REVIEWING', 'NEEDS FAHAD', 'BLOCKED', 'COMPLETED', 'FAILED']) assert.ok(css.includes(`[data-state="${state}"]`), state);
 });

@@ -16,9 +16,11 @@ const { chromium } = require('playwright');
 
 const WS = '11111111-1111-4111-8111-111111111111';
 export const SCREENS = {
-  chief: '#/', office: '#/office', center: `#/project/${WS}`, employee: '#/agent/business-finance', coding: '#/agent/coding-agent',
+  chief: '#/', office: '#/office', center: `#/project/${WS}`, map: `#/project/${WS}/map`, employee: '#/agent/business-finance', coding: '#/agent/coding-agent',
   artifacts: '#/artifacts', attention: '#/attention', workflow: '#/workflow/b0000000-0000-4000-8000-000000000001',
   task: '#/task/e0000000-0000-4000-8000-000000000001', integrations: '#/integrations', chat: '#/chat/c0000000-0000-4000-8000-000000000001',
+  finance: ['#/artifacts', 'Pilot budget'], legal: ['#/artifacts', 'Launch compliance'], creative: ['#/artifacts', 'brand direction'], audit: ['#/artifacts', 'First-pass readiness'],
+  models: '#/models', settings: '#/settings', handoff: ['#/office', null, '.handoff-fresh .handoff-hit'],
 };
 const VIEWPORTS = { desktop: [1440, 900], laptop: [1366, 768], tablet: [820, 1180], mobile: [390, 844] };
 
@@ -36,12 +38,16 @@ for (const theme of themeFlag === 'both' ? ['dark', 'light'] : [themeFlag]) {
     const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme: theme, reducedMotion: 'reduce' });
     await context.addInitScript(([id, value]) => { localStorage.setItem('hub-workspace-id', id); localStorage.setItem('hub-theme', value); }, [WS, theme]);
     const page = await context.newPage();
-    page.on('pageerror', (error) => errors.push(`${size}/${theme}: ${error.message}`));
-    page.on('console', (message) => { if (message.type() === 'error') errors.push(`${size}/${theme}: ${message.text()}`); });
-    for (const [name, hash] of Object.entries(SCREENS)) {
+    page.on('pageerror', (error) => { if (page.url() !== 'about:blank') errors.push(`${size}/${theme}: ${error.message}`); });
+    page.on('console', (message) => { if (message.type() === 'error' && page.url() !== 'about:blank' && !/ERR_CERT_AUTHORITY_INVALID|localStorage/.test(message.text())) errors.push(`${size}/${theme}: ${message.text()}`); });
+    for (const [name, target] of Object.entries(SCREENS)) {
       if (only.length && !only.includes(name)) continue;
+      const [hash, cardText, selector] = Array.isArray(target) ? target : [target];
+      await page.goto('about:blank');
       await page.goto(`${url}${hash}`);
       await page.waitForTimeout(900);
+      if (cardText) { await page.locator('.lib-card', { hasText: cardText }).first().click(); await page.waitForTimeout(700); }
+      if (selector) { await page.locator(selector).first().dispatchEvent('click'); await page.waitForTimeout(700); }
       await page.screenshot({ path: join(outDir, `${label}-${name}-${size}-${theme}.png`), fullPage: size === 'mobile' ? false : true });
     }
     await context.close();
