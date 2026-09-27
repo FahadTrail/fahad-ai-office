@@ -21,6 +21,10 @@ export class OfficeBridge {
     this.recent = [];
     this.notifiedJobs = new Set();
     this.notifiedApprovals = new Set();
+    this.notifiedQuestions = new Set();
+    // Anything still waiting for Fahad from the last day is (re)announced
+    // after a restart, so nothing is missed while the worker was down.
+    this.pendingSince = new Date(now() - 24 * 3600_000).toISOString();
   }
 
   link(hash) { return this.hubUrl ? `${this.hubUrl}/${hash}` : ''; }
@@ -80,7 +84,7 @@ export class OfficeBridge {
       out.push({ text: `${clip(body, 3500)}${link ? `\n\nOpen in the Hub: ${link}` : ''}` });
     }
     const { data: approvals } = await this.db.from('agent_approvals').select('id,session_id,tool_name,summary,risk,requested_at')
-      .eq('workspace_id', this.workspaceId).eq('status', 'pending').gte('requested_at', this.startedAt).order('requested_at', { ascending: true }).limit(10);
+      .eq('workspace_id', this.workspaceId).eq('status', 'pending').gte('requested_at', this.pendingSince).order('requested_at', { ascending: true }).limit(10);
     for (const approval of approvals || []) {
       if (this.notifiedApprovals.has(approval.id)) continue;
       this.notifiedApprovals.add(approval.id);
@@ -89,6 +93,16 @@ export class OfficeBridge {
         text: `Approval needed (${approval.risk || 'review'}): ${clip(approval.summary || approval.tool_name, 600)}${link ? `\nDetails: ${link}` : ''}`,
         buttons: [{ label: 'Approve', data: `ap:${approval.id}:approved` }, { label: 'Reject', data: `ap:${approval.id}:rejected` }],
       });
+    }
+    // Needs Fahad: a Coding task paused with a question for the owner.
+    const { data: questions } = await this.db.from('agent_sessions').select('id,title,blocker,updated_at')
+      .eq('workspace_id', this.workspaceId).eq('status', 'blocked').eq('error_code', 'HUMAN_INPUT_REQUIRED').gte('updated_at', this.pendingSince).limit(10);
+    for (const session of questions || []) {
+      const key = `${session.id}@${session.updated_at}`;
+      if (this.notifiedQuestions.has(key)) continue;
+      this.notifiedQuestions.add(key);
+      const link = this.link(`#/task/${session.id}`);
+      out.push({ text: `Needs you — ${clip(session.title || 'Coding task', 120)}: ${clip(plain(session.blocker || 'The task has a question for you.'), 600)}${link ? `\nReply in the Hub: ${link}` : ''}` });
     }
     return out;
   }

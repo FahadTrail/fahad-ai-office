@@ -76,7 +76,8 @@ export function failureOutcome(error, previous = {}, now = Date.now(), route = n
     // (model withdrawn, trial ended, API change), not a bad request: stop
     // probing it every turn. It is re-checked after the cooldown.
     health = HEALTH.UNAVAILABLE;
-    cooldownUntil = now + 6 * 60 * MINUTE;
+    // Still rejected after a rest (e.g. an expired trial): probe once a day.
+    cooldownUntil = now + (consecutive >= 9 ? 24 : 6) * 60 * MINUTE;
   } else if (error.code === 'PROVIDER_CAPACITY') {
     health = HEALTH.QUOTA_EXHAUSTED;
     cooldownUntil = resetAt || now + 60 * MINUTE;

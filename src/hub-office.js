@@ -5,6 +5,7 @@
 
 import { ACTIVE_AGENTS, OFFICE_AGENTS, officeAgent, parseOutput } from './office/agents.js';
 import { ARTIFACT_TYPES } from './office/artifacts.js';
+import { WAITING_MESSAGE } from './office/capacity.js';
 import { ownerAction, approvalCard } from './hub-workspace.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -22,8 +23,9 @@ function workflowOf(brief) {
 }
 
 // Node state of one task inside its workflow.
-export function taskState(task, byId) {
+export function taskState(task, byId, now = Date.now()) {
   if (task.status === 'running') return 'working';
+  if (task.status === 'queued' && task.not_before && Date.parse(task.not_before) > now) return 'capacity';
   if (task.status === 'done' || task.status === 'skipped') return 'done';
   if (task.status === 'failed') return 'failed';
   if (task.status === 'blocked') return 'blocked';
@@ -54,8 +56,10 @@ export function officeState({ agents = [], jobs = [], tasks = [], sessions = [],
     const brief = workflowOf(task.brief);
     if (brief.workflow === 'coding-agent') continue;
     const assignment = { jobId: job.id, objective: job.title || job.goal, task: task.title, conversationId: job.conversation_id || null };
-    const state = taskState(task, taskById);
-    if (state === 'working') {
+    const state = taskState(task, taskById, now);
+    if (state === 'capacity' && ['running', 'planning'].includes(job.status)) {
+      offer(employee.slug, { state: 'WAITING', detail: WAITING_MESSAGE, assignment: { ...assignment, resumesAt: task.not_before }, since: task.created_at });
+    } else if (state === 'working') {
       const stage = brief.stage;
       const visible = stage === 'chief_plan' ? 'THINKING' : ['synthesis', 'chief_review'].includes(stage) ? 'REVIEWING' : 'WORKING';
       const words = stage === 'chief_plan' ? 'Planning the work' : ['synthesis', 'chief_review'].includes(stage) ? 'Reviewing the team’s work' : `Working on ${task.title}`;
@@ -106,6 +110,7 @@ export function workflowView({ job, tasks = [], agents = [], results = [], hando
       kind: { chief_plan: 'plan', synthesis: 'synthesis', launch_dev: 'development', specialist: 'workstream', research: 'workstream', chief_review: 'synthesis', direct: 'conversation', consult: 'consult' }[brief.stage] || 'task',
       revision: Boolean(brief.revision), state: taskState(task, byId), dependsOn: (task.depends_on || []).filter((id) => byId.has(id)),
       startedAt: task.started_at || null, completedAt: task.completed_at || null,
+      ...(task.not_before ? { resumesAt: task.not_before, waitReason: task.wait_info?.reason || null } : {}),
       output: output ? { summary: parsed.summary.slice(0, 600) || output.summary, decisions: parsed.decisions, content: output.content, at: output.created_at } : null,
       codingTask: session ? { id: session.id, status: session.status, phase: session.phase, title: session.title } : null,
     };
@@ -131,7 +136,7 @@ export function workflowView({ job, tasks = [], agents = [], results = [], hando
 
 // Capability evidence → one honest state per connector. "Connected" needs a
 // real successful use; configuration alone is "Configured — not verified".
-export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, databaseOk = true, memoryCount = 0, now = Date.now() }) {
+export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, databaseOk = true, memoryCount = 0, supabaseCheck = null, now = Date.now() }) {
   const last = (names) => toolRuns.filter((run) => names.some((name) => run.tool_name === name || run.tool_name.startsWith(`${name}.`)) && run.status === 'succeeded')
     .map((run) => run.last).sort().at(-1) || null;
   const present = (name) => String(env[name] || '').trim().length > 0;
@@ -148,8 +153,7 @@ export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, database
     { id: 'ci', label: 'CI checks', ...state(last(['github.ci_status']), present('CODING_GITHUB_TOKEN'), 'CI status check') },
     { id: 'deployment', label: 'Deployment', ...state(last(['deploy.status', 'verify.http']), false, 'deployment check') },
     { id: 'database', label: 'Supabase database (Office data)', status: databaseOk ? 'Connected' : 'Unavailable', verifiedAt: databaseOk ? new Date(now).toISOString() : null, detail: databaseOk ? 'Live: this page was read from it' : 'The Hub could not read the database' },
-    { id: 'supabase_tools', label: 'Supabase tools for the Coding Agent', ...state(last(['supabase']), present('CODING_SUPABASE_ACCESS_TOKEN'), 'database tool call'),
-      ...(present('CODING_SUPABASE_ACCESS_TOKEN') || last(['supabase']) ? {} : { detail: 'Not configured: CODING_SUPABASE_ACCESS_TOKEN is missing, so the Coding Agent has no database tools' }) },
+    { id: 'supabase_tools', label: 'Supabase tools for the Coding Agent', ...supabaseToolsState(last(['supabase']), supabaseCheck, present('CODING_SUPABASE_ACCESS_TOKEN'), state) },
     { id: 'web_search', label: 'Web search', ...state(webRuns.web_search || null, present('GEMINI_API_KEY'), 'web search') },
     { id: 'web_fetch', label: 'Web page reading', ...state(webRuns.web_fetch || null, true, 'page fetch') },
     { id: 'memory', label: 'Project memory', status: databaseOk ? 'Available' : 'Unavailable', verifiedAt: null, detail: `${memoryCount} saved item${memoryCount === 1 ? '' : 's'}` },
@@ -204,6 +208,16 @@ export function commandCenter({ project, live, states, artifacts = [], memory = 
   };
 }
 
+// The Coding worker's read-only self-check counts as real use: it runs the
+// agent's own Supabase client against the allowlisted project.
+function supabaseToolsState(toolUse, check, configuredHere, state) {
+  if (toolUse) return state(toolUse, true, 'database tool call');
+  if (check?.ok) return { status: 'Connected', verifiedAt: check.checked_at, detail: `Verified read-only on ${check.project} (${check.db_role || 'read-only role'}); outside projects and writes refused; token not exposed` };
+  if (check && check.token_present) return { status: 'Configured — not verified', verifiedAt: null, detail: `Token present; self-check failed: ${check.error_code || 'unknown'}` };
+  if ((check && !check.token_present) || (!check && !configuredHere)) return { status: 'Not configured', verifiedAt: null, detail: 'Not configured: CODING_SUPABASE_ACCESS_TOKEN is missing, so the Coding Agent has no database tools' };
+  return state(null, configuredHere, 'database tool call');
+}
+
 // Which employees use a connector (the per-employee connector registry).
 export function connectorUsers(id) {
   const web = ACTIVE_AGENTS.filter((agent) => agent.webTools).map((agent) => agent.label);
@@ -242,7 +256,7 @@ async function workspaceActivity(db, workspaceId, sinceMs) {
     rows(db.from('agent_approvals').select('id,session_id,tool_name,action,risk,summary,arguments_preview,status,requested_at').eq('workspace_id', workspaceId).eq('status', 'pending')),
   ]);
   const jobIds = jobs.map((job) => job.id);
-  const tasks = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at').in('job_id', jobIds)) : [];
+  const tasks = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at,not_before,wait_info').in('job_id', jobIds)) : [];
   return { agents, jobs, tasks, sessions: sessions.filter((session) => !TERMINAL_SESSION.has(session.status) || (session.completed_at && Date.now() - Date.parse(session.completed_at) < RECENT_MS)), approvals };
 }
 
@@ -323,7 +337,7 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
       const [job] = await rows(db.from('jobs').select('id,title,goal,status,progress,cost_usd,conversation_id,project_id,created_at,completed_at').eq('id', jobId));
       if (!job) return sendJson(response, 404, { ok: false, error: 'WORKFLOW_NOT_FOUND' }), true;
       const [tasks, agents, results, handoffs, events, artifacts] = await Promise.all([
-        rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at').eq('job_id', jobId)),
+        rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at,not_before,wait_info').eq('job_id', jobId)),
         rows(db.from('agents').select('id,slug,name')),
         rows(db.from('results').select('task_id,kind,summary,content,created_at').eq('job_id', jobId).order('created_at', { ascending: true })),
         rows(db.from('handoffs').select('from_agent_id,to_agent_id,from_task_id,to_task_id,created_at').eq('job_id', jobId).order('created_at', { ascending: true })),
@@ -371,10 +385,11 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
     if (path === '/api/capabilities') {
       const since = new Date(Date.now() - 90 * 86400_000).toISOString();
       let databaseOk = true;
-      const [toolRuns, routeEvents, memory] = await Promise.all([
+      const [toolRuns, routeEvents, memory, supabaseChecks] = await Promise.all([
         rows(db.from('tool_executions').select('tool_name,status,started_at').gte('started_at', since).order('started_at', { ascending: false }).limit(1000)).catch(() => { databaseOk = false; return []; }),
         rows(db.from('events').select('payload,created_at').eq('payload->>kind', 'model_route').gte('created_at', since).order('created_at', { ascending: false }).limit(500)).catch(() => []),
         rows(db.from('project_memory').select('id')).catch(() => []),
+        rows(db.from('events').select('payload,created_at').eq('payload->>kind', 'supabase_tools_check').order('created_at', { ascending: false }).limit(1)).catch(() => []),
       ]);
       const latest = new Map();
       for (const run of toolRuns) {
@@ -383,7 +398,7 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
       }
       const webRuns = {};
       for (const event of routeEvents) for (const tool of event.payload?.tools_used || []) if (!webRuns[tool] || webRuns[tool] < event.created_at) webRuns[tool] = event.created_at;
-      return sendJson(response, 200, { ok: true, capabilities: capabilityView({ toolRuns: [...latest.values()], webRuns, env, databaseOk, memoryCount: memory.length }) }), true;
+      return sendJson(response, 200, { ok: true, capabilities: capabilityView({ toolRuns: [...latest.values()], webRuns, env, databaseOk, memoryCount: memory.length, supabaseCheck: supabaseChecks[0]?.payload || null }) }), true;
     }
     return sendJson(response, 404, { ok: false, error: 'NOT_FOUND' }), true;
   } catch (error) {

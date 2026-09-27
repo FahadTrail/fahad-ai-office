@@ -90,6 +90,9 @@ export class OfficeModelRunner {
     hooks = {},
     beforeCall = null,
     onlyProvider = null,
+    // Work done before this step had to wait for capacity: completed tool
+    // calls are handed to the model instead of being run again.
+    resume = null,
   }) {
     const started = Date.now();
     const pool = this.poolFactory({ env: this.env, fetchFn: this.fetchFn });
@@ -134,11 +137,18 @@ export class OfficeModelRunner {
     let partial = '';
     let continuations = 0;
 
+    for (const call of Array.isArray(resume?.completedToolCalls) ? resume.completedToolCalls.slice(0, 40) : []) {
+      if (!call?.name) continue;
+      const args = call.args && typeof call.args === 'object' ? call.args : {};
+      const summary = String(call.summary || '').slice(0, 1500);
+      completed.push({ key: `${call.name}:${JSON.stringify(args)}`, name: call.name, args, result: { resumed: true, summary }, summary });
+    }
     const handoff = () => {
       if (!completed.length) return [userText(prompt)];
       const lines = completed.map((entry, index) => `${index + 1}. ${entry.name}(${JSON.stringify(entry.args)}) → ${entry.summary}`);
       return [userText(`${prompt}\n\nCHECKPOINT — work already completed on this task by a previous model. Do NOT repeat these tool calls; build on their results:\n${lines.join('\n')}`)];
     };
+    if (completed.length) messages = handoff();
     const checkpoint = async (kind, detail) => {
       checkpointSequence += 1;
       const saved = {
@@ -204,6 +214,8 @@ export class OfficeModelRunner {
       } catch (error) {
         lastEvaluation = error.evaluations || null;
         error.officeRouting = { job, dataClass, path, switches, escalations, evaluations: lastEvaluation };
+        // What this step already did, so a resumed attempt does not redo it.
+        error.officeCheckpoint = { completedToolCalls: completed.slice(-40).map((entry) => ({ name: entry.name, args: entry.args, summary: String(entry.summary || '').slice(0, 1500) })) };
         throw error;
       }
       const route = result.route;

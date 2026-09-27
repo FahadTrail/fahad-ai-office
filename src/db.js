@@ -130,6 +130,16 @@ export class SupabaseStore {
     return data;
   }
 
+  // No model capacity right now: the task waits (queued, not claimable until
+  // `until`) instead of failing. Returns { waiting } or { exhausted }.
+  async deferTask(task, { until, info = {}, maxWaits = 48 }) {
+    const { data, error } = await this.db.rpc('defer_task', {
+      p_task: task.task_id, p_run: task.run_id, p_until: until, p_info: info, p_max_waits: maxWaits,
+    });
+    if (error) throw new Error('defer_task failed: ' + error.message);
+    return data;
+  }
+
   async requeueStaleTasks(minutes) {
     const { data, error } = await this.db.rpc('requeue_stale_tasks', {
       p_older_than: `${minutes} minutes`,

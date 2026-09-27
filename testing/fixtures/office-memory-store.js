@@ -54,11 +54,14 @@ export class MemoryStore {
   }
 
   async claimNextTask() {
-    const task = this.tasks.find((candidate) => candidate.status === 'queued' && candidate.depends_on.every((id) => this.tasks.find((dependency) => dependency.id === id)?.status === 'done'));
+    const task = this.tasks.find((candidate) => candidate.status === 'queued' && this.jobs.find((job) => job.id === candidate.job_id)?.status === 'running'
+      && (!candidate.not_before || candidate.not_before <= this.now)
+      && candidate.depends_on.every((id) => this.tasks.find((dependency) => dependency.id === id)?.status === 'done'));
     if (!task) return null;
     task.status = 'running';
     task.attempts += 1;
     task.started_at = this.now;
+    task.not_before = null;
     const run = { id: this.id('run'), task_id: task.id, job_id: task.job_id, agent_id: task.agent_id, attempt_no: task.attempts, status: 'running', model: null, tokens_in: 0, tokens_out: 0, cost_usd: 0 };
     this.runs.push(run);
     await this.emit({ jobId: task.job_id, taskId: task.id, runId: run.id, agentId: task.agent_id, type: 'agent_started', message: task.title, payload: { attempt: task.attempts } });
@@ -67,7 +70,8 @@ export class MemoryStore {
       const result = [...this.results].reverse().find((candidate) => candidate.task_id === id);
       return { task_id: id, title: dependency.title, agent_slug: dependency.agent_slug, summary: result?.summary, content: result?.content };
     });
-    return { task_id: task.id, job_id: task.job_id, run_id: run.id, agent_id: task.agent_id, agent_slug: task.agent_slug, attempt_no: task.attempts, max_attempts: task.max_attempts, title: task.title, brief: task.brief, goal: this.jobs.find((job) => job.id === task.job_id).goal, project_id: this.jobs.find((job) => job.id === task.job_id).project_id, upstream };
+    return { task_id: task.id, job_id: task.job_id, run_id: run.id, agent_id: task.agent_id, agent_slug: task.agent_slug, attempt_no: task.attempts, max_attempts: task.max_attempts, title: task.title, brief: task.brief, goal: this.jobs.find((job) => job.id === task.job_id).goal, project_id: this.jobs.find((job) => job.id === task.job_id).project_id, upstream,
+      wait_count: task.wait_count || 0, wait_info: task.wait_info ? structuredClone(task.wait_info) : null };
   }
 
   async completeTask(claim, result, summary) {
@@ -115,6 +119,20 @@ export class MemoryStore {
     job.status = 'failed';
     await this.emit({ jobId: job.id, agentId: task.agent_id, type: 'job_failed', message: 'Job failed' });
     return { will_retry: false };
+  }
+
+  // Mirrors public.defer_task (20260930090000_office_capacity_wait.sql).
+  async deferTask(claim, { until, info = {}, maxWaits = 48 }) {
+    const task = this.tasks.find((candidate) => candidate.id === claim.task_id);
+    if (task.status !== 'running') return { ignored: true, status: task.status };
+    if ((task.wait_count || 0) >= maxWaits) return { exhausted: true, wait_count: task.wait_count };
+    const at = Math.min(Math.max(Date.parse(until) || this.now, this.now + 30_000), this.now + 24 * 3600_000);
+    const run = this.runs.find((candidate) => candidate.id === claim.run_id);
+    Object.assign(run, { status: 'cancelled', error_message: 'WAITING_FOR_CAPACITY', ended_at: this.now });
+    Object.assign(task, { status: 'queued', started_at: null, not_before: at, wait_count: (task.wait_count || 0) + 1, wait_info: structuredClone(info), max_attempts: task.max_attempts + 1 });
+    await this.emit({ jobId: task.job_id, taskId: task.id, runId: run.id, agentId: task.agent_id, type: 'status_changed', level: 'warning',
+      message: 'Waiting for free model capacity — will resume automatically.', payload: { status: 'WAITING_FOR_CAPACITY', until: new Date(at).toISOString(), wait_count: task.wait_count, ...structuredClone(info) } });
+    return { waiting: true, until: new Date(at).toISOString(), wait_count: task.wait_count };
   }
 
   async requeueStaleTasks() {

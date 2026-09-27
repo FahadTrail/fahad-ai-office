@@ -2,6 +2,7 @@ import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validatePlan } from
 import { DISPATCHABLE, mentionedEmployees, officeAgent } from './office/agents.js';
 import { converseDirect, parseConsultRequest, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
 import { parseArtifacts, parseSources } from './office/artifacts.js';
+import { CAPACITY_LIMITS, capacityDecision } from './office/capacity.js';
 import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
 import { EscalationRequired, classifyOfficeData } from './office/pool-runner.js';
 import {
@@ -148,6 +149,21 @@ export class OfficeWorkflow {
       else if (brief.stage === STAGES.CONSULT) await this.executeConsult(task, brief);
       else throw new Error('Unsupported workflow stage');
     } catch (error) {
+      // No model may run this step right now: wait for free capacity when it
+      // is expected to recover, fail with the real blocker when it is not.
+      const capacity = capacityDecision(error, { now: this.now(), waitCount: Number(task.wait_count || 0) });
+      if (capacity?.kind === 'wait' && typeof this.store.deferTask === 'function') {
+        const checkpoint = error.officeCheckpoint?.completedToolCalls?.length ? error.officeCheckpoint
+          : task.wait_info?.checkpoint || null;
+        const deferred = await this.store.deferTask(task, {
+          until: capacity.until, maxWaits: CAPACITY_LIMITS.maxWaits,
+          info: { ...capacity.info, stage: brief?.stage || null, ...(checkpoint ? { checkpoint: fitCheckpoint(checkpoint) } : {}) },
+        });
+        if (deferred?.waiting || deferred?.ignored) return { ok: false, waiting: Boolean(deferred.waiting), until: deferred.until || capacity.until };
+        error = Object.assign(new Error(`Waited ${deferred?.wait_count ?? CAPACITY_LIMITS.maxWaits} times for free model capacity; none recovered. Blocker: ${capacity.info.routes.map((route) => `${route.id} ${route.reasons.join('+')}`).slice(0, 4).join('; ')}`), { code: 'CAPACITY_WAIT_EXHAUSTED' });
+      } else if (capacity?.kind === 'blocked') {
+        error = Object.assign(new Error(`No allowed model can run this step: ${capacity.summary.text}`), { code: 'NO_ALLOWED_MODEL' });
+      }
       const safe = safeError(error);
       const failure = await this.store.failTask(task, safe);
       if (failure?.ignored) return { ok: failure.status === 'done', error: safe };
@@ -708,6 +724,7 @@ export class OfficeWorkflow {
       context: execution.gatewayContext,
       validate,
       beforeCall: drillFailover ? failoverDrill() : null,
+      resume: task.wait_info?.checkpoint || null,
       hooks: {
         onAttempt: execution.onAttempt,
         onCheckpoint: execution.onCheckpoint,
@@ -958,4 +975,11 @@ export function escalationDrill(validate) {
     }
     return validate(text);
   };
+}
+
+// A checkpoint stored with a waiting task stays small (wait_info ≤ 20 KB).
+function fitCheckpoint(checkpoint) {
+  const calls = (checkpoint.completedToolCalls || []).map((call) => ({ name: call.name, args: call.args, summary: String(call.summary || '').slice(0, 1200) }));
+  while (calls.length && JSON.stringify(calls).length > 14_000) calls.shift();
+  return { completedToolCalls: calls };
 }

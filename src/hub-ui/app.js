@@ -361,11 +361,11 @@ function welcomeAgent(who) {
   </div>`;
 }
 
-const FLOW_ICON = { done: '✓', working: '●', waiting: '○', ready: '○', failed: '✕', blocked: '✕' };
+const FLOW_ICON = { done: '✓', working: '●', waiting: '○', ready: '○', failed: '✕', blocked: '✕', capacity: '⏸' };
 function flowCard(flow, jobId) {
   if (!flow) return '';
   return `<a class="flow-card" href="#/workflow/${esc(jobId)}"><div class="small faint">Chief of Staff dispatched the team</div>
-    ${flow.streams.map((stream) => `<div class="flow-row st-${esc(stream.state)}"><span class="flow-icon">${FLOW_ICON[stream.state] || '○'}</span><strong>${esc(stream.agent)}</strong><span class="muted grow">${esc(stream.title)}</span><span class="xs faint">${esc(stream.state)}</span></div>`).join('')}
+    ${flow.streams.map((stream) => `<div class="flow-row st-${esc(stream.state)}"><span class="flow-icon">${FLOW_ICON[stream.state] || '○'}</span><strong>${esc(stream.agent)}</strong><span class="muted grow">${esc(stream.title)}</span><span class="xs faint">${esc(stream.state === 'capacity' ? 'waiting for free capacity' : stream.state)}</span></div>`).join('')}
     <div class="flow-row st-${esc(flow.synthesis)}"><span class="flow-icon">${FLOW_ICON[flow.synthesis] || '○'}</span><strong>Chief of Staff</strong><span class="muted grow">Consolidated result</span><span class="xs faint">${esc(flow.synthesis)}</span></div>
     <div class="xs" style="margin-top:var(--s-2)">Open the workflow →</div></a>`;
 }
@@ -705,7 +705,7 @@ async function renderAgent(slug) {
   every(5000, async () => { try { const data = await load(); const next = JSON.stringify(data); if (next !== last) { last = next; draw(data); artifacts(); } } catch {} });
 }
 
-const NODE_WORD = { done: 'Done', working: 'Working', waiting: 'Waiting', ready: 'Starting', failed: 'Failed', blocked: 'Blocked' };
+const NODE_WORD = { done: 'Done', working: 'Working', waiting: 'Waiting', ready: 'Starting', failed: 'Failed', blocked: 'Blocked', capacity: 'Waiting for free model capacity — will resume automatically' };
 async function renderWorkflow(jobId) {
   let signature = '';
   const load = async () => {
@@ -721,7 +721,7 @@ async function renderWorkflow(jobId) {
     const needs = (node) => node.dependsOn.map((id) => byId.get(id)).filter((dep) => dep && dep.kind !== 'plan' && dep.kind !== 'synthesis').map((dep) => dep.agentLabel);
     const nodeRow = (node) => `<div class="flow-node st-${esc(node.state)}"><span class="flow-icon">${FLOW_ICON[node.state] || '○'}</span>
       <div class="grow"><div><strong>${esc(node.agentLabel)}</strong> — ${esc(node.title)}${node.revision ? ' <span class="pill st-waiting">revision</span>' : ''}</div>
-      <div class="xs faint">${esc(NODE_WORD[node.state] || node.state)}${needs(node).length ? ` · after ${esc([...new Set(needs(node))].join(', '))}` : ''}${node.completedAt ? ` · ${when(node.completedAt)}` : ''}</div>
+      <div class="xs faint">${esc(NODE_WORD[node.state] || node.state)}${needs(node).length ? ` · after ${esc([...new Set(needs(node))].join(', '))}` : ''}${node.completedAt ? ` · ${when(node.completedAt)}` : ''}${node.state === 'capacity' && node.resumesAt ? ` · retry ${esc(new Date(node.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}` : ''}</div>
       ${node.codingTask ? `<a class="xs" href="#/task/${esc(node.codingTask.id)}">Coding Agent task: ${esc(STATUS_WORDS[node.codingTask.status] || node.codingTask.status)} · ${esc(stageWord(node.codingTask.phase))}</a>` : ''}
       ${node.output?.summary ? `<div class="small" dir="auto">${esc(node.output.summary)}</div>` : ''}</div></div>`;
     view.innerHTML = `<div class="page stack">

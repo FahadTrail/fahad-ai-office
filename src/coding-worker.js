@@ -12,6 +12,7 @@ import { SupabaseWorkspacePolicyStore } from './workspace-policy/supabase-store.
 import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
 import { CodingWorker, createCodingRuntime } from './coding-agent/runtime.js';
 import { codeFingerprint } from './build-info.js';
+import { supabaseCheckEvent, supabaseSelfCheck } from './coding-agent/supabase-check.js';
 
 const log = (...parts) => console.log(`[${new Date().toISOString()}] [coding-worker]`, ...parts);
 
@@ -73,6 +74,14 @@ async function main() {
   });
   const routable = runtime.pool.filter((route) => !route.unavailableReasons.length).map((route) => route.id);
   log(`code ${build.codeFingerprint}; sandbox mode: ${runtime.mode}; routable models: ${routable.join(', ') || 'none'}`);
+  // Read-only Supabase tools self-check (no model call; result is metadata).
+  supabaseSelfCheck({
+    record: async (report) => {
+      const { error } = await db.from('events').insert(supabaseCheckEvent(report));
+      if (error) log('WARN supabase self-check not recorded:', error.message);
+    },
+  }).then((report) => log(`Supabase tools self-check: ${report.ok ? 'OK' : `not verified (${report.error_code || 'failed'})`}`))
+    .catch((error) => log('WARN supabase self-check failed:', error?.code || 'error'));
   const worker = new CodingWorker({
     runtime, sessionStore, log,
     onHeartbeat: (state) => writeFileSync('/tmp/fahad-coding-worker-health.json', JSON.stringify({ ...state, pid: process.pid, updatedAt: Date.now() })),
