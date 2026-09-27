@@ -53,7 +53,7 @@ export async function renderOffice(ctx) {
     </header>
     <div class="office-stats" id="officeStats" aria-live="polite"></div>
     <div class="office-body">
-      <section class="scene" id="scene" aria-label="Office floor"><div class="floor" id="floor"><svg class="handoff-layer" id="handoffLayer" aria-hidden="true"></svg><div class="stations" id="stations"></div></div>
+      <section class="scene" id="scene" aria-label="Office floor"><div class="floor" id="floor"><svg class="handoff-layer" id="handoffLayer" role="group" aria-label="Handoffs between employees"></svg><div class="stations" id="stations"></div></div>
         <div class="scene-legend" aria-hidden="true"><span><i class="lg lg-working"></i>Working</span><span><i class="lg lg-waiting"></i>Waiting</span><span><i class="lg lg-needs"></i>Needs you</span><span><i class="lg lg-done"></i>Just delivered</span><span><i class="lg lg-handoff"></i>Handoff</span></div>
       </section>
       <aside class="office-side">

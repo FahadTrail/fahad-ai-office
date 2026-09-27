@@ -47,7 +47,11 @@ for (const theme of themeFlag === 'both' ? ['dark', 'light'] : [themeFlag]) {
       await page.goto(`${url}${hash}`);
       await page.waitForTimeout(900);
       if (cardText) { await page.locator('.lib-card', { hasText: cardText }).first().click(); await page.waitForTimeout(700); }
-      if (selector) { await page.locator(selector).first().dispatchEvent('click'); await page.waitForTimeout(700); }
+      if (selector) {
+        // Narrow layouts show the floor as cards without handoff lines; skip.
+        if (!(await page.locator(selector).count())) continue;
+        await page.locator(selector).first().dispatchEvent('click'); await page.waitForTimeout(700);
+      }
       await page.screenshot({ path: join(outDir, `${label}-${name}-${size}-${theme}.png`), fullPage: size === 'mobile' ? false : true });
     }
     await context.close();

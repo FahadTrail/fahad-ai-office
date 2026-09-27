@@ -19,7 +19,7 @@ export const ARTIFACT_LABELS = Object.freeze({
 });
 
 const tag = (text, kind = '') => `<span class="tag ${esc(kind)}">${esc(text)}</span>`;
-const table = (columns, rows) => `<div class="art-scroll"><table class="art-table"><thead><tr>${columns.map((column) => `<th>${esc(column)}</th>`).join('')}</tr></thead>
+const table = (columns, rows) => `<div class="art-scroll" tabindex="0" role="region" aria-label="Table"><table class="art-table"><thead><tr>${columns.map((column) => `<th>${esc(column)}</th>`).join('')}</tr></thead>
   <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td dir="auto">${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 
 function chart(data) {
@@ -109,7 +109,7 @@ const RENDER = {
     <span class="xs faint">${esc([item.start, item.end].filter(Boolean).join(' → '))}</span>${item.status ? ` ${tag(item.status, 'muted')}` : ''}${item.detail ? `<div class="small muted" dir="auto">${esc(item.detail)}</div>` : ''}</div></li>`).join('')}</ol>`,
   checklist: (data) => `<ul class="art-check">${arr(data.items).map((item) => `<li class="ck-${esc(item.status || 'todo')}"><span class="ck-box">${{ done: '✓', pass: '✓', fail: '✕', blocked: '!' }[item.status] || ''}</span>
     <span class="grow" dir="auto">${esc(item.text)}${item.note ? `<span class="small muted"> — ${esc(item.note)}</span>` : ''}</span>${item.owner ? tag(String(item.owner).toUpperCase(), 'muted') : ''}</li>`).join('')}</ul>`,
-  kanban: (data) => `<div class="art-kanban">${arr(data.columns, 6).map((column) => `<div class="kb-col"><div class="kb-head">${esc(column.name)} <span class="faint">${arr(column.cards, 20).length}</span></div>
+  kanban: (data) => `<div class="art-kanban" tabindex="0" role="region" aria-label="Board">${arr(data.columns, 6).map((column) => `<div class="kb-col"><div class="kb-head">${esc(column.name)} <span class="faint">${arr(column.cards, 20).length}</span></div>
     ${arr(column.cards, 20).map((card) => `<div class="kb-card"><div dir="auto">${esc(card.title)}</div>${card.detail ? `<div class="xs muted" dir="auto">${esc(card.detail)}</div>` : ''}</div>`).join('')}</div>`).join('')}</div>`,
   flow: (data) => {
     const steps = arr(data.steps, 30);
