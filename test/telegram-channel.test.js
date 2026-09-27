@@ -99,7 +99,7 @@ test('results and approval requests come back once; buttons record the Hub decis
   await channel.flushOutbox();
   const outgoing = sent.filter((entry) => entry.method === 'sendMessage').slice(1);
   assert.equal(outgoing.length, 2, 'each item is delivered once');
-  assert.match(outgoing[0].body.text, /^Plan\nBold answer\n\[visual in the Hub\]/);
+  assert.match(outgoing[0].body.text, /^Plan\nBold answer\n◧ Table — open in the Hub/, "a rich deliverable is named and stays in the Hub");
   assert.deepEqual(outgoing[1].body.reply_markup.inline_keyboard[0].map((button) => button.callback_data),
     ['ap:11111111-2222-4333-8444-555555555555:approved', 'ap:11111111-2222-4333-8444-555555555555:rejected']);
   await channel.handleUpdate({ update_id: 9, callback_query: { id: 'cb', data: 'ap:11111111-2222-4333-8444-555555555555:approved', message: { chat: { id: Number(OWNER) } } } });

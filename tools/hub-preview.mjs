@@ -10,7 +10,7 @@ import { memoryPostgrest } from '../testing/fixtures/memory-postgrest.js';
 import { previewTables } from '../testing/fixtures/hub-preview-data.js';
 
 export function startPreview({ port = 4173, now = Date.now() } = {}) {
-  const db = memoryPostgrest(previewTables(now));
+  const db = memoryPostgrest(previewTables(now), { rpc: { model_usage_summary: () => ({ data: [], error: null }) } });
   const store = {
     createJob: async ({ title, goal, projectId, conversationId }) => {
       const job = { id: crypto.randomUUID(), title, goal, project_id: projectId, conversation_id: conversationId || null, status: 'planning', progress: 0, created_at: new Date().toISOString() };

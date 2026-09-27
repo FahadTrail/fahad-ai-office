@@ -8,7 +8,7 @@ import { escapeHtml, renderMarkdown } from '../src/hub-ui/markdown.js';
 const file = (name) => fileURLToPath(new URL(`../src/hub-ui/${name}`, import.meta.url));
 
 test('the Workspace V2 scripts are valid modules', () => {
-  for (const name of ['app.js', 'markdown.js', 'auth.js', 'office.js', 'characters.js', 'artifacts.js']) execFileSync(process.execPath, ['--check', file(name)]);
+  for (const name of ['app.js', 'markdown.js', 'auth.js', 'office.js', 'characters.js', 'artifacts.js', 'project.js', 'library.js', 'export.js', 'humanize.js']) execFileSync(process.execPath, ['--check', file(name)]);
 });
 
 test('markdown renders the common constructs', () => {
@@ -43,7 +43,7 @@ test('the V2 interface uses the centralized design tokens and covers the owner f
   assert.match(css, /@media \(max-width: 900px\)/);
   assert.match(css, /:root\[data-theme="light"\]/, 'Fahad can choose the light theme');
   assert.match(readFileSync(file('office.css'), 'utf8'), /prefers-reduced-motion: reduce\) \{\s*\.office \*/, 'the Live Office respects reduced motion');
-  for (const phrase of ['/api/artifacts', '/api/command-center', 'renderArtifact', 'drawHandoffs', '#/employees', '#/integrations']) assert.ok(js.includes(phrase) || readFileSync(file('office.js'), 'utf8').includes(phrase) || readFileSync(file('index.html'), 'utf8').includes(phrase), phrase);
+  for (const phrase of ['/api/artifacts', '/api/command-center', 'renderArtifact', 'drawHandoffs', '#/employees', '#/integrations']) assert.ok(['app.js', 'office.js', 'project.js', 'index.html'].some((name) => readFileSync(file(name), 'utf8').includes(phrase)), phrase);
   for (const phrase of ['What do you want me to build or fix?', 'Reply &amp; Continue', 'data-decide="approved"', 'data-decide="rejected"', 'View details', 'Needs attention', '/api/tasks/${id}/reply']) {
     assert.ok(js.includes(phrase), phrase);
   }

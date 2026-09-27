@@ -151,10 +151,20 @@ const HELP = [
   '/status — what is in progress and waiting for you.',
 ].join('\n');
 
+const ARTIFACT_NAMES = { table: 'Table', chart: 'Chart', timeline: 'Timeline', checklist: 'Checklist', kanban: 'Board', flow: 'Flow', moodboard: 'Moodboard', financial_model: 'Financial model',
+  compliance_matrix: 'Compliance matrix', audit_report: 'Audit report', content_calendar: 'Content calendar', evidence: 'Evidence', risk_matrix: 'Risk matrix' };
+
 // Telegram shows plain text reliably; artifacts stay in the Hub.
 export function plain(markdown) {
   return String(markdown || '')
-    .replace(/```artifact[\s\S]*?```/g, '[visual in the Hub]')
+    .replace(/```artifact\s*([\s\S]*?)```/g, (_, body) => {
+      // A rich deliverable stays in the Hub; Telegram gets its name.
+      try {
+        const artifact = JSON.parse(body);
+        const kind = ARTIFACT_NAMES[artifact.type] || 'Visual';
+        return `◧ ${kind}${artifact.title ? `: ${String(artifact.title).slice(0, 80)}` : ''} — open in the Hub`;
+      } catch { return '◧ Visual — open in the Hub'; }
+    })
     .replace(/```[a-z]*\n?/gi, '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/^#{1,6}\s*/gm, '')

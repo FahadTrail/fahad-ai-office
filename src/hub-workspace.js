@@ -5,6 +5,7 @@
 // themselves (Chief workflow, Coding Agent controller) are unchanged.
 
 import { SESSION_FIELDS, modelPoolSnapshot, publicSession, publicEvent } from './hub-coding.js';
+import { ACTIVE_AGENTS, NICKNAMES } from './office/agents.js';
 import { officeAgent } from './office/agents.js';
 
 // Structured memory (see the final-roster migration's project_memory check).
@@ -212,7 +213,10 @@ export function taskView(session, { events = [], approvals = [], attempts = [] }
 
 // ------------------------------------------------------------------ attention
 
-export function attentionFrom({ sessions = [], approvals = [], failedJobs = [] }) {
+// Needs Fahad: only meaningful interruptions, each with a category and a
+// priority (URGENT / ACTION NEEDED / INFO). Routine completion is never urgent.
+export const PRIORITY = Object.freeze({ URGENT: 'URGENT', ACTION: 'ACTION NEEDED', INFO: 'INFO' });
+export function attentionFrom({ sessions = [], approvals = [], failedJobs = [], artifacts = [], completedObjectives = [] }) {
   const items = [];
   const bySession = new Map();
   for (const approval of approvals) {
@@ -221,15 +225,34 @@ export function attentionFrom({ sessions = [], approvals = [], failedJobs = [] }
   }
   for (const session of sessions) {
     const need = ownerAction(session, bySession.get(session.id) || []);
-    if (need) items.push({ kind: need.kind, severity: need.kind === 'approval' ? 'action' : need.kind === 'question' ? 'action' : 'warning', taskId: session.id, title: session.title, detail: need.kind === 'question' ? need.question : need.kind === 'approval' ? need.items.map((item) => item.what).join('; ') : need.explanation, at: session.updated_at });
-    else if (session.status === 'failed') items.push({ kind: 'failed', severity: 'error', taskId: session.id, title: session.title, detail: String(session.blocker || session.error_code || 'The task failed.').slice(0, 300), at: session.updated_at });
-    else if (session.status === 'completed') items.push({ kind: 'completed', severity: 'info', taskId: session.id, title: session.title, detail: session.result?.summary ? String(session.result.summary).slice(0, 300) : 'Completed.', at: session.completed_at || session.updated_at });
+    if (need) {
+      const risky = need.kind === 'approval' && (bySession.get(session.id) || []).some((approval) => ['high', 'critical'].includes(String(approval.risk || '').toLowerCase()));
+      items.push({ kind: need.kind, severity: need.kind === 'approval' ? 'action' : need.kind === 'question' ? 'action' : 'warning',
+        category: { approval: 'APPROVAL', question: 'ANSWER REQUIRED' }[need.kind] || 'NEEDS OWNER', priority: risky ? PRIORITY.URGENT : PRIORITY.ACTION,
+        taskId: session.id, title: session.title, detail: need.kind === 'question' ? need.question : need.kind === 'approval' ? need.items.map((item) => item.what).join('; ') : need.explanation, at: session.updated_at });
+    } else if (session.status === 'failed') items.push({ kind: 'failed', severity: 'error', category: 'FAILED TASK', priority: PRIORITY.ACTION, taskId: session.id, title: session.title, detail: String(session.blocker || session.error_code || 'The task failed.').slice(0, 300), at: session.updated_at });
+    else if (session.status === 'completed') items.push({ kind: 'completed', severity: 'info', category: 'COMPLETED', priority: PRIORITY.INFO, taskId: session.id, title: session.title, detail: session.result?.summary ? String(session.result.summary).slice(0, 300) : 'Completed.', at: session.completed_at || session.updated_at });
   }
   for (const job of failedJobs) {
-    items.push({ kind: 'failed', severity: 'error', conversationId: job.conversation_id, jobId: job.id, title: job.title || 'Chat request', detail: 'The Office could not finish this request.', at: job.completed_at || job.created_at });
+    items.push({ kind: 'failed', severity: 'error', category: 'FAILED TASK', priority: PRIORITY.ACTION, conversationId: job.conversation_id, jobId: job.id, title: job.title || 'Chat request', detail: 'The Office could not finish this request.', at: job.completed_at || job.created_at });
   }
-  const rank = { action: 0, error: 1, warning: 2, info: 3 };
-  return items.toSorted((left, right) => rank[left.severity] - rank[right.severity] || String(right.at).localeCompare(String(left.at)));
+  for (const artifact of artifacts) {
+    if (artifact.type === 'compliance_matrix') {
+      const flagged = (artifact.data?.items || []).filter((item) => ['PROFESSIONAL REVIEW REQUIRED', 'RISK FLAG'].includes(item.classification));
+      if (flagged.length) items.push({ kind: 'legal', severity: 'action', category: 'LEGAL DECISION', priority: PRIORITY.ACTION, jobId: artifact.job_id, conversationId: artifact.conversation_id || null, artifactId: artifact.id,
+        title: artifact.title || 'Compliance review', detail: `${flagged.length} item${flagged.length === 1 ? '' : 's'} need${flagged.length === 1 ? 's' : ''} your decision or a lawyer’s review: ${flagged.slice(0, 2).map((item) => item.requirement).join('; ')}`, at: artifact.created_at });
+    }
+    if (artifact.type === 'audit_report') {
+      const findings = (artifact.data?.findings || []).filter((finding) => finding.severity === 'critical' || (finding.severity === 'high' && /secur|privacy|auth|secret|access/i.test(`${finding.area} ${finding.title}`)));
+      if (findings.length) items.push({ kind: 'security', severity: 'action', category: 'SECURITY DECISION', priority: findings.some((finding) => finding.severity === 'critical') ? PRIORITY.URGENT : PRIORITY.ACTION,
+        jobId: artifact.job_id, conversationId: artifact.conversation_id || null, artifactId: artifact.id, title: artifact.title || 'Audit', detail: findings.slice(0, 2).map((finding) => `${finding.severity}: ${finding.title}`).join('; '), at: artifact.created_at });
+    }
+  }
+  for (const job of completedObjectives) {
+    items.push({ kind: 'completed', severity: 'info', category: 'PROJECT COMPLETE', priority: PRIORITY.INFO, jobId: job.id, conversationId: job.conversation_id || null, title: job.title || 'Objective', detail: 'The team delivered; CHIEF consolidated the result.', at: job.completed_at || job.created_at });
+  }
+  const rank = { [PRIORITY.URGENT]: 0, [PRIORITY.ACTION]: 1, [PRIORITY.INFO]: 2 };
+  return items.toSorted((left, right) => rank[left.priority] - rank[right.priority] || String(right.at).localeCompare(String(left.at)));
 }
 
 // ------------------------------------------------------------------ models
@@ -368,9 +391,15 @@ function messageFromJob(job, { results = [], sessions = [], attempts = [], steps
 
 // ------------------------------------------------------------------ handler
 
+// A table added by a later migration reads as empty until it exists.
+async function optional(query) {
+  const { data, error } = await query;
+  return error ? [] : data || [];
+}
+
 export async function handleWorkspaceApi({ db, request, response, url, sendJson, readJson, actor, store }) {
   const path = url.pathname;
-  if (!/^\/api\/(conversations|tasks|attention|projects|models)(\/|$)/.test(path)) return false;
+  if (!/^\/api\/(conversations|tasks|attention|projects|models|search)(\/|$)/.test(path)) return false;
   try {
     const method = request.method;
 
@@ -558,6 +587,35 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
     }
 
     // ---- needs attention
+    // Global search: a few results per kind, each a cheap indexed-prefix or
+    // bounded ilike query in the current project (never a full scan UI-side).
+    if (method === 'GET' && path === '/api/search') {
+      const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
+      const term = String(url.searchParams.get('q') || '').trim().slice(0, 80);
+      if (term.length < 2) return sendJson(response, 200, { ok: true, results: [] }), true;
+      const pattern = `%${term.replace(/[%_\\]/g, (char) => `\\${char}`)}%`;
+      const [conversations, jobs, artifacts, memory, sessions, projects] = await Promise.all([
+        optional(db.from('conversations').select('id,title,agent_slug,last_message_at').eq('project_id', workspaceId).eq('archived', false).ilike('title', pattern).order('last_message_at', { ascending: false }).limit(6)),
+        optional(db.from('jobs').select('id,title,goal,status,conversation_id,created_at').eq('project_id', workspaceId).ilike('goal', pattern).order('created_at', { ascending: false }).limit(6)),
+        optional(db.from('artifacts').select('id,type,title,agent_slug,job_id,created_at').eq('project_id', workspaceId).ilike('title', pattern).order('created_at', { ascending: false }).limit(6)),
+        optional(db.from('project_memory').select('id,kind,content').eq('project_id', workspaceId).ilike('content', pattern).limit(6)),
+        optional(db.from('agent_sessions').select('id,title,status,updated_at').eq('workspace_id', workspaceId).ilike('title', pattern).order('updated_at', { ascending: false }).limit(6)),
+        optional(db.from('projects').select('id,name').ilike('name', pattern).limit(6)),
+      ]);
+      const lower = term.toLowerCase();
+      const employees = ACTIVE_AGENTS.filter((agent) => [agent.label, agent.key, agent.scope, ...(NICKNAMES[agent.key] || [])].some((value) => String(value).toLowerCase().includes(lower))).slice(0, 6);
+      const results = [
+        ...employees.map((agent) => ({ kind: 'employee', id: agent.slug, title: agent.label, detail: agent.deliverable, href: `#/agent/${agent.slug}` })),
+        ...projects.map((project) => ({ kind: 'project', id: project.id, title: project.name, href: `#/project/${project.id}` })),
+        ...conversations.map((conversation) => ({ kind: 'conversation', id: conversation.id, title: conversation.title, detail: conversation.agent_slug ? 'Direct chat' : 'Chat with CHIEF', href: `#/chat/${conversation.id}` })),
+        ...jobs.map((job) => ({ kind: 'objective', id: job.id, title: job.title || String(job.goal).slice(0, 120), detail: job.status, href: job.conversation_id ? `#/chat/${job.conversation_id}` : `#/workflow/${job.id}` })),
+        ...sessions.map((session) => ({ kind: 'task', id: session.id, title: session.title, detail: session.status, href: `#/task/${session.id}` })),
+        ...artifacts.map((artifact) => ({ kind: 'artifact', id: artifact.id, title: artifact.title || artifact.type, detail: `${artifact.type} · ${String(artifact.agent_slug || '')}`, href: `#/artifacts/${artifact.type}` })),
+        ...memory.map((item) => ({ kind: 'memory', id: item.id, title: String(item.content).slice(0, 140), detail: item.kind, href: `#/project/${workspaceId}` })),
+      ];
+      return sendJson(response, 200, { ok: true, results }), true;
+    }
+
     if (method === 'GET' && path === '/api/attention') {
       const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
       const since = new Date(Date.now() - 3 * 24 * 3600_000).toISOString();
@@ -568,8 +626,15 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         rows(db.from('jobs').select('id,title,conversation_id,status,created_at,completed_at').eq('project_id', workspaceId).eq('status', 'failed')
           .not('conversation_id', 'is', null).gte('created_at', since).limit(20)),
       ]);
-      const items = attentionFrom({ sessions, approvals, failedJobs });
-      return sendJson(response, 200, { ok: true, items, counts: { action: items.filter((item) => item.severity === 'action').length, total: items.length } }), true;
+      const weekAgo = new Date(Date.now() - 7 * 24 * 3600_000).toISOString();
+      const [artifacts, completedJobs] = await Promise.all([
+        optional(db.from('artifacts').select('id,job_id,conversation_id,type,title,data,created_at').eq('project_id', workspaceId).in('type', ['compliance_matrix', 'audit_report']).gte('created_at', weekAgo).order('created_at', { ascending: false }).limit(20)),
+        rows(db.from('jobs').select('id,title,conversation_id,status,created_at,completed_at').eq('project_id', workspaceId).eq('status', 'completed').gte('completed_at', since).order('completed_at', { ascending: false }).limit(20)),
+      ]);
+      // A major completion is a multi-employee objective (it has a synthesis step).
+      const synthesized = completedJobs.length ? new Set((await rows(db.from('tasks').select('job_id,brief').in('job_id', completedJobs.map((job) => job.id)))).filter((task) => /"stage":"synthesis"/.test(task.brief || '')).map((task) => task.job_id)) : new Set();
+      const items = attentionFrom({ sessions, approvals, failedJobs, artifacts, completedObjectives: completedJobs.filter((job) => synthesized.has(job.id)) });
+      return sendJson(response, 200, { ok: true, items, counts: { action: items.filter((item) => item.priority !== PRIORITY.INFO).length, urgent: items.filter((item) => item.priority === PRIORITY.URGENT).length, total: items.length } }), true;
     }
 
     // ---- projects (context + memory)
@@ -607,6 +672,20 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         const { data, error } = await db.from('project_memory').insert({ project_id: id, kind, content, source: 'owner' }).select('id,kind,content,source,created_at').single();
         if (error) throw Object.assign(new Error(`Could not save: ${error.message}`), { statusCode: 500 });
         return sendJson(response, 201, { ok: true, memory: data }), true;
+      }
+      if (method === 'PATCH' && projectMatch[2] === 'memory' && projectMatch[3]) {
+        const body = await readJson(request);
+        const patch = {};
+        if (body.content !== undefined) patch.content = text(body.content, 'Memory', { min: 3, max: 2000 });
+        if (body.kind !== undefined) {
+          if (!MEMORY_KINDS.includes(body.kind)) throw input('Unknown memory type');
+          patch.kind = body.kind;
+        }
+        if (!Object.keys(patch).length) throw input('Nothing to change');
+        const { data, error } = await db.from('project_memory').update(patch).eq('id', uuid(projectMatch[3], 'memoryId')).eq('project_id', id).select('id,kind,content,source,created_at');
+        if (error) throw Object.assign(new Error(`Could not update: ${error.message}`), { statusCode: 500 });
+        if (!data?.length) return sendJson(response, 404, { ok: false, error: 'MEMORY_NOT_FOUND' }), true;
+        return sendJson(response, 200, { ok: true, memory: data[0] }), true;
       }
       if (method === 'DELETE' && projectMatch[2] === 'memory' && projectMatch[3]) {
         const { error } = await db.from('project_memory').delete().eq('id', uuid(projectMatch[3], 'memoryId')).eq('project_id', id);

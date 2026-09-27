@@ -175,7 +175,7 @@ export function artifactView(row) {
 
 // A project at a glance: what is moving, who is on it, what was produced,
 // what needs Fahad, open risks, spend and what the Office knows.
-export function commandCenter({ project, live, states, artifacts = [], memory = [], knowledge = [], costs = [], now = Date.now() }) {
+export function commandCenter({ project, live, states, artifacts = [], memory = [], knowledge = [], costs = [], finals = [], outputs = [], handoffs = [], now = Date.now() }) {
   const active = live.jobs.filter((job) => ['planning', 'running'].includes(job.status));
   const audits = artifacts.filter((artifact) => artifact.type === 'audit_report');
   const risks = [
@@ -190,7 +190,42 @@ export function commandCenter({ project, live, states, artifacts = [], memory = 
   ].slice(0, 12);
   const byKind = {};
   for (const item of memory) byKind[item.kind] = (byKind[item.kind] || 0) + 1;
+  // Executive layer: status, CHIEF's latest summary, progress, the whole team,
+  // next actions and decisions — each from a real row, or absent.
+  const section = (text, name) => (String(text || '').replace(/```artifact[\s\S]*?```/g, '').match(new RegExp(`^##\\s*${name}[^\\n]*\\n([\\s\\S]*?)(?=^##\\s|$(?![\\s\\S]))`, 'mi'))?.[1] || '').trim();
+  const bullets = (text) => text.split('\n').map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, '').trim()).filter((line) => line && !/^#/.test(line)).slice(0, 8);
+  // CHIEF's voice only: finals of objectives CHIEF planned (not direct chats).
+  const chiefJobs = new Set(live.tasks.filter((task) => stageOf(task.brief) === 'chief_plan').map((task) => task.job_id));
+  const latestFinal = finals.filter((final) => chiefJobs.has(final.job_id)).toSorted((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null;
+  const summaryText = latestFinal ? (section(latestFinal.content, 'Executive summary') || section(latestFinal.content, 'Summary') || parseOutput(latestFinal.content).summary) : '';
+  const criticalRisk = risks.some((risk) => risk.severity === 'critical');
+  const needs = live.approvals.length + live.sessions.filter((session) => session.status === 'blocked' && session.error_code === 'HUMAN_INPUT_REQUIRED').length;
+  const status = needs ? 'NEEDS FAHAD' : criticalRisk ? 'AT RISK' : active.length ? 'IN PROGRESS' : live.jobs.length ? 'UP TO DATE' : 'NO ACTIVITY';
+  const latestOutput = new Map();
+  for (const output of outputs.toSorted((a, b) => String(a.created_at).localeCompare(String(b.created_at)))) latestOutput.set(output.agent_slug, output);
+  const latestArtifact = new Map();
+  for (const artifact of artifacts) if (!latestArtifact.has(artifact.agent_slug)) latestArtifact.set(artifact.agent_slug, artifact);
+  const jobProgress = new Map(live.jobs.map((job) => [job.id, job.progress || 0]));
+  const chiefChecklist = artifacts.filter((artifact) => artifact.agent_slug === 'chief-of-staff' && artifact.type === 'checklist')[0];
+  const nextActions = latestFinal && section(latestFinal.content, 'Next actions') ? bullets(section(latestFinal.content, 'Next actions')).map((text) => ({ text, from: 'CHIEF' }))
+    : (chiefChecklist?.data?.items || []).filter((item) => item.status === 'todo').slice(0, 8).map((item) => ({ text: item.text, from: 'CHIEF', owner: item.owner || null }));
+  const decisionsForFahad = outputs.map((output) => ({ from: officeAgent(output.agent_slug)?.label || 'Agent', text: parseOutput(output.content).decisions, at: output.created_at, jobId: output.job_id }))
+    .filter((entry) => entry.text).slice(0, 6);
   return {
+    status,
+    summary: summaryText ? { text: summaryText.slice(0, 700), at: latestFinal.created_at, jobId: latestFinal.job_id } : null,
+    progress: active.length ? Math.round(active.reduce((sum, job) => sum + (job.progress || 0), 0) / active.length) : live.jobs.length ? 100 : 0,
+    roster: ACTIVE_AGENTS.filter((entry) => entry.executor !== 'chief').map((entry) => {
+      const state = states.get(entry.slug) || { state: 'AVAILABLE', detail: 'Available' };
+      const output = latestOutput.get(entry.slug);
+      const artifact = latestArtifact.get(entry.slug);
+      return { key: entry.key, slug: entry.slug, label: entry.label, state: state.state, detail: state.detail, task: state.state === 'AVAILABLE' ? null : state.assignment?.task || null,
+        progress: state.assignment?.jobId ? jobProgress.get(state.assignment.jobId) ?? null : null,
+        latest: output ? { summary: parseOutput(output.content).summary.slice(0, 220), at: output.created_at } : null,
+        artifact: artifact ? { id: artifact.id, title: artifact.title, type: artifact.type } : null };
+    }),
+    nextActions, decisionsForFahad,
+    handoffs,
     project: { id: project.id, name: project.name, description: project.description || '', repository: project.default_repository || null },
     objectives: { active: active.slice(0, 8).map((job) => ({ id: job.id, title: job.title || job.goal, status: job.status, progress: job.progress || 0 })),
       completed: live.jobs.filter((job) => job.status === 'completed').length, failed: live.jobs.filter((job) => job.status === 'failed').length },
@@ -443,8 +478,12 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
         if (!employee) throw Object.assign(new Error('Unknown employee'), { statusCode: 400 });
         query = query.eq('agent_slug', employee.slug);
       }
-      const artifacts = await optionalRows(query.order('created_at', { ascending: false }).limit(60));
-      return sendJson(response, 200, { ok: true, types: Object.keys(ARTIFACT_TYPES), artifacts: artifacts.map(artifactView) }), true;
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 60));
+      const artifacts = await optionalRows(query.order('created_at', { ascending: false }).limit(limit));
+      const jobIds = [...new Set(artifacts.map((artifact) => artifact.job_id).filter(Boolean))];
+      const jobs = jobIds.length ? await optionalRows(db.from('jobs').select('id,title,goal').in('id', jobIds)) : [];
+      const objective = new Map(jobs.map((job) => [job.id, job.title || String(job.goal || '').slice(0, 120)]));
+      return sendJson(response, 200, { ok: true, types: Object.keys(ARTIFACT_TYPES), artifacts: artifacts.map((artifact) => ({ ...artifactView(artifact), objective: objective.get(artifact.job_id) || null })) }), true;
     }
 
     if (path === '/api/command-center') {
@@ -459,7 +498,21 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
         jobIds.length ? optionalRows(db.from('jobs').select('cost_usd').in('id', jobIds)) : [],
       ]);
       if (!project) return sendJson(response, 404, { ok: false, error: 'PROJECT_NOT_FOUND' }), true;
-      return sendJson(response, 200, { ok: true, ...commandCenter({ project, live, states: officeState(live), artifacts, memory, knowledge, costs }) }), true;
+      const agentSlugById = new Map(live.agents.map((agent) => [agent.id, agent.slug]));
+      const taskAgent = new Map(live.tasks.map((task) => [task.id, agentSlugById.get(task.agent_id)]));
+      const [results, extra] = await Promise.all([
+        jobIds.length ? rows(db.from('results').select('job_id,task_id,kind,content,created_at').in('job_id', jobIds).order('created_at', { ascending: false }).limit(120)) : [],
+        liveExtras(db, workspaceId, live, 30 * 86400_000),
+      ]);
+      const finals = results.filter((result) => result.kind === 'final');
+      const outputs = results.filter((result) => result.kind !== 'final' && result.task_id).map((result) => ({ ...result, agent_slug: taskAgent.get(result.task_id) })).filter((result) => result.agent_slug && result.agent_slug !== 'chief-of-staff');
+      const agentById = new Map(live.agents.map((agent) => [agent.id, agent]));
+      const jobById = new Map(live.jobs.map((job) => [job.id, job]));
+      const taskById = new Map(live.tasks.map((task) => [task.id, task]));
+      const handoffs = extra.handoffs.slice(0, 12).map((handoff) => handoffView(handoff, { agentById, jobById, taskById, artifactsByTask: new Map() })).filter((handoff) => handoff.fromKey !== handoff.toKey);
+      const center = commandCenter({ project, live, states: officeState(live), artifacts, memory, knowledge, costs, finals, outputs, handoffs });
+      return sendJson(response, 200, { ok: true, ...center, timeline: timelineView({ ...live, ...extra, limit: 14 }),
+        activeJobId: live.jobs.find((job) => ['planning', 'running'].includes(job.status))?.id || live.jobs[0]?.id || null }), true;
     }
 
     if (path === '/api/capabilities') {
