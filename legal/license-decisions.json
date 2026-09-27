@@ -1,0 +1,23 @@
+{
+  "_about": "Open-source license gate (see docs/open-source-capability-audit.md). Permissive SPDX licenses pass automatically; every other license needs a recorded decision here. Decisions are LEGAL research classifications, not legal advice.",
+  "decisions": [
+    {
+      "package": "@anthropic-ai/claude-agent-sdk",
+      "match": "^@anthropic-ai/claude-agent-sdk(-[a-z0-9-]+)?$",
+      "license": "Proprietary (© Anthropic PBC; use subject to Anthropic's legal agreements)",
+      "decision": "APPROVED WITH CONDITIONS",
+      "conditions": "Used unmodified as a client SDK under the account's Anthropic commercial terms; not redistributed outside the runtime image; review again if the terms or distribution model change.",
+      "source": "https://code.claude.com/docs/en/legal-and-compliance",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "package": "fast-sha256",
+      "match": "^fast-sha256$",
+      "license": "Unlicense",
+      "decision": "APPROVED",
+      "conditions": "Public-domain dedication; no obligations.",
+      "source": "https://unlicense.org/",
+      "reviewed": "2026-09-27"
+    }
+  ]
+}

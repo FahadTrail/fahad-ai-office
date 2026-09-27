@@ -9,27 +9,52 @@ no second orchestrator.
 
 | Talk to | For | How it runs |
 |---|---|---|
-| **Chief of Staff** (New chat) | Any objective | Plans workstreams, dispatches employees, consolidates the result |
-| **An employee** (Office → employee → Chat) | A request inside one specialty | A single `direct` task for that employee, with conversation context |
-| **Coding Agent** (Tasks → Coding Agent) | A development specification | The engineering controller (plan → edit → test → PR → CI → approval → deploy → verify) |
+| **CHIEF** (Hub home, or Telegram) | Any objective | Plans workstreams, dispatches employees, synthesizes one result |
+| **An employee** (Employees → employee → Chat) | A request inside one specialty | A `direct` task; the employee may consult up to two colleagues first (`consult` tasks), then answers |
+| **CODING** (Tasks → Coding Agent) | A development specification | The engineering controller (plan → edit → test → PR → CI → approval → deploy → verify) |
 
 ## Roster (`src/office/agents.js`; identities in `public.agents`)
 
-Employees are job roles, not models. Each one routes by job type on the shared
-Model Pool (free-first, failover, privacy and budget rules unchanged).
+Nine visible employees, no human names. Employees are job roles, not models:
+each routes by job type on the shared Model Pool (free-first, failover,
+privacy and budget rules unchanged). Retired identities (Business Strategy,
+Operations) stay in history and route new work to PRODUCT.
 
-| Key | Employee | Job type | Web |
-|---|---|---|---|
-| chief | Chief of Staff | orchestration / synthesis | — |
-| research | Research (`research-strategy`) | research | yes |
-| strategy | Business Strategy (`business-strategy`, new) | research | yes |
-| finance | Finance (`business-finance`) | finance | when authorized |
-| brand | Brand & Creative (`brand-creative`, new) | branding | — |
-| content | Content & Media (`content-media`, new) | content | yes |
-| product | Product & Tech (`product-tech`) | research | when authorized |
-| operations | Operations | content | — |
-| review | QA & Review (`qa-security`) | orchestration | — |
-| coding | Coding Agent | coding (separate controller) | — |
+| Key | Employee | Job type | Web | Artifacts |
+|---|---|---|---|---|
+| chief | CHIEF (`chief-of-staff`) | orchestration / synthesis | — | table, checklist, timeline |
+| research | RESEARCH (`research-strategy`) | research | yes | evidence (VERIFIED/LIKELY/UNKNOWN), table, risk_matrix |
+| creative | CREATIVE (`brand-creative`) | branding | — | moodboard (palette, fonts, concepts), table |
+| product | PRODUCT (`product-tech`, absorbs Business Strategy) | research | yes | kanban, timeline, flow, checklist, table |
+| finance | FINANCE (`business-finance`) | finance | yes | financial_model (KNOWN/ESTIMATED/ASSUMPTION), chart, table |
+| coding | CODING (`coding-agent`) | coding (separate controller) | — | PR, CI, deployment |
+| audit | AUDIT (`qa-security`) | orchestration | — | audit_report (PASS/NEEDS WORK/BLOCKED, issue owners), checklist |
+| social | SOCIAL (`content-media`, SEO is a skill) | content | yes | content_calendar, table |
+| legal | LEGAL (`legal-compliance`, new) | research | yes | compliance_matrix (jurisdiction, source, date, classification) |
+
+**Nicknames.** Fahad can name employees in Gulf Arabic or English capitals —
+"حولها للفاينانس", "خل الليغال يراجع", "اسأل الريسيرش", "خل الكرييتف يشتغل
+عليها", "حول المشروع للكودينج", "let LEGAL review". `mentionedEmployees()`
+detects them (Arabic prefixes لل/بال/و… included) and CHIEF is told to route
+to exactly those employees.
+
+**Artifacts.** Employees emit ` ```artifact ` JSON blocks; the workflow
+validates them (`src/office/artifacts.js`, 13 types), stores them in
+`public.artifacts`, and the Hub draws them (`src/hub-ui/artifacts.js`: SVG
+charts, boards, moodboards, matrices). Agents never produce HTML.
+
+**Knowledge.** Links under `## Sources` become `knowledge_items` with an
+expiry (LEGAL 180 days, PRODUCT 120, RESEARCH 90, FINANCE 60, SOCIAL 30) and
+are given back to that employee on the next task in the project.
+
+**Memory types.** fact, decision, preference, constraint, product/technical/
+brand decision, legal requirement, financial assumption.
+
+**Channels.** `src/channels/office-bridge.js` is transport-neutral (Telegram
+now, WhatsApp later with the same `handleMessage` / `outbox` / `decide`).
+Telegram (`src/channels/telegram.js`) is owner-only, rate limited, sends
+results and approval requests with Approve/Reject buttons, and deep-links to
+the Hub.
 
 ## Chief orchestration (`chief.js` route `orchestrate`, `workflow.js`)
 

@@ -23,6 +23,7 @@ import { createModelPool } from './model-gateway/agentic/model-pool.js';
 import { rankFreeModels } from './model-gateway/agentic/capabilities.js';
 import { OfficeModelRunner } from './office/pool-runner.js';
 import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
+import { startTelegramChannel } from './channels/start.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
@@ -85,6 +86,7 @@ let busy = false;
 let lastPollAt = 0;
 let heartbeatTimer;
 let hubServer;
+let telegram = null;
 let toolBrokerCanary = { status: 'pending' };
 
 function heartbeat() {
@@ -101,6 +103,7 @@ function shutdown() {
   if (!running) return;
   running = false;
   hubServer?.close();
+  telegram?.stop();
   log('Shutdown signal received. Finishing current task, then stopping.');
 }
 
@@ -115,6 +118,8 @@ async function main() {
     hubServer = createHubServer({ db, authClient: hubAuth, store });
     log('Fahad AI Hub listening on the protected loopback port 2132.');
   }
+  // Telegram → CHIEF, only when Fahad has configured a bot token.
+  telegram = await startTelegramChannel({ db, store, log }).catch((error) => { log('WARN  telegram channel not started:', error.message); return null; });
   toolBrokerCanary = await runStartupCanary({
     log,
     canary: () => runProductionToolBrokerCanary({
@@ -127,7 +132,7 @@ async function main() {
   heartbeatTimer = setInterval(heartbeat, 5000);
   log('------------------------------------------------------------');
   log('Fahad AI Office - Runtime v3 (Chief -> specialist workstreams -> Chief synthesis)');
-  log('Employees: Chief of Staff, Research, Business Strategy, Finance, Brand & Creative, Content & Media, Product & Tech, Operations, QA & Review; Coding Agent separately');
+  log('Employees: CHIEF, RESEARCH, CREATIVE, PRODUCT, FINANCE, CODING, AUDIT, SOCIAL, LEGAL');
   log('Models: Chief=' + CHIEF_MODEL + ', Research=' + RESEARCH_MODEL);
   log('Idle check every ' + IDLE_MS + 'ms. Hub provides the protected task interface.');
   log('------------------------------------------------------------');

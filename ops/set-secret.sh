@@ -36,6 +36,10 @@ declare -A SHAPE=(
   # provider itself verifies the key before it is stored (verify_qwen_key).
   [QWEN_API_KEY]='^sk-(ws[A-Za-z0-9._-]{8,256}|[A-Za-z0-9]{20,256})$'
   [MINIMAX_API_KEY]='^[A-Za-z0-9._-]{20,512}$'
+  # Telegram → CHIEF channel (BotFather token; the owner's private chat id,
+  # which the bot tells you when you send it /start before pairing).
+  [TELEGRAM_BOT_TOKEN]='^[0-9]{5,}:[A-Za-z0-9_-]{20,}$'
+  [TELEGRAM_OWNER_CHAT_ID]='^-?[0-9]{3,20}$'
 )
 if [[ -z $NAME || -z ${SHAPE[$NAME]+x} ]]; then
   echo "Usage: sudo bash ops/set-secret.sh NAME   (NAME is one of: ${!SHAPE[*]})"; exit 1

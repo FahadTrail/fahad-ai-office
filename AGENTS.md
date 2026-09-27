@@ -143,6 +143,19 @@ inside the built runtime image as root.
   Details are in `docs/office-workflow.md`; the migration is
   `20260928090000_office_multi_agent`.
 
+* Office evolution (2026-09-27): nine employees — CHIEF, RESEARCH, CREATIVE,
+  PRODUCT, FINANCE, CODING, AUDIT, SOCIAL, LEGAL (Business Strategy and
+  Operations retired, history kept); Arabic nicknames; structured artifacts
+  (`public.artifacts`) drawn by the Hub; curated `knowledge_items` with
+  expiry; typed memory; internal consults; Living Office, Employees,
+  Artifacts, Integrations and the Project Command Center; light/dark theme.
+  Telegram → CHIEF channel (`src/channels/`) is built and tested; it starts
+  only when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_CHAT_ID` are set.
+  License gate: `test/license-gate.test.js` + `legal/license-decisions.json`.
+  Hermes: read-only `ops/hermes-audit.sh`, plan in `docs/hermes-decommission.md`
+  (not ready; never touch Hermes before Fahad's single final approval).
+  Migration `20260929090000_office_final_roster` is applied in production.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,

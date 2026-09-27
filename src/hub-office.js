@@ -153,6 +153,8 @@ export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, database
     { id: 'web_search', label: 'Web search', ...state(webRuns.web_search || null, present('GEMINI_API_KEY'), 'web search') },
     { id: 'web_fetch', label: 'Web page reading', ...state(webRuns.web_fetch || null, true, 'page fetch') },
     { id: 'memory', label: 'Project memory', status: databaseOk ? 'Available' : 'Unavailable', verifiedAt: null, detail: `${memoryCount} saved item${memoryCount === 1 ? '' : 's'}` },
+    { id: 'telegram', label: 'Telegram → CHIEF', ...state(null, present('TELEGRAM_BOT_TOKEN') && present('TELEGRAM_OWNER_CHAT_ID'), 'Telegram message'),
+      ...(present('TELEGRAM_BOT_TOKEN') ? {} : { detail: 'Not configured: needs a BotFather token (TELEGRAM_BOT_TOKEN) and your chat id (TELEGRAM_OWNER_CHAT_ID)' }) },
     { id: 'tool_broker', label: 'Tool Broker (audited tools)', ...state(toolRuns.filter((run) => run.status === 'succeeded').map((run) => run.last).sort().at(-1) || null, true, 'audited tool call') },
   ];
   return items.map((item) => (item.status === 'Connected' && stale(item.verifiedAt) ? { ...item, status: 'Connected (not used recently)' } : item))
@@ -207,7 +209,7 @@ export function connectorUsers(id) {
   const web = ACTIVE_AGENTS.filter((agent) => agent.webTools).map((agent) => agent.label);
   const coding = ACTIVE_AGENTS.filter((agent) => agent.executor === 'coding').map((agent) => agent.label);
   const everyone = ACTIVE_AGENTS.map((agent) => agent.label);
-  return ({ web_search: web, web_fetch: web, database: everyone, memory: everyone })[id] || coding;
+  return ({ web_search: web, web_fetch: web, database: everyone, memory: everyone, telegram: ['CHIEF'] })[id] || coding;
 }
 
 // ------------------------------------------------------------------ handler
