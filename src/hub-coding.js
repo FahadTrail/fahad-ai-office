@@ -375,7 +375,7 @@ export function providerSummary(routes) {
       models: list.length, liveModels: live.length, qualifiedModels: qualified.length,
       credential: facts.credentialEnv ? { env: facts.credentialEnv, status: list.some((route) => route.credentialStatus === 'PRESENT') ? 'PRESENT' : list[0].credentialStatus, page: facts.credentialPage, scope: facts.scope } : null,
       blocker: blocked?.accountBlocker || null,
-      freeTier: facts.freeTier || null, privacy: facts.privacy || null, source: facts.source || null,
+      freeTier: facts.freeTier || null, privacy: facts.privacy || null, source: facts.source || null, evidence: facts.evidence || null,
     };
   });
 }

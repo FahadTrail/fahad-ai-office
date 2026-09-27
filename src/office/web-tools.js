@@ -99,31 +99,53 @@ export async function webFetch({ url }, { fetchFn = fetch, resolve = lookup, tim
 }
 
 // Google Search grounding via the Gemini API (official feature, free tier).
-export async function webSearch({ query }, { env = process.env, fetchFn = fetch, timeoutMs = 30_000 } = {}) {
+// Free-tier limits are per model, so a rate-limited model is skipped for a
+// minute and the next grounding-capable model answers instead.
+const SEARCH_MODELS_DEFAULT = ['gemini-flash-lite-latest', 'gemini-flash-latest'];
+const searchCooldown = new Map();
+export function searchModels(env = process.env) {
+  const configured = String(env.OFFICE_SEARCH_MODELS || env.OFFICE_SEARCH_MODEL || '').split(',').map((value) => value.trim()).filter((value) => /^[A-Za-z0-9._-]{2,80}$/.test(value));
+  return configured.length ? configured : SEARCH_MODELS_DEFAULT;
+}
+
+export async function webSearch({ query }, { env = process.env, fetchFn = fetch, timeoutMs = 30_000, now = Date.now } = {}) {
   const apiKey = String(env.GEMINI_API_KEY || '').trim();
   if (!apiKey) throw toolError('SEARCH_UNAVAILABLE', 'Web search is not configured (no Gemini key); use web_fetch on known sources');
   const q = String(query || '').trim().slice(0, 400);
   if (!q) throw toolError('SEARCH_QUERY_EMPTY', 'The query is empty');
-  const model = /^[A-Za-z0-9._-]+$/.test(env.OFFICE_SEARCH_MODEL || '') ? env.OFFICE_SEARCH_MODEL : 'gemini-flash-lite-latest';
-  const response = await fetchFn(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: 'POST', signal: AbortSignal.timeout(timeoutMs),
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: `Search the web for: ${q}\nSummarize the most relevant current facts in at most 8 short bullet points.` }] }],
-      tools: [{ google_search: {} }],
-      generationConfig: { maxOutputTokens: 800 },
-    }),
-  });
-  if (!response.ok) throw toolError('SEARCH_FAILED', `Search provider returned HTTP ${response.status}`, response.status);
-  const body = await response.json();
-  const candidate = body.candidates?.[0] || {};
-  const summary = (candidate.content?.parts || []).map((part) => part.text || '').join('').trim().slice(0, 3000);
-  const sources = (candidate.groundingMetadata?.groundingChunks || [])
-    .map((chunk) => chunk.web).filter(Boolean)
-    .map((web) => ({ title: String(web.title || '').slice(0, 200), url: String(web.uri || '') }))
-    .filter((source) => /^https?:\/\//.test(source.url)).slice(0, 8);
-  return { query: q, summary, sources, provider: 'Google Search grounding (Gemini API)' };
+  const models = searchModels(env);
+  const ready = models.filter((model) => (searchCooldown.get(model) || 0) <= now());
+  if (!ready.length) throw toolError('SEARCH_RATE_LIMITED', 'Web search is rate limited right now; use web_fetch on known sources or try again in a minute', 429);
+  let lastStatus = null;
+  for (const model of ready) {
+    const response = await fetchFn(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST', signal: AbortSignal.timeout(timeoutMs),
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: `Search the web for: ${q}\nSummarize the most relevant current facts in at most 8 short bullet points.` }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 800 },
+      }),
+    });
+    if (!response.ok) {
+      lastStatus = response.status;
+      if ([429, 503].includes(response.status)) { searchCooldown.set(model, now() + 60_000); continue; }
+      if (response.status === 404) { searchCooldown.set(model, now() + 6 * 3_600_000); continue; }
+      throw toolError('SEARCH_FAILED', `Search provider returned HTTP ${response.status}`, response.status);
+    }
+    const body = await response.json();
+    const candidate = body.candidates?.[0] || {};
+    const summary = (candidate.content?.parts || []).map((part) => part.text || '').join('').trim().slice(0, 3000);
+    const sources = (candidate.groundingMetadata?.groundingChunks || [])
+      .map((chunk) => chunk.web).filter(Boolean)
+      .map((web) => ({ title: String(web.title || '').slice(0, 200), url: String(web.uri || '') }))
+      .filter((source) => /^https?:\/\//.test(source.url)).slice(0, 8);
+    return { query: q, summary, sources, provider: 'Google Search grounding (Gemini API)', model };
+  }
+  throw toolError(lastStatus === 429 ? 'SEARCH_RATE_LIMITED' : 'SEARCH_FAILED', `Search provider returned HTTP ${lastStatus}; use web_fetch on known sources`, lastStatus);
 }
+
+export function resetSearchCooldowns() { searchCooldown.clear(); }
 
 export function createOfficeToolExecutor({ env = process.env, fetchFn = fetch, resolve = lookup, allowSearch = true } = {}) {
   return async (call) => {

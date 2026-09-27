@@ -127,6 +127,13 @@ test('failure outcomes map provider errors to durable health', () => {
   assert.equal(failureOutcome(classifyProviderError(failure(500)), transient, now).health, HEALTH.UNAVAILABLE);
   const refusal = failureOutcome(classifyProviderError(failure(422, { type: 'refusal' })), {}, now);
   assert.equal(refusal.cooldownUntil, null);
+  // One invalid request is about the request; three in a row mean the route is broken.
+  const invalid = classifyProviderError(failure(400));
+  assert.equal(invalid.code, 'PROVIDER_INVALID_REQUEST');
+  assert.equal(failureOutcome(invalid, { consecutiveFailures: 1 }, now).cooldownUntil, null);
+  const broken = failureOutcome(invalid, { consecutiveFailures: 2 }, now);
+  assert.equal(broken.health, HEALTH.UNAVAILABLE);
+  assert.equal(broken.cooldownUntil, new Date(now + 6 * 3_600_000).toISOString());
 });
 
 test('model pool marks missing credentials, unknown pricing and privacy truthfully', () => {

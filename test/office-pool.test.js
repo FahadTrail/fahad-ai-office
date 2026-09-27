@@ -194,3 +194,46 @@ test('web tools refuse private, local, Hermes and non-web targets and extract re
   assert.deepEqual(JSON.parse(sent[0].init.body).tools, [{ google_search: {} }]);
   await assert.rejects(webSearch({ query: 'x' }, { env: {} }), /not configured/);
 });
+
+test('web search falls back to the next free Gemini model when one is rate limited', async () => {
+  const { resetSearchCooldowns } = await import('../src/office/web-tools.js');
+  resetSearchCooldowns();
+  const env = { GEMINI_API_KEY: 'AIzaTestKey_0123456789abcdefghijklmn' };
+  const called = [];
+  const fetchFn = async (url) => {
+    const model = url.match(/models\/([^:]+):/)[1];
+    called.push(model);
+    if (model === 'gemini-flash-lite-latest') return { ok: false, status: 429, json: async () => ({}) };
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'facts' }] }, groundingMetadata: { groundingChunks: [{ web: { title: 'Src', uri: 'https://example.com/a' } }] } }] }) };
+  };
+  let clock = 1_000;
+  const first = await webSearch({ query: 'coffee apps dubai' }, { env, fetchFn, now: () => clock });
+  assert.equal(first.model, 'gemini-flash-latest');
+  assert.deepEqual(first.sources, [{ title: 'Src', url: 'https://example.com/a' }]);
+  await webSearch({ query: 'again' }, { env, fetchFn, now: () => clock });
+  assert.deepEqual(called, ['gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-flash-latest'], 'the rate-limited model is skipped for a minute');
+  clock += 61_000;
+  const allLimited = async () => ({ ok: false, status: 429, json: async () => ({}) });
+  await assert.rejects(webSearch({ query: 'x' }, { env, fetchFn: allLimited, now: () => clock }), (error) => error.code === 'SEARCH_RATE_LIMITED');
+  await assert.rejects(webSearch({ query: 'y' }, { env, fetchFn: allLimited, now: () => clock }), /rate limited right now/);
+  resetSearchCooldowns();
+});
+
+test('an answer cut off by the output limit is continued, never saved half-finished', async () => {
+  const calls = [];
+  const client = {
+    async turn({ messages, maxOutputTokens }) {
+      const content = messages.at(-1).content;
+      calls.push({ maxOutputTokens, last: Array.isArray(content) ? content.map((block) => block.text || '').join('') : String(content) });
+      const usage = { inputTokens: 100, outputTokens: 50, costUsd: 0 };
+      if (calls.length === 1) return { message: { role: 'assistant', content: [{ type: 'text', text: '## Summary\nPart one, cut off mid-' }] }, usage, stopReason: 'max_tokens', model: 'gemini-flash-latest', durationMs: 1 };
+      return { message: { role: 'assistant', content: [{ type: 'text', text: 'sentence. Done.' }] }, usage, stopReason: 'end', model: 'gemini-flash-latest', durationMs: 1 };
+    },
+  };
+  const runner = new OfficeModelRunner({ stateStore: new MemoryProviderStateStore(), poolFactory: () => [route('gemini:gemini-flash-latest', { qualityTier: 4 }, client)], sleepFn: async () => {} });
+  const result = await runner.run({ job: 'synthesis', systemPrompt: 'x', prompt: 'Consolidate', maxOutputTokens: 8000 });
+  assert.equal(result.text, '## Summary\nPart one, cut off mid-sentence. Done.');
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].last, /cut off by the output limit\. Continue exactly where you stopped/);
+  assert.equal(calls[0].maxOutputTokens, 8000);
+});
