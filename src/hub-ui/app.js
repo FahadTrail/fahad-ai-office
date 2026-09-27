@@ -296,7 +296,7 @@ async function renderChat(id, agentSlug = null) {
       <div class="who-role">${esc(direct ? who.scope : 'Give me the objective — I coordinate the Office and bring back one result.')}</div></div>
       <a class="btn btn-ghost btn-sm" href="#/agent/${esc(slug)}">Profile</a></div>
     ${conversation ? `<div class="chat-head">
-      <div class="chat-title" dir="auto" id="chatTitle">${esc(conversation.title)}</div>
+      <h1 class="chat-title" dir="auto" id="chatTitle">${esc(conversation.title)}</h1>
       <button class="btn btn-ghost btn-sm" id="renameChat">Rename</button>
       <button class="btn btn-ghost btn-sm" id="archiveChat">${conversation.archived ? 'Unarchive' : 'Archive'}</button>
       <button class="btn btn-ghost btn-sm" id="deleteChat">Delete</button>

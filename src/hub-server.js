@@ -14,6 +14,7 @@ import { handleWorkspaceApi } from './hub-workspace.js';
 import { handleOfficeApi } from './hub-office.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { extname } from 'node:path';
 
 // Workspace interface: every file in src/hub-ui (scripts, styles, fonts) is
@@ -41,13 +42,16 @@ export const UI_VERSION = createHash('sha1').update(Object.values(UI_ASSETS).map
 // Scripts and styles may reference the version (fonts, on-demand modules).
 for (const asset of Object.values(UI_ASSETS)) if (/javascript|css/.test(asset.type)) asset.body = Buffer.from(asset.body.toString('utf8').replaceAll('__UI_VERSION__', UI_VERSION));
 export const WORKSPACE_HTML = readFileSync(new URL('index.html', UI_DIR), 'utf8').replaceAll('__UI_VERSION__', UI_VERSION);
+// Text assets are compressed once at start-up (fonts are already compressed).
+for (const asset of Object.values(UI_ASSETS)) if (/javascript|css|svg/.test(asset.type)) asset.gzip = gzipSync(asset.body, { level: 9 });
 
 function sendAsset(request, response, asset, versioned) {
-  const headers = { 'content-type': asset.type, etag: asset.etag, 'x-content-type-options': 'nosniff',
+  const headers = { 'content-type': asset.type, etag: asset.etag, 'x-content-type-options': 'nosniff', vary: 'accept-encoding',
     'cache-control': versioned ? 'public, max-age=31536000, immutable' : 'no-cache' };
   if (request.headers['if-none-match'] === asset.etag) { response.writeHead(304, headers); return response.end(); }
-  response.writeHead(200, headers);
-  return response.end(asset.body);
+  const gzip = asset.gzip && /\bgzip\b/.test(String(request.headers['accept-encoding'] || ''));
+  response.writeHead(200, gzip ? { ...headers, 'content-encoding': 'gzip' } : headers);
+  return response.end(gzip ? asset.gzip : asset.body);
 }
 
 const DEFAULT_PORT = 2132;

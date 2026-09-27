@@ -169,6 +169,26 @@ inside the built runtime image as root.
   artifacts intact). Supabase Coding tools self-check VERIFIED in production
   (read-only role, project scope and write guard enforced, no secret exposed).
 
+* Hermes was operationally decommissioned by Fahad (2026-09-27). Its backup
+  and retained directories are off-limits: the Office never restores,
+  reconnects, depends on or modifies them.
+
+* V4 visual experience (2026-09-27), UI only with no core rebuild. It covers:
+  * the design system and tokens, with self-hosted Inter and IBM Plex Sans
+    Arabic;
+  * the lazy-loaded Live Office with real states and clickable handoffs;
+  * the CHIEF home;
+  * the Command Center executive view plus the project map;
+  * the artifact library with department views and shared exports;
+  * Needs Fahad levels, integration states and search;
+  * SSE realtime (`/api/stream`);
+  * content-hashed, gzipped assets;
+  * axe-clean WCAG AA in both themes.
+
+  Details are in `docs/v4-experience.md`. Visual QA runs through
+  `tools/hub-preview.mjs` + `tools/ui-screenshots.mjs`, using fictional
+  preview data only.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,

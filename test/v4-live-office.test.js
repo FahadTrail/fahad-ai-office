@@ -161,3 +161,36 @@ test('the Live Office is lazy-loaded, honours reduced motion and uses tokens onl
   assert.match(css, /animation: attention 1\.6s var\(--ease-in-out\) 4;/, 'attention pulses a few times, not forever');
   for (const state of ['THINKING', 'WORKING', 'TESTING', 'WAITING', 'REVIEWING', 'NEEDS FAHAD', 'BLOCKED', 'COMPLETED', 'FAILED']) assert.ok(css.includes(`[data-state="${state}"]`), state);
 });
+
+test('text assets are served gzip-compressed when the browser accepts it; fonts are not re-compressed', async () => {
+  await withHub(async (base) => {
+    const html = await fetch(`${base}/`).then((response) => response.text());
+    const version = html.match(/app\.js\?v=([0-9a-f]{12})/)[1];
+    const plain = await fetch(`${base}/ui/app.css?v=${version}`, { headers: { 'accept-encoding': 'identity' } });
+    assert.equal(plain.headers.get('content-encoding'), null);
+    const { request } = await import('node:http');
+    const gz = await new Promise((resolve, reject) => {
+      request(`${base}/ui/app.css?v=${version}`, { headers: { 'accept-encoding': 'gzip' } }, (response) => { const chunks = []; response.on('data', (chunk) => chunks.push(chunk)); response.on('end', () => resolve({ headers: response.headers, size: Buffer.concat(chunks).length })); }).on('error', reject).end();
+    });
+    assert.equal(gz.headers['content-encoding'], 'gzip');
+    assert.equal(gz.headers.vary, 'accept-encoding');
+    assert.ok(gz.size < Number((await plain.arrayBuffer()).byteLength) / 3, 'CSS compresses to under a third');
+    const font = await fetch(`${base}/ui/fonts/inter-latin-var.woff2?v=${version}`, { headers: { 'accept-encoding': 'gzip' } });
+    assert.equal(font.headers.get('content-encoding'), null);
+  });
+});
+
+test('accessibility guards: interactive layers are not hidden, scroll regions are reachable, focus is visible', () => {
+  const office = file('office.js');
+  assert.doesNotMatch(office, /class="handoff-layer"[^>]*aria-hidden/, 'the clickable handoff layer is not aria-hidden');
+  assert.match(office, /role="dialog" aria-modal="true"/);
+  assert.match(office, /event\.key === 'Escape'/, 'drawers close with Escape');
+  assert.match(office, /event\.key === 'Tab'/, 'focus stays inside an open drawer');
+  const art = file('artifacts.js');
+  assert.match(art, /class="art-scroll" tabindex="0" role="region"/);
+  assert.match(art, /class="art-kanban" tabindex="0" role="region"/);
+  const css = file('app.css');
+  assert.match(css, /:focus-visible \{ outline: none; box-shadow: var\(--focus\); /);
+  assert.match(css, /--accent-fill:/, 'white-on-accent buttons use a darker fill (WCAG AA)');
+  assert.match(file('app.js'), /<h1 class="chat-title"/, 'every page has a heading');
+});
