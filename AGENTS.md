@@ -89,8 +89,7 @@ inside the built runtime image as root.
   Kimi, GLM, MiniMax, Gemini, OpenRouter, Groq: no credentials.
 * Migrations through `20260925190000_routing_policy_and_usage` are applied; the
   production schema fingerprint equals `supabase/verify/schema-fingerprint.txt`.
-* Not configured: `CODING_SUPABASE_ACCESS_TOKEN` (the agent's Supabase tools
-  fail closed until it is added); the workspace budget is $2/month.
+* The workspace budget is $2/month.
 
 * Platform expansion (2026-09-25): job-based routing over a capability registry
   (`src/model-gateway/agentic/capabilities.js`), free-quota knowledge with
@@ -163,6 +162,12 @@ inside the built runtime image as root.
   after restarts and sends Needs-Fahad questions; `tools/hermes-decision.mjs`
   turns the Hermes audit into one decision. Migration
   `20260930090000_office_capacity_wait`.
+  Live-verified free-only at $0 (2026-09-27): a FINANCE → CODING consult
+  whose FINANCE follow-up hit WAITING_FOR_CAPACITY, auto-resumed 6 minutes
+  later from its checkpoint and finished (AED estimate with KNOWN/ESTIMATED/
+  ASSUMPTION); a long CHIEF synthesis (7.6K chars, 6 distinct sections,
+  artifacts intact). Supabase Coding tools self-check VERIFIED in production
+  (read-only role, project scope and write guard enforced, no secret exposed).
 
 ## Next actions
 
