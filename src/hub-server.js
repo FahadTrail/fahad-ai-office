@@ -12,20 +12,43 @@ import {
 import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi, readDeployedVersion } from './hub-coding.js';
 import { handleWorkspaceApi } from './hub-workspace.js';
 import { handleOfficeApi } from './hub-office.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { extname } from 'node:path';
 
-// Workspace V2 interface (static files shipped in src/hub-ui). The previous
-// single-page Hub stays available at /classic.
-const UI_FILES = Object.freeze({
-  '/ui/app.css': ['app.css', 'text/css; charset=utf-8'],
-  '/ui/app.js': ['app.js', 'text/javascript; charset=utf-8'],
-  '/ui/markdown.js': ['markdown.js', 'text/javascript; charset=utf-8'],
-  '/ui/auth.js': ['auth.js', 'text/javascript; charset=utf-8'],
-  '/ui/artifacts.js': ['artifacts.js', 'text/javascript; charset=utf-8'],
-});
-const uiFile = (name) => readFileSync(new URL(`./hub-ui/${name}`, import.meta.url), 'utf8');
-export const WORKSPACE_HTML = uiFile('index.html');
-const UI_ASSETS = Object.fromEntries(Object.entries(UI_FILES).map(([path, [name, type]]) => [path, { body: uiFile(name), type }]));
+// Workspace interface: every file in src/hub-ui (scripts, styles, fonts) is
+// served from memory under /ui/. The page references them with ?v=<content
+// hash>, so a deployment changes every URL and assets can be cached forever;
+// modules loaded on demand (the Live Office) revalidate with an ETag.
+const UI_TYPES = Object.freeze({ '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' });
+const UI_DIR = new URL('./hub-ui/', import.meta.url);
+function loadUiAssets() {
+  const assets = {};
+  const walk = (dir, prefix) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) { walk(new URL(`${entry.name}/`, dir), `${prefix}${entry.name}/`); continue; }
+      const type = UI_TYPES[extname(entry.name)];
+      if (!type) continue;
+      const body = readFileSync(new URL(entry.name, dir));
+      assets[`/ui/${prefix}${entry.name}`] = { body, type, etag: `"${createHash('sha1').update(body).digest('hex').slice(0, 16)}"` };
+    }
+  };
+  walk(UI_DIR, '');
+  return assets;
+}
+const UI_ASSETS = loadUiAssets();
+export const UI_VERSION = createHash('sha1').update(Object.values(UI_ASSETS).map((asset) => asset.etag).join('')).digest('hex').slice(0, 12);
+// Scripts and styles may reference the version (fonts, on-demand modules).
+for (const asset of Object.values(UI_ASSETS)) if (/javascript|css/.test(asset.type)) asset.body = Buffer.from(asset.body.toString('utf8').replaceAll('__UI_VERSION__', UI_VERSION));
+export const WORKSPACE_HTML = readFileSync(new URL('index.html', UI_DIR), 'utf8').replaceAll('__UI_VERSION__', UI_VERSION);
+
+function sendAsset(request, response, asset, versioned) {
+  const headers = { 'content-type': asset.type, etag: asset.etag, 'x-content-type-options': 'nosniff',
+    'cache-control': versioned ? 'public, max-age=31536000, immutable' : 'no-cache' };
+  if (request.headers['if-none-match'] === asset.etag) { response.writeHead(304, headers); return response.end(); }
+  response.writeHead(200, headers);
+  return response.end(asset.body);
+}
 
 const DEFAULT_PORT = 2132;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -54,8 +77,7 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
         return send(response, 200, HUB_HTML, 'text/html; charset=utf-8');
       }
       if (request.method === 'GET' && UI_ASSETS[requestUrl.pathname]) {
-        const asset = UI_ASSETS[requestUrl.pathname];
-        return send(response, 200, asset.body, asset.type);
+        return sendAsset(request, response, UI_ASSETS[requestUrl.pathname], requestUrl.searchParams.get('v') === UI_VERSION);
       }
       if (request.method === 'GET' && requestUrl.pathname === '/api/auth/config') {
         return sendJson(response, 200, { ok: true, enabled: authEnabled, emailHint: authEnabled ? maskEmail(ownerEmail) : null });

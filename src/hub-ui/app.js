@@ -11,7 +11,7 @@ function applyTheme(theme) {
 try { applyTheme(localStorage.getItem('hub-theme')); } catch {}
 const view = $('#view');
 const MEMORY_KINDS = [['fact', 'Fact'], ['decision', 'Decision'], ['preference', 'Preference'], ['constraint', 'Constraint'], ['product_decision', 'Product decision'], ['technical_decision', 'Technical decision'], ['brand_decision', 'Brand decision'], ['legal_requirement', 'Legal requirement'], ['financial_assumption', 'Financial assumption']];
-const state = { workspaceId: null, workspaces: [], conversations: [], timers: [], attention: { action: 0, total: 0 }, sidebarTimer: null, signedOut: false };
+const state = { workspaceId: null, workspaces: [], conversations: [], timers: [], leave: [], attention: { action: 0, total: 0 }, sidebarTimer: null, signedOut: false };
 
 // ------------------------------------------------------------------ api
 class ApiError extends Error {}
@@ -60,7 +60,7 @@ const modelName = (route) => String(route || '').split(':').slice(1).join(':') |
 const STATUS_WORDS = { queued: 'Queued', running: 'Running', awaiting_approval: 'Needs approval', blocked: 'Needs you', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', planning: 'Thinking', attention: 'Needs attention' };
 const pill = (status, label) => `<span class="pill ${esc(status)}">${esc(label || STATUS_WORDS[status] || status)}</span>`;
 function every(ms, fn) { const id = setInterval(fn, ms); state.timers.push(id); return id; }
-function clearTimers() { state.timers.forEach(clearInterval); state.timers = []; }
+function clearTimers() { state.timers.forEach(clearInterval); state.timers = []; const leave = state.leave; state.leave = []; leave.forEach((fn) => { try { fn(); } catch {} }); }
 function setTitle(text) { document.title = text ? `${text} · Fahad AI Office` : 'Fahad AI Office'; $('#topTitle').textContent = text || 'Fahad AI Office'; }
 function autosize(textarea) { textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`; }
 function markdown(text) {
@@ -155,6 +155,7 @@ async function boot() {
     state.workspaceId = select.value;
     try { localStorage.setItem('hub-workspace-id', select.value); } catch {}
     refreshSidebar();
+    connectLive();
     location.hash = '#/';
   };
   $('#menuButton').onclick = () => toggleSidebar(true);
@@ -162,7 +163,8 @@ async function boot() {
   $('#scrim').onclick = () => toggleSidebar(false);
   window.addEventListener('hashchange', route);
   await refreshSidebar();
-  state.sidebarTimer = setInterval(refreshSidebar, 20_000);
+  connectLive();
+  state.sidebarTimer = setInterval(refreshSidebar, 60_000);
   route();
 }
 function toggleSidebar(open) {
@@ -208,7 +210,7 @@ async function route() {
   const routes = {
     '': () => renderChat(null), chat: () => renderChat(id), chats: renderChats, tasks: () => renderTasks(id || 'running'), task: () => renderTask(id),
     code: renderNewTask, attention: renderAttention, projects: renderProjects, project: () => renderProject(id), models: renderModels, settings: renderSettings,
-    office: renderOffice, agent: () => renderAgent(id), workflow: () => renderWorkflow(id), talk: () => renderChat(null, id),
+    office: renderOffice, agent: async () => { await renderOffice(); await openEmployee(id); }, workflow: () => renderWorkflow(id), talk: () => renderChat(null, id),
     artifacts: () => renderArtifacts(id), employees: renderEmployees, integrations: renderIntegrations,
   };
   markNav({ '': 'chat', chat: 'chats', task: 'tasks', code: 'tasks', project: 'projects', agent: 'employees', workflow: 'office', talk: 'employees' }[section] ?? section);
@@ -601,108 +603,57 @@ const statePill = (value) => `<span class="pill ${STATE_CLASS[value] || 'st-avai
 const ACTIVE_STATES = new Set(['THINKING', 'WORKING', 'TESTING', 'REVIEWING']);
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-// The Living Office: one desk per employee, CHIEF at the head of the floor.
-// Every state and every moving handoff comes from real task/handoff rows.
-async function renderOffice() {
-  setTitle('Office');
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>The Office</h1><p>Live from real work: who is busy, who is waiting, and what just changed hands.</p></div>
-    <a class="btn btn-primary" href="#/">Give CHIEF an objective</a></div><div id="officeBody"><div class="skeleton-floor" aria-hidden="true"></div></div></div>`;
-  let signature = '';
-  const seen = new Set();
-  const load = async () => {
-    const data = await api(`/api/office${q({ workspaceId: ws() })}`);
-    const next = JSON.stringify(data);
-    if (next === signature) return;
-    signature = next;
-    const chief = data.agents.find((agent) => agent.executor === 'chief');
-    const staff = data.agents.filter((agent) => agent.executor !== 'chief');
-    const busy = data.agents.filter((agent) => ACTIVE_STATES.has(agent.state)).length;
-    const desk = (agent, extra = '') => `<a class="desk ${STATE_CLASS[agent.state] || ''} ${extra}" href="#/agent/${esc(agent.slug)}" data-desk="${esc(agent.label)}" style="--agent:${esc(agent.color || 'var(--accent)')}">
-      <div class="desk-top">${avatar(agent)}<div class="grow"><div class="desk-name">${esc(agent.label)}</div><div class="desk-role">${esc(agent.deliverable || '')}</div></div><span class="desk-light" title="${esc(agent.state)}"></span></div>
-      <div class="desk-state">${statePill(agent.state)}</div>
-      <div class="small desk-detail" dir="auto">${esc(agent.state === 'AVAILABLE' ? 'Ready for work' : agent.detail || '')}</div>
-      ${agent.assignment?.objective ? `<div class="xs faint desk-obj" dir="auto">${esc(agent.assignment.objective)}</div>` : ''}</a>`;
-    $('#officeBody').innerHTML = `
-      ${data.needsFahad ? `<a class="owner-banner" href="#/attention">● ${data.needsFahad} item${data.needsFahad === 1 ? '' : 's'} need you — open Needs attention</a>` : ''}
-      <div class="floor-stats"><div><strong>${busy}</strong><span>working now</span></div><div><strong>${data.workflows.filter((flow) => !['completed', 'failed'].includes(flow.status)).length}</strong><span>objectives in progress</span></div><div><strong>${data.handoffs.length}</strong><span>handoffs (2 h)</span></div></div>
-      <div class="floor" id="floor"><svg class="floor-links" id="floorLinks" aria-hidden="true"></svg>
-        <div class="floor-head">${desk(chief, 'desk-chief')}</div>
-        <div class="floor-desks">${staff.map((agent) => desk(agent)).join('')}</div></div>
-      <div class="office-columns">
-        <div><h2 class="section-title">Objectives in the office</h2>${data.workflows.length ? data.workflows.map((flow) => `<a class="list-item" href="#/workflow/${esc(flow.id)}"><div class="grow"><div class="title" dir="auto">${esc(flow.title)}</div><div class="sub">${esc(flow.status)} · ${flow.progress}% · ${when(flow.createdAt)}</div></div>${pill(flow.status === 'completed' ? 'completed' : flow.status === 'failed' ? 'failed' : 'running', flow.status === 'completed' ? 'Completed' : flow.status === 'failed' ? 'Failed' : 'In progress')}</a>`).join('') : '<div class="muted small">No multi-agent objective in the last week. Give CHIEF one from the chat.</div>'}</div>
-        <div><h2 class="section-title">Recent handoffs</h2>${data.handoffs.length ? data.handoffs.map((handoff) => `<a class="handoff" href="#/workflow/${esc(handoff.jobId)}"><strong>${esc(handoff.from)}</strong> → <strong>${esc(handoff.to)}</strong><span class="xs faint">${when(handoff.at)}</span></a>`).join('') : '<div class="muted small">No handoffs in the last two hours.</div>'}</div>
-      </div>`;
-    drawHandoffs(data.handoffs.filter((handoff) => Date.now() - Date.parse(handoff.at) < 10 * 60_000), seen);
+// The Live Office lives in its own module, loaded on demand (with its art
+// and styles), so the Workspace routes stay light.
+const loadOffice = () => import('./office.js?v=__UI_VERSION__');
+async function renderOffice() { return (await loadOffice()).renderOffice(officeContext()); }
+async function openEmployee(slug) { return (await loadOffice()).openEmployee(officeContext(), slug); }
+let capabilitiesCache = null;
+function officeContext() {
+  return {
+    api, esc, when, q, ws, view, setTitle, toast, every, reducedMotion, renderArtifact,
+    onChange: (fn, onLive) => onLiveChange(fn, onLive),
+    onLeave: (fn) => state.leave.push(fn),
+    capabilities: async () => {
+      if (!capabilitiesCache || Date.now() - capabilitiesCache.at > 60_000) capabilitiesCache = { at: Date.now(), list: api('/api/capabilities').then((data) => data.capabilities) };
+      return capabilitiesCache.list;
+    },
   };
-  await load();
-  every(4000, () => load().catch(() => {}));
 }
 
-// A handoff in the last 10 minutes is drawn as a line between two desks; a
-// new one travels along it once (skipped with reduced motion).
-function drawHandoffs(handoffs, seen) {
-  const floor = $('#floor');
-  const svg = $('#floorLinks');
-  if (!floor || !svg || window.innerWidth < 720) return;
-  const box = floor.getBoundingClientRect();
-  svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
-  const centre = (label) => {
-    const element = floor.querySelector(`[data-desk="${CSS.escape(label || '')}"]`);
-    if (!element) return null;
-    const rect = element.getBoundingClientRect();
-    return [rect.left - box.left + rect.width / 2, rect.top - box.top + rect.height / 2];
-  };
-  const lines = [];
-  for (const handoff of handoffs) {
-    const [from, to] = [centre(handoff.from), centre(handoff.to)];
-    if (!from || !to || (from[0] === to[0] && from[1] === to[1])) continue;
-    const key = `${handoff.from}>${handoff.to}@${handoff.at}`;
-    const fresh = !seen.has(key) && !reducedMotion();
-    seen.add(key);
-    const bend = `M${from[0]},${from[1]} Q${(from[0] + to[0]) / 2},${Math.min(from[1], to[1]) - 40} ${to[0]},${to[1]}`;
-    lines.push(`<path class="link" d="${bend}"/>${fresh ? `<circle class="packet" r="5"><animateMotion dur="1.6s" fill="freeze" path="${bend}"/></circle>` : ''}`);
-  }
-  svg.innerHTML = lines.join('');
+// ------------------------------------------------------------------ realtime
+// One EventSource per workspace. The Hub pushes "change" when real rows
+// change; views re-read then. Polling stays only as a slow safety net.
+const live = { source: null, workspace: null, listeners: new Set(), connected: false, liveListeners: new Set() };
+function connectLive() {
+  if (!ws() || live.workspace === ws() && live.source) return;
+  live.source?.close();
+  live.workspace = ws();
+  if (typeof EventSource === 'undefined') return;
+  const source = new EventSource(`./api/stream${q({ workspaceId: ws() })}`);
+  live.source = source;
+  const setLive = (value) => { live.connected = value; live.liveListeners.forEach((fn) => fn(value)); };
+  source.addEventListener('ready', () => setLive(true));
+  source.addEventListener('change', () => { live.listeners.forEach((fn) => fn()); refreshSidebar(); });
+  source.onerror = () => setLive(false);
+}
+function onLiveChange(fn, onLive) {
+  let timer = null;
+  const debounced = () => { clearTimeout(timer); timer = setTimeout(fn, 250); };
+  live.listeners.add(debounced);
+  if (onLive) { live.liveListeners.add(onLive); onLive(live.connected); }
+  state.leave.push(() => { live.listeners.delete(debounced); if (onLive) live.liveListeners.delete(onLive); clearTimeout(timer); });
 }
 
 async function renderEmployees() {
   setTitle('Employees');
   const data = await api(`/api/office${q({ workspaceId: ws() })}`);
   view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Employees</h1><p>Nine roles, no fixed models: each employee's work is routed to the best available model for its job, free first. Say their names in Arabic or English — CHIEF understands.</p></div></div>
-    <div class="office-grid">${data.agents.map((agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}">
+    <div class="office-grid">${data.agents.map((agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}" data-employee="${esc(agent.slug)}">
       <div class="row">${avatar(agent)}<div class="grow"><div class="title">${esc(agent.label)}</div><div class="xs faint">${esc(agent.deliverable || '')}</div></div>${statePill(agent.state)}</div>
       <div class="small muted">${esc(agent.scope)}</div>
       <div class="row">${agent.directChat ? '<span class="tag">Direct chat</span>' : ''}${agent.executor === 'coding' ? '<span class="tag">Engineering tasks</span>' : ''}${agent.executor === 'chief' ? '<span class="tag">Orchestrates</span>' : ''}</div></a>`).join('')}</div></div>`;
-}
-
-async function renderAgent(slug) {
-  const load = async () => api(`/api/agents/${slug}${q({ workspaceId: ws() })}`);
-  const draw = (data) => {
-    const agent = data.agent;
-    agentCache.set(slug, agent);
-    setTitle(agent.label);
-    const cta = agent.directChat ? `<a class="btn btn-primary" href="#/talk/${esc(slug)}">Chat with ${esc(agent.label)}</a>`
-      : agent.executor === 'coding' ? '<a class="btn btn-primary" href="#/code">Give the Coding Agent a task</a>' : '<a class="btn btn-primary" href="#/">Give the Chief an objective</a>';
-    view.innerHTML = `<div class="page stack">
-      <div class="agent-head">${avatar(agent, 'avatar-lg')}<div class="grow"><h1>${esc(agent.label)}</h1><div class="muted">${esc(agent.tagline || '')}</div></div>${cta}</div>
-      <div class="card"><div class="row">${statePill(data.state.state)}<span dir="auto">${esc(data.state.detail || '')}</span></div>
-        ${data.state.assignment ? `<div class="small muted" style="margin-top:var(--s-2)" dir="auto">Current assignment: ${data.state.assignment.jobId ? `<a href="#/workflow/${esc(data.state.assignment.jobId)}">${esc(data.state.assignment.objective)}</a>` : `<a href="#/task/${esc(data.state.assignment.sessionId)}">${esc(data.state.assignment.objective)}</a>`}</div>` : ''}</div>
-      <div class="card"><h2 class="card-title">Role</h2><p>${esc(agent.scope)}</p>
-        <dl class="kv"><div><dt>Delivers</dt><dd>${esc(agent.deliverable)}</dd></div><div><dt>Model</dt><dd>AUTO · ${esc(agent.job)} work</dd></div><div><dt>Web access</dt><dd>${agent.webTools ? 'Yes' : 'No'}</dd></div><div><dt>Talk directly</dt><dd>${agent.directChat ? 'Yes' : agent.executor === 'coding' ? 'Via tasks' : 'Via CHIEF'}</dd></div></dl></div>
-      ${data.codingSessions?.length ? `<div class="card"><h2 class="card-title">Engineering tasks</h2>${data.codingSessions.map((session) => `<a class="list-item" href="#/task/${esc(session.id)}"><div class="grow"><div class="title">${esc(session.title)}</div><div class="sub">${esc(stageWord(session.phase))}</div></div>${pill(taskGroup(session.status), STATUS_WORDS[session.status])}</a>`).join('')}</div>` : ''}
-      <div class="card"><h2 class="card-title">Recent work</h2>${data.recent.length ? data.recent.map((item) => `<a class="list-item" href="#/workflow/${esc(item.jobId)}"><div class="grow"><div class="title" dir="auto">${esc(item.title)}</div><div class="sub" dir="auto">${esc(item.objective)}</div>${item.summary ? `<div class="sub small" dir="auto">${esc(item.summary)}</div>` : ''}</div><div class="xs faint">${esc(item.status)}<br>${when(item.at)}</div></a>`).join('') : '<div class="muted small">No work in the last 30 days.</div>'}</div>
-      <div class="card"><h2 class="card-title">Recent artifacts</h2><div id="agentArtifacts" class="muted small">Loading…</div></div>
-      ${agent.directChat ? `<div class="card"><h2 class="card-title">Conversations</h2>${data.conversations.length ? data.conversations.map((conversation) => `<a class="list-item" href="#/chat/${esc(conversation.id)}"><div class="grow"><div class="title" dir="auto">${esc(conversation.title)}</div><div class="sub">${when(conversation.lastMessageAt)}</div></div></a>`).join('') : '<div class="muted small">No direct conversations yet.</div>'}</div>` : ''}
-    </div>`;
-  };
-  const artifacts = () => api(`/api/artifacts${q({ workspaceId: ws(), agent: slug })}`).then(({ artifacts: list }) => {
-    const holder = $('#agentArtifacts');
-    if (holder) holder.innerHTML = list.length ? list.slice(0, 4).map(renderArtifact).join('') : 'No artifacts yet. Visual outputs (tables, charts, boards) appear here.';
-  }).catch(() => {});
-  draw(await load());
-  artifacts();
-  let last = '';
-  every(5000, async () => { try { const data = await load(); const next = JSON.stringify(data); if (next !== last) { last = next; draw(data); artifacts(); } } catch {} });
+  view.querySelectorAll('[data-employee]').forEach((card) => { card.onclick = (event) => { event.preventDefault(); openEmployee(card.dataset.employee); }; });
 }
 
 const NODE_WORD = { done: 'Done', working: 'Working', waiting: 'Waiting', ready: 'Starting', failed: 'Failed', blocked: 'Blocked', capacity: 'Waiting for free model capacity — will resume automatically' };
