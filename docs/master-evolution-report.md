@@ -1,4 +1,4 @@
-# Fahad AI Office — Master Evolution report (2026-09-27)
+# Fahad AI Office — Master Evolution report (2026-09-27, final)
 
 Evidence labels: **VERIFIED** (seen in production data or a real run),
 **TESTED** (automated tests only), **NOT VERIFIED** (with the reason).
@@ -7,7 +7,7 @@ set to `allow_paid=false` for the live validation and nothing paid was spent
 (live run cost: **$0.0000**).
 
 ## 1. Baseline
-Production ran `main` at `271eba5` before this phase's fixes; 311 tests pass;
+Production runs `main` at `149d9b8` (PR #57 roster/UI, PR #58 live-run fixes); 311 tests pass;
 CI green on every merged PR. Schema fingerprint in production equals
 `supabase/verify/schema-fingerprint.txt` (945 objects, digest `a7fb7bb7…`). VERIFIED.
 
@@ -45,8 +45,8 @@ typography, three logo concepts. AUDIT later flagged a WCAG contrast issue in
 it. VERIFIED.
 
 ## 8. PRODUCT
-Not dispatched by CHIEF for this objective (not needed); covered by tests
-(kanban/timeline/flow/checklist artifacts). TESTED — NOT VERIFIED LIVE.
+Live (second run, free only): MVP kanban board, main user-journey flow,
+3-month roadmap timeline and an acceptance-criteria checklist. VERIFIED.
 
 ## 9. FINANCE
 Live: financial model with KNOWN/ESTIMATED/ASSUMPTION per line, two charts
@@ -64,7 +64,10 @@ Live: verdict **NEEDS WORK**, six findings with severity and owner
 VERIFIED.
 
 ## 12. SOCIAL
-Not needed for this objective. TESTED — NOT VERIFIED LIVE.
+Live (second run, free only): a 14-day Instagram/TikTok launch content
+calendar; 3 complete source links (later.com) saved as SOCIAL knowledge
+with a 30-day expiry — the post-fix source parser accepted only complete
+URLs. VERIFIED.
 
 ## 13. LEGAL
 Live: compliance matrix (jurisdiction, source, date, status, classification,
@@ -83,9 +86,11 @@ summary total (~AED 4,000) disagrees with its own table (~AED 5,552).
 
 ## 15. Direct chats and consults
 Direct chat with FINANCE in Arabic answered in Arabic with KNOWN/ESTIMATED
-labels. The model did not consult CODING although asked → fixed with
-deterministic named consults (PR #58). Consult mechanics: TESTED; live re-run
-in section 34.
+labels. First run: the model ignored "اسأل الكودينج" → fixed (PR #58). Second
+run after the fix: FINANCE immediately created the consult task "FINANCE asks
+CODING", and CODING answered in Arabic with an infrastructure table on a free
+route. VERIFIED. FINANCE's final answer using that input: NOT VERIFIED DUE TO
+BUDGET (see section 34).
 
 ## 16. Models are roles, not fixed models
 Every stage routed by job type. Live paths: CHIEF plan on Gemini flash (free)
@@ -183,9 +188,23 @@ TESTED + screenshots; not re-screenshotted on production (the Hub domain is
 not reachable from the build environment).
 
 ## 34. Post-fix live re-verification
-PR #58 (fixes from the live run) → CI → merge → deploy → a second free-only
-run of the named-consult and synthesis paths. Result recorded at the end of
-this file.
+PR #58 merged (`149d9b8`), deployed ("DEPLOYMENT SUCCESSFUL — now running
+commit 149d9b8"). Second free-only run:
+* Named consult → VERIFIED (section 15).
+* PRODUCT, SOCIAL, LEGAL workstreams → VERIFIED (7 artifacts, clean sources).
+* FINANCE follow-up and CHIEF synthesis → **NOT VERIFIED DUE TO BUDGET**: both
+  failed fast with "No model route satisfies the task policy". Root cause: the
+  first run used today's free capacity for high-tier jobs — OpenRouter's key-
+  level free allowance (both Nemotron routes quota-exhausted until 00:00 UTC)
+  and Gemini flash cooling down — and the remaining free models are below the
+  reasoning-4/writing-4 bar those stages need; paid routes were disabled by
+  the free-only policy, as instructed. The synthesis-continuation fix is
+  therefore verified by tests only.
+* Finding: an Office task fails immediately when no route is eligible, even
+  when free capacity returns at a known time. Recommended next change: park the
+  task as WAITING until the earliest cooldown ends instead of failing.
+* Spend for the whole phase: $0.00 (workspace spend unchanged at $1.9167).
+* The temporary `allow_paid=false` routing row was removed afterwards.
 
 ## 35. Telegram → CHIEF
 Built and tested (owner-only, rate limited, results + Approve/Reject, deep
