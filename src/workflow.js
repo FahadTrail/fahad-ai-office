@@ -1,5 +1,5 @@
 import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validatePlan } from './chief.js';
-import { officeAgent } from './office/agents.js';
+import { DISPATCHABLE, mentionedEmployees, officeAgent } from './office/agents.js';
 import { converseDirect, parseConsultRequest, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
 import { parseArtifacts, parseSources } from './office/artifacts.js';
 import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
@@ -520,6 +520,14 @@ export class OfficeWorkflow {
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     const knowledge = await this.knowledgeFor(context, employee);
     const allowConsult = !brief.followUp;
+    // Fahad named a colleague ("اسأل الكودينج", "ask CODING first"): consult
+    // them first without relying on the model to decide it.
+    const named = allowConsult ? mentionedEmployees(request.goal).filter((key) => key !== employee.key && DISPATCHABLE.includes(key)).slice(0, 2) : [];
+    if (named.length) {
+      return this.requestConsults(task, { text: '', tokensIn: 0, tokensOut: 0, costUsd: 0, model: 'no model call (named colleague)' }, employee, named.map((key) => ({
+        employee: key, question: `Fahad asked ${employee.label}: "${request.goal.slice(0, 1500)}". Give ${employee.label} the input from your specialty that this needs.`,
+      })));
+    }
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
       agent, role: employee.key, goal: request.goal, context: context?.text || '', knowledge, consults, allowConsult,
       webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
@@ -693,6 +701,8 @@ export class OfficeWorkflow {
       prompt: args.prompt,
       useWebTools: (args.allowedTools || []).length > 0,
       maxTurns: args.maxTurns,
+      // The Chief's synthesis consolidates every employee: give it room.
+      ...(String(stage).startsWith(STAGES.SYNTHESIS) ? { maxOutputTokens: 8000 } : {}),
       dataClass: request.dataClass,
       onlyProvider: preference && preference !== MODEL_PROVIDER ? preference : null,
       context: execution.gatewayContext,
@@ -809,7 +819,7 @@ export class OfficeWorkflow {
             message: `${hostTool.name} ${hostTool.status}.`,
             payload: {
               kind: 'host_tool', tool: hostTool.name, status: hostTool.status,
-              tool_use_id: hostTool.id, duration_ms: hostTool.durationMs ?? null,
+              tool_use_id: hostTool.id, duration_ms: hostTool.durationMs ?? null, ...(hostTool.error ? { error: hostTool.error } : {}),
             },
           });
         }

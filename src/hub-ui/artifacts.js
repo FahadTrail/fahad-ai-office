@@ -5,6 +5,8 @@
 import { escapeHtml as esc } from './markdown.js';
 
 const HEX = /^#[0-9a-f]{6}$/i;
+// Only complete http(s) links become anchors; placeholders ("…/id...") stay text.
+const isLink = (value) => /^https?:\/\/[^\s`'"<>]{4,1000}$/i.test(String(value || '')) && !/\.\.\.|…/.test(String(value));
 const n = (value) => (Number.isFinite(Number(value)) && value !== null && value !== '' ? Number(value) : null);
 const arr = (value, max = 80) => (Array.isArray(value) ? value.slice(0, max) : []);
 const fmt = (value, unit = '') => (value === null ? '—' : `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}${unit ? ` ${unit}` : ''}`);
@@ -110,15 +112,15 @@ const RENDER = {
   compliance_matrix: (data) => table(['Requirement', 'Jurisdiction', 'Status', 'Classification', 'Uncertainty', 'Source'], arr(data.items).map((item) => [
     `${esc(item.requirement)}${item.applicability ? `<div class="xs muted">${esc(item.applicability)}</div>` : ''}`, esc(item.jurisdiction), esc(item.status),
     tag(item.classification, { 'RISK FLAG': 'bad', 'PROFESSIONAL REVIEW REQUIRED': 'warn', DRAFT: 'muted' }[item.classification] || 'ok'), esc(item.uncertainty),
-    /^https?:\/\//.test(String(item.source || '')) ? `<a href="${esc(item.source)}" target="_blank" rel="noopener noreferrer">source</a>${item.source_date ? ` <span class="xs faint">${esc(item.source_date)}</span>` : ''}` : esc(item.source)]))
+    isLink(item.source) ? `<a href="${esc(item.source)}" target="_blank" rel="noopener noreferrer">source</a>${item.source_date ? ` <span class="xs faint">${esc(item.source_date)}</span>` : ''}` : esc(item.source)]))
     + '<div class="xs faint">LEGAL provides research, not legal advice. Items marked PROFESSIONAL REVIEW REQUIRED need a qualified lawyer.</div>',
   audit_report: (data) => `<div class="audit-verdict v-${esc(String(data.verdict || '').replace(/\s+/g, '-').toLowerCase())}">${esc(data.verdict || 'PASS')}</div>
     <div class="audit-issues">${arr(data.findings).map((finding) => `<div class="issue sev-${esc(finding.severity)}"><div class="row">${tag(finding.severity, { critical: 'bad', high: 'bad', medium: 'warn', low: 'muted' }[finding.severity])}${finding.area ? tag(finding.area, 'muted') : ''}${finding.owner ? `<span class="xs faint">→ ${esc(String(finding.owner).toUpperCase())}</span>` : ''}</div>
       <strong dir="auto">${esc(finding.title)}</strong>${finding.detail ? `<div class="small muted" dir="auto">${esc(finding.detail)}</div>` : ''}</div>`).join('') || '<div class="small muted">No findings.</div>'}</div>`,
   content_calendar: (data) => table(['When', 'Platform', 'Format', 'Hook', 'Caption'], arr(data.entries).map((entry) => [esc(entry.date), esc(entry.platform), esc(entry.format), `<strong>${esc(entry.hook)}</strong>`, esc(entry.caption)])),
   evidence: (data) => `<ul class="art-evidence">${arr(data.claims).map((claim) => {
-    const status = claim.status === 'VERIFIED' && !/^https?:\/\//.test(String(claim.source || '')) ? 'LIKELY' : (['VERIFIED', 'LIKELY'].includes(claim.status) ? claim.status : 'UNKNOWN');
-    return `<li>${tag(status, { VERIFIED: 'ok', LIKELY: 'warn', UNKNOWN: 'muted' }[status])}<span class="grow" dir="auto">${esc(claim.claim)}</span>${/^https?:\/\//.test(String(claim.source || '')) ? `<a class="xs" href="${esc(claim.source)}" target="_blank" rel="noopener noreferrer">source</a>` : ''}</li>`;
+    const status = claim.status === 'VERIFIED' && !isLink(claim.source) ? 'LIKELY' : (['VERIFIED', 'LIKELY'].includes(claim.status) ? claim.status : 'UNKNOWN');
+    return `<li>${tag(status, { VERIFIED: 'ok', LIKELY: 'warn', UNKNOWN: 'muted' }[status])}<span class="grow" dir="auto">${esc(claim.claim)}</span>${isLink(claim.source) ? `<a class="xs" href="${esc(claim.source)}" target="_blank" rel="noopener noreferrer">source</a>` : ''}</li>`;
   }).join('')}</ul>`,
   risk_matrix: riskMatrix,
 };

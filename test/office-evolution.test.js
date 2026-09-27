@@ -186,3 +186,29 @@ test('the visual engine draws every artifact type and escapes everything', async
   const parts = splitArtifacts('Before\n```artifact\n{"type":"checklist","items":[{"text":"a"}]}\n```\nAfter\n```artifact\n{broken\n```');
   assert.deepEqual(parts.map((part) => (part.artifact ? part.artifact.type : part.text.trim())), ['Before', 'checklist', 'After']);
 });
+
+test('when Fahad names a colleague in a direct chat, the consult happens without asking the model first', async () => {
+  const store = new MemoryStore({ goal: 'قبل ما تجاوب اسأل الكودينج: كم تكلفة الاستضافة؟', projectId: 'ws-1' });
+  store.conversationAgent = async () => 'business-finance';
+  const calls = [];
+  const workflow = new OfficeWorkflow({
+    store, now: () => store.now,
+    direct: async (input) => {
+      calls.push({ role: input.role, consultFrom: input.consultFrom || null, consults: input.consults?.map((entry) => entry.agent_slug) || [] });
+      return outcome(input.consultFrom ? 'Hosting ≈ 25 USD/month (ESTIMATED).' : '## Summary\nAbout 92 AED/month (ESTIMATED, CODING input).');
+    },
+  });
+  await drain(workflow);
+  assert.deepEqual(calls, [
+    { role: 'coding', consultFrom: 'FINANCE', consults: [] },
+    { role: 'finance', consultFrom: null, consults: ['coding-agent'] },
+  ]);
+  assert.match(store.results.find((result) => result.kind === 'final').content, /92 AED/);
+});
+
+test('placeholder and malformed links are never saved as sources or evidence', () => {
+  const md = '## Sources\n- `https://apps.apple.com/ae/app/starbucks-uae/...`\n- https://apps.apple.com/ae/app/x/id...\n- https://deliveroo.ae`\n- [PDPL](https://u.ae/pdpl)\n- https://x';
+  assert.deepEqual(parseSources(md).map((source) => source.url), ['https://deliveroo.ae', 'https://u.ae/pdpl']);
+  const { artifacts } = parseArtifacts(block({ type: 'evidence', claims: [{ claim: 'x', status: 'VERIFIED', source: 'https://apps.apple.com/ae/app/y/id...' }] }));
+  assert.deepEqual(artifacts[0].data.claims[0], { claim: 'x', status: 'LIKELY', source: '' });
+});

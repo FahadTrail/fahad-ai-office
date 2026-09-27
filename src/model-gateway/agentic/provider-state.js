@@ -71,6 +71,12 @@ export function failureOutcome(error, previous = {}, now = Date.now(), route = n
     // account's data policy, no tool support): stop retrying it every turn.
     health = HEALTH.UNAVAILABLE;
     cooldownUntil = now + 6 * 60 * MINUTE;
+  } else if (error.code === 'PROVIDER_INVALID_REQUEST' && consecutive >= 3) {
+    // The same route rejecting three requests in a row is a route problem
+    // (model withdrawn, trial ended, API change), not a bad request: stop
+    // probing it every turn. It is re-checked after the cooldown.
+    health = HEALTH.UNAVAILABLE;
+    cooldownUntil = now + 6 * 60 * MINUTE;
   } else if (error.code === 'PROVIDER_CAPACITY') {
     health = HEALTH.QUOTA_EXHAUSTED;
     cooldownUntil = resetAt || now + 60 * MINUTE;

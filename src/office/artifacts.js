@@ -19,6 +19,17 @@ const oneOf = (value, allowed, fallback) => {
   const match = allowed.find((option) => option.toLowerCase() === upper.toLowerCase());
   return match ?? fallback;
 };
+// A real, complete link: placeholders ("…/id...", "https://x.com/...") and
+// links wrapped in Markdown/code punctuation are rejected, never saved.
+export function realUrl(value) {
+  const raw = String(value ?? '').trim();
+  if (/\.\.\.|…/.test(raw)) return '';
+  const candidate = raw.replace(/^[<`'"(]+|[>`'")\],;:.]+$/g, '');
+  if (!/^https?:\/\/[^\s`'"<>]{4,1000}$/i.test(candidate)) return '';
+  try {
+    return /\.[a-z]{2,}$/i.test(new URL(candidate).hostname) ? candidate : '';
+  } catch { return ''; }
+}
 const hex = (value) => (/^#[0-9a-f]{6}$/i.test(String(value || '').trim()) ? String(value).trim().toUpperCase() : null);
 
 // type → { hint (for prompts), clean (validator returning data or null) }
@@ -94,7 +105,7 @@ export const ARTIFACT_TYPES = Object.freeze({
     hint: '{"type":"compliance_matrix","title":"…","items":[{"requirement":"…","jurisdiction":"UAE","source":"https://…","source_date":"2026-01-01","applicability":"…","status":"required|recommended|not_applicable|unknown","classification":"INFORMATION|DRAFT|RISK FLAG|PROFESSIONAL REVIEW REQUIRED","uncertainty":"low|medium|high"}]}',
     clean: (raw) => {
       const items = list(raw.items).map((item) => ({
-        requirement: text(item?.requirement, 300), jurisdiction: text(item?.jurisdiction, 60), source: text(item?.source, 400), source_date: text(item?.source_date, 20),
+        requirement: text(item?.requirement, 300), jurisdiction: text(item?.jurisdiction, 60), source: realUrl(item?.source) || text(item?.source, 400).replace(/https?:\/\/\S+/gi, '').trim(), source_date: text(item?.source_date, 20),
         applicability: text(item?.applicability, 300), status: oneOf(item?.status, ['required', 'recommended', 'not_applicable', 'unknown'], 'unknown'),
         classification: oneOf(item?.classification, ['INFORMATION', 'DRAFT', 'RISK FLAG', 'PROFESSIONAL REVIEW REQUIRED'], 'INFORMATION'),
         uncertainty: oneOf(item?.uncertainty, ['low', 'medium', 'high'], 'medium'),
@@ -122,7 +133,7 @@ export const ARTIFACT_TYPES = Object.freeze({
     hint: '{"type":"evidence","title":"…","claims":[{"claim":"…","status":"VERIFIED|LIKELY|UNKNOWN","source":"https://…"}]}',
     clean: (raw) => {
       const claims = list(raw.claims).map((claim) => ({ claim: text(claim?.claim, 300), status: oneOf(claim?.status, ['VERIFIED', 'LIKELY', 'UNKNOWN'], 'UNKNOWN'),
-        source: /^https?:\/\//i.test(String(claim?.source || '')) ? text(claim.source, 400) : '' }))
+        source: realUrl(claim?.source).slice(0, 400) }))
         .map((claim) => (claim.status === 'VERIFIED' && !claim.source ? { ...claim, status: 'LIKELY' } : claim))
         .filter((claim) => claim.claim);
       return claims.length ? { claims } : null;
@@ -177,9 +188,9 @@ export function artifactInstructions(types = []) {
 export function parseSources(markdown) {
   const section = String(markdown || '').match(/^##\s*Sources[^\n]*\n([\s\S]*?)(?=^##\s|$(?![\s\S]))/mi)?.[1] || '';
   const found = new Map();
-  for (const match of section.matchAll(/\[([^\]]{2,200})\]\((https?:\/\/[^)\s]{4,900})\)|(https?:\/\/[^\s)>\]]{4,900})/g)) {
-    const url = (match[2] || match[3]).replace(/[.,;]+$/, '');
-    if (!found.has(url)) found.set(url, { title: text(match[1] || url, 300), url });
+  for (const match of section.matchAll(/\[([^\]]{2,200})\]\(([^)\s]{4,1000})\)|(https?:\/\/[^\s)>\]]{4,1000})/g)) {
+    const url = realUrl(match[2] || match[3]);
+    if (url && !found.has(url)) found.set(url, { title: text(match[1] || url, 300), url });
   }
   return [...found.values()].slice(0, 20);
 }

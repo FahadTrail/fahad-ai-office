@@ -129,6 +129,10 @@ export class OfficeModelRunner {
     let currentRouteId = null;
     let checkpointSequence = 0;
     let lastEvaluation = null;
+    // An answer cut off by the output limit is continued (same model, same
+    // conversation) instead of being saved half-finished.
+    let partial = '';
+    let continuations = 0;
 
     const handoff = () => {
       if (!completed.length) return [userText(prompt)];
@@ -234,14 +238,23 @@ export class OfficeModelRunner {
             completed.push({ key, name: call.name, args: call.arguments || {}, result: outcome.result, summary: content.slice(0, 1500) });
             toolsUsed.push(call.name);
           }
-          await (hooks.onActivity || (async () => {}))({ turns: turn + 1, hostTool: { name: call.name, status: outcome.ok ? 'completed' : 'failed', id: call.id, durationMs: Date.now() - startedAt } });
+          await (hooks.onActivity || (async () => {}))({ turns: turn + 1, hostTool: { name: call.name, status: outcome.ok ? 'completed' : 'failed', id: call.id, durationMs: Date.now() - startedAt, ...(outcome.ok ? {} : { error: String(outcome.result?.error || 'TOOL_FAILED').slice(0, 60) }) } });
         }
         messages.push({ role: 'user', content: results });
         continue;
       }
-      const text = result.message.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n').trim();
+      const piece = result.message.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n');
+      if (result.stopReason === 'max_tokens' && piece.trim() && continuations < MAX_CONTINUATIONS) {
+        partial += piece;
+        continuations += 1;
+        messages.push(userText('Your answer was cut off by the output limit. Continue exactly where you stopped: no repetition, no preamble.'));
+        continue;
+      }
+      const text = `${partial}${piece}`.trim();
+      partial = '';
       let failure = null;
       if (!text) failure = new EscalationRequired('The model returned no answer', result.stopReason === 'max_tokens' ? 'OUTPUT_TRUNCATED' : 'EMPTY_OUTPUT');
+      else if (result.stopReason === 'max_tokens') failure = new EscalationRequired('The answer is still cut off after continuing', 'OUTPUT_TRUNCATED');
       else if (validate) {
         try {
           await validate(text);
@@ -274,6 +287,8 @@ export class OfficeModelRunner {
     throw Object.assign(new Error(`The ${job} stage did not finish within its turn budget`), { code: 'OFFICE_TURN_BUDGET_EXHAUSTED' });
   }
 }
+
+const MAX_CONTINUATIONS = 2;
 
 function qualification(route, job) {
   const capabilities = route.capabilities || {};
