@@ -22,7 +22,7 @@ const SECRET_ENV_NAMES = Object.freeze([
   'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_SECRET_KEY', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'OPENAI_API_KEY',
   'DEEPSEEK_API_KEY', 'QWEN_API_KEY', 'KIMI_API_KEY', 'ZHIPU_API_KEY', 'MINIMAX_API_KEY', 'GEMINI_API_KEY',
   'OPENROUTER_API_KEY', 'GROQ_API_KEY', 'GITHUB_MODELS_TOKEN', 'CEREBRAS_API_KEY', 'MISTRAL_API_KEY', 'CONTINUITY_GITHUB_TOKEN', 'CODING_GITHUB_TOKEN',
-  'CODING_SUPABASE_ACCESS_TOKEN', 'HUB_ACCESS_TOKEN', 'VPS_SSH_KEY_B64',
+  'CODING_SUPABASE_ACCESS_TOKEN', 'HUB_ACCESS_TOKEN', 'VPS_SSH_KEY_B64', 'TELEGRAM_BOT_TOKEN',
 ]);
 
 const SECRET_PATTERNS = Object.freeze([
@@ -35,6 +35,8 @@ const SECRET_PATTERNS = Object.freeze([
   // Google AI Studio auth keys (Gemini API, 2026-05 onwards).
   /\bAQ\.Ab[A-Za-z0-9._-]{30,}/,
   /\bxox[abp]-[A-Za-z0-9-]{10,}\b/,
+  // Telegram bot tokens (<bot id>:<35-char secret>).
+  /\b\d{6,12}:[A-Za-z0-9_-]{30,}\b/,
   /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
   new RegExp(`\\b(?:${SECRET_ENV_NAMES.join('|')})\\s*[=:]\\s*['"]?[A-Za-z0-9_./+-]{12,}`, 'i'),
 ]);

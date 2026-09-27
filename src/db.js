@@ -242,6 +242,25 @@ export class SupabaseStore {
     return session;
   }
 
+  async saveArtifacts(rows) {
+    const { error } = await this.db.from('artifacts').insert(rows);
+    if (error) throw new Error('Could not save artifacts: ' + error.message);
+  }
+
+  // Re-citing a source refreshes its date and expiry instead of duplicating it.
+  async saveKnowledge(rows) {
+    const { error } = await this.db.from('knowledge_items').upsert(rows, { onConflict: 'project_id,agent_slug,source_url' });
+    if (error) throw new Error('Could not save knowledge: ' + error.message);
+  }
+
+  async knowledgeFor(projectId, agentSlug, limit = 8) {
+    const { data, error } = await this.db.from('knowledge_items').select('title,source_url,source_date')
+      .eq('project_id', projectId).eq('agent_slug', agentSlug).gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false }).limit(limit);
+    if (error) throw new Error('Could not read knowledge: ' + error.message);
+    return data || [];
+  }
+
   async getJob(jobId) {
     const { data, error } = await this.db.from('jobs').select('*').eq('id', jobId).single();
     if (error) throw new Error('Could not read job: ' + error.message);

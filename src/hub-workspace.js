@@ -7,6 +7,10 @@
 import { SESSION_FIELDS, modelPoolSnapshot, publicSession, publicEvent } from './hub-coding.js';
 import { officeAgent } from './office/agents.js';
 
+// Structured memory (see the final-roster migration's project_memory check).
+export const MEMORY_KINDS = Object.freeze(['fact', 'decision', 'preference', 'constraint', 'product_decision', 'technical_decision',
+  'brand_decision', 'legal_requirement', 'financial_assumption']);
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPO_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -594,7 +598,7 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
       if (method === 'POST' && projectMatch[2] === 'memory' && !projectMatch[3]) {
         const body = await readJson(request);
         const content = text(body.content, 'Memory', { min: 3, max: 2000 });
-        const kind = ['fact', 'decision', 'preference'].includes(body.kind) ? body.kind : 'fact';
+        const kind = MEMORY_KINDS.includes(body.kind) ? body.kind : 'fact';
         const { data, error } = await db.from('project_memory').insert({ project_id: id, kind, content, source: 'owner' }).select('id,kind,content,source,created_at').single();
         if (error) throw Object.assign(new Error(`Could not save: ${error.message}`), { statusCode: 500 });
         return sendJson(response, 201, { ok: true, memory: data }), true;

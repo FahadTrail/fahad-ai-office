@@ -13,64 +13,35 @@
 // dashboard shows it as READY — NOT ACTIVE.
 
 import { JOB_PROFILES } from '../model-gateway/agentic/capabilities.js';
+import { ACTIVE_AGENTS } from '../office/agents.js';
 
-export const OFFICE_ROLES = Object.freeze([
-  {
-    id: 'chief', label: 'Chief of Staff', job: 'orchestration', runtime: 'office-workflow',
-    tools: [], approvals: [], status: 'ACTIVE — plans (orchestration) and reviews (synthesis) on the shared Model Pool',
-    purpose: 'Classifies the request, picks the specialist, writes the handoff and reviews the result; escalates high-stakes work.',
+// Per-employee tools and approvals. Skills (e.g. SEO for SOCIAL) are part of
+// an employee's scope, never separate employees.
+const PROFILE = {
+  chief: { tools: [], approvals: [], status: 'ACTIVE — plans, dispatches and synthesizes on the shared Model Pool' },
+  research: { tools: ['web_search', 'web_fetch'], approvals: [] },
+  creative: { tools: [], approvals: ['publish'] },
+  product: { tools: ['web_search', 'web_fetch'], approvals: [] },
+  finance: { tools: ['web_search', 'web_fetch'], approvals: ['any_payment', 'external_send'] },
+  coding: {
+    runtime: 'coding-agent', tools: ['repo.*', 'shell.run', 'github.*', 'supabase.query_read'],
+    approvals: ['github.pr_merge', 'supabase.query_write', 'supabase.migration_apply'],
+    status: 'ACTIVE — Fahad Coding Agent (PR, CI, merge approval, deployment)',
   },
-  {
-    id: 'research', label: 'Research', job: 'research', runtime: 'office-workflow',
-    tools: ['web_search', 'web_fetch'], approvals: [], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
-    purpose: 'Evidence gathering and analysis with cited sources.',
-  },
-  {
-    id: 'strategy', label: 'Business Strategy', job: 'research', runtime: 'office-workflow',
-    tools: ['web_search', 'web_fetch'], approvals: [], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
-    purpose: 'Business model, product strategy, MVP scope and go-to-market.',
-  },
-  {
-    id: 'branding', label: 'Brand & Creative', job: 'branding', runtime: 'office-workflow',
-    tools: [], approvals: ['publish'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
-    purpose: 'Names, positioning, tone of voice and brand guidelines.',
-  },
-  {
-    id: 'content', label: 'Content & Media', job: 'content', runtime: 'office-workflow',
-    tools: [], approvals: ['publish'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
-    purpose: 'Articles, posts and copy drafts; nothing is published without approval.',
-  },
-  {
-    id: 'seo', label: 'SEO', job: 'seo', runtime: 'office-agent',
-    tools: ['web_search', 'web_fetch'], approvals: ['publish'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
-    purpose: 'Keyword research, on-page audits and content briefs.',
-  },
-  {
-    id: 'finance', label: 'Finance', job: 'finance', runtime: 'office-agent',
-    tools: ['web_search', 'web_fetch'], approvals: ['any_payment', 'external_send'], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
-    purpose: 'Budgets, forecasts and cost analysis; never moves money.',
-  },
-  {
-    id: 'development', label: 'Development', job: 'coding', runtime: 'coding-agent',
-    tools: ['repo.*', 'shell.run', 'github.*', 'supabase.query_read'], approvals: ['github.pr_merge', 'supabase.query_write', 'supabase.migration_apply'],
-    status: 'ACTIVE — Fahad Coding Agent', purpose: 'Autonomous development through PR, CI, merge approval and deployment.',
-  },
-  {
-    id: 'product', label: 'Product & Tech', job: 'research', runtime: 'office-workflow',
-    tools: ['web_search'], approvals: [], status: 'ACTIVE — delegated by Chief (written plans; code goes to the Coding Agent)',
-    purpose: 'Technical requirements, architecture options and build plans.',
-  },
-  {
-    id: 'operations', label: 'Operations', job: 'content', runtime: 'office-workflow',
-    tools: [], approvals: [], status: 'ACTIVE — delegated by Chief (shared Model Pool)',
-    purpose: 'Launch checklists, timelines, processes and follow-ups.',
-  },
-  {
-    id: 'qa_security', label: 'QA & Review', job: 'orchestration', runtime: 'office-workflow',
-    tools: [], approvals: [], status: 'ACTIVE — reviews Office work when the Chief adds a review workstream',
-    purpose: 'Accuracy, gaps, risks and consistency review before work reaches Fahad; code changes are gated by the Coding Agent tests and CI.',
-  },
-].map((role) => Object.freeze({ ...role, jobProfile: JOB_PROFILES[role.job] })));
+  audit: { tools: [], approvals: [] },
+  social: { tools: ['web_search', 'web_fetch'], approvals: ['publish'], skills: ['SEO', 'content calendar', 'trend research'] },
+  legal: { tools: ['web_search', 'web_fetch'], approvals: [], skills: ['open-source license review', 'UAE compliance'] },
+};
+
+export const OFFICE_ROLES = Object.freeze(ACTIVE_AGENTS.map((agent) => {
+  const profile = PROFILE[agent.key] || {};
+  return Object.freeze({
+    id: agent.key, label: agent.label, job: agent.job, runtime: profile.runtime || 'office-workflow',
+    tools: profile.tools || [], approvals: profile.approvals || [], skills: profile.skills || [],
+    status: profile.status || 'ACTIVE — dispatched by CHIEF or chatted with directly (shared Model Pool)',
+    purpose: agent.scope, jobProfile: JOB_PROFILES[agent.job],
+  });
+}));
 
 // The routing a role's worker passes to the shared gateway.
 export function roleRouting(roleId, overrides = {}) {

@@ -3,20 +3,20 @@ import assert from 'node:assert/strict';
 import { OfficeWorkflow, SEQUENCES } from '../src/workflow.js';
 import { validatePlan } from '../src/chief.js';
 import { parseRevisionRequest } from '../src/office/specialist.js';
-import { OFFICE_AGENTS, officeAgent, parseOutput } from '../src/office/agents.js';
+import { ACTIVE_AGENTS, DISPATCHABLE, OFFICE_AGENTS, officeAgent, parseOutput } from '../src/office/agents.js';
 import { MemoryStore } from '../testing/fixtures/office-memory-store.js';
 
 const outcome = (text) => ({ text, tokensIn: 10, tokensOut: 5, costUsd: 0, durationMs: 5, turns: 1 });
 const deliverable = (who, body) => `## Summary\n${who} summary.\n\n## Work\n${body}\n\n## Handoff\nNext.\n\n## Decisions for Fahad\nNone`;
 
-// Research → (Strategy ∥ Brand) → Finance(after Strategy) → Chief synthesis.
+// RESEARCH → (PRODUCT ∥ CREATIVE) → FINANCE(after PRODUCT) → CHIEF synthesis.
 const PLAN = {
   route: 'orchestrate', plan_summary: 'Launch concept for Morning Harbor.',
   synthesis_brief: 'One launch concept with decisions.',
   workstreams: [
     { id: 'market', agent: 'research', title: 'Market research', brief: 'Research the premium bakery market in the target city.', depends_on: [] },
-    { id: 'strategy', agent: 'strategy', title: 'Business model', brief: 'Define the business model and positioning using the research.', depends_on: ['market'] },
-    { id: 'brand', agent: 'brand', title: 'Brand concept', brief: 'Create the brand concept and tone of voice from the research.', depends_on: ['market'] },
+    { id: 'strategy', agent: 'product', title: 'Business model', brief: 'Define the business model and positioning using the research.', depends_on: ['market'] },
+    { id: 'brand', agent: 'creative', title: 'Brand concept', brief: 'Create the brand concept and tone of voice from the research.', depends_on: ['market'] },
     { id: 'finance', agent: 'finance', title: 'Launch budget', brief: 'Estimate launch costs and pricing for the business model.', depends_on: ['strategy'] },
   ],
 };
@@ -55,20 +55,20 @@ test('the Chief orchestrates several employees with dependencies, handoffs and o
   const job = store.jobs[0];
   assert.equal(job.status, 'completed');
   const work = calls.filter((call) => call.role && call.role !== 'synthesis');
-  assert.deepEqual(work.map((call) => call.role), ['research', 'strategy', 'brand', 'finance']);
-  assert.deepEqual(work.find((call) => call.role === 'strategy').inputs, ['research-strategy'], 'strategy receives the research output');
-  assert.deepEqual(work.find((call) => call.role === 'finance').inputs, ['business-strategy'], 'finance receives the strategy output');
+  assert.deepEqual(work.map((call) => call.role), ['research', 'product', 'creative', 'finance']);
+  assert.deepEqual(work.find((call) => call.role === 'product').inputs, ['research-strategy'], 'product receives the research output');
+  assert.deepEqual(work.find((call) => call.role === 'finance').inputs, ['product-tech'], 'finance receives the product output');
   const synthesis = calls.find((call) => call.role === 'synthesis');
-  assert.deepEqual(synthesis.outputs.sort(), ['brand-creative', 'business-finance', 'business-strategy', 'research-strategy']);
+  assert.deepEqual(synthesis.outputs.sort(), ['brand-creative', 'business-finance', 'product-tech', 'research-strategy']);
   assert.equal(synthesis.allowRevision, true);
   // Every employee ran under its own identity, as a durable task.
-  assert.deepEqual(store.tasks.map((task) => task.agent_slug), ['chief-of-staff', 'research-strategy', 'business-strategy', 'brand-creative', 'business-finance', 'chief-of-staff']);
+  assert.deepEqual(store.tasks.map((task) => task.agent_slug), ['chief-of-staff', 'research-strategy', 'product-tech', 'brand-creative', 'business-finance', 'chief-of-staff']);
   assert.ok(store.tasks.every((task) => task.status === 'done'));
   // Real handoffs along every dependency edge.
   const edges = store.handoffs.map((handoff) => `${handoff.from_agent_id}>${handoff.to_agent_id}`);
-  for (const edge of ['chief>research', 'research>strategy', 'research>brand', 'strategy>finance', 'strategy>chief', 'brand>chief', 'finance>chief']) assert.ok(edges.includes(edge), edge);
+  for (const edge of ['chief>research', 'research>product', 'research>brand', 'product>finance', 'product>chief', 'brand>chief', 'finance>chief']) assert.ok(edges.includes(edge), edge);
   // Durable outputs, the plan as a readable table, and the Chief's final result.
-  assert.match(store.results.find((result) => result.task_id === store.tasks[0].id).content, /\| Market research \| Research \|/);
+  assert.match(store.results.find((result) => result.task_id === store.tasks[0].id).content, /\| Market research \| RESEARCH \|/);
   assert.equal(store.results.find((result) => result.kind === 'final').content, '# Morning Harbor launch concept\nConsolidated.');
   assert.ok(store.events.some((event) => event.payload?.kind === 'workflow_planned' && event.payload.workstreams.length === 4));
   assert.equal(store.events.filter((event) => event.payload?.kind === 'output_ready').length, 4);
@@ -94,7 +94,7 @@ test('the Chief can request one bounded revision round before the final result',
   await drain(workflow);
   assert.equal(store.jobs[0].status, 'completed');
   const revision = calls.find((call) => call.revision);
-  assert.equal(revision.role, 'brand');
+  assert.equal(revision.role, 'creative');
   assert.match(revision.revision, /warmer/);
   assert.match(revision.previous, /Brand concept deliverable/);
   const syntheses = calls.filter((call) => call.role === 'synthesis');
@@ -147,19 +147,19 @@ test('a direct conversation goes to that employee, not the Chief', async () => {
   store.conversationAgent = async () => 'brand-creative';
   const { workflow, calls } = office({ store });
   await drain(workflow);
-  assert.deepEqual(calls, [{ role: 'direct', agent: 'brand' }]);
+  assert.deepEqual(calls, [{ role: 'direct', agent: 'creative' }]);
   assert.equal(store.tasks.length, 1);
   assert.equal(store.tasks[0].agent_slug, 'brand-creative');
-  assert.equal(store.results.find((result) => result.kind === 'final').content, 'Direct answer from brand.');
+  assert.equal(store.results.find((result) => result.kind === 'final').content, 'Direct answer from creative.');
 });
 
 test('a failed workstream blocks what depends on it and fails the objective honestly', async () => {
   const { store, workflow } = office({
-    specialist: async (input) => { if (input.role === 'strategy') throw new Error('provider unavailable'); return outcome(deliverable(input.role, 'ok')); },
+    specialist: async (input) => { if (input.role === 'product') throw new Error('provider unavailable'); return outcome(deliverable(input.role, 'ok')); },
   });
   await drain(workflow);
   assert.equal(store.jobs[0].status, 'failed');
-  assert.equal(store.tasks.find((task) => task.agent_slug === 'business-strategy').status, 'failed');
+  assert.equal(store.tasks.find((task) => task.agent_slug === 'product-tech').status, 'failed');
   assert.equal(store.tasks.find((task) => task.agent_slug === 'business-finance').status, 'blocked');
   assert.ok(!store.results.some((result) => result.kind === 'final'));
 });
@@ -168,17 +168,27 @@ test('orchestration plans are validated: known employees, no cycles, bounded siz
   const base = { route: 'orchestrate', plan_summary: 'x' };
   const stream = (id, agent, depends = []) => ({ id, agent, title: id, brief: 'a sufficiently long brief for the work', depends_on: depends });
   assert.throws(() => validatePlan(JSON.stringify({ ...base, workstreams: [stream('a', 'astrologer')] })), /unknown employee/);
-  assert.throws(() => validatePlan(JSON.stringify({ ...base, workstreams: [stream('a', 'research', ['b']), stream('b', 'brand', ['a'])] })), /cycle/);
+  assert.throws(() => validatePlan(JSON.stringify({ ...base, workstreams: [stream('a', 'research', ['b']), stream('b', 'creative', ['a'])] })), /cycle/);
   assert.throws(() => validatePlan(JSON.stringify({ ...base, workstreams: [stream('a', 'research', ['zzz'])] })), /unknown workstream/);
   assert.throws(() => validatePlan(JSON.stringify({ ...base, workstreams: Array.from({ length: 9 }, (_, index) => stream(`w${index}`, 'research')) })), /limit is 8/);
   assert.throws(() => validatePlan(JSON.stringify({ ...base, workstreams: [stream('a', 'coding'), stream('b', 'coding')] })), /one development/);
   assert.throws(() => validatePlan(JSON.stringify({ ...base, workstreams: [stream('a', 'chief')] })), /unknown employee/);
   const plan = validatePlan(JSON.stringify({ ...base, workstreams: [stream('b', 'seo', ['a']), stream('a', 'market')] }));
-  assert.deepEqual(plan.workstreams.map((entry) => `${entry.id}:${entry.agent}`), ['a:research', 'b:content'], 'aliases map to employees; dependency order');
+  assert.deepEqual(plan.workstreams.map((entry) => `${entry.id}:${entry.agent}`), ['a:research', 'b:social'], 'aliases map to employees; dependency order');
 });
 
 test('the roster: every Office function has its own executable employee; models are never pinned', () => {
-  for (const key of ['research', 'strategy', 'finance', 'brand', 'content', 'coding', 'chief']) assert.ok(officeAgent(key), key);
+  assert.deepEqual(ACTIVE_AGENTS.map((agent) => agent.label), ['CHIEF', 'RESEARCH', 'CREATIVE', 'PRODUCT', 'FINANCE', 'CODING', 'AUDIT', 'SOCIAL', 'LEGAL']);
+  for (const key of ['research', 'finance', 'creative', 'product', 'social', 'audit', 'legal', 'coding', 'chief']) assert.ok(officeAgent(key), key);
+  // Retired identities keep their history but route new work to their successor.
+  assert.equal(officeAgent('business-strategy').retired, true);
+  assert.equal(officeAgent('strategy').key, 'product');
+  assert.equal(officeAgent('operations').slug, 'operations');
+  assert.equal(officeAgent('ops').key, 'product');
+  assert.equal(officeAgent('seo').key, 'social', 'SEO is a SOCIAL skill, not an employee');
+  assert.ok(!DISPATCHABLE.includes('strategy') && !DISPATCHABLE.includes('operations') && !DISPATCHABLE.includes('chief'));
+  // Fahad's Arabic nicknames.
+  for (const [word, key] of [['الفاينانس', 'finance'], ['الليغال', 'legal'], ['الريسيرش', 'research'], ['الكرييتف', 'creative'], ['الكودينج', 'coding']]) assert.equal(officeAgent(word)?.key, key, word);
   assert.equal(new Set(OFFICE_AGENTS.map((agent) => agent.slug)).size, OFFICE_AGENTS.length);
   for (const agent of OFFICE_AGENTS) {
     assert.ok(agent.job, `${agent.slug} routes by job type`);

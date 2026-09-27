@@ -21,6 +21,7 @@ const UI_FILES = Object.freeze({
   '/ui/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/ui/markdown.js': ['markdown.js', 'text/javascript; charset=utf-8'],
   '/ui/auth.js': ['auth.js', 'text/javascript; charset=utf-8'],
+  '/ui/artifacts.js': ['artifacts.js', 'text/javascript; charset=utf-8'],
 });
 const uiFile = (name) => readFileSync(new URL(`./hub-ui/${name}`, import.meta.url), 'utf8');
 export const WORKSPACE_HTML = uiFile('index.html');

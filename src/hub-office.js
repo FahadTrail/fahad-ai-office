@@ -3,14 +3,15 @@
 // multi-agent objective, and what the Office's tools can actually do.
 // Nothing here invents activity: an employee with no task row is AVAILABLE.
 
-import { OFFICE_AGENTS, officeAgent, parseOutput } from './office/agents.js';
+import { ACTIVE_AGENTS, OFFICE_AGENTS, officeAgent, parseOutput } from './office/agents.js';
+import { ARTIFACT_TYPES } from './office/artifacts.js';
 import { ownerAction, approvalCard } from './hub-workspace.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_SESSION = new Set(['completed', 'failed', 'cancelled']);
 const RECENT_MS = 15 * 60_000;
 
-export const AGENT_STATES = Object.freeze(['AVAILABLE', 'THINKING', 'WORKING', 'TESTING', 'WAITING', 'REVIEWING', 'BLOCKED', 'NEEDS FAHAD', 'COMPLETED']);
+export const AGENT_STATES = Object.freeze(['AVAILABLE', 'QUEUED', 'THINKING', 'WORKING', 'TESTING', 'WAITING', 'REVIEWING', 'NEEDS FAHAD', 'BLOCKED', 'COMPLETED', 'FAILED']);
 
 function stageOf(brief) {
   try { return JSON.parse(brief)?.stage || null; } catch { return null; }
@@ -39,7 +40,7 @@ export function officeState({ agents = [], jobs = [], tasks = [], sessions = [],
   const jobById = new Map(jobs.map((job) => [job.id, job]));
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
-  const rank = { 'NEEDS FAHAD': 0, WORKING: 1, TESTING: 1, THINKING: 1, REVIEWING: 1, WAITING: 2, BLOCKED: 3, COMPLETED: 4, AVAILABLE: 5 };
+  const rank = { 'NEEDS FAHAD': 0, WORKING: 1, TESTING: 1, THINKING: 1, REVIEWING: 1, WAITING: 2, QUEUED: 2, BLOCKED: 3, FAILED: 3, COMPLETED: 4, AVAILABLE: 5 };
   const result = new Map(OFFICE_AGENTS.map((entry) => [entry.slug, { state: 'AVAILABLE', detail: 'Available', assignment: null, since: null }]));
   const offer = (slug, candidate) => {
     const current = result.get(slug);
@@ -62,9 +63,11 @@ export function officeState({ agents = [], jobs = [], tasks = [], sessions = [],
     } else if ((state === 'waiting' || state === 'ready') && ['running', 'planning'].includes(job.status)) {
       const waitingFor = (task.depends_on || []).map((id) => taskById.get(id)).filter((dep) => dep && !['done', 'skipped'].includes(dep.status))
         .map((dep) => officeAgent(agentById.get(dep.agent_id)?.slug)?.label).filter(Boolean);
-      offer(employee.slug, { state: 'WAITING', detail: waitingFor.length ? `Waiting for ${[...new Set(waitingFor)].join(', ')}` : `Starting: ${task.title}`, assignment, since: task.created_at });
+      offer(employee.slug, waitingFor.length
+        ? { state: 'WAITING', detail: `Waiting for ${[...new Set(waitingFor)].join(', ')}`, assignment, since: task.created_at }
+        : { state: 'QUEUED', detail: `Next up: ${task.title}`, assignment, since: task.created_at });
     } else if (state === 'failed' || state === 'blocked') {
-      if (now - Date.parse(task.completed_at || task.created_at) < 6 * 3600_000) offer(employee.slug, { state: 'BLOCKED', detail: state === 'failed' ? `Could not finish ${task.title}` : `Blocked: ${task.title} (an earlier step failed)`, assignment, since: task.completed_at || task.created_at });
+      if (now - Date.parse(task.completed_at || task.created_at) < 6 * 3600_000) offer(employee.slug, { state: state === 'failed' ? 'FAILED' : 'BLOCKED', detail: state === 'failed' ? `Could not finish ${task.title}` : `Blocked: ${task.title} (an earlier step failed)`, assignment, since: task.completed_at || task.created_at });
     } else if (state === 'done' && task.completed_at && now - Date.parse(task.completed_at) < RECENT_MS) {
       offer(employee.slug, { state: 'COMPLETED', detail: `Delivered ${task.title}`, assignment, since: task.completed_at });
     }
@@ -84,7 +87,7 @@ export function officeState({ agents = [], jobs = [], tasks = [], sessions = [],
 }
 
 // The workflow of one objective: Fahad → Chief → workstreams → synthesis.
-export function workflowView({ job, tasks = [], agents = [], results = [], handoffs = [], events = [], sessions = [] }) {
+export function workflowView({ job, tasks = [], agents = [], results = [], handoffs = [], events = [], sessions = [], artifacts = [] }) {
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const latestResult = new Map();
@@ -100,7 +103,7 @@ export function workflowView({ job, tasks = [], agents = [], results = [], hando
     const session = sessionById.get(launched.get(task.id));
     return {
       id: task.id, title: task.title, agent: employee?.key || agent?.slug, agentLabel: employee?.label || agent?.name || 'Agent', agentSlug: agent?.slug || null,
-      kind: { chief_plan: 'plan', synthesis: 'synthesis', launch_dev: 'development', specialist: 'workstream', research: 'workstream', chief_review: 'synthesis', direct: 'conversation' }[brief.stage] || 'task',
+      kind: { chief_plan: 'plan', synthesis: 'synthesis', launch_dev: 'development', specialist: 'workstream', research: 'workstream', chief_review: 'synthesis', direct: 'conversation', consult: 'consult' }[brief.stage] || 'task',
       revision: Boolean(brief.revision), state: taskState(task, byId), dependsOn: (task.depends_on || []).filter((id) => byId.has(id)),
       startedAt: task.started_at || null, completedAt: task.completed_at || null,
       output: output ? { summary: parsed.summary.slice(0, 600) || output.summary, decisions: parsed.decisions, content: output.content, at: output.created_at } : null,
@@ -120,6 +123,8 @@ export function workflowView({ job, tasks = [], agents = [], results = [], hando
       fromTask: handoff.from_task_id, toTask: handoff.to_task_id, at: handoff.created_at,
     })),
     revisions: events.filter((event) => event.payload?.kind === 'revision_requested').flatMap((event) => event.payload.revisions || []),
+    consults: events.filter((event) => event.payload?.kind === 'consult_requested').map((event) => ({ from: officeAgent(event.payload.agent)?.label, consults: (event.payload.consults || []).map((entry) => ({ to: officeAgent(entry.employee)?.label, question: entry.question })) })),
+    artifacts: artifacts.map(artifactView),
     final: final ? { content: final.content, at: final.created_at } : null,
   };
 }
@@ -148,12 +153,74 @@ export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, database
     { id: 'web_search', label: 'Web search', ...state(webRuns.web_search || null, present('GEMINI_API_KEY'), 'web search') },
     { id: 'web_fetch', label: 'Web page reading', ...state(webRuns.web_fetch || null, true, 'page fetch') },
     { id: 'memory', label: 'Project memory', status: databaseOk ? 'Available' : 'Unavailable', verifiedAt: null, detail: `${memoryCount} saved item${memoryCount === 1 ? '' : 's'}` },
+    { id: 'telegram', label: 'Telegram → CHIEF', ...state(null, present('TELEGRAM_BOT_TOKEN') && present('TELEGRAM_OWNER_CHAT_ID'), 'Telegram message'),
+      ...(present('TELEGRAM_BOT_TOKEN') ? {} : { detail: 'Not configured: needs a BotFather token (TELEGRAM_BOT_TOKEN) and your chat id (TELEGRAM_OWNER_CHAT_ID)' }) },
     { id: 'tool_broker', label: 'Tool Broker (audited tools)', ...state(toolRuns.filter((run) => run.status === 'succeeded').map((run) => run.last).sort().at(-1) || null, true, 'audited tool call') },
   ];
-  return items.map((item) => (item.status === 'Connected' && stale(item.verifiedAt) ? { ...item, status: 'Connected (not used recently)' } : item));
+  return items.map((item) => (item.status === 'Connected' && stale(item.verifiedAt) ? { ...item, status: 'Connected (not used recently)' } : item))
+    .map((item) => ({ ...item, employees: connectorUsers(item.id) }));
+}
+
+const ARTIFACT_COLUMNS = 'id,project_id,job_id,task_id,conversation_id,agent_slug,type,title,data,created_at';
+
+export function artifactView(row) {
+  const employee = officeAgent(row.agent_slug);
+  return { id: row.id, type: row.type, title: row.title, data: row.data, jobId: row.job_id, taskId: row.task_id, conversationId: row.conversation_id || null,
+    agent: employee?.key || row.agent_slug, agentLabel: employee?.label || row.agent_slug, at: row.created_at };
+}
+
+// A project at a glance: what is moving, who is on it, what was produced,
+// what needs Fahad, open risks, spend and what the Office knows.
+export function commandCenter({ project, live, states, artifacts = [], memory = [], knowledge = [], costs = [], now = Date.now() }) {
+  const active = live.jobs.filter((job) => ['planning', 'running'].includes(job.status));
+  const audits = artifacts.filter((artifact) => artifact.type === 'audit_report');
+  const risks = [
+    ...audits.flatMap((artifact) => (artifact.data?.findings || []).filter((finding) => ['high', 'critical'].includes(finding.severity))
+      .map((finding) => ({ from: 'AUDIT', severity: finding.severity, text: finding.title, owner: officeAgent(finding.owner)?.label || null }))),
+    ...artifacts.filter((artifact) => artifact.type === 'risk_matrix').flatMap((artifact) => (artifact.data?.items || [])
+      .filter((item) => item.likelihood * item.impact >= 12)
+      .map((item) => ({ from: officeAgent(artifact.agent_slug)?.label || null, severity: item.likelihood * item.impact >= 20 ? 'critical' : 'high', text: item.risk, owner: officeAgent(item.owner)?.label || null }))),
+    ...artifacts.filter((artifact) => artifact.type === 'compliance_matrix').flatMap((artifact) => (artifact.data?.items || [])
+      .filter((item) => ['RISK FLAG', 'PROFESSIONAL REVIEW REQUIRED'].includes(item.classification))
+      .map((item) => ({ from: 'LEGAL', severity: item.classification === 'RISK FLAG' ? 'high' : 'review', text: item.requirement, owner: 'LEGAL' }))),
+  ].slice(0, 12);
+  const byKind = {};
+  for (const item of memory) byKind[item.kind] = (byKind[item.kind] || 0) + 1;
+  return {
+    project: { id: project.id, name: project.name, description: project.description || '', repository: project.default_repository || null },
+    objectives: { active: active.slice(0, 8).map((job) => ({ id: job.id, title: job.title || job.goal, status: job.status, progress: job.progress || 0 })),
+      completed: live.jobs.filter((job) => job.status === 'completed').length, failed: live.jobs.filter((job) => job.status === 'failed').length },
+    team: ACTIVE_AGENTS.map((entry) => ({ key: entry.key, label: entry.label, ...(states.get(entry.slug) || { state: 'AVAILABLE' }) }))
+      .filter((member) => member.state !== 'AVAILABLE'),
+    coding: live.sessions.map((session) => ({ id: session.id, title: session.title, status: session.status, phase: session.phase })),
+    needsFahad: live.approvals.length + live.sessions.filter((session) => session.status === 'blocked' && session.error_code === 'HUMAN_INPUT_REQUIRED').length,
+    artifacts: artifacts.slice(0, 12).map(artifactView),
+    latestAudit: audits[0] ? { verdict: audits[0].data?.verdict || null, title: audits[0].title, at: audits[0].created_at } : null,
+    risks,
+    costUsd: Number(costs.reduce((sum, row) => sum + Number(row.cost_usd || 0), 0).toFixed(6)),
+    memory: { total: memory.length, byKind, decisions: memory.filter((item) => /decision/.test(item.kind)).slice(0, 6).map((item) => ({ kind: item.kind, content: item.content })) },
+    knowledge: { total: knowledge.length, fresh: knowledge.filter((item) => !item.expires_at || Date.parse(item.expires_at) > now).length,
+      recent: knowledge.slice(0, 6).map((item) => ({ agent: officeAgent(item.agent_slug)?.label || item.agent_slug, title: item.title, url: item.source_url, date: item.source_date })) },
+  };
+}
+
+// Which employees use a connector (the per-employee connector registry).
+export function connectorUsers(id) {
+  const web = ACTIVE_AGENTS.filter((agent) => agent.webTools).map((agent) => agent.label);
+  const coding = ACTIVE_AGENTS.filter((agent) => agent.executor === 'coding').map((agent) => agent.label);
+  const everyone = ACTIVE_AGENTS.map((agent) => agent.label);
+  return ({ web_search: web, web_fetch: web, database: everyone, memory: everyone, telegram: ['CHIEF'] })[id] || coding;
 }
 
 // ------------------------------------------------------------------ handler
+
+// Tables added by a later migration: a missing table reads as empty so the
+// Hub keeps working while a deployment and its migration roll out.
+async function optionalRows(query) {
+  const { data, error } = await query;
+  if (error) return [];
+  return data || [];
+}
 
 async function rows(query) {
   const { data, error } = await query;
@@ -181,7 +248,7 @@ async function workspaceActivity(db, workspaceId, sinceMs) {
 
 export async function handleOfficeApi({ db, request, response, url, sendJson, env = process.env }) {
   const path = url.pathname;
-  if (!/^\/api\/(office|agents|workflows|capabilities)(\/|$)/.test(path)) return false;
+  if (!/^\/api\/(office|agents|workflows|capabilities|artifacts|command-center)(\/|$)/.test(path)) return false;
   try {
     const method = request.method;
     if (method !== 'GET') return sendJson(response, 405, { ok: false, error: 'METHOD_NOT_ALLOWED' }), true;
@@ -198,7 +265,7 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
       const workflowJobs = new Set(live.tasks.filter((task) => stageOf(task.brief) === 'synthesis').map((task) => task.job_id));
       return sendJson(response, 200, {
         ok: true,
-        agents: OFFICE_AGENTS.map((entry) => ({ slug: entry.slug, key: entry.key, label: entry.label, scope: entry.scope, deliverable: entry.deliverable,
+        agents: ACTIVE_AGENTS.map((entry) => ({ slug: entry.slug, key: entry.key, label: entry.label, scope: entry.scope, deliverable: entry.deliverable,
           executor: entry.executor, directChat: entry.directChat, color: colors.get(entry.slug) || null, ...states.get(entry.slug) })),
         workflows: live.jobs.filter((job) => workflowJobs.has(job.id)).slice(0, 8).map((job) => ({ id: job.id, title: job.title, status: job.status, progress: job.progress || 0, createdAt: job.created_at })),
         handoffs: handoffs.map((handoff) => ({ from: officeAgent(agentById.get(handoff.from_agent_id)?.slug)?.label, to: officeAgent(agentById.get(handoff.to_agent_id)?.slug)?.label, jobId: handoff.job_id, at: handoff.created_at })),
@@ -255,16 +322,50 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
       const jobId = uuid(workflowMatch[1], 'jobId');
       const [job] = await rows(db.from('jobs').select('id,title,goal,status,progress,cost_usd,conversation_id,project_id,created_at,completed_at').eq('id', jobId));
       if (!job) return sendJson(response, 404, { ok: false, error: 'WORKFLOW_NOT_FOUND' }), true;
-      const [tasks, agents, results, handoffs, events] = await Promise.all([
+      const [tasks, agents, results, handoffs, events, artifacts] = await Promise.all([
         rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at').eq('job_id', jobId)),
         rows(db.from('agents').select('id,slug,name')),
         rows(db.from('results').select('task_id,kind,summary,content,created_at').eq('job_id', jobId).order('created_at', { ascending: true })),
         rows(db.from('handoffs').select('from_agent_id,to_agent_id,from_task_id,to_task_id,created_at').eq('job_id', jobId).order('created_at', { ascending: true })),
         rows(db.from('events').select('task_id,type,payload,created_at').eq('job_id', jobId).eq('type', 'activity').order('created_at', { ascending: true }).limit(300)),
+        optionalRows(db.from('artifacts').select(ARTIFACT_COLUMNS).eq('job_id', jobId).order('created_at', { ascending: true }).limit(60)),
       ]);
       const sessionIds = events.filter((event) => event.payload?.kind === 'task_launched').map((event) => event.payload.session_id).filter(Boolean);
       const sessions = sessionIds.length ? await rows(db.from('agent_sessions').select('id,title,status,phase').in('id', sessionIds)) : [];
-      return sendJson(response, 200, { ok: true, ...workflowView({ job, tasks, agents, results, handoffs, events, sessions }) }), true;
+      return sendJson(response, 200, { ok: true, ...workflowView({ job, tasks, agents, results, handoffs, events, sessions, artifacts }) }), true;
+    }
+
+    if (path === '/api/artifacts') {
+      const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
+      let query = db.from('artifacts').select(ARTIFACT_COLUMNS).eq('project_id', workspaceId);
+      const type = url.searchParams.get('type');
+      if (type) {
+        if (!ARTIFACT_TYPES[type]) throw Object.assign(new Error('Unknown artifact type'), { statusCode: 400 });
+        query = query.eq('type', type);
+      }
+      const agent = url.searchParams.get('agent');
+      if (agent) {
+        const employee = officeAgent(agent);
+        if (!employee) throw Object.assign(new Error('Unknown employee'), { statusCode: 400 });
+        query = query.eq('agent_slug', employee.slug);
+      }
+      const artifacts = await optionalRows(query.order('created_at', { ascending: false }).limit(60));
+      return sendJson(response, 200, { ok: true, types: Object.keys(ARTIFACT_TYPES), artifacts: artifacts.map(artifactView) }), true;
+    }
+
+    if (path === '/api/command-center') {
+      const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
+      const live = await workspaceActivity(db, workspaceId, 30 * 86400_000);
+      const jobIds = live.jobs.map((job) => job.id);
+      const [project, artifacts, memory, knowledge, costs] = await Promise.all([
+        rows(db.from('projects').select('id,name,description,default_repository,created_at').eq('id', workspaceId)).then((list) => list[0] || null),
+        optionalRows(db.from('artifacts').select(ARTIFACT_COLUMNS).eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(40)),
+        optionalRows(db.from('project_memory').select('kind,content,created_at').eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(60)),
+        optionalRows(db.from('knowledge_items').select('agent_slug,title,source_url,source_date,expires_at').eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(40)),
+        jobIds.length ? optionalRows(db.from('jobs').select('cost_usd').in('id', jobIds)) : [],
+      ]);
+      if (!project) return sendJson(response, 404, { ok: false, error: 'PROJECT_NOT_FOUND' }), true;
+      return sendJson(response, 200, { ok: true, ...commandCenter({ project, live, states: officeState(live), artifacts, memory, knowledge, costs }) }), true;
     }
 
     if (path === '/api/capabilities') {

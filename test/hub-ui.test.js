@@ -37,10 +37,13 @@ test('the V2 interface uses the centralized design tokens and covers the owner f
   const js = readFileSync(file('app.js'), 'utf8');
   for (const token of ['--bg', '--surface', '--text', '--accent', '--success', '--warning', '--danger', '--s-4', '--fs-md', '--r-md']) assert.match(css, new RegExp(`${token}:`));
   // Component rules use tokens, not raw colours (the token blocks are the only place colours are defined).
-  const rules = css.replace(/:root\s*\{[\s\S]*?\n\}/g, '').replace(/@media \(prefers-color-scheme: light\)\s*\{[\s\S]*?\n\}/, '');
+  const rules = css.replace(/:root(\[data-theme="(?:light|dark)"\])?\s*\{[\s\S]*?\n\}/g, '').replace(/@media \(prefers-color-scheme: light\)\s*\{[\s\S]*?\n\}/, '');
   const raw = (rules.match(/#[0-9a-f]{3,8}\b/gi) || []).filter((colour) => !['#fff', '#06140e', '#1a1204', '#8b5cf6'].includes(colour.toLowerCase()));
   assert.deepEqual(raw, [], 'raw colours outside the token blocks');
   assert.match(css, /@media \(max-width: 900px\)/);
+  assert.match(css, /:root\[data-theme="light"\]/, 'Fahad can choose the light theme');
+  assert.match(css, /prefers-reduced-motion: reduce\) \{ \.desk/, 'the Living Office respects reduced motion');
+  for (const phrase of ['/api/artifacts', '/api/command-center', 'renderArtifact', 'drawHandoffs', '#/employees', '#/integrations']) assert.ok(js.includes(phrase) || readFileSync(file('index.html'), 'utf8').includes(phrase), phrase);
   for (const phrase of ['What do you want me to build or fix?', 'Reply &amp; Continue', 'data-decide="approved"', 'data-decide="rejected"', 'View details', 'Needs attention', '/api/tasks/${id}/reply']) {
     assert.ok(js.includes(phrase), phrase);
   }

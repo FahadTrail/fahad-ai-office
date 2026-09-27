@@ -198,12 +198,12 @@ test('platform overview covers every dashboard section and reports credentials o
   assert.equal(overview.codingAgent.sessions.awaiting_approval, 1);
   assert.equal(overview.approvals.length, 1);
   assert.equal(overview.usage.budget.remainingUsd, 0.4);
-  assert.deepEqual(overview.officeAgents.map((role) => role.id), ['chief', 'research', 'strategy', 'branding', 'content', 'seo', 'finance', 'development', 'product', 'operations', 'qa_security']);
+  assert.deepEqual(overview.officeAgents.map((role) => role.id), ['chief', 'research', 'creative', 'product', 'finance', 'coding', 'audit', 'social', 'legal']);
   assert.ok(overview.office && Array.isArray(overview.office.roles));
   const gemini = overview.usage.freeQuota.find((entry) => entry.id.startsWith('gemini:'));
   assert.equal(gemini.basis, 'EXACT QUOTA NOT AVAILABLE', 'Google does not publish the number, so none is shown');
   assert.equal(gemini.percentRemaining, null);
-  assert.ok(overview.officeAgents.find((role) => role.id === 'content').freeModels.includes('gemini:gemini-flash-latest'));
+  assert.ok(overview.officeAgents.find((role) => role.id === 'social').freeModels.includes('gemini:gemini-flash-latest'));
   const none = await platformOverview({ db: fakeDb(), workspaceId, env: {} });
   assert.equal(none.codingAgent.supabaseTools.tokenConfigured, false);
 });

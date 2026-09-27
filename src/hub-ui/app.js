@@ -2,9 +2,15 @@
 // views from the Hub's JSON API; polling keeps running work live.
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 import { loginErrorMessage } from './auth.js';
+import { ARTIFACT_LABELS, renderArtifact, splitArtifacts } from './artifacts.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
+function applyTheme(theme) {
+  if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
+}
+try { applyTheme(localStorage.getItem('hub-theme')); } catch {}
 const view = $('#view');
+const MEMORY_KINDS = [['fact', 'Fact'], ['decision', 'Decision'], ['preference', 'Preference'], ['constraint', 'Constraint'], ['product_decision', 'Product decision'], ['technical_decision', 'Technical decision'], ['brand_decision', 'Brand decision'], ['legal_requirement', 'Legal requirement'], ['financial_assumption', 'Financial assumption']];
 const state = { workspaceId: null, workspaces: [], conversations: [], timers: [], attention: { action: 0, total: 0 }, sidebarTimer: null, signedOut: false };
 
 // ------------------------------------------------------------------ api
@@ -58,7 +64,7 @@ function clearTimers() { state.timers.forEach(clearInterval); state.timers = [];
 function setTitle(text) { document.title = text ? `${text} · Fahad AI Office` : 'Fahad AI Office'; $('#topTitle').textContent = text || 'Fahad AI Office'; }
 function autosize(textarea) { textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`; }
 function markdown(text) {
-  const html = renderMarkdown(text);
+  const html = splitArtifacts(text).map((part) => (part.artifact ? renderArtifact(part.artifact) : renderMarkdown(part.text))).join('');
   const holder = document.createElement('div');
   holder.className = 'md';
   holder.dir = 'auto';
@@ -203,8 +209,9 @@ async function route() {
     '': () => renderChat(null), chat: () => renderChat(id), chats: renderChats, tasks: () => renderTasks(id || 'running'), task: () => renderTask(id),
     code: renderNewTask, attention: renderAttention, projects: renderProjects, project: () => renderProject(id), models: renderModels, settings: renderSettings,
     office: renderOffice, agent: () => renderAgent(id), workflow: () => renderWorkflow(id), talk: () => renderChat(null, id),
+    artifacts: () => renderArtifacts(id), employees: renderEmployees, integrations: renderIntegrations,
   };
-  markNav({ '': 'chat', chat: 'chats', task: 'tasks', project: 'projects', agent: 'office', workflow: 'office', talk: 'office' }[section] ?? section);
+  markNav({ '': 'chat', chat: 'chats', task: 'tasks', code: 'tasks', project: 'projects', agent: 'employees', workflow: 'office', talk: 'employees' }[section] ?? section);
   document.querySelectorAll('#recentChats a').forEach((link) => link.classList.toggle('active', link.getAttribute('href') === `#/chat/${id}`));
   try {
     await (routes[section] || routes[''])();
@@ -589,38 +596,83 @@ function avatar(agent, extra = '') {
   const initial = String(agent.label || '?').replace(/[^A-Za-z؀-ۿ]/g, '').slice(0, 1).toUpperCase() || '•';
   return `<span class="avatar ${extra}" style="--agent:${esc(agent.color || 'var(--accent)')}" aria-hidden="true">${esc(initial)}</span>`;
 }
-const STATE_CLASS = { AVAILABLE: 'st-available', THINKING: 'st-working', WORKING: 'st-working', TESTING: 'st-working', REVIEWING: 'st-working', WAITING: 'st-waiting', BLOCKED: 'st-blocked', 'NEEDS FAHAD': 'st-needs', COMPLETED: 'st-completed' };
+const STATE_CLASS = { AVAILABLE: 'st-available', QUEUED: 'st-waiting', THINKING: 'st-working', WORKING: 'st-working', TESTING: 'st-working', REVIEWING: 'st-working', WAITING: 'st-waiting', BLOCKED: 'st-blocked', FAILED: 'st-blocked', 'NEEDS FAHAD': 'st-needs', COMPLETED: 'st-completed' };
 const statePill = (value) => `<span class="pill ${STATE_CLASS[value] || 'st-available'}">${esc(value)}</span>`;
+const ACTIVE_STATES = new Set(['THINKING', 'WORKING', 'TESTING', 'REVIEWING']);
+const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
+// The Living Office: one desk per employee, CHIEF at the head of the floor.
+// Every state and every moving handoff comes from real task/handoff rows.
 async function renderOffice() {
   setTitle('Office');
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>The Office</h1><p>Who is working on what right now. Every state comes from real work in progress.</p></div>
-    <a class="btn btn-primary" href="#/">Give the Chief an objective</a></div><div id="officeBody"><div class="muted">Loading…</div></div></div>`;
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>The Office</h1><p>Live from real work: who is busy, who is waiting, and what just changed hands.</p></div>
+    <a class="btn btn-primary" href="#/">Give CHIEF an objective</a></div><div id="officeBody"><div class="skeleton-floor" aria-hidden="true"></div></div></div>`;
   let signature = '';
+  const seen = new Set();
   const load = async () => {
     const data = await api(`/api/office${q({ workspaceId: ws() })}`);
     const next = JSON.stringify(data);
     if (next === signature) return;
     signature = next;
     const chief = data.agents.find((agent) => agent.executor === 'chief');
-    const staff = data.agents.filter((agent) => agent.executor === 'office');
-    const coding = data.agents.find((agent) => agent.executor === 'coding');
-    const card = (agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}">
-      <div class="row">${avatar(agent)}<div class="grow"><div class="title">${esc(agent.label)}</div>${statePill(agent.state)}</div></div>
-      <div class="small agent-detail" dir="auto">${esc(agent.detail || '')}</div>
-      ${agent.assignment?.objective ? `<div class="xs faint" dir="auto">${esc(agent.assignment.objective)}</div>` : `<div class="xs faint">${esc(agent.scope)}</div>`}</a>`;
+    const staff = data.agents.filter((agent) => agent.executor !== 'chief');
+    const busy = data.agents.filter((agent) => ACTIVE_STATES.has(agent.state)).length;
+    const desk = (agent, extra = '') => `<a class="desk ${STATE_CLASS[agent.state] || ''} ${extra}" href="#/agent/${esc(agent.slug)}" data-desk="${esc(agent.label)}" style="--agent:${esc(agent.color || 'var(--accent)')}">
+      <div class="desk-top">${avatar(agent)}<div class="grow"><div class="desk-name">${esc(agent.label)}</div><div class="desk-role">${esc(agent.deliverable || '')}</div></div><span class="desk-light" title="${esc(agent.state)}"></span></div>
+      <div class="desk-state">${statePill(agent.state)}</div>
+      <div class="small desk-detail" dir="auto">${esc(agent.state === 'AVAILABLE' ? 'Ready for work' : agent.detail || '')}</div>
+      ${agent.assignment?.objective ? `<div class="xs faint desk-obj" dir="auto">${esc(agent.assignment.objective)}</div>` : ''}</a>`;
     $('#officeBody').innerHTML = `
       ${data.needsFahad ? `<a class="owner-banner" href="#/attention">● ${data.needsFahad} item${data.needsFahad === 1 ? '' : 's'} need you — open Needs attention</a>` : ''}
-      <h2 class="section-title">Chief of Staff</h2><div class="office-grid office-grid-1">${card(chief)}</div>
-      <h2 class="section-title">Specialists</h2><div class="office-grid">${staff.map(card).join('')}</div>
-      <h2 class="section-title">Engineering</h2><div class="office-grid office-grid-1">${card(coding)}</div>
+      <div class="floor-stats"><div><strong>${busy}</strong><span>working now</span></div><div><strong>${data.workflows.filter((flow) => !['completed', 'failed'].includes(flow.status)).length}</strong><span>objectives in progress</span></div><div><strong>${data.handoffs.length}</strong><span>handoffs (2 h)</span></div></div>
+      <div class="floor" id="floor"><svg class="floor-links" id="floorLinks" aria-hidden="true"></svg>
+        <div class="floor-head">${desk(chief, 'desk-chief')}</div>
+        <div class="floor-desks">${staff.map((agent) => desk(agent)).join('')}</div></div>
       <div class="office-columns">
-        <div><h2 class="section-title">Objectives in the office</h2>${data.workflows.length ? data.workflows.map((flow) => `<a class="list-item" href="#/workflow/${esc(flow.id)}"><div class="grow"><div class="title" dir="auto">${esc(flow.title)}</div><div class="sub">${esc(flow.status)} · ${flow.progress}% · ${when(flow.createdAt)}</div></div>${pill(flow.status === 'completed' ? 'completed' : flow.status === 'failed' ? 'failed' : 'running', flow.status === 'completed' ? 'Completed' : flow.status === 'failed' ? 'Failed' : 'In progress')}</a>`).join('') : '<div class="muted small">No multi-agent objective in the last week. Give the Chief one from the chat.</div>'}</div>
+        <div><h2 class="section-title">Objectives in the office</h2>${data.workflows.length ? data.workflows.map((flow) => `<a class="list-item" href="#/workflow/${esc(flow.id)}"><div class="grow"><div class="title" dir="auto">${esc(flow.title)}</div><div class="sub">${esc(flow.status)} · ${flow.progress}% · ${when(flow.createdAt)}</div></div>${pill(flow.status === 'completed' ? 'completed' : flow.status === 'failed' ? 'failed' : 'running', flow.status === 'completed' ? 'Completed' : flow.status === 'failed' ? 'Failed' : 'In progress')}</a>`).join('') : '<div class="muted small">No multi-agent objective in the last week. Give CHIEF one from the chat.</div>'}</div>
         <div><h2 class="section-title">Recent handoffs</h2>${data.handoffs.length ? data.handoffs.map((handoff) => `<a class="handoff" href="#/workflow/${esc(handoff.jobId)}"><strong>${esc(handoff.from)}</strong> → <strong>${esc(handoff.to)}</strong><span class="xs faint">${when(handoff.at)}</span></a>`).join('') : '<div class="muted small">No handoffs in the last two hours.</div>'}</div>
       </div>`;
+    drawHandoffs(data.handoffs.filter((handoff) => Date.now() - Date.parse(handoff.at) < 10 * 60_000), seen);
   };
   await load();
   every(4000, () => load().catch(() => {}));
+}
+
+// A handoff in the last 10 minutes is drawn as a line between two desks; a
+// new one travels along it once (skipped with reduced motion).
+function drawHandoffs(handoffs, seen) {
+  const floor = $('#floor');
+  const svg = $('#floorLinks');
+  if (!floor || !svg || window.innerWidth < 720) return;
+  const box = floor.getBoundingClientRect();
+  svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
+  const centre = (label) => {
+    const element = floor.querySelector(`[data-desk="${CSS.escape(label || '')}"]`);
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    return [rect.left - box.left + rect.width / 2, rect.top - box.top + rect.height / 2];
+  };
+  const lines = [];
+  for (const handoff of handoffs) {
+    const [from, to] = [centre(handoff.from), centre(handoff.to)];
+    if (!from || !to || (from[0] === to[0] && from[1] === to[1])) continue;
+    const key = `${handoff.from}>${handoff.to}@${handoff.at}`;
+    const fresh = !seen.has(key) && !reducedMotion();
+    seen.add(key);
+    const bend = `M${from[0]},${from[1]} Q${(from[0] + to[0]) / 2},${Math.min(from[1], to[1]) - 40} ${to[0]},${to[1]}`;
+    lines.push(`<path class="link" d="${bend}"/>${fresh ? `<circle class="packet" r="5"><animateMotion dur="1.6s" fill="freeze" path="${bend}"/></circle>` : ''}`);
+  }
+  svg.innerHTML = lines.join('');
+}
+
+async function renderEmployees() {
+  setTitle('Employees');
+  const data = await api(`/api/office${q({ workspaceId: ws() })}`);
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Employees</h1><p>Nine roles, no fixed models: each employee's work is routed to the best available model for its job, free first. Say their names in Arabic or English — CHIEF understands.</p></div></div>
+    <div class="office-grid">${data.agents.map((agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}">
+      <div class="row">${avatar(agent)}<div class="grow"><div class="title">${esc(agent.label)}</div><div class="xs faint">${esc(agent.deliverable || '')}</div></div>${statePill(agent.state)}</div>
+      <div class="small muted">${esc(agent.scope)}</div>
+      <div class="row">${agent.directChat ? '<span class="tag">Direct chat</span>' : ''}${agent.executor === 'coding' ? '<span class="tag">Engineering tasks</span>' : ''}${agent.executor === 'chief' ? '<span class="tag">Orchestrates</span>' : ''}</div></a>`).join('')}</div></div>`;
 }
 
 async function renderAgent(slug) {
@@ -636,15 +688,21 @@ async function renderAgent(slug) {
       <div class="card"><div class="row">${statePill(data.state.state)}<span dir="auto">${esc(data.state.detail || '')}</span></div>
         ${data.state.assignment ? `<div class="small muted" style="margin-top:var(--s-2)" dir="auto">Current assignment: ${data.state.assignment.jobId ? `<a href="#/workflow/${esc(data.state.assignment.jobId)}">${esc(data.state.assignment.objective)}</a>` : `<a href="#/task/${esc(data.state.assignment.sessionId)}">${esc(data.state.assignment.objective)}</a>`}</div>` : ''}</div>
       <div class="card"><h2 class="card-title">Role</h2><p>${esc(agent.scope)}</p>
-        <dl class="kv"><div><dt>Delivers</dt><dd>${esc(agent.deliverable)}</dd></div><div><dt>Model</dt><dd>AUTO · ${esc(agent.job)} work</dd></div><div><dt>Web access</dt><dd>${agent.webTools ? 'Yes' : 'No'}</dd></div><div><dt>Talk directly</dt><dd>${agent.directChat ? 'Yes' : agent.executor === 'coding' ? 'Via tasks' : 'Via the Chief'}</dd></div></dl></div>
+        <dl class="kv"><div><dt>Delivers</dt><dd>${esc(agent.deliverable)}</dd></div><div><dt>Model</dt><dd>AUTO · ${esc(agent.job)} work</dd></div><div><dt>Web access</dt><dd>${agent.webTools ? 'Yes' : 'No'}</dd></div><div><dt>Talk directly</dt><dd>${agent.directChat ? 'Yes' : agent.executor === 'coding' ? 'Via tasks' : 'Via CHIEF'}</dd></div></dl></div>
       ${data.codingSessions?.length ? `<div class="card"><h2 class="card-title">Engineering tasks</h2>${data.codingSessions.map((session) => `<a class="list-item" href="#/task/${esc(session.id)}"><div class="grow"><div class="title">${esc(session.title)}</div><div class="sub">${esc(stageWord(session.phase))}</div></div>${pill(taskGroup(session.status), STATUS_WORDS[session.status])}</a>`).join('')}</div>` : ''}
       <div class="card"><h2 class="card-title">Recent work</h2>${data.recent.length ? data.recent.map((item) => `<a class="list-item" href="#/workflow/${esc(item.jobId)}"><div class="grow"><div class="title" dir="auto">${esc(item.title)}</div><div class="sub" dir="auto">${esc(item.objective)}</div>${item.summary ? `<div class="sub small" dir="auto">${esc(item.summary)}</div>` : ''}</div><div class="xs faint">${esc(item.status)}<br>${when(item.at)}</div></a>`).join('') : '<div class="muted small">No work in the last 30 days.</div>'}</div>
+      <div class="card"><h2 class="card-title">Recent artifacts</h2><div id="agentArtifacts" class="muted small">Loading…</div></div>
       ${agent.directChat ? `<div class="card"><h2 class="card-title">Conversations</h2>${data.conversations.length ? data.conversations.map((conversation) => `<a class="list-item" href="#/chat/${esc(conversation.id)}"><div class="grow"><div class="title" dir="auto">${esc(conversation.title)}</div><div class="sub">${when(conversation.lastMessageAt)}</div></div></a>`).join('') : '<div class="muted small">No direct conversations yet.</div>'}</div>` : ''}
     </div>`;
   };
+  const artifacts = () => api(`/api/artifacts${q({ workspaceId: ws(), agent: slug })}`).then(({ artifacts: list }) => {
+    const holder = $('#agentArtifacts');
+    if (holder) holder.innerHTML = list.length ? list.slice(0, 4).map(renderArtifact).join('') : 'No artifacts yet. Visual outputs (tables, charts, boards) appear here.';
+  }).catch(() => {});
   draw(await load());
+  artifacts();
   let last = '';
-  every(5000, async () => { try { const data = await load(); const next = JSON.stringify(data); if (next !== last) { last = next; draw(data); } } catch {} });
+  every(5000, async () => { try { const data = await load(); const next = JSON.stringify(data); if (next !== last) { last = next; draw(data); artifacts(); } } catch {} });
 }
 
 const NODE_WORD = { done: 'Done', working: 'Working', waiting: 'Waiting', ready: 'Starting', failed: 'Failed', blocked: 'Blocked' };
@@ -671,16 +729,18 @@ async function renderWorkflow(jobId) {
         <h1 dir="auto">${esc(data.job.title)}</h1><p dir="auto">${esc(data.job.objective)}</p></div></div>
       <div class="card"><h2 class="card-title">Workflow</h2>
         <div class="flow-node st-done"><span class="flow-icon">✓</span><div class="grow"><strong>Fahad</strong> — gave the objective</div></div>
-        ${plan ? nodeRow({ ...plan, agentLabel: 'Chief of Staff', title: 'Split the objective into workstreams' }) : ''}
-        <div class="flow-branch">${streams.map(nodeRow).join('') || '<div class="muted small">No workstreams (the Chief answered alone).</div>'}</div>
+        ${plan ? nodeRow({ ...plan, agentLabel: 'CHIEF', title: 'Split the objective into workstreams' }) : ''}
+        <div class="flow-branch">${streams.map(nodeRow).join('') || '<div class="muted small">No workstreams (CHIEF answered alone).</div>'}</div>
         ${syntheses.map((node) => nodeRow({ ...node, title: node.title === 'Chief final synthesis' ? 'Final synthesis after revisions' : 'Consolidate the team’s work' })).join('')}
         <div class="flow-node st-${data.final ? 'done' : 'waiting'}"><span class="flow-icon">${data.final ? '✓' : '○'}</span><div class="grow"><strong>Fahad</strong> — ${data.final ? 'received the result' : 'will receive the result'}</div></div>
         ${data.participants.length ? `<div class="xs faint" style="margin-top:var(--s-2)">Team: ${esc(data.participants.map((entry) => entry.label).join(', '))}</div>` : ''}</div>
       ${data.decisions.length ? `<div class="owner-card"><h2>Decisions for Fahad</h2>${data.decisions.map((decision) => `<div class="owner-item"><div class="small muted">${esc(decision.from)}</div>${markdown(decision.text)}</div>`).join('')}</div>` : ''}
-      ${data.final ? `<div class="card"><h2 class="card-title">Final result — Chief of Staff</h2>${markdown(data.final.content)}</div>` : ''}
+      ${data.final ? `<div class="card"><h2 class="card-title">Final result — CHIEF</h2>${markdown(data.final.content)}</div>` : ''}
+      ${data.artifacts?.some((artifact) => artifact.agent !== 'chief') ? `<div class="card"><h2 class="card-title">Team artifacts</h2>${data.artifacts.filter((artifact) => artifact.agent !== 'chief').map(renderArtifact).join('')}</div>` : ''}
+      ${data.consults?.length ? `<details class="disclosure"><summary>Internal consults (${data.consults.length})</summary><div class="disclosure-body">${data.consults.map((entry) => entry.consults.map((consult) => `<div class="small"><strong>${esc(entry.from)}</strong> asked <strong>${esc(consult.to)}</strong>: <span dir="auto">${esc(consult.question)}</span></div>`).join('')).join('')}</div></details>` : ''}
       <div class="card"><h2 class="card-title">Outputs</h2>${data.nodes.filter((node) => node.output).map((node) => `<details class="disclosure"><summary>${esc(node.agentLabel)} — ${esc(node.title)}</summary><div class="disclosure-body">${markdown(node.output.content)}</div></details>`).join('') || '<div class="muted small">Outputs appear here as each employee delivers.</div>'}</div>
       ${data.handoffs.length ? `<details class="disclosure"><summary>Handoffs (${data.handoffs.length})</summary><div class="disclosure-body">${data.handoffs.map((handoff) => `<div class="small">${esc(handoff.from)} → ${esc(handoff.to)} <span class="faint">${when(handoff.at)}</span></div>`).join('')}</div></details>` : ''}
-      ${data.revisions.length ? `<details class="disclosure"><summary>Revisions requested by the Chief (${data.revisions.length})</summary><div class="disclosure-body">${data.revisions.map((revision) => `<div class="small">${esc(revision.workstream)}: ${esc(revision.instruction)}</div>`).join('')}</div></details>` : ''}
+      ${data.revisions.length ? `<details class="disclosure"><summary>Revisions requested by CHIEF (${data.revisions.length})</summary><div class="disclosure-body">${data.revisions.map((revision) => `<div class="small">${esc(revision.workstream)}: ${esc(revision.instruction)}</div>`).join('')}</div></details>` : ''}
     </div>`;
     return data.job.status;
   };
@@ -711,14 +771,16 @@ async function renderProject(id) {
   const { project, memory, stats } = await api(`/api/projects/${id}`);
   setTitle(project.name);
   view.innerHTML = `<div class="page stack"><div class="page-head"><div><h1>${esc(project.name)}</h1><p>${stats.conversations} chats · ${stats.tasks} tasks (${stats.completedTasks} completed)</p></div>${id !== ws() ? '<button class="btn" id="useProject">Switch to this project</button>' : ''}</div>
+    <div id="commandCenter" class="command-center"><div class="skeleton-floor" aria-hidden="true"></div></div>
     <form class="card" id="projectForm"><h2 class="card-title">Context</h2>
-      <label class="field-label" for="pDesc">What this project is (the Chief reads this)</label><textarea id="pDesc" class="input" rows="4" dir="auto">${esc(project.description)}</textarea>
+      <label class="field-label" for="pDesc">What this project is (CHIEF reads this)</label><textarea id="pDesc" class="input" rows="4" dir="auto">${esc(project.description)}</textarea>
       <label class="field-label" for="pRepo">Default repository for tasks</label><input id="pRepo" class="input" value="${esc(project.defaultRepository)}" placeholder="owner/name">
       <div class="row" style="margin-top:var(--s-3)"><button class="btn btn-primary" type="submit">Save</button></div></form>
     <div class="card"><h2 class="card-title">Objectives &amp; workflows</h2><div id="projectFlows" class="muted small">Loading…</div></div>
-    <div class="card"><h2 class="card-title">Memory</h2><p class="small muted">Facts, decisions and preferences the Office reuses in new chats and tasks.</p>
-      <form class="row" id="memoryForm"><select id="mKind" class="input input-sm" style="width:auto"><option value="fact">Fact</option><option value="decision">Decision</option><option value="preference">Preference</option></select><input id="mText" class="input input-sm grow" dir="auto" placeholder="e.g. Production runs on the Hostinger VPS"><button class="btn btn-sm" type="submit">Add</button></form>
+    <div class="card"><h2 class="card-title">Memory</h2><p class="small muted">Facts, decisions, constraints and assumptions the Office reuses in new chats and tasks.</p>
+      <form class="row" id="memoryForm"><select id="mKind" class="input input-sm" style="width:auto">${MEMORY_KINDS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select><input id="mText" class="input input-sm grow" dir="auto" placeholder="e.g. Production runs on the Hostinger VPS"><button class="btn btn-sm" type="submit">Add</button></form>
       <div style="margin-top:var(--s-3)">${memory.map((item) => `<div class="list-item"><div class="grow"><div class="sub faint xs">${esc(item.kind)}</div><div dir="auto">${esc(item.content)}</div></div><button class="icon-btn" data-forget="${esc(item.id)}" aria-label="Remove">✕</button></div>`).join('') || '<div class="muted small">Nothing remembered yet.</div>'}</div></div></div>`;
+  api(`/api/command-center${q({ workspaceId: id })}`).then((center) => { $('#commandCenter').innerHTML = commandCenterHtml(center); }).catch((error) => { $('#commandCenter').innerHTML = `<div class="error-note">${esc(error.message)}</div>`; });
   api(`/api/workflows${q({ workspaceId: id })}`).then(({ workflows }) => {
     $('#projectFlows').innerHTML = workflows.length ? workflows.slice(0, 10).map((flow) => `<a class="list-item" href="#/workflow/${esc(flow.id)}"><div class="grow"><div class="title" dir="auto">${esc(flow.title)}</div><div class="sub">${flow.workstreams} workstreams · ${when(flow.createdAt)}</div></div>${pill(flow.status === 'completed' ? 'completed' : flow.status === 'failed' ? 'failed' : 'running', flow.status)}</a>`).join('') : 'No multi-agent objectives yet.';
   }).catch(() => {});
@@ -734,6 +796,48 @@ async function renderProject(id) {
     '[data-forget]': async (_, element) => { await api(`/api/projects/${id}/memory/${element.dataset.forget}`, { method: 'DELETE' }); renderProject(id); },
     '#useProject': () => { $('#projectSelect').value = id; $('#projectSelect').onchange(); },
   });
+}
+
+const MEMORY_LABEL = Object.fromEntries(MEMORY_KINDS);
+function commandCenterHtml(center) {
+  const verdict = center.latestAudit ? `<span class="audit-verdict v-${esc(String(center.latestAudit.verdict || '').replace(/\s+/g, '-').toLowerCase())}">${esc(center.latestAudit.verdict)}</span>` : '<span class="muted small">No audit yet</span>';
+  return `<div class="cc-kpis">
+      <div class="cc-kpi"><span>Objectives in progress</span><strong>${center.objectives.active.length}</strong><em>${center.objectives.completed} completed · ${center.objectives.failed} failed (30 days)</em></div>
+      <div class="cc-kpi"><span>Needs Fahad</span><strong>${center.needsFahad}</strong><em><a href="#/attention">Open</a></em></div>
+      <div class="cc-kpi"><span>Latest audit</span><strong>${verdict}</strong><em>${center.latestAudit ? when(center.latestAudit.at) : ''}</em></div>
+      <div class="cc-kpi"><span>AI spend (30 days)</span><strong>${usd(center.costUsd)}</strong><em>Office objectives</em></div>
+    </div>
+    <div class="cc-grid">
+      <div class="card"><h2 class="card-title">On it now</h2>${center.team.length ? center.team.map((member) => `<div class="list-item"><div class="grow"><div class="title">${esc(member.label)}</div><div class="sub" dir="auto">${esc(member.detail || '')}</div></div>${statePill(member.state)}</div>`).join('') : '<div class="muted small">Nobody is working on this project right now.</div>'}
+        ${center.objectives.active.map((job) => `<a class="list-item" href="#/workflow/${esc(job.id)}"><div class="grow"><div class="title" dir="auto">${esc(job.title)}</div><div class="progress"><i style="width:${Math.max(0, Math.min(100, Number(job.progress) || 0))}%"></i></div></div></a>`).join('')}
+        ${center.coding.map((session) => `<a class="list-item" href="#/task/${esc(session.id)}"><div class="grow"><div class="title" dir="auto">CODING — ${esc(session.title)}</div><div class="sub">${esc(stageWord(session.phase))}</div></div>${pill(taskGroup(session.status), STATUS_WORDS[session.status])}</a>`).join('')}</div>
+      <div class="card"><h2 class="card-title">Open risks</h2>${center.risks.length ? center.risks.map((risk) => `<div class="issue sev-${esc(risk.severity)}"><div class="row"><span class="tag ${risk.severity === 'critical' || risk.severity === 'high' ? 'bad' : 'warn'}">${esc(risk.severity)}</span><span class="xs faint">${esc(risk.from || '')}${risk.owner ? ` → ${esc(risk.owner)}` : ''}</span></div><div dir="auto">${esc(risk.text)}</div></div>`).join('') : '<div class="muted small">No high risks recorded by AUDIT, LEGAL or a risk matrix.</div>'}</div>
+      <div class="card"><h2 class="card-title">Decisions &amp; memory</h2>${Object.keys(center.memory.byKind).length ? `<div class="row" style="margin-bottom:var(--s-2)">${Object.entries(center.memory.byKind).map(([kind, count]) => `<span class="tag muted">${esc(MEMORY_LABEL[kind] || kind)} · ${count}</span>`).join('')}</div>` : ''}
+        ${center.memory.decisions.map((item) => `<div class="small" dir="auto">• ${esc(item.content)} <span class="xs faint">${esc(MEMORY_LABEL[item.kind] || item.kind)}</span></div>`).join('') || '<div class="muted small">No decisions saved yet.</div>'}</div>
+      <div class="card"><h2 class="card-title">Knowledge</h2><div class="small muted">${center.knowledge.fresh} current source${center.knowledge.fresh === 1 ? '' : 's'} of ${center.knowledge.total} (expired ones are re-checked)</div>
+        ${center.knowledge.recent.map((item) => `<div class="small"><span class="xs faint">${esc(item.agent)}</span> <a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" dir="auto">${esc(item.title)}</a></div>`).join('')}</div>
+    </div>
+    ${center.artifacts.length ? `<div class="card"><div class="spread"><h2 class="card-title">Latest artifacts</h2><a class="small" href="#/artifacts">All artifacts</a></div><div class="artifact-grid">${center.artifacts.slice(0, 4).map(renderArtifact).join('')}</div></div>` : ''}`;
+}
+
+// ------------------------------------------------------------------ artifacts
+async function renderArtifacts(type = '') {
+  setTitle('Artifacts');
+  const data = await api(`/api/artifacts${q({ workspaceId: ws(), ...(type ? { type } : {}) })}`);
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Artifacts</h1><p>Everything the employees produced as visuals: tables, charts, boards, moodboards, models, matrices and reports.</p></div></div>
+    <div class="chips" role="tablist"><a class="chip ${type ? '' : 'active'}" href="#/artifacts">All</a>${data.types.map((entry) => `<a class="chip ${entry === type ? 'active' : ''}" href="#/artifacts/${esc(entry)}">${esc(ARTIFACT_LABELS[entry] || entry)}</a>`).join('')}</div>
+    ${data.artifacts.length ? `<div class="artifact-grid">${data.artifacts.map((artifact) => `<div>${renderArtifact(artifact)}<div class="xs faint artifact-meta">${when(artifact.at)}${artifact.jobId ? ` · <a href="#/workflow/${esc(artifact.jobId)}">open objective</a>` : ''}${artifact.conversationId ? ` · <a href="#/chat/${esc(artifact.conversationId)}">open chat</a>` : ''}</div></div>`).join('')}</div>`
+      : '<div class="empty"><h3>No artifacts yet</h3><p>Ask CHIEF for a plan, budget, brand direction or review — the employees will produce visual outputs here.</p></div>'}</div>`;
+}
+
+// ------------------------------------------------------------------ integrations
+async function renderIntegrations() {
+  setTitle('Integrations');
+  view.innerHTML = `<div class="page stack"><div class="page-head"><div><h1>Integrations</h1><p>Tools and connectors per employee. "Connected" means a real successful use was recorded; configuration alone never counts.</p></div></div>
+    <div id="capabilities" class="muted small">Checking…</div></div>`;
+  const { capabilities } = await api('/api/capabilities');
+  const kind = (status) => (status.startsWith('Connected') || status === 'Available' ? 'st-completed' : status.startsWith('Configured') ? 'st-waiting' : status === 'Not configured' ? 'st-available' : 'st-blocked');
+  $('#capabilities').innerHTML = `<div class="card">${capabilities.map((item) => `<div class="list-item"><div class="grow"><div class="title">${esc(item.label)}</div><div class="sub">${esc(item.detail)}</div>${item.employees?.length ? `<div class="row" style="margin-top:4px">${item.employees.map((label) => `<span class="tag muted">${esc(label)}</span>`).join('')}</div>` : ''}</div><span class="pill ${kind(item.status)}">${esc(item.status)}</span></div>`).join('')}</div>`;
 }
 
 // ------------------------------------------------------------------ models
@@ -756,13 +860,15 @@ async function renderSettings() {
   try { health = await (await fetch('./healthz')).json(); } catch {}
   view.innerHTML = `<div class="page stack"><div class="page-head"><div><h1>Settings</h1></div></div>
     <div class="card"><h2 class="card-title">Account</h2><p class="small muted">Signed in as the owner. Sessions last 7 days.</p><button class="btn" id="logout">Sign out</button></div>
-    <div class="card"><h2 class="card-title">Tools &amp; connectors</h2><p class="small muted">"Connected" means a real successful use was recorded; configuration alone is not counted.</p><div id="capabilities" class="muted small">Checking…</div></div>
+    <div class="card"><h2 class="card-title">Appearance</h2><div class="chips" id="themeChips">${[['auto', 'System'], ['dark', 'Dark'], ['light', 'Light']].map(([value, label]) => `<button class="chip" data-theme-choice="${value}">${label}</button>`).join('')}</div></div>
+    <div class="card"><h2 class="card-title">Tools &amp; connectors</h2><p class="small muted">See <a href="#/integrations">Integrations</a> for every connector and the employees that use it.</p></div>
     <div class="card"><h2 class="card-title">System</h2><dl class="kv"><div><dt>Hub</dt><dd>${health?.ok ? 'Healthy' : 'Unknown'}</dd></div><div><dt>Version</dt><dd class="mono small">${esc(String(health?.version || '—').slice(0, 12))}</dd></div></dl>
       <p class="small muted" style="margin-top:var(--s-3)">Technical dashboards (Platform, detailed model pool, legacy Coding Agent form) remain in the <a href="./classic">classic view</a>.</p></div></div>`;
-  api('/api/capabilities').then(({ capabilities }) => {
-    const kind = (status) => (status.startsWith('Connected') || status === 'Available' ? 'st-completed' : status.startsWith('Configured') ? 'st-waiting' : status === 'Not configured' ? 'st-available' : 'st-blocked');
-    $('#capabilities').innerHTML = capabilities.map((item) => `<div class="list-item"><div class="grow"><div class="title">${esc(item.label)}</div><div class="sub">${esc(item.detail)}</div></div><span class="pill ${kind(item.status)}">${esc(item.status)}</span></div>`).join('');
-  }).catch((error) => { $('#capabilities').textContent = error.message; });
+  let current = 'auto';
+  try { current = localStorage.getItem('hub-theme') || 'auto'; } catch {}
+  const mark = () => document.querySelectorAll('[data-theme-choice]').forEach((chip) => chip.classList.toggle('active', chip.dataset.themeChoice === current));
+  mark();
+  bind(view, { '[data-theme-choice]': (_, element) => { current = element.dataset.themeChoice; try { localStorage.setItem('hub-theme', current); } catch {} applyTheme(current); mark(); } });
   $('#logout').onclick = async () => { await fetch('./api/auth/logout', { method: 'POST' }).catch(() => {}); location.reload(); };
 }
 

@@ -1,10 +1,11 @@
 import { CHIEF_MAX_TURNS, CHIEF_MODEL } from './config.js';
 import { runModel } from './model-runner.js';
-import { DISPATCHABLE, OFFICE_AGENTS, officeAgent } from './office/agents.js';
+import { ACTIVE_AGENTS, DISPATCHABLE, NICKNAMES, mentionedEmployees, officeAgent } from './office/agents.js';
 
 const SPECIALIST_ROLES = ['research', 'content', 'branding', 'seo', 'finance'];
 
 export async function planJob({ agent, goal, context = '', run = runModel, onActivity, execution = {} }) {
+  const named = mentionedEmployees(goal).filter((key) => key !== 'chief');
   const outcome = await run({
     ...execution,
     model: execution.model || CHIEF_MODEL,
@@ -14,7 +15,7 @@ export async function planJob({ agent, goal, context = '', run = runModel, onAct
     systemPrompt: agent.system_prompt,
     onActivity,
     prompt: [
-      'You are the Chief of Staff of Fahad AI Office. Decide how to handle Fahad\'s latest message.',
+      'You are CHIEF, the head of Fahad AI Office. Decide how to handle Fahad\'s latest message.',
       'Choose exactly ONE route:',
       '- "answer": you reply directly yourself. Use it for greetings, quick questions, clarifications,',
       '  follow-ups that the conversation/project context already answers, short explanations and simple',
@@ -24,14 +25,17 @@ export async function planJob({ agent, goal, context = '', run = runModel, onAct
       '  Independent workstreams run in parallel. Use only the employees the objective genuinely needs;',
       '  a single-specialist request is one workstream. Do not do specialist work yourself.',
       '  Employees (use the key):',
-      ...OFFICE_AGENTS.filter((entry) => entry.executor !== 'chief').map((entry) => `    ${entry.key}: ${entry.label} — ${entry.scope}`),
+      ...ACTIVE_AGENTS.filter((entry) => entry.executor !== 'chief').map((entry) => `    ${entry.key}: ${entry.label} — ${entry.scope}${NICKNAMES[entry.key]?.length ? ` (Fahad may say: ${NICKNAMES[entry.key].join(', ')})` : ''}`),
+      '  When Fahad names employees ("حولها للفاينانس", "let LEGAL review", "اسأل الريسيرش"), dispatch exactly those',
+      '  employees (plus only what their work strictly depends on).',
       '  Put "coding" only for a concrete, fully specified change to the project repository; its brief is',
       '  the complete engineering objective (what to change, acceptance criteria, constraints).',
-      '  Put "review" last when the combined work benefits from a quality check before it reaches Fahad.',
+      '  Put "audit" last when the combined work benefits from a quality/security/completeness check before it reaches Fahad.',
+      '  Put "legal" for laws, regulation, contracts, terms, privacy or licensing questions (never for general research).',
       '- "development": the whole message is a request to build, fix, change, test or review code in the',
       '  project repository. Write a complete, self-contained objective in "development_objective" and a title.',
       'Return JSON only, with these keys (unused ones may be empty strings or empty arrays):',
-      '{"route":"orchestrate","answer":"","plan_summary":"...","workstreams":[{"id":"market","agent":"research","title":"Market research","brief":"self-contained instructions incl. the goal and output constraints","depends_on":[]},{"id":"model","agent":"strategy","title":"Business model","brief":"...","depends_on":["market"]}],"synthesis_brief":"what the final consolidated answer must cover","development_title":"","development_objective":""}',
+      '{"route":"orchestrate","answer":"","plan_summary":"...","workstreams":[{"id":"market","agent":"research","title":"Market research","brief":"self-contained instructions incl. the goal and output constraints","depends_on":[]},{"id":"mvp","agent":"product","title":"MVP scope","brief":"...","depends_on":["market"]}],"synthesis_brief":"what the final consolidated answer must cover","development_title":"","development_objective":""}',
       'LANGUAGE: write plan_summary, every workstream title and brief, and synthesis_brief in the language of Fahad\'s current',
       'message (English message → English), and tell each employee in its brief to answer in that language.',
       'Always write plan_summary (one sentence). Each workstream brief must be',
@@ -40,6 +44,7 @@ export async function planJob({ agent, goal, context = '', run = runModel, onAct
       'regardless of the language of earlier turns or project context.',
       '',
       context ? `CONTEXT (project and earlier messages in this conversation):\n${context}\n` : '',
+      named.length ? `EMPLOYEES FAHAD NAMED IN THIS MESSAGE: ${named.map((key) => officeAgent(key).label).join(', ')} — route to them.` : '',
       `FAHAD'S MESSAGE: ${goal}`,
     ].join('\n'),
   });
