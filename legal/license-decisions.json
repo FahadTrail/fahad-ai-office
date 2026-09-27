@@ -18,6 +18,24 @@
       "conditions": "Public-domain dedication; no obligations.",
       "source": "https://unlicense.org/",
       "reviewed": "2026-09-27"
+    },
+    {
+      "package": "font:Inter",
+      "match": "^font:Inter$",
+      "license": "OFL-1.1",
+      "decision": "APPROVED",
+      "conditions": "Self-hosted web font (src/hub-ui/fonts, Latin subset). The SIL Open Font License permits use, embedding and redistribution with the product; the font is not sold by itself and keeps its name.",
+      "source": "https://github.com/rsms/inter/blob/master/LICENSE.txt",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "package": "font:IBM Plex Sans Arabic",
+      "match": "^font:IBM Plex Sans Arabic$",
+      "license": "OFL-1.1",
+      "decision": "APPROVED",
+      "conditions": "Self-hosted web font (src/hub-ui/fonts, Arabic subset, weights 400-700). Same OFL conditions as Inter.",
+      "source": "https://github.com/IBM/plex/blob/master/LICENSE.txt",
+      "reviewed": "2026-09-27"
     }
   ]
 }

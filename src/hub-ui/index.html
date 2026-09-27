@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
 <title>Fahad AI Office</title>
-<link rel="stylesheet" href="./ui/app.css">
+<link rel="preload" href="./ui/fonts/inter-latin-var.woff2?v=__UI_VERSION__" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="./ui/app.css?v=__UI_VERSION__">
 </head>
 <body>
 <div id="login" class="login hidden" role="dialog" aria-labelledby="loginTitle">
@@ -64,6 +65,6 @@
   </main>
 </div>
 <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-<script src="./ui/app.js" type="module"></script>
+<script src="./ui/app.js?v=__UI_VERSION__" type="module"></script>
 </body>
 </html>

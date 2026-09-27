@@ -7,6 +7,7 @@ import { ACTIVE_AGENTS, OFFICE_AGENTS, officeAgent, parseOutput } from './office
 import { ARTIFACT_TYPES } from './office/artifacts.js';
 import { WAITING_MESSAGE } from './office/capacity.js';
 import { ownerAction, approvalCard } from './hub-workspace.js';
+import { OfficeStream, handoffView, timelineView } from './hub-office-live.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_SESSION = new Set(['completed', 'failed', 'cancelled']);
@@ -228,6 +229,15 @@ function telegramState(delivered, check, configuredHere, state) {
   return state(null, true, 'Telegram message');
 }
 
+// Which connectors an employee works with (ids match /api/capabilities).
+export function EMPLOYEE_CONNECTORS(employee) {
+  const ids = ['database', 'memory'];
+  if (employee.webTools) ids.push('web_search', 'web_fetch');
+  if (employee.executor === 'coding') ids.push('github', 'repository', 'pull_requests', 'ci', 'deployment', 'supabase_tools', 'tool_broker');
+  if (employee.executor === 'chief') ids.push('telegram');
+  return ids;
+}
+
 // Which employees use a connector (the per-employee connector registry).
 export function connectorUsers(id) {
   const web = ACTIVE_AGENTS.filter((agent) => agent.webTools).map((agent) => agent.label);
@@ -262,37 +272,86 @@ async function workspaceActivity(db, workspaceId, sinceMs) {
   const [agents, jobs, sessions, approvals] = await Promise.all([
     rows(db.from('agents').select('id,slug,name,accent_color,is_active')),
     rows(db.from('jobs').select('id,title,goal,status,progress,conversation_id,created_at,completed_at').eq('project_id', workspaceId).gte('created_at', since).order('created_at', { ascending: false }).limit(60)),
-    rows(db.from('agent_sessions').select('id,title,status,phase,error_code,blocker,conversation_id,created_at,updated_at,completed_at').eq('workspace_id', workspaceId).order('updated_at', { ascending: false }).limit(20)),
+    rows(db.from('agent_sessions').select('id,job_id,title,status,phase,error_code,blocker,result,conversation_id,created_at,updated_at,completed_at').eq('workspace_id', workspaceId).order('updated_at', { ascending: false }).limit(20)),
     rows(db.from('agent_approvals').select('id,session_id,tool_name,action,risk,summary,arguments_preview,status,requested_at').eq('workspace_id', workspaceId).eq('status', 'pending')),
   ]);
   const jobIds = jobs.map((job) => job.id);
-  const tasks = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at,not_before,wait_info').in('job_id', jobIds)) : [];
+  const tasks = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at,not_before,wait_count,wait_info').in('job_id', jobIds)) : [];
   return { agents, jobs, tasks, sessions: sessions.filter((session) => !TERMINAL_SESSION.has(session.status) || (session.completed_at && Date.now() - Date.parse(session.completed_at) < RECENT_MS)), approvals };
 }
 
+// Handoffs and artifacts of the same window, for the timeline and handoffs.
+async function liveExtras(db, workspaceId, live, sinceMs) {
+  const since = new Date(Date.now() - sinceMs).toISOString();
+  const jobIds = live.jobs.map((job) => job.id);
+  const [handoffs, artifacts] = await Promise.all([
+    jobIds.length ? rows(db.from('handoffs').select('id,from_agent_id,to_agent_id,from_task_id,to_task_id,job_id,created_at').in('job_id', jobIds).order('created_at', { ascending: false }).limit(80)) : [],
+    optionalRows(db.from('artifacts').select('id,job_id,task_id,agent_slug,type,title,created_at').eq('project_id', workspaceId).gte('created_at', since).order('created_at', { ascending: false }).limit(80)),
+  ]);
+  return { handoffs, artifacts };
+}
+
+const streams = new WeakMap();
+
 export async function handleOfficeApi({ db, request, response, url, sendJson, env = process.env }) {
   const path = url.pathname;
-  if (!/^\/api\/(office|agents|workflows|capabilities|artifacts|command-center)(\/|$)/.test(path)) return false;
+  if (!/^\/api\/(office|agents|workflows|capabilities|artifacts|command-center|timeline|stream)(\/|$)/.test(path)) return false;
   try {
     const method = request.method;
     if (method !== 'GET') return sendJson(response, 405, { ok: false, error: 'METHOD_NOT_ALLOWED' }), true;
+
+    if (path === '/api/stream') {
+      const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
+      if (!streams.has(db)) streams.set(db, new OfficeStream({ db }));
+      streams.get(db).subscribe(workspaceId, response);
+      return true;
+    }
+
+    if (path === '/api/timeline') {
+      const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
+      const live = await workspaceActivity(db, workspaceId, 7 * 86400_000);
+      const extra = await liveExtras(db, workspaceId, live, 7 * 86400_000);
+      const agent = url.searchParams.get('agent');
+      const status = url.searchParams.get('status');
+      const job = url.searchParams.get('job');
+      const filters = {
+        ...(agent ? { agent: agent === 'fahad' ? 'fahad' : officeAgent(agent)?.key || '__none__' } : {}),
+        ...(status && ['info', 'working', 'done', 'waiting', 'attention', 'failed'].includes(status) ? { status } : {}),
+        ...(job ? { job: uuid(job, 'job') } : {}),
+      };
+      return sendJson(response, 200, { ok: true, entries: timelineView({ ...live, ...extra, filters, limit: 120 }) }), true;
+    }
 
     if (path === '/api/office') {
       const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
       const live = await workspaceActivity(db, workspaceId, 7 * 86400_000);
       const states = officeState(live);
+      const extra = await liveExtras(db, workspaceId, live, 7 * 86400_000);
       const colors = new Map(live.agents.map((agent) => [agent.slug, agent.accent_color]));
-      const since = new Date(Date.now() - 2 * 3600_000).toISOString();
-      const jobIds = live.jobs.map((job) => job.id);
-      const handoffs = jobIds.length ? await rows(db.from('handoffs').select('from_agent_id,to_agent_id,from_task_id,to_task_id,job_id,created_at').in('job_id', jobIds).gte('created_at', since).order('created_at', { ascending: false }).limit(20)) : [];
       const agentById = new Map(live.agents.map((agent) => [agent.id, agent]));
+      const jobById = new Map(live.jobs.map((job) => [job.id, job]));
+      const taskById = new Map(live.tasks.map((task) => [task.id, task]));
+      const artifactsByTask = new Map();
+      for (const artifact of extra.artifacts.toSorted((a, b) => String(a.created_at).localeCompare(String(b.created_at)))) artifactsByTask.set(artifact.task_id, [...(artifactsByTask.get(artifact.task_id) || []), artifact]);
+      const latestArtifact = new Map();
+      for (const artifact of extra.artifacts) if (!latestArtifact.has(artifact.agent_slug) || latestArtifact.get(artifact.agent_slug).created_at < artifact.created_at) latestArtifact.set(artifact.agent_slug, artifact);
       const workflowJobs = new Set(live.tasks.filter((task) => stageOf(task.brief) === 'synthesis').map((task) => task.job_id));
+      const since = Date.now() - 24 * 3600_000;
       return sendJson(response, 200, {
         ok: true,
-        agents: ACTIVE_AGENTS.map((entry) => ({ slug: entry.slug, key: entry.key, label: entry.label, scope: entry.scope, deliverable: entry.deliverable,
-          executor: entry.executor, directChat: entry.directChat, color: colors.get(entry.slug) || null, ...states.get(entry.slug) })),
+        agents: ACTIVE_AGENTS.map((entry) => {
+          const state = states.get(entry.slug);
+          const artifact = latestArtifact.get(entry.slug);
+          const job = state?.assignment?.jobId ? jobById.get(state.assignment.jobId) : null;
+          return { slug: entry.slug, key: entry.key, label: entry.label, scope: entry.scope, deliverable: entry.deliverable,
+            executor: entry.executor, directChat: entry.directChat, color: colors.get(entry.slug) || null, ...state,
+            progress: job ? job.progress || 0 : null,
+            recentArtifact: artifact ? { id: artifact.id, type: artifact.type, title: artifact.title, at: artifact.created_at } : null };
+        }),
         workflows: live.jobs.filter((job) => workflowJobs.has(job.id)).slice(0, 8).map((job) => ({ id: job.id, title: job.title, status: job.status, progress: job.progress || 0, createdAt: job.created_at })),
-        handoffs: handoffs.map((handoff) => ({ from: officeAgent(agentById.get(handoff.from_agent_id)?.slug)?.label, to: officeAgent(agentById.get(handoff.to_agent_id)?.slug)?.label, jobId: handoff.job_id, at: handoff.created_at })),
+        handoffs: extra.handoffs.filter((handoff) => Date.parse(handoff.created_at) >= since)
+          .map((handoff) => handoffView(handoff, { agentById, jobById, taskById, artifactsByTask })).filter((handoff) => handoff.fromKey && handoff.toKey && handoff.fromKey !== handoff.toKey),
+        timeline: timelineView({ ...live, ...extra, limit: 30 }),
         needsFahad: live.approvals.length + live.sessions.filter((session) => session.status === 'blocked' && session.error_code === 'HUMAN_INPUT_REQUIRED').length,
       }), true;
     }
@@ -310,6 +369,7 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
         .toSorted((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 12);
       const results = own.length ? await rows(db.from('results').select('task_id,summary,content,created_at,kind').in('task_id', own.map((task) => task.id))) : [];
       const jobById = new Map(live.jobs.map((job) => [job.id, job]));
+      const handoffs = live.jobs.length ? await rows(db.from('handoffs').select('id,from_agent_id,to_agent_id,from_task_id,to_task_id,job_id,created_at').in('job_id', live.jobs.map((job) => job.id)).order('created_at', { ascending: false }).limit(80)) : [];
       const conversations = employee.directChat && employee.executor === 'office'
         ? await rows(db.from('conversations').select('id,title,last_message_at').eq('project_id', workspaceId).eq('agent_slug', employee.slug).eq('archived', false).order('last_message_at', { ascending: false }).limit(10))
         : [];
@@ -326,7 +386,17 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
             at: task.completed_at || task.started_at || task.created_at, summary: output ? (parseOutput(output.content).summary || output.summary || '').slice(0, 400) : null };
         }),
         conversations: conversations.map((conversation) => ({ id: conversation.id, title: conversation.title, lastMessageAt: conversation.last_message_at })),
-        codingSessions: employee.executor === 'coding' ? live.sessions.map((session) => ({ id: session.id, title: session.title, status: session.status, phase: session.phase })) : [],
+        codingSessions: employee.executor === 'coding' ? live.sessions.map((session) => ({ id: session.id, title: session.title, status: session.status, phase: session.phase,
+          prUrl: session.result?.pr?.url || null, ci: session.result?.ci?.state || null, updatedAt: session.updated_at })) : [],
+        progress: state?.assignment?.jobId ? (live.jobs.find((job) => job.id === state.assignment.jobId)?.progress || 0) : null,
+        handoffs: handoffs.filter((handoff) => [handoff.from_agent_id, handoff.to_agent_id].includes(record?.id))
+          .map((handoff) => handoffView(handoff, { agentById: new Map(live.agents.map((agent) => [agent.id, agent])), jobById, taskById: new Map(live.tasks.map((task) => [task.id, task])), artifactsByTask: new Map() }))
+          .filter((handoff) => handoff.fromKey !== handoff.toKey).slice(0, 12),
+        attention: [
+          ...(state?.state === 'NEEDS FAHAD' ? [{ kind: 'action', text: state.detail, sessionId: state.assignment?.sessionId || null, jobId: state.assignment?.jobId || null }] : []),
+          ...own.filter((task) => task.status === 'failed').slice(0, 3).map((task) => ({ kind: 'failed', text: `Could not finish ${task.title}`, jobId: task.job_id })),
+        ],
+        integrations: EMPLOYEE_CONNECTORS(employee),
       }), true;
     }
 

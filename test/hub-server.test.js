@@ -176,7 +176,18 @@ test('the Workspace V2 page and its assets are served; the classic Hub stays ava
     const page = await fetch(`${base}/`);
     const html = await page.text();
     assert.equal(page.headers.get('content-type'), 'text/html; charset=utf-8');
-    assert.match(html, /<script src="\.\/ui\/app\.js" type="module"><\/script>/);
+    const version = html.match(/<script src="\.\/ui\/app\.js\?v=([0-9a-f]{12})" type="module"><\/script>/)?.[1];
+    assert.ok(version, 'the app script is versioned by content');
+    const versioned = await fetch(`${base}/ui/app.css?v=${version}`);
+    assert.match(versioned.headers.get('cache-control'), /immutable/, 'versioned assets are cached forever');
+    const css = await versioned.text();
+    assert.ok(css.includes(`inter-latin-var.woff2?v=${version}`) && !css.includes('__UI_VERSION__'), 'fonts are referenced with the version');
+    const font = await fetch(`${base}/ui/fonts/plex-arabic-400.woff2?v=${version}`);
+    assert.equal(font.headers.get('content-type'), 'font/woff2');
+    assert.ok((await font.arrayBuffer()).byteLength > 20_000, 'fonts are served as binary');
+    const plain = await fetch(`${base}/ui/app.js`);
+    assert.equal(plain.headers.get('cache-control'), 'no-cache');
+    assert.equal((await fetch(`${base}/ui/app.js`, { headers: { 'if-none-match': plain.headers.get('etag') } })).status, 304, 'unversioned assets revalidate');
     assert.match(html, /id="loginForm"/);
     for (const [path, type] of [['/ui/app.js', 'text/javascript'], ['/ui/markdown.js', 'text/javascript'], ['/ui/auth.js', 'text/javascript'], ['/ui/app.css', 'text/css']]) {
       const response = await fetch(`${base}${path}`);
