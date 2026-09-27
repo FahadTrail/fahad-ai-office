@@ -116,3 +116,41 @@ test('the bot token never appears in logs, errors or redacted tool output', asyn
   assert.ok(!redact(`token=${TOKEN}`).includes('AAFakeToken'));
   assert.equal(plain('[Hub](https://x.example) **ok**'), 'Hub (https://x.example) ok');
 });
+
+test('Needs Fahad questions are sent once; pending approvals are re-announced after a restart', async () => {
+  const { channel, tables, sent, db } = setup();
+  tables.agent_sessions = [{ id: 's9', workspace_id: 'ws-1', status: 'blocked', error_code: 'HUMAN_INPUT_REQUIRED', title: 'Fix login', blocker: '**Which** environment should I test against?', updated_at: '2026-09-27T09:59:00Z' }];
+  tables.agent_approvals.push({ id: '11111111-2222-4333-8444-666666666666', workspace_id: 'ws-1', session_id: 's9', status: 'pending', summary: 'Merge PR #60', risk: 'high', requested_at: '2026-09-27T09:00:00Z' });
+  await channel.flushOutbox();
+  await channel.flushOutbox();
+  const texts = sent.filter((entry) => entry.method === 'sendMessage').map((entry) => entry.body.text);
+  assert.equal(texts.filter((text) => /Needs you — Fix login: Which environment/.test(text)).length, 1, 'question sent once, plain text');
+  assert.match(texts.find((text) => /Needs you/.test(text)), /Reply in the Hub: https:\/\/office\.example\/#\/task\/s9/);
+  assert.equal(texts.filter((text) => /Merge PR #60/.test(text)).length, 1, 'approval requested before this process started is still announced');
+  // A restart (new bridge) re-announces the still-pending approval once.
+  const { OfficeBridge: Bridge } = await import('../src/channels/office-bridge.js');
+  const again = new Bridge({ db, store: { createJob: async () => ({}) }, workspaceId: 'ws-1', now: () => Date.parse('2026-09-27T11:00:00Z') });
+  const items = await again.outbox();
+  assert.equal(items.filter((item) => /Merge PR #60/.test(item.text)).length, 1);
+});
+
+test('startup needs only TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_CHAT_ID; nothing starts without the token', async () => {
+  const { startTelegramChannel } = await import('../src/channels/start.js');
+  const db = { from: () => ({ select() { return this; }, eq() { return this; }, limit() { return this; }, maybeSingle: async () => ({ data: { id: 'ws-1' } }) }) };
+  const logs = [];
+  assert.equal(await startTelegramChannel({ db, store: {}, log: (...parts) => logs.push(parts.join(' ')), env: {} }), null, 'no token → no channel');
+  await assert.rejects(startTelegramChannel({ db, store: {}, log: () => {}, env: { TELEGRAM_BOT_TOKEN: 'nope' } }), (error) => /not a valid bot token/.test(error.message) && !error.message.includes('nope'));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, result: [] }) });
+  try {
+    const channel = await startTelegramChannel({ db, store: {}, log: (...parts) => logs.push(parts.join(' ')), env: { TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_OWNER_CHAT_ID: OWNER, HUB_PUBLIC_HOST: 'office.example' } });
+    assert.ok(channel);
+    assert.equal(channel.owner, OWNER);
+    assert.equal(channel.bridge.hubUrl, 'https://office.example');
+    channel.stop();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.ok(logs.some((line) => /Telegram channel started \(owner paired\)/.test(line)));
+  assert.ok(!logs.join('\n').includes(TOKEN), 'the token is never logged');
+});

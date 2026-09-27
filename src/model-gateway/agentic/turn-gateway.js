@@ -177,7 +177,9 @@ export class AgentTurnGateway {
           code: lastError ? 'ALL_PROVIDERS_UNAVAILABLE' : 'NO_ELIGIBLE_PROVIDER',
           failureClass: FAILURE_CLASS.APPROVAL,
           attempts,
-          evaluations: evaluations.map(({ route: candidate, reasons }) => ({ id: candidate.id, reasons })),
+          evaluations: evaluations.map(({ route: candidate, reasons, state }) => ({
+            id: candidate.id, reasons, billingClass: candidate.billingClass, cooldownUntil: state?.cooldownUntil || null,
+          })),
           cause: lastError || undefined,
         });
       }
@@ -276,8 +278,12 @@ export class AgentTurnGateway {
       failed.push(route.id);
       previousRoute = route;
     }
+    const evaluations = await this.evaluate({ ...routing, maxOutputTokens, excludedRouteIds: failed }).catch(() => null);
     throw new GatewayError('All eligible model routes are unavailable', {
       code: 'ALL_PROVIDERS_UNAVAILABLE', failureClass: FAILURE_CLASS.APPROVAL, attempts, cause: lastError || undefined,
+      ...(evaluations ? { evaluations: evaluations.map(({ route: candidate, reasons, state }) => ({
+        id: candidate.id, reasons, billingClass: candidate.billingClass, cooldownUntil: state?.cooldownUntil || null,
+      })) } : {}),
     });
   }
 }

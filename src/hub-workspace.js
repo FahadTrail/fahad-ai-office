@@ -311,6 +311,7 @@ export function workflowSummary(steps = []) {
     if (step.status === 'running') return 'working';
     if (['done', 'skipped'].includes(step.status)) return 'done';
     if (['failed', 'blocked'].includes(step.status)) return step.status;
+    if (step.status === 'queued' && step.not_before && Date.parse(step.not_before) > Date.now()) return 'capacity';
     return (step.depends_on || []).some((id) => !['done', 'skipped'].includes(byId.get(id)?.status)) ? 'waiting' : 'ready';
   };
   const synthesis = steps.filter((step) => stage(step) === 'synthesis').at(-1);
@@ -321,8 +322,12 @@ export function workflowSummary(steps = []) {
 }
 
 // Human words for what the Office is doing on an unfinished chat request.
-export function chatStage(job, steps = []) {
+export function chatStage(job, steps = [], now = Date.now()) {
   if (job.status === 'planning' || !steps.length) return 'Thinking';
+  // A step waiting for free model capacity resumes by itself.
+  if (!steps.some((step) => step.status === 'running') && steps.some((step) => step.status === 'queued' && step.not_before && Date.parse(step.not_before) > now)) {
+    return 'Waiting for free model capacity — will resume automatically';
+  }
   const flow = workflowSummary(steps);
   if (flow) {
     const done = flow.streams.filter((stream) => stream.state === 'done').length;
@@ -408,7 +413,7 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         const jobs = await rows(db.from('jobs').select('id,title,goal,status,progress,final_summary,cost_usd,tokens_used,created_at,completed_at')
           .eq('conversation_id', id).order('created_at', { ascending: true }).limit(200));
         const jobIds = jobs.map((job) => job.id);
-        const stepRows = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,sequence,brief,depends_on').in('job_id', jobIds).order('sequence')) : [];
+        const stepRows = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,sequence,brief,depends_on,not_before').in('job_id', jobIds).order('sequence')) : [];
         const agentRows = stepRows.length ? await rows(db.from('agents').select('id,slug')) : [];
         const slugById = new Map(agentRows.map((agent) => [agent.id, agent.slug]));
         for (const step of stepRows) step.agent_slug = slugById.get(step.agent_id) || null;

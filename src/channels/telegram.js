@@ -90,10 +90,13 @@ export class TelegramChannel {
         if (Date.now() - lastOutbox > 5000) { lastOutbox = Date.now(); await this.flushOutbox(); }
       } catch (error) {
         this.log(`WARN  telegram: ${error.message}`);
-        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        await new Promise((resolve) => { this.backoff = setTimeout(resolve, 10_000); this.backoff.unref?.(); });
       }
     }
   }
 
-  stop() { this.running = false; }
+  stop() {
+    this.running = false;
+    if (this.backoff) clearTimeout(this.backoff);
+  }
 }

@@ -156,6 +156,14 @@ inside the built runtime image as root.
   (not ready; never touch Hermes before Fahad's single final approval).
   Migration `20260929090000_office_final_roster` is applied in production.
 
+* Closure sprint (2026-09-27): Office steps wait for free model capacity
+  (`WAITING_FOR_CAPACITY`, `defer_task`, auto-resume from checkpoint) instead
+  of failing; the Coding worker runs a read-only Supabase tools self-check at
+  start (event `supabase_tools_check`); Telegram re-announces pending items
+  after restarts and sends Needs-Fahad questions; `tools/hermes-decision.mjs`
+  turns the Hermes audit into one decision. Migration
+  `20260930090000_office_capacity_wait`.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,

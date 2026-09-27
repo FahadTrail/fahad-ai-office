@@ -25,6 +25,17 @@ of Hermes environment variables. It changes nothing and makes no network call
 (guarded by `test/hermes-audit.test.js`). The audit is required because this
 build environment cannot reach the VPS.
 
+Then turn the output into the decision (read-only, prints a plan only):
+
+```sh
+node tools/hermes-decision.mjs hermes-audit.txt            # add --telegram-live once Office Telegram works
+```
+
+It lists what Hermes runs (containers, env NAMES, routes, volumes, units,
+cron), maps each capability to its Office replacement and answers
+`NOT READY` or `HERMES READY FOR FINAL DECOMMISSION`; only the latter prints
+the reversible-first removal plan, which still needs Fahad's single approval.
+
 ## Step 2 — capability map
 
 Fill from the audit; each Hermes capability needs a proven Office replacement.

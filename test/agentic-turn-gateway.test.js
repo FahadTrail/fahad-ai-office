@@ -112,7 +112,7 @@ test('no eligible route is a human-facing blocker with reasons, not a guess', as
   const gateway = new AgentTurnGateway({ pool: [route('a:m', { unavailableReasons: ['CREDENTIAL_MISSING'] })], stateStore: new MemoryProviderStateStore() });
   await assert.rejects(gateway.turn({ tools: [], prepare: async () => ({}) }), (error) => {
     assert.equal(error.code, 'NO_ELIGIBLE_PROVIDER');
-    assert.deepEqual(error.evaluations, [{ id: 'a:m', reasons: ['CREDENTIAL_MISSING'] }]);
+    assert.deepEqual(error.evaluations, [{ id: 'a:m', reasons: ['CREDENTIAL_MISSING'], billingClass: error.evaluations[0].billingClass, cooldownUntil: null }]);
     return true;
   });
 });
@@ -134,6 +134,7 @@ test('failure outcomes map provider errors to durable health', () => {
   const broken = failureOutcome(invalid, { consecutiveFailures: 2 }, now);
   assert.equal(broken.health, HEALTH.UNAVAILABLE);
   assert.equal(broken.cooldownUntil, new Date(now + 6 * 3_600_000).toISOString());
+  assert.equal(failureOutcome(invalid, { consecutiveFailures: 48 }, now).cooldownUntil, new Date(now + 24 * 3_600_000).toISOString(), 'a route that stays broken is probed once a day');
 });
 
 test('model pool marks missing credentials, unknown pricing and privacy truthfully', () => {

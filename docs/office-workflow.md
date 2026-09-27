@@ -50,6 +50,26 @@ are given back to that employee on the next task in the project.
 **Memory types.** fact, decision, preference, constraint, product/technical/
 brand decision, legal requirement, financial assumption.
 
+**Waiting for free capacity.** When no allowed model can run a step right
+now but one will recover (a daily quota reset, a rate-limit cooldown), the
+step is not failed: it is checkpointed (completed tool calls kept), the task
+returns to the queue with `not_before` = the earliest recovery time
+(`defer_task`), and it resumes by itself — also after a worker restart —
+without repeating finished work. The Hub shows "Waiting for free model
+capacity — will resume automatically." Waits never use up retries, are
+bounded (48), and never widen access (a paid route excluded by policy stays
+excluded). If every allowed route is permanently unavailable (policy,
+capability, privacy, missing credential, blocked account) the step fails at
+once with that blocker. Code: `src/office/capacity.js`, migration
+`20260930090000_office_capacity_wait`.
+
+**Telegram setup (owner, once).** Create a bot with @BotFather, then on the
+server: `sudo bash ops/set-secret.sh TELEGRAM_BOT_TOKEN`; send the bot
+`/start` (it replies with your chat id); `sudo bash ops/set-secret.sh
+TELEGRAM_OWNER_CHAT_ID`. Nothing else: the channel starts with the runtime,
+links go to `HUB_PUBLIC_HOST`, and pending approvals/questions are
+re-announced after a restart.
+
 **Channels.** `src/channels/office-bridge.js` is transport-neutral (Telegram
 now, WhatsApp later with the same `handleMessage` / `outbox` / `decide`).
 Telegram (`src/channels/telegram.js`) is owner-only, rate limited, sends
