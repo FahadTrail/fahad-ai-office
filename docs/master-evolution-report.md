@@ -219,3 +219,22 @@ for final decommission** (audit output and proven replacements missing).
 Telegram credentials; Hermes audit output; `CODING_SUPABASE_ACCESS_TOKEN`;
 budget ($1.917 of $2 used until 2026-10-01 — paid work refused soon);
 Qwen activation; Cerebras credits (paid, not recommended now).
+
+## 38. Closure sprint (2026-09-27)
+
+* **Capacity wait** (`20260930090000_office_capacity_wait`, applied; schema
+  fingerprint 955 objects): a step with no free route but a recoverable one is
+  checkpointed and deferred (`WAITING_FOR_CAPACITY`), then resumes on its own;
+  permanent/account blockers fail clearly; waits are bounded (48, backoff up to
+  60 min, 24 h cap).
+* **Live, free-only, $0:** FINANCE → CODING consult — CODING answered, the
+  FINANCE follow-up waited for capacity (Gemini cooldown, OpenRouter free quota
+  exhausted), auto-resumed at 08:15:50 and delivered the AED estimate with
+  KNOWN/ESTIMATED/ASSUMPTION labels. CHIEF long synthesis — 7,637 chars, six
+  distinct sections, closed artifact blocks, stored once.
+* **Supabase Coding tools:** VERIFIED by the worker's start-up self-check
+  (`supabase_read_only_user`, scope enforced, write blocked, no secret exposed).
+* **Telegram:** code-complete; needs only `TELEGRAM_BOT_TOKEN` and
+  `TELEGRAM_OWNER_CHAT_ID`.
+* **Hermes:** untouched; separation guarded by `test/hermes-separation.test.js`;
+  `tools/hermes-decision.mjs` turns the audit into the single decision.
