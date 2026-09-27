@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { FAILURE_CLASS, GatewayError, classifyProviderError } from '../contracts.js';
 import { DEFAULT_BILLING_PRIORITY } from './model-pool.js';
 import { isCoolingDown } from './provider-state.js';
-import { capabilityGaps, jobFit } from './capabilities.js';
+import { capabilityGaps, jobFit, languageFit, languageGaps } from './capabilities.js';
 import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 import { qualificationGaps, evidenceScore } from './qualification.js';
 
@@ -60,6 +60,7 @@ export class AgentTurnGateway {
     minQualityTier = this.minQualityTier,
     job = null,
     qualifications = null,
+    language = null,
   } = {}) {
     const state = await this.stateStore.snapshot();
     const now = this.now();
@@ -80,6 +81,7 @@ export class AgentTurnGateway {
       // Capability before price: a free model that cannot do the job is not
       // offered the job.
       reasons.push(...capabilityGaps(route.capabilities, job));
+      reasons.push(...languageGaps(route.capabilities, language));
       // Evidence before claims: a free model's own qualification results can
       // rule it out of a job, and critical jobs need a passed qualification.
       reasons.push(...qualificationGaps(route, job, qualifications, now));
@@ -107,12 +109,12 @@ export class AgentTurnGateway {
   // when qualification evidence is available the order is job-specific —
   // capability fit plus evidence (passed skills for this job, observed
   // reliability, recent limits) — so each job has its own free preference.
-  order(evaluations, { preferredRouteId = null, billingPriority = this.billingPriority, strategy = this.strategy, job = null, qualifications = null } = {}) {
+  order(evaluations, { preferredRouteId = null, billingPriority = this.billingPriority, strategy = this.strategy, job = null, qualifications = null, language = null } = {}) {
     const rank = (route) => {
       const index = billingPriority.indexOf(route.billingClass);
       return index < 0 ? billingPriority.length : index;
     };
-    const fit = (route) => (job ? jobFit(route, job) : route.qualityTier);
+    const fit = (route) => (job ? jobFit(route, job) : route.qualityTier) + languageFit(route, language);
     const within = strategy === 'economy'
       ? (left, right) => left.costTier - right.costTier || fit(right) - fit(left)
       : strategy === 'quality'
@@ -171,6 +173,7 @@ export class AgentTurnGateway {
         strategy: routing.strategy || this.strategy,
         job: routing.job || null,
         qualifications: routing.qualifications || null,
+        language: routing.language || null,
       });
       if (!route) {
         throw new GatewayError(lastError ? 'All eligible model routes are unavailable' : 'No model route satisfies the task policy', {

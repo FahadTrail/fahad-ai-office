@@ -84,6 +84,25 @@ Telegram (`src/channels/telegram.js`) is owner-only, rate limited, sends
 results and approval requests with Approve/Reject buttons, and deep-links to
 the Hub.
 
+## Language (`src/office/language.js`)
+
+One language policy for every Office voice — CHIEF (answers, plans, briefs,
+synthesis), every employee, direct chats, consults, the Hub and Telegram:
+
+* Arabic from Fahad → polished Emirati (UAE) Arabic with correct grammar; no
+  literal translation, no heavy slang, Modern Standard Arabic only for legal,
+  contractual, official and technical-definition text.
+* English → English. A real Arabic/English mix → the same natural mix.
+* Role and technical terms (Chief, Finance, Legal, PR, CI, deploy, API,
+  dashboard, workflow…) stay in English.
+
+Arabic work is routed to models that write Arabic well: the capability
+registry carries an `arabic` score, routes below 3 are not offered Arabic
+answers (`CAPABILITY_ARABIC_BELOW_3`) and stronger Arabic writers rank first.
+CHIEF's prompt carries the OFFICE FACTS (9 roles: CHIEF + 8 specialists,
+LEGAL included) built from the live roster, and it must never invent people,
+organizations or status.
+
 ## Chief orchestration (`chief.js` route `orchestrate`, `workflow.js`)
 
 1. **Plan.** The Chief returns 1–8 workstreams, each with an employee, a

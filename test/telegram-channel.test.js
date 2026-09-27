@@ -63,7 +63,9 @@ test('only the paired owner reaches CHIEF; strangers and groups are ignored', as
   assert.equal(jobs[0].goal, 'حولها للفاينانس: كم تكلفة الاستضافة؟');
   assert.equal(jobs[0].conversationId, tables.conversations[0].id);
   assert.equal(tables.conversations[0].title, 'Telegram · CHIEF');
-  assert.match(sent.at(-1).body.text, /CHIEF is on it[\s\S]*https:\/\/office\.example\/#\/chat\//);
+  assert.match(sent.at(-1).body.text, /^تمام، الـ Chief استلم الطلب وشغال عليه\.\nتقدر تتابعه مباشرة هنا: https:\/\/office\.example\/#\/chat\//, 'an Arabic message gets an Emirati acknowledgement');
+  await channel.handleUpdate(msg(4, OWNER, 'Plan the launch please'));
+  assert.match(sent.at(-1).body.text, /^CHIEF is on it\.\nFollow it live: https:\/\/office\.example\/#\/chat\//, 'an English message gets English');
   assert.equal(channel.ignored, 2);
 });
 

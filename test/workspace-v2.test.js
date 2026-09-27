@@ -185,8 +185,13 @@ test('chat progress is described in plain words', async () => {
 });
 
 test('the Chief answers in the language of the current message', async () => {
-  const { readFileSync } = await import('node:fs');
-  const chief = readFileSync(new URL('../src/chief.js', import.meta.url), 'utf8');
-  assert.match(chief, /same language as Fahad\\'s current message/);
-  assert.doesNotMatch(chief, /in Fahad\\'s language\)/);
+  const { planJob } = await import('../src/chief.js');
+  const prompt = async (goal, context) => {
+    let seen = '';
+    await planJob({ agent: { system_prompt: '' }, goal, context, run: async (input) => { seen = input.prompt; return { text: '{"route":"answer","answer":"x","plan_summary":"x"}' }; } });
+    return seen;
+  };
+  assert.match(await prompt('What is the status?', 'Earlier turn: وش الأخبار؟'), /LANGUAGE: Fahad wrote in English/);
+  assert.match(await prompt('وش الأخبار اليوم؟', 'Earlier turn in English'), /LANGUAGE: Fahad wrote in Arabic/);
+  assert.match(await prompt('What is the status?'), /follows\nFahad's CURRENT message|Fahad's CURRENT message/);
 });

@@ -5,6 +5,7 @@ import { RESEARCH_MAX_TURNS, CHIEF_MAX_TURNS } from '../config.js';
 import { runModel } from '../model-runner.js';
 import { DISPATCHABLE, OUTPUT_CONTRACT, officeAgent } from './agents.js';
 import { artifactInstructions } from './artifacts.js';
+import { languageInstruction } from './language.js';
 
 export function knowledgeBlock(items = []) {
   if (!items.length) return '';
@@ -37,7 +38,8 @@ export async function performOfficeWork({ agent, role, goal, brief, title, upstr
     prompt: [
       `You are ${employee.label} in Fahad's AI Office. Your scope: ${employee.scope}`,
       `CHIEF assigned you this workstream: "${title}". Do the work yourself, completely; do not ask for permission.`,
-      'Write your whole deliverable in the language of Fahad\'s ORIGINAL OBJECTIVE below, whatever language the other inputs use.',
+      languageInstruction(goal),
+      'The language rule follows Fahad\'s ORIGINAL OBJECTIVE below, whatever language the other inputs use.',
       webTools ? 'Use the web tools to verify current facts and cite sources.' : 'You have no web access in this task: rely on the inputs and label assumptions.',
       ...OUTPUT_CONTRACT,
       ...employee.contract,
@@ -66,7 +68,8 @@ export async function synthesizeWorkflow({ agent, goal, synthesisBrief, outputs,
     prompt: [
       'You are CHIEF. Your employees have completed the workstreams you dispatched.',
       'Synthesize their persisted outputs into ONE coherent result for Fahad — do not concatenate reports.',
-      'Write the whole result in the language of the ORIGINAL OBJECTIVE, whatever language the employee outputs use.',
+      languageInstruction(goal),
+      'The language rule follows the ORIGINAL OBJECTIVE, whatever language the employee outputs use.',
       'Remove duplicates, surface contradictions between employees and say how you resolved them (or that they remain open).',
       'Credit employees by name (RESEARCH, PRODUCT, FINANCE…) where it helps. Do not pretend you did their work.',
       'Structure: "## Executive summary", the consolidated plan/answer, "## Resolved issues", "## Open issues & risks",',
@@ -102,13 +105,15 @@ export async function converseDirect({ agent, role, goal, context = '', knowledg
     specialist: { role: employee.key, job: employee.job },
     prompt: consultFrom ? [
       `You are ${employee.label} in Fahad's AI Office. Your colleague ${consultFrom} needs your expert input. Your scope: ${employee.scope}`,
-      'Answer the question precisely and concisely for your colleague, in the language of the question. Label estimates and assumptions;',
+      'Answer the question precisely and concisely for your colleague. Label estimates and assumptions;',
+      languageInstruction(goal, { audience: 'colleague' }),
       'never invent facts. This is advice only: do not start work, change anything or ask Fahad.',
       context ? `\nPROJECT CONTEXT:\n${context}` : '',
       `\nQUESTION FROM ${consultFrom}: ${goal}`,
     ].filter(Boolean).join('\n') : [
       `You are ${employee.label} in Fahad's AI Office, and Fahad is talking to you directly. Your scope: ${employee.scope}`,
-      'Answer as this employee, within your specialty, in the language of his message. If the request is outside',
+      languageInstruction(goal),
+      'Answer as this employee, within your specialty. If the request is outside',
       'your specialty, say which colleague (or CHIEF) should handle it, and help as far as you can.',
       'Never invent facts; label estimates. Markdown is welcome.',
       ...employee.contract,

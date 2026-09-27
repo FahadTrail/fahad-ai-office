@@ -14,6 +14,7 @@ import {
   TASK_MAX_ATTEMPTS,
 } from './config.js';
 import { ScopedToolBrokerSession } from './tool-broker/session.js';
+import { routingLanguage } from './office/language.js';
 
 export const WORKFLOW = 'chief-research-chief';
 export const WORKFLOW_VERSION = 1;
@@ -713,6 +714,7 @@ export class OfficeWorkflow {
     const execution = this.modelExecution(task, stage);
     return async (args) => this.modelRunner.run({
       job,
+      language: routingLanguage(request.goal),
       systemPrompt: args.systemPrompt,
       prompt: args.prompt,
       useWebTools: (args.allowedTools || []).length > 0,

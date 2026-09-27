@@ -9,6 +9,7 @@
 // approve/reject decision that the Hub itself offers.
 
 import { autoTitle } from '../hub-workspace.js';
+import { detectLanguage } from '../office/language.js';
 
 const CONVERSATION_TITLE = { telegram: 'Telegram · CHIEF', whatsapp: 'WhatsApp · CHIEF' };
 const MAX_MESSAGE = 8000;
@@ -57,7 +58,10 @@ export class OfficeBridge {
     const job = await this.store.createJob({ title: autoTitle(message), goal: message, projectId: this.workspaceId, requestedProvider: 'auto', conversationId });
     await this.db.from('conversations').update({ last_message_at: new Date(this.now()).toISOString(), updated_at: new Date(this.now()).toISOString() }).eq('id', conversationId);
     const link = this.link(`#/chat/${conversationId}`);
-    return { reply: `CHIEF is on it.${link ? `\nFollow it live: ${link}` : ''}`, jobId: job.id };
+    const arabic = detectLanguage(message) !== 'en';
+    const reply = arabic ? `تمام، الـ Chief استلم الطلب وشغال عليه.${link ? `\nتقدر تتابعه مباشرة هنا: ${link}` : ''}`
+      : `CHIEF is on it.${link ? `\nFollow it live: ${link}` : ''}`;
+    return { reply, jobId: job.id };
   }
 
   async status() {
@@ -76,7 +80,7 @@ export class OfficeBridge {
   async outbox() {
     const out = [];
     const conversationId = await this.conversation();
-    const { data: done } = await this.db.from('jobs').select('id,status,completed_at').eq('conversation_id', conversationId)
+    const { data: done } = await this.db.from('jobs').select('id,status,completed_at,goal').eq('conversation_id', conversationId)
       .in('status', ['completed', 'failed']).gte('completed_at', this.pendingSince).order('completed_at', { ascending: true }).limit(10);
     const pending = (done || []).filter((job) => !this.notifiedJobs.has(job.id));
     const delivered = new Set();
@@ -87,10 +91,12 @@ export class OfficeBridge {
     for (const job of pending) {
       if (delivered.has(job.id)) { this.notifiedJobs.add(job.id); continue; }
       const { data: final } = await this.db.from('results').select('content').eq('job_id', job.id).eq('kind', 'final').limit(1).maybeSingle();
-      const body = job.status === 'failed' ? 'CHIEF could not finish this request. Details are in the Hub.' : plain(final?.content || 'Done.');
+      const arabic = detectLanguage(job.goal) !== 'en';
+      const failed = arabic ? 'ما قدر الـ Chief يكمّل هالطلب. التفاصيل موجودة في الـ Hub.' : 'CHIEF could not finish this request. Details are in the Hub.';
+      const body = job.status === 'failed' ? failed : plain(final?.content || (arabic ? 'تم.' : 'Done.'));
       const link = this.link(`#/chat/${conversationId}`);
       out.push({
-        text: `${clip(body, 3500)}${link ? `\n\nOpen in the Hub: ${link}` : ''}`,
+        text: `${clip(body, 3500)}${link ? `\n\n${arabic ? 'افتحه في الـ Hub' : 'Open in the Hub'}: ${link}` : ''}`,
         ack: async () => {
           this.notifiedJobs.add(job.id);
           await this.db.from('events').insert({ job_id: job.id, type: 'activity', level: 'info', message: `Result delivered to ${this.channel}.`,

@@ -1,6 +1,7 @@
 import { CHIEF_MAX_TURNS, CHIEF_MODEL } from './config.js';
 import { runModel } from './model-runner.js';
 import { ACTIVE_AGENTS, DISPATCHABLE, NICKNAMES, mentionedEmployees, officeAgent } from './office/agents.js';
+import { languageInstruction, officeFacts } from './office/language.js';
 
 const SPECIALIST_ROLES = ['research', 'content', 'branding', 'seo', 'finance'];
 
@@ -36,12 +37,12 @@ export async function planJob({ agent, goal, context = '', run = runModel, onAct
       '  project repository. Write a complete, self-contained objective in "development_objective" and a title.',
       'Return JSON only, with these keys (unused ones may be empty strings or empty arrays):',
       '{"route":"orchestrate","answer":"","plan_summary":"...","workstreams":[{"id":"market","agent":"research","title":"Market research","brief":"self-contained instructions incl. the goal and output constraints","depends_on":[]},{"id":"mvp","agent":"product","title":"MVP scope","brief":"...","depends_on":["market"]}],"synthesis_brief":"what the final consolidated answer must cover","development_title":"","development_objective":""}',
-      'LANGUAGE: write plan_summary, every workstream title and brief, and synthesis_brief in the language of Fahad\'s current',
-      'message (English message → English), and tell each employee in its brief to answer in that language.',
       'Always write plan_summary (one sentence). Each workstream brief must be',
       'self-contained: the employee sees the original objective, your brief and the outputs it depends on — nothing else.',
-      'Write the answer in the same language as Fahad\'s current message (English message → English answer; Arabic → Arabic),',
-      'regardless of the language of earlier turns or project context.',
+      officeFacts(ACTIVE_AGENTS),
+      languageInstruction(goal),
+      'The language rule applies to "answer", plan_summary, every workstream title and brief, and synthesis_brief; it follows',
+      'Fahad\'s CURRENT message, whatever language earlier turns or the project context use.',
       '',
       context ? `CONTEXT (project and earlier messages in this conversation):\n${context}\n` : '',
       named.length ? `EMPLOYEES FAHAD NAMED IN THIS MESSAGE: ${named.map((key) => officeAgent(key).label).join(', ')} — route to them.` : '',
@@ -163,7 +164,8 @@ export async function reviewResearch({ agent, goal, reviewBrief, research, run =
       'You are the Chief of Staff performing final review. Research & Strategy has completed',
       'the delegated task. Review its persisted result below, resolve any ambiguity conservatively,',
       'and answer Fahad directly. Do not pretend that you performed the research yourself.',
-      'Use the language of the original goal. Lead with the concise recommendation.',
+      languageInstruction(goal),
+      'Lead with the concise recommendation.',
       '',
       `ORIGINAL GOAL: ${goal}`,
       `REVIEW BRIEF: ${reviewBrief}`,
