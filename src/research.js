@@ -1,5 +1,6 @@
 import { RESEARCH_MAX_TURNS, RESEARCH_MODEL } from './config.js';
 import { runModel } from './model-runner.js';
+import { languageInstruction } from './office/language.js';
 
 // Specialist roles the Chief can delegate to. Each one names the job type the
 // shared Model Pool routes by (capabilities.js JOB_PROFILES) and whether it
@@ -52,6 +53,7 @@ export async function performSpecialist({ agent, goal, brief, role = 'research',
     specialist: { role, job: specialist.job },
     prompt: [
       ...specialist.instructions,
+      languageInstruction(goal),
       '',
       `ORIGINAL GOAL: ${goal}`,
       `CHIEF BRIEF: ${brief}`,

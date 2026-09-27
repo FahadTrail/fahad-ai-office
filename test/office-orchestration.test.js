@@ -199,10 +199,14 @@ test('the roster: every Office function has its own executable employee; models 
 });
 
 test('language follows Fahad\'s message through plan, workstreams and synthesis', async () => {
-  const { readFileSync } = await import('node:fs');
-  const chief = readFileSync(new URL('../src/chief.js', import.meta.url), 'utf8');
-  const specialist = readFileSync(new URL('../src/office/specialist.js', import.meta.url), 'utf8');
-  assert.match(chief, /every workstream title and brief, and synthesis_brief in the language of Fahad/);
-  assert.match(specialist, /whole deliverable in the language of Fahad\\?'s ORIGINAL OBJECTIVE/);
-  assert.match(specialist, /whole result in the language of the ORIGINAL OBJECTIVE/);
+  const { performOfficeWork, synthesizeWorkflow } = await import('../src/office/specialist.js');
+  const prompts = [];
+  const run = async (input) => { prompts.push(input.prompt); return { text: 'ok' }; };
+  const agent = { system_prompt: '' };
+  await performOfficeWork({ agent, role: 'finance', goal: 'كم تكلفة الاستضافة الشهرية؟', brief: 'Estimate hosting costs in English words', title: 'Costs', run });
+  await synthesizeWorkflow({ agent, goal: 'كم تكلفة الاستضافة الشهرية؟', synthesisBrief: 'costs', outputs: [], allowRevision: false, run });
+  for (const prompt of prompts) {
+    assert.match(prompt, /LANGUAGE: Fahad wrote in Arabic — answer in Arabic\./);
+    assert.match(prompt, /follows (Fahad's )?(the )?ORIGINAL OBJECTIVE/);
+  }
 });

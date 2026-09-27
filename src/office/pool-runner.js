@@ -93,6 +93,8 @@ export class OfficeModelRunner {
     // Work done before this step had to wait for capacity: completed tool
     // calls are handed to the model instead of being run again.
     resume = null,
+    // 'ar' when the answer is in Arabic: prefer models that write it well.
+    language = null,
   }) {
     const started = Date.now();
     const pool = this.poolFactory({ env: this.env, fetchFn: this.fetchFn });
@@ -167,7 +169,7 @@ export class OfficeModelRunner {
       }
       const evaluationRouting = {
         requiresPrivateData, estimatedInputTokens: estimateTokens(systemPrompt, messages, tools), authorizedRouteIds,
-        allowPaid: routing.allowPaid, billingPriority: routing.billingPriority, strategy: routing.strategy, job,
+        allowPaid: routing.allowPaid, billingPriority: routing.billingPriority, strategy: routing.strategy, job, language,
         policyExcludedRouteIds: [...routing.excludedRoutes, ...excluded], remainingBudgetUsd, qualifications,
         ...(routing.effort ? { effort: routing.effort } : {}),
       };

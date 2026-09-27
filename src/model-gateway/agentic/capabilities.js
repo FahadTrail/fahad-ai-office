@@ -13,44 +13,50 @@
 export const CAPABILITY_SCORES = Object.freeze(['coding', 'reasoning', 'research', 'writing', 'speed']);
 export const CAPABILITY_FLAGS = Object.freeze(['toolCalling', 'vision', 'structuredOutput']);
 
+// Writing quality in Arabic (1–5), used when Fahad writes Arabic. Planning
+// estimates from provider documentation and live Office answers (a small
+// model produced broken Gulf Arabic on 2026-09-27). Unknown models default
+// to at most 3 so they never outrank a known strong Arabic writer.
+export const ARABIC_MIN = 3;
+
 // Keyed by model id (exact) or by a RegExp source matched against the model
 // id. Order matters: the first match wins.
 const REGISTRY = [
-  ['claude-opus-5', { coding: 5, reasoning: 5, research: 5, writing: 5, speed: 2, vision: true, structuredOutput: true }],
-  ['claude-sonnet-5', { coding: 5, reasoning: 5, research: 5, writing: 5, speed: 3, vision: true, structuredOutput: true }],
-  ['gpt-5.3-codex', { coding: 5, reasoning: 5, research: 4, writing: 4, speed: 3, vision: true, structuredOutput: true }],
-  ['deepseek-flash', { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: false, structuredOutput: true }],
-  [/^qwen3(\.\d+)?-(flash|plus|max|coder)/, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: false, structuredOutput: true }],
-  [/^kimi-k2\.\d+-code/, { coding: 5, reasoning: 4, research: 4, writing: 4, speed: 3, vision: false, structuredOutput: true }],
+  ['claude-opus-5', { coding: 5, reasoning: 5, research: 5, writing: 5, speed: 2, vision: true, structuredOutput: true , arabic: 5 }],
+  ['claude-sonnet-5', { coding: 5, reasoning: 5, research: 5, writing: 5, speed: 3, vision: true, structuredOutput: true , arabic: 5 }],
+  ['gpt-5.3-codex', { coding: 5, reasoning: 5, research: 4, writing: 4, speed: 3, vision: true, structuredOutput: true , arabic: 5 }],
+  ['deepseek-flash', { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: false, structuredOutput: true , arabic: 4 }],
+  [/^qwen3(\.\d+)?-(flash|plus|max|coder)/, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: false, structuredOutput: true , arabic: 4 }],
+  [/^kimi-k2\.\d+-code/, { coding: 5, reasoning: 4, research: 4, writing: 4, speed: 3, vision: false, structuredOutput: true , arabic: 3 }],
   // Z.ai's free Flash models are fine for simple text work, below our coding floor.
-  [/^glm-4\.\d+v?-flash/, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
-  [/^glm-5(\.\d+)?/, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: false, structuredOutput: true }],
-  [/^MiniMax-M2/, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: false, structuredOutput: true }],
-  [/^gemini-.*flash-lite/, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 5, vision: true, structuredOutput: true }],
-  [/^gemini-.*flash/, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: true, structuredOutput: true }],
-  [/^gemini-.*pro/, { coding: 5, reasoning: 5, research: 5, writing: 5, speed: 2, vision: true, structuredOutput: true }],
+  [/^glm-4\.\d+v?-flash/, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true , arabic: 3 }],
+  [/^glm-5(\.\d+)?/, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: false, structuredOutput: true , arabic: 4 }],
+  [/^MiniMax-M2/, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: false, structuredOutput: true , arabic: 3 }],
+  [/^gemini-.*flash-lite/, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 5, vision: true, structuredOutput: true , arabic: 4 }],
+  [/^gemini-.*flash/, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: true, structuredOutput: true , arabic: 5 }],
+  [/^gemini-.*pro/, { coding: 5, reasoning: 5, research: 5, writing: 5, speed: 2, vision: true, structuredOutput: true , arabic: 5 }],
   // Open-weight models served by free/low-cost hosts (Groq, Cerebras, GitHub
   // Models, OpenRouter). Strong for text; not trusted with autonomous coding.
   // Qwen 3.8 27B (Groq free plan, Cerebras trial): strong reasoning for its size.
-  [/qwen-?3\.8-27b/i, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
-  [/(^|\/)(openai\/)?gpt-oss-120b/, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
-  [/(^|\/)(openai\/)?gpt-oss-20b/, { coding: 2, reasoning: 3, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
-  [/llama-3\.3-70b|llama3\.3-70b/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 5, vision: false, structuredOutput: true }],
-  [/llama-3\.1-8b|llama3\.1-8b/i, { coding: 2, reasoning: 2, research: 2, writing: 3, speed: 5, vision: false, structuredOutput: false }],
+  [/qwen-?3\.8-27b/i, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true , arabic: 2 }],
+  [/(^|\/)(openai\/)?gpt-oss-120b/, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true , arabic: 3 }],
+  [/(^|\/)(openai\/)?gpt-oss-20b/, { coding: 2, reasoning: 3, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true , arabic: 2 }],
+  [/llama-3\.3-70b|llama3\.3-70b/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 5, vision: false, structuredOutput: true , arabic: 3 }],
+  [/llama-3\.1-8b|llama3\.1-8b/i, { coding: 2, reasoning: 2, research: 2, writing: 3, speed: 5, vision: false, structuredOutput: false , arabic: 2 }],
   [/qwen-?3-(coder|235b)/i, { coding: 4, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
-  [/mistral-large|magistral-medium/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 3, vision: false, structuredOutput: true }],
+  [/mistral-large|magistral-medium/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 3, vision: false, structuredOutput: true , arabic: 4 }],
   [/codestral|devstral/i, { coding: 4, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
-  [/mistral-small|ministral/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
-  [/(^|\/)gpt-4\.1(-mini)?$/, { coding: 4, reasoning: 3, research: 4, writing: 4, speed: 4, vision: true, structuredOutput: true }],
+  [/mistral-small|ministral/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true , arabic: 3 }],
+  [/(^|\/)gpt-4\.1(-mini)?$/, { coding: 4, reasoning: 3, research: 4, writing: 4, speed: 4, vision: true, structuredOutput: true , arabic: 4 }],
   // Common OpenRouter free (":free") models. Conservative: free OpenRouter
   // endpoints are never used for private code regardless of these scores.
-  [/(^|\/)deepseek-(r1|v3|chat)/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 2, vision: false, structuredOutput: true }],
+  [/(^|\/)deepseek-(r1|v3|chat)/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 2, vision: false, structuredOutput: true , arabic: 4 }],
   [/(^|\/)kimi-k2/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 3, vision: false, structuredOutput: true }],
   [/(^|\/)qwen3?-?\d*.*coder/i, { coding: 4, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
   [/(^|\/)qwen3/i, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
   [/(^|\/)glm-4\.\d+-air/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
   [/(^|\/)llama-4/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 4, vision: true, structuredOutput: true }],
-  [/(^|\/)gemma-4/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 4, vision: true, structuredOutput: true }],
+  [/(^|\/)gemma-4/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 4, vision: true, structuredOutput: true , arabic: 4 }],
   [/(^|\/)gemma/i, { coding: 2, reasoning: 3, research: 3, writing: 3, speed: 4, vision: true, structuredOutput: false }],
   // Seen in OpenRouter's free catalog (2026-09). Small, safety-only and
   // domain-specialised variants score lower for general Office work.
@@ -97,6 +103,7 @@ export function capabilityProfile(definition, env = {}) {
   for (const score of CAPABILITY_SCORES) {
     profile[score] = clampScore(override?.[score], clampScore(known?.[score], score === 'speed' ? 3 : base));
   }
+  profile.arabic = clampScore(override?.arabic, clampScore(known?.arabic, Math.min(profile.writing, 3)));
   profile.toolCalling = definition.toolCalling !== false && override?.toolCalling !== false;
   // Provider catalog flags (e.g. OpenRouter supported_parameters) fill in
   // what the registry does not know.
@@ -153,6 +160,18 @@ export function capabilityGaps(capabilities, job) {
   if (profile.vision && !capabilities.vision) gaps.push('VISION_REQUIRED');
   if (profile.minContext && capabilities.contextWindow < profile.minContext) gaps.push('CONTEXT_WINDOW_TOO_SMALL');
   return gaps;
+}
+
+// Output language: Arabic needs a model that writes Arabic well.
+export function languageGaps(capabilities, language) {
+  if (language !== 'ar' || !capabilities) return [];
+  return (capabilities.arabic || 0) < ARABIC_MIN ? [`CAPABILITY_ARABIC_BELOW_${ARABIC_MIN}`] : [];
+}
+
+// Bonus added to job fit when the answer is in Arabic (0 for other languages).
+export function languageFit(route, language) {
+  if (language !== 'ar' || !route.capabilities) return 0;
+  return ((route.capabilities.arabic || 0) - ARABIC_MIN) * 0.75;
 }
 
 // Weighted fit on the 1–5 scale; used to rank routes within a billing class.
