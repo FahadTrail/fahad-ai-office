@@ -303,6 +303,7 @@ colliding on failover turns; CI log excerpts that showed only the tail (now
 failure lines + tail). Tool-level errors a handler returns to the model (for
 example `EDIT_NOT_FOUND`) appear as warning events; their broker row stays
 `succeeded` because the tool itself ran.
+- 2026-09-27: post-Hermes smoke test — CHIEF → CODING handoff verified (this line was added by the Coding Agent).
 
 ## Verification in this repository
 
