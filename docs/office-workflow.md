@@ -112,3 +112,10 @@ the Hub.
 
 - New agents: `business-strategy`, `brand-creative` and `content-media`.
 - `conversations.agent_slug` for direct conversations.
+
+## Glossary
+
+- **workstream**: A single thread of specialized tasks assigned to one agent.
+- **handoff**: The process of passing completed output from one agent to the next or to the Chief of Staff.
+- **synthesis**: The consolidation of multiple workstream outputs into a single, coherent final answer.
+- **revision**: The process of reviewing and adjusting work to ensure it meets the original goal.
