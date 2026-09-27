@@ -68,30 +68,45 @@ export class OfficeBridge {
     return [`Objectives in progress: ${(running || []).length}`, `Approvals waiting for you: ${(approvals || []).length}`, this.link('#/office') ? `Office: ${this.link('#/office')}` : ''].filter(Boolean).join('\n');
   }
 
-  // Results of this channel's conversation and new approval requests, each
-  // delivered once (only what happened after the bridge started).
+  // Results of this channel's conversation, new approval requests and
+  // Needs-Fahad questions. Each item carries an `ack` that the transport calls
+  // only after a successful send, so a failed send is retried. A delivered
+  // result is marked durably (event kind channel_delivered): a result that
+  // completes while the channel restarts is still delivered, exactly once.
   async outbox() {
     const out = [];
     const conversationId = await this.conversation();
     const { data: done } = await this.db.from('jobs').select('id,status,completed_at').eq('conversation_id', conversationId)
-      .in('status', ['completed', 'failed']).gte('completed_at', this.startedAt).order('completed_at', { ascending: true }).limit(10);
-    for (const job of done || []) {
-      if (this.notifiedJobs.has(job.id)) continue;
-      this.notifiedJobs.add(job.id);
+      .in('status', ['completed', 'failed']).gte('completed_at', this.pendingSince).order('completed_at', { ascending: true }).limit(10);
+    const pending = (done || []).filter((job) => !this.notifiedJobs.has(job.id));
+    const delivered = new Set();
+    if (pending.length) {
+      const { data: marks } = await this.db.from('events').select('job_id,payload').eq('type', 'activity').in('job_id', pending.map((job) => job.id));
+      for (const mark of marks || []) if (mark.payload?.kind === 'channel_delivered' && mark.payload?.channel === this.channel) delivered.add(mark.job_id);
+    }
+    for (const job of pending) {
+      if (delivered.has(job.id)) { this.notifiedJobs.add(job.id); continue; }
       const { data: final } = await this.db.from('results').select('content').eq('job_id', job.id).eq('kind', 'final').limit(1).maybeSingle();
       const body = job.status === 'failed' ? 'CHIEF could not finish this request. Details are in the Hub.' : plain(final?.content || 'Done.');
       const link = this.link(`#/chat/${conversationId}`);
-      out.push({ text: `${clip(body, 3500)}${link ? `\n\nOpen in the Hub: ${link}` : ''}` });
+      out.push({
+        text: `${clip(body, 3500)}${link ? `\n\nOpen in the Hub: ${link}` : ''}`,
+        ack: async () => {
+          this.notifiedJobs.add(job.id);
+          await this.db.from('events').insert({ job_id: job.id, type: 'activity', level: 'info', message: `Result delivered to ${this.channel}.`,
+            payload: { kind: 'channel_delivered', channel: this.channel, at: new Date(this.now()).toISOString() } });
+        },
+      });
     }
     const { data: approvals } = await this.db.from('agent_approvals').select('id,session_id,tool_name,summary,risk,requested_at')
       .eq('workspace_id', this.workspaceId).eq('status', 'pending').gte('requested_at', this.pendingSince).order('requested_at', { ascending: true }).limit(10);
     for (const approval of approvals || []) {
       if (this.notifiedApprovals.has(approval.id)) continue;
-      this.notifiedApprovals.add(approval.id);
       const link = this.link(`#/task/${approval.session_id}`);
       out.push({
         text: `Approval needed (${approval.risk || 'review'}): ${clip(approval.summary || approval.tool_name, 600)}${link ? `\nDetails: ${link}` : ''}`,
         buttons: [{ label: 'Approve', data: `ap:${approval.id}:approved` }, { label: 'Reject', data: `ap:${approval.id}:rejected` }],
+        ack: async () => { this.notifiedApprovals.add(approval.id); },
       });
     }
     // Needs Fahad: a Coding task paused with a question for the owner.
@@ -100,9 +115,11 @@ export class OfficeBridge {
     for (const session of questions || []) {
       const key = `${session.id}@${session.updated_at}`;
       if (this.notifiedQuestions.has(key)) continue;
-      this.notifiedQuestions.add(key);
       const link = this.link(`#/task/${session.id}`);
-      out.push({ text: `Needs you — ${clip(session.title || 'Coding task', 120)}: ${clip(plain(session.blocker || 'The task has a question for you.'), 600)}${link ? `\nReply in the Hub: ${link}` : ''}` });
+      out.push({
+        text: `Needs you — ${clip(session.title || 'Coding task', 120)}: ${clip(plain(session.blocker || 'The task has a question for you.'), 600)}${link ? `\nReply in the Hub: ${link}` : ''}`,
+        ack: async () => { this.notifiedQuestions.add(key); },
+      });
     }
     return out;
   }

@@ -70,6 +70,14 @@ TELEGRAM_OWNER_CHAT_ID`. Nothing else: the channel starts with the runtime,
 links go to `HUB_PUBLIC_HOST`, and pending approvals/questions are
 re-announced after a restart.
 
+**Go-live evidence.** At every start the channel calls `getMe` and records an
+event (`payload.kind = telegram_channel`: ok, bot username, owner paired — no
+token). Each result delivered to Telegram is marked durably
+(`channel_delivered`), so a result that finishes while the runtime restarts is
+still delivered exactly once, and a failed send is retried. Hub → Integrations
+shows Telegram → CHIEF as *Configured* after a good start and *Connected* after
+the first delivered result.
+
 **Channels.** `src/channels/office-bridge.js` is transport-neutral (Telegram
 now, WhatsApp later with the same `handleMessage` / `outbox` / `decide`).
 Telegram (`src/channels/telegram.js`) is owner-only, rate limited, sends

@@ -19,22 +19,32 @@ with it, and every path, command and gate policy still blocks Hermes
 sudo bash ops/hermes-audit.sh > hermes-audit.txt
 ```
 
-It lists containers, images, volumes, networks, systemd units, cron entries,
-directories, Traefik host rules, listening ports and the NAMES (never values)
-of Hermes environment variables. It changes nothing and makes no network call
-(guarded by `test/hermes-audit.test.js`). The audit is required because this
-build environment cannot reach the VPS.
+It lists containers (matched by name, image or compose project), images,
+volumes with their sizes, bind mounts with sizes, networks and which
+containers are attached to them, systemd units, cron entries, directories,
+Traefik host rules (container labels and file-provider configs), listening
+ports and the NAMES (never values) of Hermes environment variables. For each
+name that is also in the Office `.env` it prints only `same value: yes|no`
+(compared inside the script, never printed). It changes nothing and makes no
+network call (guarded by `test/hermes-audit.test.js`). The audit is required
+because this build environment cannot reach the VPS.
 
-Then turn the output into the decision (read-only, prints a plan only):
+Then turn the output into the decision (read-only, prints a report only):
 
 ```sh
-node tools/hermes-decision.mjs hermes-audit.txt            # add --telegram-live once Office Telegram works
+node tools/hermes-decision.mjs hermes-audit.txt --telegram-live [--data-exported] [--obsolete web,container:NAME]
 ```
 
-It lists what Hermes runs (containers, env NAMES, routes, volumes, units,
-cron), maps each capability to its Office replacement and answers
-`NOT READY` or `HERMES READY FOR FINAL DECOMMISSION`; only the latter prints
-the reversible-first removal plan, which still needs Fahad's single approval.
+Every capability is classified **REPLACED BY OFFICE**, **MUST MIGRATE**,
+**NO LONGER NEEDED** (Fahad names it with `--obsolete`) or **UNKNOWN** (a
+container whose purpose is not recognisable). It answers `NOT READY` while
+anything is MUST MIGRATE/UNKNOWN, an Office container sits on a Hermes
+network, or a credential VALUE is shared with the Office. Otherwise it prints
+`HERMES READY FOR FINAL DECOMMISSION` with: what Hermes contains, what was
+migrated, what is obsolete, what will be removed, the credentials to revoke,
+and the backup/rollback status — the single message for Fahad's one approval.
+`--telegram-live` is justified once the Hub's Integrations page shows
+Telegram → CHIEF **Connected** (a CHIEF result was delivered to Telegram).
 
 ## Step 2 — capability map
 

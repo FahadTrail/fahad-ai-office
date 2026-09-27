@@ -71,9 +71,24 @@ export class TelegramChannel {
     if (reply) await this.send(chatId, reply);
   }
 
+  // Delivered items are acknowledged one by one; the first failed send stops
+  // the flush and everything not acknowledged is retried next time.
   async flushOutbox() {
     if (!this.owner) return;
-    for (const item of await this.bridge.outbox()) await this.send(this.owner, item.text, item.buttons);
+    for (const item of await this.bridge.outbox()) {
+      await this.send(this.owner, item.text, item.buttons);
+      await item.ack?.();
+    }
+  }
+
+  // getMe proves the token works; only the bot's public username is kept.
+  async verify() {
+    try {
+      const me = await this.call('getMe');
+      return { ok: true, bot_username: typeof me?.username === 'string' ? me.username.slice(0, 64) : null };
+    } catch (error) {
+      return { ok: false, error_code: 'TELEGRAM_GETME_FAILED', detail: error.message };
+    }
   }
 
   async start() {

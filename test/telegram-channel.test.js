@@ -136,12 +136,13 @@ test('Needs Fahad questions are sent once; pending approvals are re-announced af
 
 test('startup needs only TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_CHAT_ID; nothing starts without the token', async () => {
   const { startTelegramChannel } = await import('../src/channels/start.js');
-  const db = { from: () => ({ select() { return this; }, eq() { return this; }, limit() { return this; }, maybeSingle: async () => ({ data: { id: 'ws-1' } }) }) };
+  const inserted = [];
+  const db = { from: () => ({ select() { return this; }, eq() { return this; }, limit() { return this; }, maybeSingle: async () => ({ data: { id: 'ws-1' } }), insert: async (row) => { inserted.push(row); return { error: null }; } }) };
   const logs = [];
   assert.equal(await startTelegramChannel({ db, store: {}, log: (...parts) => logs.push(parts.join(' ')), env: {} }), null, 'no token → no channel');
   await assert.rejects(startTelegramChannel({ db, store: {}, log: () => {}, env: { TELEGRAM_BOT_TOKEN: 'nope' } }), (error) => /not a valid bot token/.test(error.message) && !error.message.includes('nope'));
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, result: [] }) });
+  globalThis.fetch = async (url) => ({ ok: true, status: 200, json: async () => ({ ok: true, result: url.endsWith('/getMe') ? { username: 'fahad_office_bot' } : [] }) });
   try {
     const channel = await startTelegramChannel({ db, store: {}, log: (...parts) => logs.push(parts.join(' ')), env: { TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_OWNER_CHAT_ID: OWNER, HUB_PUBLIC_HOST: 'office.example' } });
     assert.ok(channel);
@@ -153,4 +154,45 @@ test('startup needs only TELEGRAM_BOT_TOKEN and TELEGRAM_OWNER_CHAT_ID; nothing 
   }
   assert.ok(logs.some((line) => /Telegram channel started \(owner paired\)/.test(line)));
   assert.ok(!logs.join('\n').includes(TOKEN), 'the token is never logged');
+  const status = inserted.findLast((row) => row.payload?.kind === 'telegram_channel');
+  assert.equal(inserted[0].payload.error_code, 'TELEGRAM_TOKEN_INVALID', 'an invalid token is recorded, never echoed');
+  assert.deepEqual([status.payload.ok, status.payload.bot_username, status.payload.owner_paired], [true, 'fahad_office_bot', true]);
+  assert.ok(inserted.at(-1)?.payload?.kind === 'telegram_channel' && !JSON.stringify(inserted).includes(TOKEN) && !JSON.stringify(inserted).includes('AAFake'), 'start-up evidence holds no token');
+});
+
+test('a failed send is retried; a result finished during a restart is delivered exactly once', async () => {
+  const { channel, tables, db, sent } = setup();
+  await channel.handleUpdate(msg(1, OWNER, 'Summarise the week'));
+  const conversationId = tables.conversations[0].id;
+  tables.jobs.push({ id: 'job-7', conversation_id: conversationId, status: 'completed', completed_at: '2026-09-27T09:30:00Z' });
+  tables.results.push({ job_id: 'job-7', kind: 'final', content: 'Weekly summary' });
+  let failing = true;
+  const originalSend = channel.send.bind(channel);
+  channel.send = async (...args) => { if (failing) throw new Error('Telegram sendMessage failed (HTTP 502)'); return originalSend(...args); };
+  await assert.rejects(channel.flushOutbox(), /HTTP 502/);
+  failing = false;
+  await channel.flushOutbox();
+  await channel.flushOutbox();
+  assert.equal(sent.filter((entry) => /Weekly summary/.test(entry.body.text || '')).length, 1, 'delivered once after the retry');
+  assert.equal(tables.events.filter((row) => row.payload.kind === 'channel_delivered' && row.job_id === 'job-7').length, 1);
+  // Restart: a new bridge and channel see the durable mark and do not resend.
+  const bridge = new OfficeBridge({ db, store: {}, workspaceId: 'ws-1', now: () => Date.parse('2026-09-27T10:30:00Z') });
+  const texts = [];
+  const again = new TelegramChannel({ token: TOKEN, ownerChatId: OWNER, bridge, fetchImpl: async (url, init) => { texts.push(JSON.parse(init.body).text); return { ok: true, status: 200, json: async () => ({ ok: true, result: {} }) }; } });
+  tables.jobs.push({ id: 'job-8', conversation_id: conversationId, status: 'completed', completed_at: '2026-09-27T10:20:00Z' });
+  tables.results.push({ job_id: 'job-8', kind: 'final', content: 'Finished while restarting' });
+  await again.flushOutbox();
+  assert.deepEqual(texts.filter((text) => /Weekly summary|Finished while restarting/.test(text)).map((text) => text.split('\n')[0]), ['Finished while restarting']);
+});
+
+test('the Hub shows Telegram from evidence: start-up check, pairing, first delivered result', async () => {
+  const { capabilityView } = await import('../src/hub-office.js');
+  const view = (options) => capabilityView(options).find((item) => item.id === 'telegram');
+  assert.equal(view({}).status, 'Not configured');
+  assert.match(view({ telegramCheck: { ok: false, error_code: 'TELEGRAM_GETME_FAILED' } }).detail, /TELEGRAM_GETME_FAILED/);
+  assert.match(view({ telegramCheck: { ok: true, bot_username: 'office_bot', owner_paired: false } }).detail, /@office_bot verified; send it \/start/);
+  assert.match(view({ telegramCheck: { ok: true, bot_username: 'office_bot', owner_paired: true } }).detail, /paired; waiting for the first message/);
+  const live = view({ telegramCheck: { ok: true, owner_paired: true }, telegramDelivered: '2026-09-27T10:00:00Z', now: Date.parse('2026-09-27T11:00:00Z') });
+  assert.equal(live.status, 'Connected');
+  assert.deepEqual(live.employees, ['CHIEF']);
 });

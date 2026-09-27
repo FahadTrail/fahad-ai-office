@@ -136,7 +136,7 @@ export function workflowView({ job, tasks = [], agents = [], results = [], hando
 
 // Capability evidence → one honest state per connector. "Connected" needs a
 // real successful use; configuration alone is "Configured — not verified".
-export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, databaseOk = true, memoryCount = 0, supabaseCheck = null, now = Date.now() }) {
+export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, databaseOk = true, memoryCount = 0, supabaseCheck = null, telegramCheck = null, telegramDelivered = null, now = Date.now() }) {
   const last = (names) => toolRuns.filter((run) => names.some((name) => run.tool_name === name || run.tool_name.startsWith(`${name}.`)) && run.status === 'succeeded')
     .map((run) => run.last).sort().at(-1) || null;
   const present = (name) => String(env[name] || '').trim().length > 0;
@@ -157,8 +157,7 @@ export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, database
     { id: 'web_search', label: 'Web search', ...state(webRuns.web_search || null, present('GEMINI_API_KEY'), 'web search') },
     { id: 'web_fetch', label: 'Web page reading', ...state(webRuns.web_fetch || null, true, 'page fetch') },
     { id: 'memory', label: 'Project memory', status: databaseOk ? 'Available' : 'Unavailable', verifiedAt: null, detail: `${memoryCount} saved item${memoryCount === 1 ? '' : 's'}` },
-    { id: 'telegram', label: 'Telegram → CHIEF', ...state(null, present('TELEGRAM_BOT_TOKEN') && present('TELEGRAM_OWNER_CHAT_ID'), 'Telegram message'),
-      ...(present('TELEGRAM_BOT_TOKEN') ? {} : { detail: 'Not configured: needs a BotFather token (TELEGRAM_BOT_TOKEN) and your chat id (TELEGRAM_OWNER_CHAT_ID)' }) },
+    { id: 'telegram', label: 'Telegram → CHIEF', ...telegramState(telegramDelivered, telegramCheck, present('TELEGRAM_BOT_TOKEN'), state) },
     { id: 'tool_broker', label: 'Tool Broker (audited tools)', ...state(toolRuns.filter((run) => run.status === 'succeeded').map((run) => run.last).sort().at(-1) || null, true, 'audited tool call') },
   ];
   return items.map((item) => (item.status === 'Connected' && stale(item.verifiedAt) ? { ...item, status: 'Connected (not used recently)' } : item))
@@ -216,6 +215,17 @@ function supabaseToolsState(toolUse, check, configuredHere, state) {
   if (check && check.token_present) return { status: 'Configured — not verified', verifiedAt: null, detail: `Token present; self-check failed: ${check.error_code || 'unknown'}` };
   if ((check && !check.token_present) || (!check && !configuredHere)) return { status: 'Not configured', verifiedAt: null, detail: 'Not configured: CODING_SUPABASE_ACCESS_TOKEN is missing, so the Coding Agent has no database tools' };
   return state(null, configuredHere, 'database tool call');
+}
+
+// Telegram: a result delivered to Fahad's chat is real use; the channel's
+// start-up check (getMe + pairing) proves the credentials.
+function telegramState(delivered, check, configuredHere, state) {
+  if (delivered) return state(delivered, true, 'CHIEF result delivered to Telegram');
+  if (check?.ok && check.owner_paired) return { status: 'Configured — not verified', verifiedAt: null, detail: `Bot @${check.bot_username || '?'} verified and paired; waiting for the first message` };
+  if (check?.ok) return { status: 'Configured — not verified', verifiedAt: null, detail: `Bot @${check.bot_username || '?'} verified; send it /start, then set TELEGRAM_OWNER_CHAT_ID` };
+  if (check) return { status: 'Unavailable', verifiedAt: null, detail: `Telegram start-up check failed: ${check.error_code || 'unknown'}` };
+  if (!configuredHere) return { status: 'Not configured', verifiedAt: null, detail: 'Not configured: needs a BotFather token (TELEGRAM_BOT_TOKEN) and your chat id (TELEGRAM_OWNER_CHAT_ID)' };
+  return state(null, true, 'Telegram message');
 }
 
 // Which employees use a connector (the per-employee connector registry).
@@ -385,11 +395,13 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
     if (path === '/api/capabilities') {
       const since = new Date(Date.now() - 90 * 86400_000).toISOString();
       let databaseOk = true;
-      const [toolRuns, routeEvents, memory, supabaseChecks] = await Promise.all([
+      const [toolRuns, routeEvents, memory, supabaseChecks, telegramChecks, telegramDeliveries] = await Promise.all([
         rows(db.from('tool_executions').select('tool_name,status,started_at').gte('started_at', since).order('started_at', { ascending: false }).limit(1000)).catch(() => { databaseOk = false; return []; }),
         rows(db.from('events').select('payload,created_at').eq('payload->>kind', 'model_route').gte('created_at', since).order('created_at', { ascending: false }).limit(500)).catch(() => []),
         rows(db.from('project_memory').select('id')).catch(() => []),
         rows(db.from('events').select('payload,created_at').eq('payload->>kind', 'supabase_tools_check').order('created_at', { ascending: false }).limit(1)).catch(() => []),
+        rows(db.from('events').select('payload,created_at').eq('payload->>kind', 'telegram_channel').order('created_at', { ascending: false }).limit(1)).catch(() => []),
+        rows(db.from('events').select('created_at').eq('payload->>kind', 'channel_delivered').eq('payload->>channel', 'telegram').order('created_at', { ascending: false }).limit(1)).catch(() => []),
       ]);
       const latest = new Map();
       for (const run of toolRuns) {
@@ -398,7 +410,7 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
       }
       const webRuns = {};
       for (const event of routeEvents) for (const tool of event.payload?.tools_used || []) if (!webRuns[tool] || webRuns[tool] < event.created_at) webRuns[tool] = event.created_at;
-      return sendJson(response, 200, { ok: true, capabilities: capabilityView({ toolRuns: [...latest.values()], webRuns, env, databaseOk, memoryCount: memory.length, supabaseCheck: supabaseChecks[0]?.payload || null }) }), true;
+      return sendJson(response, 200, { ok: true, capabilities: capabilityView({ toolRuns: [...latest.values()], webRuns, env, databaseOk, memoryCount: memory.length, supabaseCheck: supabaseChecks[0]?.payload || null, telegramCheck: telegramChecks[0]?.payload || null, telegramDelivered: telegramDeliveries[0]?.created_at || null }) }), true;
     }
     return sendJson(response, 404, { ok: false, error: 'NOT_FOUND' }), true;
   } catch (error) {
