@@ -51,7 +51,9 @@ affected.
 | `office-presentation.js` | The single adapter: `/api/office` + `/api/artifacts` → `{ employees, projects, handoffs, artifacts, needsFahad, summary }`, `describeOffice()` for screen readers, `officeMode()` for AUTO/IMMERSIVE/LIGHT. Pure; tested. |
 | `office3d/layout.js` | The architectural plan (wings, workspaces, partitions, camera presets). Pure data. |
 | `office3d/state-visuals.js` | Real state → screen / board / pose / indicator; CODING lifecycle → engineering panel. Pure. |
-| `office3d/characters.js` | Replaceable figure factory, poses and ambient/task motion. |
+| `office3d/characters.js` | Replaceable figure factory (Character V2 wardrobe), poses and ambient/task motion. |
+| `office3d/lighting.js` | DAY / EVENING / NIGHT presets and the blend between them (V5.1). Pure; tested. |
+| `office3d/decor.js` | Static architecture and light fixtures: facades, pendants, light pools, department furniture (V5.1). |
 | `office3d/surfaces.js` | Canvas-drawn screens and wall displays: real artifact, real state, or a quiet abstract pattern. |
 | `office3d/scene.js` | Renderer, lighting, architecture, batching, handoffs, labels, camera rig, picking, quality watchdog, fail-safe. |
 
@@ -76,8 +78,14 @@ no second polling engine. Two read-only fields were added to `/api/office`:
 
 ## Characters
 
-* **Figures:** abstract, human-like and ceramic-matte, with a thin wing-accent
-  collar. There are no faces or names.
+* **Figures (Character V2, V5.1):** stylised, professional people with
+  natural proportions, hair and a department wardrobe (`WARDROBE` in
+  `characters.js`): CHIEF in a charcoal suit and slightly taller; RESEARCH,
+  LEGAL and AUDIT precise (knitwear or suits, glasses); PRODUCT and FINANCE
+  tailored; CREATIVE and SOCIAL relaxed (colour, rolled sleeves); CODING in a
+  dark hoodie with headphones. No faces are drawn (a small nose and ears
+  only) and there are no names. One shared vertex-coloured material; 7 draw
+  calls per figure.
 * **Poses:** relaxed, focused, working, reading and paused. Each comes from the
   real state.
 * **Motion:**

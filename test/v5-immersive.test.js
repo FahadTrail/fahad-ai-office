@@ -12,6 +12,7 @@ import { POSES } from '../src/hub-ui/office3d/characters.js';
 import { drawBoard, drawEngineeringPanel, drawMonitor, drawProjectWall, surfacePalette } from '../src/hub-ui/office3d/surfaces.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const OFFICE3D = ['scene.js', 'surfaces.js', 'characters.js', 'layout.js', 'state-visuals.js', 'lighting.js', 'decor.js'];
 const NOW = Date.parse('2026-09-28T10:00:00Z');
 const agent = (key, state = 'AVAILABLE', extra = {}) => ({ key, slug: `${key}-slug`, label: key.toUpperCase(), state, detail: '', ...extra });
 const OFFICE = {
@@ -152,15 +153,18 @@ test('the 3D engine is lazy: only the immersive Office imports it; nothing else 
   assert.match(read('src/hub-ui/office3d/scene.js'), /from '\.\.\/vendor\/three\.js\?v=__UI_VERSION__'/);
   for (const file of ['project.js', 'library.js', 'artifacts.js', 'export.js']) assert.doesNotMatch(read(`src/hub-ui/${file}`), /office3d|three/);
   // The renderer never talks to the network: it only receives presentation state.
-  for (const file of ['scene.js', 'surfaces.js', 'characters.js', 'layout.js', 'state-visuals.js']) assert.doesNotMatch(read(`src/hub-ui/office3d/${file}`), /fetch\(|api\(|\/api\//);
+  for (const file of OFFICE3D) assert.doesNotMatch(read(`src/hub-ui/office3d/${file}`), /fetch\(|api\(|\/api\//);
 });
 
 test('the vendored engine stays inside its budget and keeps its MIT notice', () => {
   const bundle = readFileSync(new URL('../src/hub-ui/vendor/three.js', import.meta.url));
   assert.match(bundle.subarray(0, 300).toString(), /three\.js r0\.186\.1 .* MIT License/);
   assert.ok(gzipSync(bundle).length < 170_000, `gzipped engine ${gzipSync(bundle).length} B`);
-  const scene = ['scene.js', 'surfaces.js', 'characters.js', 'layout.js', 'state-visuals.js'].reduce((sum, file) => sum + statSync(new URL(`../src/hub-ui/office3d/${file}`, import.meta.url)).size, 0);
-  assert.ok(scene < 90_000, `scene code ${scene} B`);
+  // Scene code (lazy, gzipped like every Hub asset): V5.1 added lighting and
+  // decor modules; the budget is on the transferred size.
+  const scene = gzipSync(Buffer.concat(OFFICE3D.map((file) => readFileSync(new URL(`../src/hub-ui/office3d/${file}`, import.meta.url))))).length;
+  assert.ok(scene < 40_000, `scene code ${scene} B gzipped`);
+  assert.ok(OFFICE3D.every((file) => statSync(new URL(`../src/hub-ui/office3d/${file}`, import.meta.url)).size < 70_000));
   const pkg = JSON.parse(read('package.json'));
   assert.ok(pkg.devDependencies.three && !pkg.dependencies?.three, 'three is a build-time dependency only');
 });

@@ -56,13 +56,24 @@ export const CAMERA = Object.freeze({
   focusDistance: 11.5, focusPolar: 1.08,
 });
 
-// A framed view of a workspace: from behind and a little to the right of the
-// employee, looking at the desk and the wall display.
+// A framed view of a workspace (V5.1): from behind and to the right of the
+// employee, a little higher, so the figure, the desk and the whole wall
+// display share the frame instead of the display filling it.
 export function focusPreset(key) {
   const workspace = WORKSPACES[key];
   if (!workspace) return CAMERA.overview;
-  const distance = key === 'chief' ? CAMERA.focusDistance + 3 : CAMERA.focusDistance;
-  return { target: [workspace.x, 1.35, workspace.z - workspace.board.back * 0.45], azimuth: workspace.yaw + 0.42, polar: CAMERA.focusPolar, distance };
+  const chief = key === 'chief';
+  return { target: [workspace.x, 1.0, workspace.z - workspace.board.back * 0.3], azimuth: workspace.yaw + (chief ? 0.3 : 0.42), polar: chief ? 0.94 : 0.96, distance: chief ? 16 : 12 };
+}
+
+// A department view: the whole wing, framed from the Office's viewpoint.
+export function wingPreset(id) {
+  const wing = WINGS.find((entry) => entry.id === id);
+  if (!wing) return null;
+  const span = Math.max(wing.width, wing.depth * 1.3);
+  // Back studios are seen from higher up, over the glass partitions.
+  const back = wing.z < -6;
+  return { target: [wing.x, 0.9, wing.z - (back ? 0.2 : 0.6)], azimuth: back ? 0.3 : 0.4, polar: back ? 0.72 : 0.9, distance: (back ? 12 : 10) + span * 1.4 };
 }
 
 // Desk anchor (screen height) for handoff arcs.

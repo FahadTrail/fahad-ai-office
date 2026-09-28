@@ -3,16 +3,18 @@
 //
 //   mountOffice3D(container, { state, dark, tokens, quality, reducedMotion, on })
 //     → { update(state), focus(key), overview(), setProject(id), setFollow(on),
-//         setTheme(dark, tokens), dispose(), stats() }
+//         setTime(day|evening|night|''), focusWing(id), dispose(), stats() }
 //
 // It consumes the presentation state only (office-presentation.js); it never
 // fetches or queries anything. Any rendering failure calls on.error() and the
 // Live Office falls back to the light Office.
 import * as THREE from '../vendor/three.js?v=__UI_VERSION__';
-import { CAMERA, ENTRANCE, PARTITIONS, PLINTH, WALLS, WINGS, WORKSPACES, anchor, focusPreset } from './layout.js?v=__UI_VERSION__';
+import { CAMERA, ENTRANCE, PARTITIONS, PLINTH, WALLS, WINGS, WORKSPACES, anchor, focusPreset, wingPreset } from './layout.js?v=__UI_VERSION__';
 import { CODING_STAGES, motionFor, stateVisual } from './state-visuals.js?v=__UI_VERSION__';
 import { POSES, WING_ACCENTS, applyPose, createCharacterFactory } from './characters.js?v=__UI_VERSION__';
 import { drawBoard, drawEngineeringPanel, drawMonitor, drawProjectWall, surfacePalette } from './surfaces.js?v=__UI_VERSION__';
+import { LIGHTING, TRANSITION_MS, blendLighting, easeLight, resolveTime } from './lighting.js?v=__UI_VERSION__';
+import { addDecor, drawArt } from './decor.js?v=__UI_VERSION__';
 
 const QUALITY = Object.freeze({
   high: { pixelRatio: 2, shadows: true, shadowSize: 2048, board: [1024, 512], monitor: [320, 200], fps: 60, plants: 1 },
@@ -21,25 +23,34 @@ const QUALITY = Object.freeze({
 });
 const ORDER = ['high', 'balanced', 'light'];
 
+// Finishes (V5.1): warm oak floor, warm-white walls, walnut, brushed metal,
+// felt and stone, separated in tone so daylight never washes them together.
 const MATERIALS = (dark) => ({
-  plinth: { color: dark ? '#26282e' : '#f7f5f1', roughness: 0.9 },
-  floor: { color: dark ? '#3a3a40' : '#ece3d6', roughness: 0.85 },
-  wood: { color: dark ? '#7a604a' : '#c9ab86', roughness: 0.45 },
-  walnut: { color: dark ? '#5b4435' : '#8a6a52', roughness: 0.4 },
-  white: { color: dark ? '#4a4e58' : '#fbfaf8', roughness: 0.55 },
-  metal: { color: dark ? '#9aa0aa' : '#b4b8bf', roughness: 0.28, metalness: 0.85 },
-  dark: { color: dark ? '#0d0f13' : '#23252a', roughness: 0.3, metalness: 0.4 },
-  bezel: { color: dark ? '#1a1c21' : '#d9d9dc', roughness: 0.25, metalness: 0.6 },
-  wall: { color: dark ? '#434752' : '#ffffff', roughness: 0.92 },
-  textile: { color: dark ? '#4c515c' : '#d9d4cc', roughness: 1 },
-  plant: { color: dark ? '#3d5a45' : '#6f8f6f', roughness: 0.9, flatShading: true },
-  pot: { color: dark ? '#4a4d55' : '#d8d2c8', roughness: 0.8 },
-  // Task-lamp shade: glows warm at night (emissive, no extra light cost).
-  lamp: { color: dark ? '#ffe2b8' : '#f4f1ec', roughness: 0.4, emissive: dark ? '#ffb46b' : '#000000', emissiveIntensity: dark ? 1.4 : 0 },
-  glass: { color: dark ? '#9fb4d0' : '#dbe8f4', roughness: 0.04, metalness: 0.1, transparent: true, opacity: dark ? 0.14 : 0.22, depthWrite: false },
+  plinth: { color: dark ? '#24252a' : '#e9e5de', roughness: 0.9 },
+  floor: { color: dark ? '#4a4038' : '#d9c8b0', roughness: 0.5 },
+  wood: { color: dark ? '#7a604a' : '#c29a70', roughness: 0.45 },
+  walnut: { color: dark ? '#5b4435' : '#7a5a44', roughness: 0.38 },
+  white: { color: dark ? '#4a4e58' : '#f6f4f0', roughness: 0.5 },
+  metal: { color: dark ? '#9aa0aa' : '#a9adb4', roughness: 0.28, metalness: 0.85 },
+  dark: { color: dark ? '#0d0f13' : '#2a2c31', roughness: 0.3, metalness: 0.4 },
+  bezel: { color: dark ? '#1a1c21' : '#cfcfd3', roughness: 0.25, metalness: 0.6 },
+  wall: { color: dark ? '#3f4148' : '#f3f0eb', roughness: 0.92 },
+  textile: { color: dark ? '#4c515c' : '#bdb4a7', roughness: 1 },
+  felt: { color: dark ? '#383c46' : '#8c929c', roughness: 1 },
+  feltWarm: { color: dark ? '#5a463c' : '#b8977e', roughness: 1 },
+  stone: { color: dark ? '#55565c' : '#e3ddd3', roughness: 0.35 },
+  plant: { color: dark ? '#3d5a45' : '#5f7f5f', roughness: 0.9, flatShading: true },
+  pot: { color: dark ? '#4a4d55' : '#cfc7bb', roughness: 0.8 },
+  // Emitters: task-lamp shades and pendants glow by evening and night
+  // (emissive, no extra light cost); the time of day sets the intensity.
+  lamp: { color: dark ? '#ffe2b8' : '#f4f1ec', roughness: 0.4, emissive: '#ffb46b', emissiveIntensity: 0 },
+  pendant: { color: dark ? '#3a3c42' : '#e8e6e2', roughness: 0.5, emissive: '#ffd6a3', emissiveIntensity: 0 },
+  cove: { color: dark ? '#6b6258' : '#cdbba3', roughness: 0.4, metalness: 0.3, emissive: '#ffc68a', emissiveIntensity: 0 },
+  glass: { color: dark ? '#9fb4d0' : '#cfdeec', roughness: 0.04, metalness: 0.1, transparent: true, opacity: dark ? 0.14 : 0.2, depthWrite: false },
+  facade: { color: dark ? '#7f93b3' : '#bcd3e6', roughness: 0.05, metalness: 0.2, transparent: true, opacity: dark ? 0.12 : 0.28, depthWrite: false },
 });
 
-export function mountOffice3D(container, { state, dark = false, tokens = {}, quality = 'balanced', reducedMotion = false, on = {} }) {
+export function mountOffice3D(container, { state, dark = false, tokens = {}, quality = 'balanced', reducedMotion = false, time = '', on = {} }) {
   let tier = QUALITY[quality] ? quality : 'balanced';
   let settings = QUALITY[tier];
   let palette = surfacePalette(tokens, dark);
@@ -68,17 +79,20 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   const camera = new THREE.PerspectiveCamera(CAMERA.fov, 1, 0.5, 400);
 
   // ------------------------------------------------------------ lights
-  const hemi = new THREE.HemisphereLight(dark ? '#9fb3d9' : '#ffffff', dark ? '#2a241c' : '#d9d2c5', dark ? 1.05 : 1.25);
-  const sun = new THREE.DirectionalLight(dark ? '#ffd2a1' : '#fff6ea', dark ? 1.25 : 2.1);
-  sun.position.set(-18, 32, 22);
+  // DAY / EVENING / NIGHT (lighting.js) sets every value below; the scene
+  // blends between them smoothly when the time of day changes.
+  const hemi = new THREE.HemisphereLight('#ffffff', '#d9d2c5', 1);
+  const sun = new THREE.DirectionalLight('#fff6ea', 2);
   sun.castShadow = settings.shadows;
   sun.shadow.mapSize.set(settings.shadowSize || 512, settings.shadowSize || 512);
   Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 20, bottom: -20, near: 1, far: 90 });
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.02;
-  const fill = new THREE.DirectionalLight(dark ? '#7f95c9' : '#dbe7ff', dark ? 0.35 : 0.45);
+  sun.shadow.radius = 3;
+  const fill = new THREE.DirectionalLight('#dbe7ff', 0.4);
   fill.position.set(24, 14, -10);
   scene.add(hemi, sun, fill);
+  let hasEnvironment = false;
   // Image-based lighting: a soft studio environment gives wood, metal, glass
   // and screens real reflections (PBR). Skipped on the light tier, where
   // every per-pixel cost matters more than reflections.
@@ -86,11 +100,9 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     const pmrem = new THREE.PMREMGenerator(renderer);
     const room = new THREE.RoomEnvironment();
     scene.environment = track(pmrem.fromScene(room, 0.04).texture);
-    scene.environmentIntensity = dark ? 0.28 : 0.3;
     room.traverse?.((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); });
     pmrem.dispose();
-    hemi.intensity = dark ? 0.75 : 0.7;
-    renderer.toneMappingExposure = dark ? 1.15 : 0.95;
+    hasEnvironment = true;
   } catch { /* lights alone still draw the Office */ }
 
   // ------------------------------------------------------------ helpers
@@ -139,7 +151,60 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     texture.colorSpace = THREE.SRGBColorSpace; texture.minFilter = THREE.LinearFilter; texture.generateMipmaps = false;
     return { canvas: c, texture };
   };
-  const screenMaterial = (texture) => track(new THREE.MeshBasicMaterial({ map: texture, toneMapped: false }));
+  const screenMaterials = [];
+  const screenMaterial = (texture) => { const made = track(new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })); screenMaterials.push(made); return made; };
+
+  // Light without lights (V5.1): soft additive decals for lamp pools, screen
+  // glow, daylight patches and wall washes. Their opacity follows the time of
+  // day; they cost one merged draw call each and no per-pixel lighting.
+  const gradientTexture = (draw) => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    draw(c.getContext('2d'));
+    const texture = track(new THREE.CanvasTexture(c)); texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  };
+  const poolTexture = gradientTexture((g) => {
+    const gradient = g.createRadialGradient(64, 64, 2, 64, 64, 63);
+    gradient.addColorStop(0, 'rgba(255,255,255,0.9)'); gradient.addColorStop(0.45, 'rgba(255,255,255,0.35)'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gradient; g.fillRect(0, 0, 128, 128);
+  });
+  const windowTexture = gradientTexture((g) => {
+    const gradient = g.createLinearGradient(0, 0, 0, 128);
+    gradient.addColorStop(0, 'rgba(255,255,255,0.95)'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gradient; g.fillRect(6, 0, 116, 128);
+    g.clearRect(62, 0, 4, 128);
+  });
+  const washTexture = gradientTexture((g) => {
+    const gradient = g.createLinearGradient(0, 128, 0, 0);
+    gradient.addColorStop(0, 'rgba(255,255,255,0.9)'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gradient; g.fillRect(0, 0, 128, 128);
+  });
+  const additive = (map, color) => {
+    const made = track(new THREE.MeshBasicMaterial({ map, color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+    made.userData.mergeable = true;
+    return made;
+  };
+  const fx = {
+    poolWarm: additive(poolTexture, '#ffb86e'), poolCool: additive(poolTexture, '#7ea4ff'),
+    window: additive(windowTexture, '#fff1d6'), wash: additive(washTexture, '#ffc58c'),
+    accent: track(new THREE.MeshBasicMaterial({ vertexColors: true })),
+  };
+  fx.accent.userData.mergeable = true;
+  const decal = (w, d, [x, y, z], name, parent, { vertical = false } = {}) => {
+    const mesh = new THREE.Mesh(track(new THREE.PlaneGeometry(w, d)), fx[name]);
+    if (!vertical) mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(x, y, z); mesh.renderOrder = 1;
+    parent.add(mesh);
+  };
+  // A thin department-accent light strip (vertex colour, one shared material).
+  const strip = (length, [x, y, z], color, yaw = 0) => {
+    const geometry = track(new THREE.BoxGeometry(length, 0.025, 0.025));
+    const tint = new THREE.Color(color);
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: geometry.attributes.position.count }, () => [tint.r, tint.g, tint.b]).flat(), 3));
+    const mesh = new THREE.Mesh(geometry, fx.accent);
+    mesh.position.set(x, y, z); mesh.rotation.y = yaw;
+    world.add(mesh);
+  };
 
   // ------------------------------------------------------------ architecture
   const world = new THREE.Group();
@@ -170,7 +235,8 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     rug.rotation.x = -Math.PI / 2; rug.position.set(wing.x, 0.006, wing.z); rug.receiveShadow = true;
     world.add(rug);
   }
-  for (const [x1, z1, x2, z2] of WALLS) {
+  // The back and left walls are glazed facades (decor.js); the near wall stays low.
+  for (const [x1, z1, x2, z2] of WALLS.slice(2)) {
     const length = Math.hypot(x2 - x1, z2 - z1);
     const wall = box(length, 1.4, 0.24, 'wall', [(x1 + x2) / 2, 0.7, (z1 + z2) / 2], world);
     wall.rotation.y = -Math.atan2(z2 - z1, x2 - x1);
@@ -246,9 +312,15 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   };
   const plants = [[-18.6, -14.6], [18.6, -14.6], [-18.4, 9.8], [3.4, 9.3], [17.8, 8.4], [3.6, -14.5], [-4.6, 3.4], [4.6, 3.4], [-7.4, 9.5]];
   plants.slice(0, Math.ceil(plants.length * settings.plants)).forEach(([x, z], index) => plant(x, z, index > 6 ? 0.75 : 1));
+  const art = canvasTexture([512, 352]);
+  drawArt(art.canvas, dark); art.texture.needsUpdate = true;
+  const ceiling = new THREE.Group();
+  world.add(ceiling);
+  addDecor({ THREE, world, ceiling, box, roundedSlab, plant, decal, strip, material, track, settings, WORKSPACES, WALLS, WING_ACCENTS,
+    art: track(new THREE.MeshStandardMaterial({ map: art.texture, roughness: 0.8 })) });
 
   // ------------------------------------------------------------ workspaces
-  const factory = createCharacterFactory(THREE, { dark });
+  const factory = createCharacterFactory(THREE);
   disposables.push({ dispose: factory.dispose });
   const workspaces = new Map();
   const pickables = [];
@@ -298,7 +370,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     const cushion = new THREE.Mesh(chairSeat, material(executive ? 'dark' : 'textile')); cushion.position.y = 0.46; cushion.castShadow = settings.shadows;
     const back = new THREE.Mesh(chairBack, material(executive ? 'dark' : 'textile')); back.position.set(0, 0.8, -0.24); back.castShadow = settings.shadows;
     seat.add(base, post, cushion, back);
-    const figure = factory.create({ accent: WING_ACCENTS[spec.wing] });
+    const figure = factory.create({ key, accent: WING_ACCENTS[spec.wing] });
     figure.root.position.set(0, 0.5, 0.02);
     figure.root.userData.dynamic = true;
     figure.root.rotation.y = 0;
@@ -413,7 +485,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     const buckets = new Map();
     const visit = (node) => {
       if (node.userData.dynamic) return;
-      if (node.isMesh && node !== root && node.material?.isMeshStandardMaterial || node.isMesh && node.material === contactMaterial) {
+      if (node.isMesh && node !== root && (node.material?.isMeshStandardMaterial || node.material?.userData.mergeable) || node.isMesh && node.material === contactMaterial) {
         const bucket = buckets.get(node.material) || { meshes: [], cast: false };
         bucket.meshes.push(node); bucket.cast ||= node.castShadow;
         buckets.set(node.material, bucket);
@@ -423,7 +495,8 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     for (const child of root.children) visit(child);
     for (const [mat, bucket] of buckets) {
       if (bucket.meshes.length < 2) continue;
-      const positions = []; const normals = []; const uvs = [];
+      const positions = []; const normals = []; const uvs = []; const colors = [];
+      const coloured = bucket.meshes.every((mesh) => mesh.geometry.attributes.color);
       for (const mesh of bucket.meshes) {
         const matrix = new THREE.Matrix4().multiplyMatrices(inverse, mesh.matrixWorld);
         const geometry = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(matrix);
@@ -431,6 +504,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
         positions.push(...geometry.attributes.position.array);
         normals.push(...(geometry.attributes.normal ? geometry.attributes.normal.array : new Float32Array(count * 3)));
         uvs.push(...(geometry.attributes.uv ? geometry.attributes.uv.array : new Float32Array(count * 2)));
+        if (coloured) colors.push(...geometry.attributes.color.array);
         geometry.dispose();
         mesh.parent.remove(mesh);
       }
@@ -438,14 +512,57 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
       merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
       merged.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      if (coloured) merged.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
       const mesh = new THREE.Mesh(merged, mat);
-      mesh.castShadow = bucket.cast && settings.shadows; mesh.receiveShadow = true;
-      if (mat === contactMaterial) mesh.renderOrder = 1;
+      mesh.castShadow = bucket.cast && settings.shadows; mesh.receiveShadow = !mat.userData.mergeable;
+      if (mat === contactMaterial || mat.userData.mergeable) mesh.renderOrder = 1;
+      if (mat === material('facade') || mat === material('glass')) mesh.renderOrder = 2;
       root.add(mesh);
     }
   };
   for (const workspace of workspaces.values()) mergeStatic(workspace.group);
+  ceiling.userData.dynamic = true; // merged on its own (below), not into the building
   mergeStatic(world);
+  ceiling.userData.dynamic = false;
+  mergeStatic(ceiling);
+
+  // ------------------------------------------------------------ time of day
+  // DAY / EVENING / NIGHT: every light, emitter, decal and the stage backdrop
+  // follow one preset; a change blends over TRANSITION_MS (instant with
+  // reduced motion). Rendering runs only while the blend moves.
+  let timeName = resolveTime(time, dark);
+  let light = { ...LIGHTING[timeName] };
+  let lightTween = null;
+  const backdrop = container.parentElement || container;
+  const applyLighting = (L) => {
+    hemi.color.set(L.sky); hemi.groundColor.set(L.ground); hemi.intensity = hasEnvironment ? L.hemi : L.hemi + 0.35;
+    sun.color.set(L.sunColor); sun.intensity = L.sun; sun.position.set(...L.sunPos);
+    fill.color.set(L.fillColor); fill.intensity = L.fill;
+    if (hasEnvironment) scene.environmentIntensity = L.env;
+    renderer.toneMappingExposure = L.exposure;
+    material('lamp').emissiveIntensity = L.lamps * 1.5;
+    material('pendant').emissiveIntensity = L.lamps * 1.1;
+    material('cove').emissiveIntensity = L.washes * 0.55;
+    fx.poolWarm.opacity = L.pools * (dark ? 0.62 : 0.4);
+    fx.poolCool.opacity = L.glow * (dark ? 0.26 : 0.18);
+    fx.window.opacity = L.windows * (dark ? 0.22 : 0.5);
+    fx.wash.opacity = L.washes * 0.45;
+    fx.accent.color.setScalar(0.4 + L.accents * 0.9);
+    for (const made of screenMaterials) made.color.setScalar(L.screens);
+    const [sky, ground] = dark ? L.backdropDark : L.backdrop;
+    backdrop.style.setProperty('--o3d-sky', sky);
+    backdrop.style.setProperty('--o3d-ground', ground);
+  };
+  applyLighting(light);
+  backdrop.dataset.light = timeName;
+  const setTime = (preference) => {
+    const next = resolveTime(preference, dark);
+    if (next === timeName && !lightTween) return;
+    timeName = next; backdrop.dataset.light = next;
+    if (reducedMotion) { light = { ...LIGHTING[next] }; applyLighting(light); lightTween = null; wake(); return; }
+    lightTween = { from: { ...light }, to: LIGHTING[next], start: performance.now() };
+    wake();
+  };
 
   // ------------------------------------------------------------ handoffs
   const handoffGroup = new THREE.Group();
@@ -561,10 +678,15 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     camera.position.set(view.target.x + view.distance * sinPolar * Math.sin(view.azimuth), view.target.y + view.distance * Math.cos(view.polar), view.target.z + view.distance * sinPolar * Math.cos(view.azimuth));
     camera.lookAt(view.target);
   };
-  const moveTo = (preset, duration = 900) => {
+  // Camera moves (V5.1): duration grows with the distance travelled, a
+  // smootherstep ease starts and lands softly, and long moves rise a little
+  // mid-flight (a crane, not a cut) so the Office stays readable.
+  const moveTo = (preset, duration) => {
     const to = { target: new THREE.Vector3(...preset.target), azimuth: preset.azimuth, polar: preset.polar, distance: preset.distance };
     if (reducedMotion || duration === 0) { Object.assign(view, { ...to, target: to.target }); placeCamera(); wake(); return; }
-    tween = { from: { target: view.target.clone(), azimuth: view.azimuth, polar: view.polar, distance: view.distance }, to, start: performance.now(), duration };
+    const travel = view.target.distanceTo(to.target) + Math.abs(view.distance - to.distance) * 0.5;
+    tween = { from: { target: view.target.clone(), azimuth: view.azimuth, polar: view.polar, distance: view.distance }, to, start: performance.now(),
+      duration: duration ?? clamp(800 + travel * 22, 950, 1800), rise: travel > 8 ? Math.min(10, travel * 0.18) : 0 };
     wake();
   };
   let focused = null;
@@ -588,8 +710,8 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     for (let step = 0; step < 18; step += 1) { const mid = (low + high) / 2; if (fits(mid)) high = mid; else low = mid; }
     overviewPreset = { ...CAMERA.overview, distance: high };
   };
-  function focus(key) { focused = key; labels.classList.add('zoomed'); buildHandoffs(); moveTo(focusPreset(key)); on.focus?.(key); }
-  const overview = () => { focused = null; labels.classList.remove('zoomed'); buildHandoffs(); moveTo(overviewPreset); on.focus?.(null); };
+  function focus(key) { focused = key; ceiling.visible = false; labels.classList.add('zoomed'); buildHandoffs(); moveTo(focusPreset(key)); on.focus?.(key); }
+  const overview = () => { focused = null; ceiling.visible = true; labels.classList.remove('zoomed'); buildHandoffs(); moveTo(overviewPreset); on.focus?.(null); };
 
   // Gentle orbit (drag) and zoom (wheel) — clicks remain the main interaction.
   let drag = null;
@@ -649,24 +771,26 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   let lastFrame = 0;
   const frames = [];
   let slowSince = 0;
+  let ambientOnly = false;
   function wake() { awake = true; }
   const project = new THREE.Vector3();
   const loop = () => {
     if (disposed) return;
     const now = performance.now();
     if (document.hidden) return;
-    if (now - lastFrame < 1000 / settings.fps - 1) return;
+    // Only ambient motion (breathing, a pulse): 30 fps is plenty.
+    if (now - lastFrame < 1000 / (ambientOnly ? Math.min(30, settings.fps) : settings.fps) - 1) return;
     const delta = now - lastFrame; lastFrame = now;
     const time = (now - born) / 1000;
     let animating = false;
     try {
       if (tween) {
         const t = Math.min(1, (now - tween.start) / tween.duration);
-        const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        const e = t * t * t * (t * (t * 6 - 15) + 10);
         view.target.lerpVectors(tween.from.target, tween.to.target, e);
         view.azimuth = tween.from.azimuth + (tween.to.azimuth - tween.from.azimuth) * e;
         view.polar = tween.from.polar + (tween.to.polar - tween.from.polar) * e;
-        view.distance = tween.from.distance + (tween.to.distance - tween.from.distance) * e;
+        view.distance = tween.from.distance + (tween.to.distance - tween.from.distance) * e + tween.rise * Math.sin(Math.PI * e);
         placeCamera();
         if (t >= 1) tween = null;
         animating = true;
@@ -687,6 +811,13 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
         }
         if (motion.ambient) animating = true;
       }
+      if (lightTween) {
+        const t = Math.min(1, (now - lightTween.start) / TRANSITION_MS);
+        light = blendLighting(lightTween.from, lightTween.to, easeLight(t));
+        applyLighting(light);
+        if (t >= 1) lightTween = null;
+        animating = true;
+      }
       if (beacon.visible && !reducedMotion) { beaconHalo.scale.setScalar(1 + Math.sin(time * 2.2) * 0.15); beaconHalo.lookAt(camera.position); animating = true; }
       for (const record of handoffs) {
         if (!record.packet) continue;
@@ -696,6 +827,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
         if (record.t >= 1) { handoffGroup.remove(record.packet); record.packet = null; }
         animating = true;
       }
+      ambientOnly = !awake && !tween && !lightTween && !handoffs.some((record) => record.packet);
       if (awake || animating) {
         renderer.render(scene, camera);
         placeLabels();
@@ -824,6 +956,10 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     overview,
     setProject(id) { selectedProject = id || null; drawSurfaces(true); buildHandoffs(); drawLabels(); applyProjectDim(); if (id) overview(); wake(); },
     setFollow(value) { follow = Boolean(value); },
+    setTime,
+    time: () => timeName,
+    // Department view: frames one wing (Executive Atrium, Intelligence Wing…).
+    focusWing(id) { const preset = wingPreset(id); if (!preset) return; focused = null; ceiling.visible = false; labels.classList.remove('zoomed'); buildHandoffs(); moveTo(preset); on.focus?.(null); },
     stats() {
       const fps = frames.length ? Math.round(1000 / (frames.reduce((sum, value) => sum + value, 0) / frames.length)) : null;
       return { quality: tier, fps, drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures };
@@ -840,6 +976,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
       renderer.dispose();
       renderer.forceContextLoss?.();
       canvas.remove(); labels.remove();
+      backdrop.style.removeProperty('--o3d-sky'); backdrop.style.removeProperty('--o3d-ground'); delete backdrop.dataset.light;
     },
   };
 }

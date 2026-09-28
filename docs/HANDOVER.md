@@ -9,12 +9,16 @@
 ## Do not touch
 
 * **Do not merge PR #71** (this branch) until V4.1 reports **V4 CLOSED**
-  *and* Fahad approves the immersive direction.
+  *and* Fahad approves the immersive direction. It stays a draft.
 * Do not touch the V4.1 acceptance job `abaccdad`, production routing,
-  Telegram or Hermes.
+  providers, secrets, Telegram or Hermes.
 * Do not touch the FINANCE, AUDIT or CHIEF reliability logic.
 
 ## State of this branch
+
+* **Branch:** `claude/v5-immersive-office` (PR #71, draft, unmerged).
+* **Latest work:** the V5.1 visual polish pass (2026-09-28). The commit
+  hash is in `git log`; its message starts with "V5.1 visual polish".
 
 **V5 (complete):**
 * a lazy-loaded Three.js immersive Office over the real presentation state;
@@ -23,30 +27,60 @@
 * a private demo preview: `tools/v5-preview-build.mjs` (fictional data,
   writes refused).
 
-**V5.1 (in progress):**
-* Done:
-  * five-item navigation (Chief, Employees, Projects, Needs Fahad, Office),
-    with the rest under "More";
-  * image-based PBR lighting on the high and balanced tiers;
-  * a one-sentence summary at the top of Employees, Needs Fahad, Tasks and
-    Projects (`src/hub-ui/summaries.js`, tested in
-    `test/hub-summaries.test.js`).
-* Plan: `docs/v5.1-plan.md`.
+**V5.1 (done so far):**
+* five-item navigation (Chief, Employees, Projects, Needs Fahad, Office),
+  with the rest under "More";
+* one summary sentence on Employees, Needs Fahad, Tasks, Projects, Office,
+  Artifacts, Integrations, Models and Chats (`src/hub-ui/summaries.js`);
+* image-based PBR lighting on the high and balanced tiers;
+* Character V2 (`src/hub-ui/office3d/characters.js`, `WARDROBE`);
+* DAY / EVENING / NIGHT with smooth blending
+  (`src/hub-ui/office3d/lighting.js`; Office → View → Light);
+* architecture, fixtures and department identity
+  (`src/hub-ui/office3d/decor.js`); ceiling cutaway in close views;
+* department views (Office → Area) and calmer camera framing and easing.
 
-## Next tasks here (in order)
+Details: `docs/v5.1-plan.md` section 2b.
 
-1. Furniture and architecture density in the 3D scene (merged static
-   meshes; keep about 200 draw calls or fewer).
-2. Characters v2 (`src/hub-ui/office3d/characters.js` only).
-3. Night lamps and time-of-day warmth.
-4. Rebuild the private preview and republish it (same artifact URL, see
-   the main handover).
+## Numbers (headless Chromium, software WebGL, 1440×900, high tier)
+
+| | Before the polish pass | After |
+|---|---|---|
+| Overview draw calls | 193 | 166 |
+| Overview triangles | 57K | 97K |
+| CHIEF focus draw calls | 98 | 87 |
+| Engine (gzipped) | 149,955 B | 150,430 B (budget 170,000) |
+| Scene code, all `office3d/` modules (gzipped) | 24 KB | 34 KB (budget 40 KB) |
+| Console errors in 25 QA views | 0 | 0 |
+| axe WCAG 2 A/AA, 7 screens × 2 themes | — | 0 violations |
+
+Real-GPU FPS is still unmeasured (software rendering shows about 2 fps on
+the high tier, as before).
+
+## Tests
+
+`node --test`: 398 pass, 0 fail. New: `test/v51-visual.test.js`; extended:
+`test/hub-summaries.test.js`, `test/v5-immersive.test.js`.
+
+## Remaining visual work (in order)
+
+1. Floor and wood detail per zone (canvas textures, no downloads).
+2. Characters pass 3: a standing/walking pose on real handoffs.
+3. Day mode depth: still slightly bright in the overview.
+4. Check wing views at 1280×720.
+
+## Exact next task
+
+Floor and wood detail per zone, in `src/hub-ui/office3d/scene.js` (floor
+texture) and `decor.js`, keeping overview draw calls at or under 200. Then
+rebuild the preview and republish it to the same private artifact.
 
 ## Commands
 
 ```sh
 npm ci && node --test
-node tools/build-three.mjs            # engine budget: ≤170 KB gz
-node tools/office3d-shots.mjs <dir>   # 3D screenshot QA (fictional data)
-node tools/v5-preview-build.mjs <dir> # private demo preview build
+node tools/build-three.mjs                    # engine budget: ≤170 KB gz
+node tools/office3d-shots.mjs <dir> --set=v51 # the 12 V5.1 QA views
+node tools/office3d-shots.mjs <dir>           # the V5 regression views
+node tools/v5-preview-build.mjs <dir>         # private demo preview build
 ```

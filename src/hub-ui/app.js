@@ -1,6 +1,6 @@
 // Fahad AI Office — Workspace V2 client. No framework: hash routes render
 // views from the Hub's JSON API; polling keeps running work live.
-import { attentionSummary, employeesSummary, projectsSummary, tasksSummary } from './summaries.js';
+import { attentionSummary, chatsSummary, employeesSummary, integrationsSummary, modelsSummary, projectsSummary, tasksSummary } from './summaries.js';
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 import { loginErrorMessage } from './auth.js';
 import { ARTIFACT_LABELS, renderArtifact, splitArtifacts } from './artifacts.js';
@@ -475,12 +475,13 @@ const taskGroup = (status) => (['awaiting_approval', 'blocked'].includes(status)
 
 async function renderChats() {
   setTitle('Chats');
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Chats</h1><p>Every conversation with the Office, newest first.</p></div><a class="btn btn-primary" href="#/">＋ New chat</a></div>
+  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Chats</h1><p class="page-summary" id="chatSummary" aria-live="polite">Every conversation with the Office, newest first.</p></div><a class="btn btn-primary" href="#/">＋ New chat</a></div>
     <div class="row" style="margin-bottom:var(--s-4)"><input id="chatSearch" class="input grow" placeholder="Search chats…" dir="auto"><button id="showArchived" class="btn">Archived</button></div>
     <div id="chatList"></div></div>`;
   let archived = false;
   const load = async () => {
     const { conversations } = await api(`/api/conversations${q({ workspaceId: ws(), archived, q: $('#chatSearch').value.trim() })}`);
+    $('#chatSummary').textContent = chatsSummary(conversations, archived);
     $('#chatList').innerHTML = conversations.length ? conversations.map((conversation) =>
       `<a class="list-item" href="#/chat/${esc(conversation.id)}"><div class="grow"><div class="title" dir="auto">${esc(conversation.title)}</div><div class="sub">${when(conversation.lastMessageAt)}</div></div></a>`).join('')
       : `<div class="empty"><h3>${archived ? 'No archived chats' : 'No chats found'}</h3><p>Start a new chat from the button above.</p></div>`;
@@ -841,7 +842,7 @@ function connection(status = '') {
 const CONNECTION_TONE = { CONNECTED: 'ok', CONFIGURED: 'configured', 'NOT CONFIGURED': 'off', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
 async function renderIntegrations() {
   setTitle('Integrations');
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Integrations</h1><p>What the Office can actually use. <strong>Connected</strong> means a real successful use was recorded — configuration alone never counts.</p></div></div>
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Integrations</h1><p class="page-summary" id="intSummary" aria-live="polite">What the Office can actually use.</p><p class="small muted"><strong>Connected</strong> means a real successful use was recorded — configuration alone never counts.</p></div></div>
     <div class="conn-legend">${Object.values(CONNECTION).map((value) => `<span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span>`).join('')}</div><div id="capabilities"><div class="drawer-loading"></div></div></div>`;
   const [{ capabilities }, models] = await Promise.all([api('/api/capabilities'), api(`/api/models${q({ workspaceId: ws() })}`).catch(() => null)]);
   const groups = [['Work tools', ['github', 'repository', 'pull_requests', 'ci', 'deployment', 'supabase_tools', 'tool_broker']], ['Research', ['web_search', 'web_fetch']], ['Channels', ['telegram']], ['Office data', ['database', 'memory']]];
@@ -854,6 +855,7 @@ async function renderIntegrations() {
   }
   const providerState = (entry) => (entry.statuses.includes('AVAILABLE') || entry.statuses.includes('COOLDOWN') ? CONNECTION.CONNECTED : entry.statuses.includes('ACCOUNT ACTION REQUIRED') ? CONNECTION.ACCOUNT
     : entry.reasons.some((reason) => /No credential/i.test(reason)) ? CONNECTION.NOT_CONFIGURED : CONNECTION.UNAVAILABLE);
+  $('#intSummary').textContent = integrationsSummary(capabilities.filter((item) => groups.some(([, ids]) => ids.includes(item.id))).map((item) => connection(item.status)));
   $('#capabilities').innerHTML = groups.map(([title, ids]) => `<section class="int-group"><h2 class="int-title">${esc(title)}</h2><div class="int-grid">${capabilities.filter((item) => ids.includes(item.id)).map(card).join('')}</div></section>`).join('')
     + (providers.size ? `<section class="int-group"><h2 class="int-title">Model providers</h2><div class="int-grid">${[...providers.values()].map((entry) => { const value = providerState(entry); return `<div class="int-card"><div class="int-top"><strong>${esc(entry.provider)}</strong><span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span></div><div class="small muted">${entry.statuses.length} model${entry.statuses.length === 1 ? '' : 's'} · ${esc(humanError(entry.reasons.find((reason) => reason) || ''))}</div></div>`; }).join('')}</div><p class="xs muted">Details per model: <a href="#/models">Models</a>.</p></section>` : '');
 }
@@ -865,10 +867,10 @@ async function renderModels() {
   const kind = { AVAILABLE: 'available', COOLDOWN: 'cooldown', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
   const waiting = (office?.agents || []).filter((agent) => agent.state === 'WAITING' && /free model capacity/i.test(agent.detail || ''));
   const counts = Object.entries(data.counts).map(([status, count]) => `${pill(kind[status], `${count} ${status.toLowerCase()}`)}`).join(' ');
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Models</h1><p>Routing is <strong>AUTO</strong>: the Office picks the best available model for each job, free first where suitable, and fails over automatically. You never have to choose.</p></div></div>
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Models</h1><p class="page-summary">${esc(modelsSummary(data.counts, waiting.length))}</p><p class="small muted">Routing is <strong>AUTO</strong>: the Office picks the best available model for each job, free first where suitable, and fails over automatically. You never have to choose.</p></div></div>
     <div class="row" style="margin-bottom:var(--s-4)">${counts}</div>
     ${waiting.length ? `<div class="capacity-banner" role="status"><strong>WAITING_FOR_CAPACITY</strong> · ${waiting.map((agent) => `${esc(agent.label)}${agent.assignment?.resumesAt ? ` (~${esc(new Date(agent.assignment.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))})` : ''}`).join(', ')} — Waiting for free model capacity — will resume automatically.</div>` : ''}
-    <details class="disclosure" open><summary>Model pool (advanced)</summary><div class="disclosure-body"><div class="table-wrap"><table class="table"><thead><tr><th>Model</th><th>Status</th><th class="hide-sm">Cost</th><th class="hide-sm">Order</th><th class="hide-sm">Health</th><th class="hide-sm">Why</th></tr></thead><tbody>
+    <details class="disclosure"><summary>Model pool (advanced)</summary><div class="disclosure-body"><div class="table-wrap"><table class="table"><thead><tr><th>Model</th><th>Status</th><th class="hide-sm">Cost</th><th class="hide-sm">Order</th><th class="hide-sm">Health</th><th class="hide-sm">Why</th></tr></thead><tbody>
     ${data.models.map((model) => { const reason = esc(model.reason.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, (iso) => new Date(iso).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }))); return `<tr><td><div class="mono small" style="overflow-wrap:anywhere">${esc(model.model)}</div><div class="xs faint">${esc(model.provider)} · ${esc(model.billing)}</div><div class="xs muted show-sm">${reason}</div></td><td>${pill(kind[model.status], model.status)}</td><td class="hide-sm">${esc(model.billing)}</td><td class="hide-sm">${model.order || '—'}</td><td class="hide-sm">${esc(model.health)}</td><td class="small muted hide-sm" style="min-width:180px">${reason}</td></tr>`; }).join('')}
     </tbody></table></div><p class="xs muted" style="margin-top:var(--s-2)">An unavailable or account-blocked model never blocks the others. The full technical dashboard is under <a href="./classic">Classic view → Platform</a>.</p></div></details></div>`;
 }

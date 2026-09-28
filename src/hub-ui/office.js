@@ -43,6 +43,7 @@ export async function renderOffice(ctx) {
       <form class="ask-chief" id="askChief"><label class="sr-only" for="askChiefInput">Ask CHIEF</label>
         <input id="askChiefInput" class="input" dir="auto" autocomplete="off" placeholder="Ask CHIEF… e.g. «خل Legal يراجع»"><button class="btn btn-primary" type="submit">Send</button></form>
     </header>
+    <p class="page-summary office-summary" id="officeSummary" aria-live="polite"></p>
     <div class="office-stats" id="officeStats" aria-live="polite"></div>
     <div class="office-body">
       <section class="immersive" id="immersive" hidden aria-label="Immersive Office">
@@ -52,10 +53,13 @@ export async function renderOffice(ctx) {
           <button type="button" class="btn btn-sm" id="o3dUseLight">Use light Office</button></div>
         <div class="o3d-controls" role="toolbar" aria-label="Office view controls">
           <button type="button" class="btn btn-sm" id="o3dOverview">Overview</button>
+          <label class="sr-only" for="o3dArea">Area</label><select class="input input-sm" id="o3dArea"><option value="">Whole Office</option><option value="atrium">Executive Atrium</option><option value="intelligence">Intelligence Wing</option><option value="strategy">Strategy Wing</option><option value="creative">Creative Studio</option><option value="build">Build Studio</option></select>
           <label class="sr-only" for="o3dProject">Project mode</label><select class="input input-sm" id="o3dProject"><option value="">All projects</option></select>
           <label class="o3d-follow"><input type="checkbox" id="o3dFollow"> Follow work</label>
-          <label class="sr-only" for="o3dQuality">Quality</label><select class="input input-sm" id="o3dQuality" title="Quality"><option value="">Quality: auto</option><option value="high">Quality: high</option><option value="balanced">Quality: balanced</option><option value="light">Quality: light</option></select>
           <details class="o3d-handoffs"><summary id="o3dHandoffSummary">Handoffs</summary><ul id="o3dHandoffList"></ul></details>
+          <details class="o3d-handoffs o3d-options"><summary>View</summary><div class="o3d-options-body">
+            <label class="field-label" for="o3dLight">Light</label><select class="input input-sm" id="o3dLight"><option value="">Match theme</option><option value="day">Day</option><option value="evening">Evening</option><option value="night">Night</option></select>
+            <label class="field-label" for="o3dQuality">Quality</label><select class="input input-sm" id="o3dQuality"><option value="">Auto</option><option value="high">High</option><option value="balanced">Balanced</option><option value="light">Light (fastest)</option></select></div></details>
         </div>
         <div class="o3d-project-card" id="o3dProjectCard" hidden aria-live="polite"></div>
         <p class="sr-only" aria-live="polite" id="o3dSummary"></p>
@@ -96,7 +100,7 @@ export async function renderOffice(ctx) {
   let immersive = null;
   let mounting = null;
   // Read-only view mode and renderer statistics (visual/performance QA, preview panel).
-  window.__fahadOffice3d = { stats: () => immersive?.stats() || null, mode: () => mode };
+  window.__fahadOffice3d = { stats: () => immersive?.stats() || null, mode: () => mode, area: (id) => immersive?.focusWing(id), light: (name) => immersive?.setTime(name) };
   const load = async () => {
     const [next, library] = await Promise.all([
       api(`/api/office${q({ workspaceId: ws() })}`),
@@ -108,6 +112,7 @@ export async function renderOffice(ctx) {
     data = next;
     artifacts = library.artifacts || [];
     drawStats(); drawSide();
+    view.querySelector('#officeSummary').textContent = describeOffice(presentation());
     if (mode.render === 'immersive') drawImmersive();
     else { drawStations(); drawHandoffs(); }
   };
@@ -159,7 +164,7 @@ export async function renderOffice(ctx) {
         if (!stage || mode.render !== 'immersive') return;
         const tokens = themeTokens();
         immersive = module.mountOffice3D(stage, {
-          state: presentation(), dark: tokens.dark, tokens, quality: readPref('hub-office-quality', '') || mode.quality || 'balanced', reducedMotion: ctx.reducedMotion(),
+          state: presentation(), dark: tokens.dark, tokens, quality: readPref('hub-office-quality', '') || mode.quality || 'balanced', reducedMotion: ctx.reducedMotion(), time: readPref('hub-office-light', ''),
           on: {
             select: (key) => { const employee = data.agents.find((agent) => agent.key === key); if (employee) openEmployee(ctx, employee.slug); },
             handoff: (handoff) => openHandoff(ctx, handoff),
@@ -208,7 +213,11 @@ export async function renderOffice(ctx) {
   view.querySelector('#o3dProject').onchange = (event) => { immersive?.setProject(event.target.value); drawProjectCard(presentation(), event.target.value); };
   view.querySelector('#o3dFollow').onchange = (event) => { immersive?.setFollow(event.target.checked); writePref('hub-office-follow', event.target.checked ? 'on' : ''); };
   view.querySelector('#o3dFollow').checked = readPref('hub-office-follow', '') === 'on';
-  view.querySelector('#o3dOverview').onclick = () => immersive?.overview();
+  view.querySelector('#o3dOverview').onclick = () => { view.querySelector('#o3dArea').value = ''; immersive?.overview(); };
+  // Area: frame one department; Light: day, evening or night (blends smoothly).
+  view.querySelector('#o3dArea').onchange = (event) => { if (event.target.value) immersive?.focusWing(event.target.value); else immersive?.overview(); };
+  view.querySelector('#o3dLight').value = readPref('hub-office-light', '');
+  view.querySelector('#o3dLight').onchange = (event) => { writePref('hub-office-light', event.target.value); immersive?.setTime(event.target.value); };
   // Quality: remount the scene at the chosen tier (auto = detected).
   view.querySelector('#o3dQuality').value = readPref('hub-office-quality', '');
   view.querySelector('#o3dQuality').onchange = (event) => { writePref('hub-office-quality', event.target.value); if (immersive) { immersive.dispose(); immersive = null; drawImmersive(); } };
