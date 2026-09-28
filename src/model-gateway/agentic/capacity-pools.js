@@ -29,6 +29,12 @@ const RULES = [
 const value = (field, route) => (typeof field === 'function' ? field(route) : field);
 
 export function capacityPool(route) {
+  // A provider definition may declare its own pool (preferred for new
+  // providers: metadata, not router code).
+  if (route.quotaPool?.id) {
+    const declared = route.quotaPool;
+    return Object.freeze({ id: declared.id, label: declared.label || declared.id, account: route.provider, shared: Boolean(declared.shared), scarce: Boolean(declared.scarce) });
+  }
   const rule = RULES.find((entry) => entry.test(route));
   if (!rule) return Object.freeze({ id: `${route.provider}:${route.model}`, label: `${route.provider} ${route.model}`, account: route.provider, shared: false, scarce: false });
   return Object.freeze({ id: rule.pool(route), label: value(rule.label, route), account: route.provider, shared: Boolean(value(rule.shared, route)), scarce: Boolean(value(rule.scarce, route)) });
