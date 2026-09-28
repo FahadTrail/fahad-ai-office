@@ -1,7 +1,7 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-Last updated: 2026-09-28, about 19:30 UTC, at the end of the router and token
-efficiency sprint. Read `AGENTS.md` first; it holds the permanent rules. This
+Last updated: 2026-09-28, about 20:30 UTC, after the provider expansion
+preparation. Read `AGENTS.md` first; it holds the permanent rules. This
 file is the live state.
 
 ## 0. DO NOT TOUCH
@@ -42,6 +42,7 @@ file is the live state.
 | `claude/fahad-audit-readonly-466kck` | Capacity audit docs, `tools/capacity-matrix.mjs` | Docs only |
 | **`claude/router-efficiency-v1`** | **This sprint.** Based on the audit branch. | Draft PR, **do not merge** |
 | `claude/v5-immersive-office` | V5 / V5.1 immersive Office (its own handover copy lives there) | Draft PR #71, do not merge |
+| **`claude/provider-expansion-prep`** | Mistral readiness, CHIEF synthesis fallback, provider contract, capacity summary. Built **on top of** the router sprint branch. | Draft PR, do not merge (merge after #72) |
 
 ## 2. Router sprint: complete
 
@@ -85,8 +86,43 @@ test (O) locks this in.
 * Docs and tools: `docs/router-efficiency.md`, the correction in
   `docs/free-capacity-audit.md`, and `tools/router-replay.mjs` (new).
 
-**Tests:** `node --test` gives 392 pass, 0 fail (at the commit this handover
-was written for).
+**Tests:** `node --test` gives 392 pass, 0 fail on the router branch (401 on
+the provider-prep branch).
+
+## 2b. Provider expansion prep: complete
+
+Everything is in `docs/provider-expansion.md`:
+* **Mistral readiness** (VERIFIED / ASSUMPTION / UNKNOWN), including the
+  fixes: 9-character tool-call ids, no empty tools array, a monthly-quota
+  wait, a declared pool and a catalog check.
+* **Exact owner setup**, including the missing workspace authorization row.
+* **CHIEF synthesis fallback test.**
+* **NVIDIA and Cloudflare verdicts:** both not integrated, and why.
+* **An adding-a-provider checklist** with a metadata contract test.
+* **The capacity summary API:** `GET /api/capacity` returns `headline` and
+  `summary`.
+
+Files changed:
+* `src/model-gateway/agentic/chat-completions.js`,
+  `src/model-gateway/agentic/model-pool.js`,
+  `src/model-gateway/agentic/capacity-pools.js`,
+  `src/model-gateway/agentic/free-quota.js`;
+* `src/hub-capacity.js`;
+* `ops/set-secret.sh` (`MISTRAL_BILLING_CLASS`, Mistral key verification);
+* `test/provider-expansion.test.js`, `docs/provider-expansion.md`.
+
+Tests: `node --test` gives 401 pass, 0 fail.
+
+**Secrets still missing** (do not request them until Fahad decides):
+* `MISTRAL_API_KEY` (and `MISTRAL_BILLING_CLASS=free` if the free plan is
+  confirmed);
+* optionally, a free web-search API key.
+
+**Owner actions**, in order:
+1. Review PR #72, then the provider-prep PR.
+2. Merge both only after V4 CLOSED.
+3. Then follow the Mistral setup in `docs/provider-expansion.md` §2, which
+   includes the workspace authorization SQL (it needs approval).
 
 ## 3. What remains
 

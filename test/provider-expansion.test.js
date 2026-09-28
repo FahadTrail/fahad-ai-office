@@ -143,3 +143,32 @@ test('provider metadata contract: every route declares what the router needs (a 
     assert.ok(capacityPool(definition).id, `${where}: capacity pool`);
   }
 });
+
+test('capacity backend: owner summary counts independent pools, estimates only from published limits', async () => {
+  const { capacityView } = await import('../src/hub-capacity.js');
+  const { memoryPostgrest } = await import('../testing/fixtures/memory-postgrest.js');
+  const now = Date.parse('2026-09-28T12:00:00Z');
+  const at = new Date(now - 3600_000).toISOString();
+  const db = memoryPostgrest({
+    provider_status: [
+      { provider: 'openrouter', model: 'openai/gpt-oss-120b:free', health: 'quota_exhausted', cooldown_until: '2026-09-29T00:00:00Z', rate_limit: null },
+      { provider: 'groq', model: 'openai/gpt-oss-120b', health: 'healthy', cooldown_until: null, rate_limit: null },
+    ],
+    model_attempts: [
+      { provider: 'groq', model: 'openai/gpt-oss-120b', status: 'succeeded', input_tokens: 3000, output_tokens: 500, cost_usd: 0, attempt_no: 1, task_id: 't1', started_at: at },
+      { provider: 'groq', model: 'openai/gpt-oss-120b', status: 'failed', input_tokens: 0, output_tokens: 0, cost_usd: 0, attempt_no: 1, task_id: 't1', started_at: at },
+      { provider: 'openrouter', model: 'openai/gpt-oss-120b:free', status: 'succeeded', input_tokens: 2000, output_tokens: 300, cost_usd: 0, attempt_no: 1, task_id: 't2', started_at: at },
+    ],
+  });
+  const view = await capacityView({ db, env: { GROQ_API_KEY: KEY, OPENROUTER_API_KEY: KEY }, now });
+  const byId = Object.fromEntries(view.pools.map((pool) => [pool.id, pool]));
+  assert.equal(byId['openrouter:free'].state, 'exhausted');
+  assert.equal(byId['openrouter:free'].estimatedCapacityLeft.requests, 0);
+  assert.equal(byId['groq:openai/gpt-oss-120b'].estimatedCapacityLeft.requests, 999, 'published 1,000/day minus 1 audited request');
+  assert.match(byId['groq:openai/gpt-oss-120b'].estimatedCapacityLeft.basis, /ESTIMATED/);
+  assert.equal(view.summary.exhaustedPools, 1);
+  assert.equal(view.summary.tokensToday, 5800);
+  assert.equal(view.summary.failedAttemptsToday, 1);
+  assert.match(view.headline, /free capacity pools are available; 1 used up \(next reset in about 12 h\)\./);
+  assert.ok(!view.pools.some((pool) => pool.id.startsWith('openrouter:') && pool.id !== 'openrouter:free'), 'OpenRouter models appear as one pool');
+});

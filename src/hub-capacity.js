@@ -3,7 +3,7 @@
 // today / this month from model_attempts. No quota number is invented:
 // `estimatedCapacityLeft` is null unless a provider reported one.
 import { createModelPool } from './model-gateway/agentic/model-pool.js';
-import { capacityPool, poolSummary } from './model-gateway/agentic/capacity-pools.js';
+import { capacityHeadline, capacityPool, poolSummary } from './model-gateway/agentic/capacity-pools.js';
 import { modelUsage } from './model-gateway/agentic/usage-telemetry.js';
 import { searchBreaker } from './office/web-tools.js';
 
@@ -31,12 +31,25 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
   }
   const usage = new Map([...byPool].map(([id, rows]) => {
     const today = modelUsage(rows.today);
-    return [id, { tokensToday: today.totalTokens, tokensMonth: modelUsage(rows.month).totalTokens, failedToday: today.failed.calls }];
+    return [id, { tokensToday: today.totalTokens, tokensMonth: modelUsage(rows.month).totalTokens, failedToday: today.failed.calls, requestsToday: today.successful.calls }];
   }));
   const pools = poolSummary(pool, state, { now, usage });
   const all = modelUsage(attemptRows || []);
   const today = modelUsage((attemptRows || []).filter((row) => Date.parse(row.started_at) >= dayStart.getTime()));
+  const configured = pools.filter((entry) => entry.state !== 'not_configured');
   return {
+    headline: capacityHeadline(pools, { now }),
+    summary: {
+      freeCapacityNow: configured.some((entry) => entry.state === 'available') ? 'available' : configured.length ? 'waiting for a reset' : 'none configured',
+      healthyPools: configured.filter((entry) => entry.state === 'available').length,
+      degradedPools: configured.filter((entry) => entry.state === 'degraded').length,
+      exhaustedPools: configured.filter((entry) => entry.state === 'exhausted').length,
+      nextReset: configured.map((entry) => entry.nextReset).filter(Boolean).toSorted()[0] || null,
+      tokensToday: today.totalTokens,
+      failedAttemptsToday: today.failed.calls,
+      estimatedRemainingRequests: configured.every((entry) => entry.estimatedCapacityLeft) ? configured.reduce((sum, entry) => sum + entry.estimatedCapacityLeft.requests, 0) : null,
+      estimatedRemainingBasis: 'Sum of per-pool estimates; null when any pool has no published limit (never invented).',
+    },
     freeCapacity: {
       pools: pools.length,
       available: pools.filter((entry) => entry.state === 'available').length,
