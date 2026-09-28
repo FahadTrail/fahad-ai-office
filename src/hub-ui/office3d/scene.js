@@ -34,6 +34,8 @@ const MATERIALS = (dark) => ({
   textile: { color: dark ? '#4c515c' : '#d9d4cc', roughness: 1 },
   plant: { color: dark ? '#3d5a45' : '#6f8f6f', roughness: 0.9, flatShading: true },
   pot: { color: dark ? '#4a4d55' : '#d8d2c8', roughness: 0.8 },
+  // Task-lamp shade: glows warm at night (emissive, no extra light cost).
+  lamp: { color: dark ? '#ffe2b8' : '#f4f1ec', roughness: 0.4, emissive: dark ? '#ffb46b' : '#000000', emissiveIntensity: dark ? 1.4 : 0 },
   glass: { color: dark ? '#9fb4d0' : '#dbe8f4', roughness: 0.04, metalness: 0.1, transparent: true, opacity: dark ? 0.14 : 0.22, depthWrite: false },
 });
 
@@ -184,6 +186,26 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     world.add(group);
   }
 
+  // Architecture (V5.1): slim columns where the wings meet, a reception desk
+  // at the entrance and a library wall in the Intelligence wing. All static:
+  // merged per material with the rest of the building.
+  for (const [x, z] of [[-7.5, -7], [-7.5, 8], [7.5, -7], [7.5, 4], [2.5, -15], [-19.6, 8], [19.6, 5]]) {
+    box(0.28, 2.5, 0.28, 'white', [x, 1.25, z], world);
+  }
+  const reception = new THREE.Group(); reception.position.set(4.2, 0, 8.3); reception.rotation.y = -0.2;
+  box(2.6, 0.98, 0.62, 'white', [0, 0.49, 0], reception);
+  roundedSlab(2.9, 0.78, 0.05, 0.12, 'walnut', [0, 1.0, 0.02], reception);
+  world.add(reception);
+  for (let unit = 0; unit < 5; unit += 1) {
+    const shelf = new THREE.Group(); shelf.position.set(-19.25, 0, -5.4 + unit * 2.5);
+    box(0.42, 2.0, 2.2, 'walnut', [0, 1.0, 0], shelf);
+    for (let row = 0; row < 4; row += 1) {
+      const finishes = ['textile', 'white', 'wood'];
+      box(0.3, 0.3, 1.95, finishes[(row + unit) % 3], [0.08, 0.34 + row * 0.44, 0], shelf, { receive: false });
+    }
+    world.add(shelf);
+  }
+
   // Brand wall at the entrance and a small lounge.
   const brand = canvasTexture([1024, 200]);
   const drawBrand = () => {
@@ -319,6 +341,12 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   // materials, hardware); real work stays on the screens.
   function addProps(key, spec, group, { deskWidth, deskDepth }) {
     const side = deskWidth / 2 + 0.9;
+    // A task lamp on every desk (V5.1): brushed-metal arm, warm shade at night.
+    const lamp = new THREE.Group(); lamp.position.set(-deskWidth / 2 + 0.22, 0.76, -deskDepth / 2 + 0.24);
+    box(0.16, 0.02, 0.16, 'metal', [0, 0.01, 0], lamp, { receive: false });
+    const arm = box(0.025, 0.46, 0.025, 'metal', [0.06, 0.24, 0.02], lamp, { receive: false }); arm.rotation.z = -0.28;
+    box(0.22, 0.05, 0.12, 'lamp', [0.16, 0.46, 0.04], lamp, { receive: false });
+    group.add(lamp);
     if (key === 'chief') {
       for (const sx of [-0.8, 0.8]) {
         const guest = new THREE.Group(); guest.position.set(sx, 0, -deskDepth / 2 - 0.85);
