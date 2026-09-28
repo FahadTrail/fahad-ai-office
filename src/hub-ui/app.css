@@ -547,6 +547,10 @@ table.table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .fin-bar { height: 8px; border-radius: var(--r-full); background: var(--surface-3); overflow: hidden; }
 .fin-bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 .fin-sens { margin: var(--s-3) 0 var(--s-1); padding: var(--s-3); border-radius: var(--r-md); background: var(--surface-2); }
+.fin-validation { display: flex; align-items: center; gap: var(--s-2); margin: 0 0 var(--s-3); padding: var(--s-2) var(--s-3); border-radius: var(--r-md); background: var(--surface-2); }
+.fin-validation.fv-inconsistent { box-shadow: inset 3px 0 0 var(--danger); }
+.fin-validation.fv-verified { box-shadow: inset 3px 0 0 var(--success); }
+.fin-issues { margin: var(--s-2) 0; padding-inline-start: var(--s-5); color: var(--danger); }
 .legal-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-2); margin-bottom: var(--s-3); }
 .legal-summary div { display: flex; flex-direction: column; padding: var(--s-3); border-radius: var(--r-md); background: var(--surface-2); }
 .legal-summary strong { font-size: var(--fs-lg); } .legal-summary span { font-size: var(--fs-xs); color: var(--text-muted); }

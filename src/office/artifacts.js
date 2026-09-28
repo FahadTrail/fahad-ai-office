@@ -94,11 +94,34 @@ export const ARTIFACT_TYPES = Object.freeze({
     },
   },
   financial_model: {
-    hint: '{"type":"financial_model","title":"Launch budget","currency":"AED","items":[{"category":"Build","item":"MVP development","one_time":30000,"monthly":0,"basis":"ESTIMATED","note":"…"}]}',
+    hint: '{"type":"financial_model","title":"Launch model","currency":"AED","months":12,"items":[{"category":"Build","item":"MVP development","one_time":30000,"monthly":0,"month":1,"basis":"ESTIMATED","note":"…"},{"category":"Hosting","item":"Servers","one_time":0,"monthly":400,"month":1,"basis":"KNOWN","note":"…"}],"revenue":{"price_monthly":49,"starting_customers":0,"new_customers":[5,5,10,10,15,15,20,20,20,20,20,20],"churn_rate":0.05,"trial_months":0,"basis":"ASSUMPTION"},"variable_cost_per_customer":3,"claims":{"year_revenue":0,"year_costs":0,"net":0,"break_even_month":null}}',
     clean: (raw) => {
       const items = list(raw.items).map((item) => ({ category: text(item?.category, 60), item: text(item?.item, 120), one_time: num(item?.one_time), monthly: num(item?.monthly),
+        ...(num(item?.month) ? { month: Math.round(num(item.month)) } : {}),
         basis: oneOf(item?.basis, ['KNOWN', 'ESTIMATED', 'ASSUMPTION'], 'ESTIMATED'), note: text(item?.note, 240) })).filter((item) => item.item);
-      return items.length ? { currency: text(raw.currency, 8) || 'USD', items } : null;
+      if (!items.length) return null;
+      const revenue = raw.revenue && typeof raw.revenue === 'object' ? {
+        ...(Array.isArray(raw.revenue.monthly) ? { monthly: list(raw.revenue.monthly, 36).map(num) } : {}),
+        ...(num(raw.revenue.price_monthly) !== null ? { price_monthly: num(raw.revenue.price_monthly) } : {}),
+        ...(num(raw.revenue.starting_customers) !== null ? { starting_customers: num(raw.revenue.starting_customers) } : {}),
+        ...(Array.isArray(raw.revenue.new_customers) ? { new_customers: list(raw.revenue.new_customers, 36).map(num) } : num(raw.revenue.new_customers) !== null ? { new_customers: num(raw.revenue.new_customers) } : {}),
+        ...(num(raw.revenue.churn_rate) !== null ? { churn_rate: num(raw.revenue.churn_rate) > 1 ? num(raw.revenue.churn_rate) / 100 : num(raw.revenue.churn_rate) } : {}),
+        ...(num(raw.revenue.trial_months) !== null ? { trial_months: num(raw.revenue.trial_months) } : {}),
+        basis: oneOf(raw.revenue.basis, ['KNOWN', 'ESTIMATED', 'ASSUMPTION'], 'ASSUMPTION'), note: text(raw.revenue.note, 240),
+      } : null;
+      const claims = raw.claims && typeof raw.claims === 'object'
+        ? Object.fromEntries(Object.entries(raw.claims).slice(0, 12).map(([key, value]) => [text(key, 40), typeof value === 'number' || value === null ? value : text(value, 40)])) : null;
+      return {
+        currency: text(raw.currency, 8) || 'USD', items,
+        ...(num(raw.months) ? { months: Math.min(36, Math.max(1, Math.round(num(raw.months)))) } : {}),
+        ...(revenue ? { revenue } : {}),
+        ...(num(raw.variable_cost_per_customer) !== null ? { variable_cost_per_customer: num(raw.variable_cost_per_customer) } : {}),
+        ...(num(raw.starting_cash) !== null ? { starting_cash: num(raw.starting_cash) } : {}),
+        ...(claims ? { claims } : {}),
+        // Written by code (office/finance.js), never by the model.
+        ...(raw.calculated && typeof raw.calculated === 'object' ? { calculated: raw.calculated } : {}),
+        ...(raw.validation && typeof raw.validation === 'object' ? { validation: { state: text(raw.validation.state, 30), issues: list(raw.validation.issues, 12) } } : {}),
+      };
     },
   },
   compliance_matrix: {
@@ -114,18 +137,24 @@ export const ARTIFACT_TYPES = Object.freeze({
     },
   },
   audit_report: {
-    hint: '{"type":"audit_report","title":"…","verdict":"PASS|NEEDS WORK|BLOCKED","findings":[{"title":"…","severity":"low|medium|high|critical","area":"security","owner":"product","detail":"…"}]}',
+    hint: '{"type":"audit_report","title":"…","verdict":"PASS|NEEDS WORK|BLOCKED","findings":[{"title":"…","severity":"low|medium|high|critical|blocked","area":"security","owner":"product","detail":"…","fix":"…"}]}',
     clean: (raw) => {
-      const findings = list(raw.findings).map((finding) => ({ title: text(finding?.title, 160), severity: oneOf(finding?.severity, ['low', 'medium', 'high', 'critical'], 'medium'),
-        area: text(finding?.area, 40), owner: text(finding?.owner, 30), detail: text(finding?.detail, 400) })).filter((finding) => finding.title);
-      return { verdict: oneOf(raw.verdict, ['PASS', 'NEEDS WORK', 'BLOCKED'], findings.length ? 'NEEDS WORK' : 'PASS'), findings };
+      const findings = list(raw.findings).map((finding) => ({ title: text(finding?.title, 160), severity: oneOf(finding?.severity, ['low', 'medium', 'high', 'critical', 'blocked'], 'medium'),
+        area: text(finding?.area, 40), owner: text(finding?.owner, 30), detail: text(finding?.detail, 400),
+        // Deterministic (code) findings carry their evidence.
+        ...(finding?.type ? { type: text(finding.type, 40), code: text(finding.code, 40), expected: text(finding.expected, 60), actual: text(finding.actual, 60), evidence: text(finding.evidence, 200) } : {}),
+        ...(finding?.fix ? { fix: text(finding.fix, 300) } : {}) })).filter((finding) => finding.title);
+      const blocked = findings.some((finding) => finding.severity === 'blocked');
+      return { verdict: blocked ? 'BLOCKED' : oneOf(raw.verdict, ['PASS', 'NEEDS WORK', 'BLOCKED'], findings.length ? 'NEEDS WORK' : 'PASS'), findings };
     },
   },
   content_calendar: {
-    hint: '{"type":"content_calendar","title":"…","entries":[{"date":"Week 1 Mon","platform":"Instagram","format":"Reel","hook":"…","caption":"…"}]}',
+    hint: '{"type":"content_calendar","title":"…","entries":[{"date":"Week 1 Mon","platform":"Instagram","pillar":"Product demo","format":"Reel","hook":"…","caption":"…","cta":"Start free trial","status":"draft","notes":"…"}]}',
     clean: (raw) => {
-      const entries = list(raw.entries).map((entry) => ({ date: text(entry?.date, 40), platform: text(entry?.platform, 30), format: text(entry?.format, 30),
-        hook: text(entry?.hook, 200), caption: text(entry?.caption, 400) })).filter((entry) => entry.hook || entry.caption);
+      const entries = list(raw.entries).map((entry) => ({ date: text(entry?.date, 40), platform: text(entry?.platform, 30), pillar: text(entry?.pillar, 60), format: text(entry?.format, 30),
+        hook: text(entry?.hook, 200), caption: text(entry?.caption, 600), cta: text(entry?.cta, 120), status: text(entry?.status, 20) || 'draft', notes: text(entry?.notes, 240),
+        ...(text(entry?.time, 30) ? { time: text(entry.time, 30), time_basis: oneOf(entry?.time_basis, ['DATA', 'ASSUMPTION'], 'ASSUMPTION') } : {}) }))
+        .filter((entry) => entry.hook || entry.caption);
       return entries.length ? { entries } : null;
     },
   },

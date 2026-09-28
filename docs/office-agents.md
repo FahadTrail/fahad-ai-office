@@ -45,8 +45,9 @@ a request keeps that one objective on free, included and promo routes.
   other conversation keep their normal free-first order with paid fallback.
 * When no free route is available, the step waits for capacity
   (`WAITING_FOR_CAPACITY`) instead of paying.
-* The marker is removed before a model sees the request, and it never hides
-  `[confidential]`.
+* The marker is stored as `jobs.free_only` and removed from the stored and
+  displayed request (chat, projects, Telegram) and from what models see.
+* It never hides `[confidential]`.
 
 **Web tools.** Any tool-capable model can use them.
 * `web_search` uses Google Search grounding through the existing Gemini key

@@ -366,6 +366,7 @@ column|d6450b0d59ebc33aefc3db3ece2e65fa|public.continuity_tasks.updated_at times
 column|d6766e4528d24ae7876b0f138f4a6bdc|public.provider_status.consecutive_failures integer null=NO default=0
 column|d6ccbf6a5f487a29342781981da30cf4|public.files.name text null=NO default=
 column|d71fe898a53e39a154fc451db6217e2b|public.continuity_usage.attempt integer null=NO default=
+column|d7768acfb5b191af6898f264344ac33a|public.jobs.free_only boolean null=NO default=false
 column|d7c316ae6cc8e5a24c2818573f2e544f|public.knowledge_items.agent_slug text null=NO default=
 column|d93feffb7fb69b3eda3026d3361613fe|public.agent_approvals.arguments_preview jsonb null=NO default='{}'::jsonb
 column|d9444dc0a9f26531e521685808e40316|public.handoffs.payload jsonb null=NO default='{}'::jsonb

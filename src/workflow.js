@@ -2,6 +2,8 @@ import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validatePlan } from
 import { DISPATCHABLE, mentionedEmployees, officeAgent } from './office/agents.js';
 import { converseDirect, parseConsultRequest, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
 import { parseArtifacts, parseSources } from './office/artifacts.js';
+import { FINANCE_STATES, injectFinanceError, needsCorrection, publishFinance, revisionInstruction, validateFinance } from './office/finance.js';
+import { chiefGate, cleanOutput, codeChecksBlock, enforceAudit, enforceFacts, evidenceGate, factsBlock, numericChecks, socialCalendar } from './office/quality.js';
 import { CAPACITY_LIMITS, capacityDecision } from './office/capacity.js';
 import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
 import { EscalationRequired, classifyOfficeData } from './office/pool-runner.js';
@@ -15,6 +17,7 @@ import {
 } from './config.js';
 import { ScopedToolBrokerSession } from './tool-broker/session.js';
 import { routingLanguage } from './office/language.js';
+import { extractFreeOnly } from './office/markers.js';
 
 export const WORKFLOW = 'chief-research-chief';
 export const WORKFLOW_VERSION = 1;
@@ -41,6 +44,7 @@ export class OfficeWorkflow {
     synthesize = synthesizeWorkflow,
     direct = converseDirect,
     parallelTasks = 1,
+    pollIntervalMs = 2_000,
     staleMinutes = STALE_TASK_MINUTES,
     maxAttempts = TASK_MAX_ATTEMPTS,
     recoveryIntervalMs = 60_000,
@@ -60,6 +64,8 @@ export class OfficeWorkflow {
     this.executors = { plan, research, review, specialist, synthesize, direct };
     // Independent workstreams are claimed together and run concurrently.
     this.parallelTasks = Math.max(1, Math.min(6, Number(parallelTasks) || 1));
+    this.inFlight = new Set();
+    this.pollIntervalMs = Math.max(10, Number(pollIntervalMs) || 2_000);
     this.staleMinutes = staleMinutes;
     this.maxAttempts = maxAttempts;
     this.recoveryIntervalMs = recoveryIntervalMs;
@@ -84,15 +90,34 @@ export class OfficeWorkflow {
       progressed = true;
     }
 
-    const claimed = [];
-    while (claimed.length < this.parallelTasks) {
+    // Dependency-aware pool: a task starts as soon as its own dependencies
+    // are done and a slot is free; it never waits for unrelated siblings.
+    let started = false;
+    while (this.inFlight.size < this.parallelTasks) {
       const task = await this.store.claimNextTask();
       if (!task) break;
-      claimed.push(task);
+      const running = this.execute(task).finally(() => this.inFlight.delete(running));
+      this.inFlight.add(running);
+      started = true;
     }
-    if (!claimed.length) return progressed;
-    await Promise.all(claimed.map((task) => this.execute(task)));
+    if (!this.inFlight.size) return progressed || started;
+    // Return when a task finishes (its dependents may now start) or after a
+    // short poll, so new jobs and newly ready tasks are claimed meanwhile.
+    let timer;
+    await Promise.race([...this.inFlight, new Promise((resolve) => { timer = setTimeout(resolve, this.pollIntervalMs); timer.unref?.(); })]);
+    clearTimeout(timer);
     return true;
+  }
+
+  // Waits for every task already running (shutdown and tests).
+  async drainInFlight() {
+    while (this.inFlight.size) await Promise.race(this.inFlight);
+  }
+
+  // The request as the workflow sees it: control markers stripped and the
+  // job's routing restrictions (free-only) applied.
+  request(task) {
+    return officeRequest(task.goal, this.env, { freeOnly: Boolean(task.free_only) });
   }
 
   async bootstrap(job) {
@@ -140,6 +165,10 @@ export class OfficeWorkflow {
     let brief;
     try {
       brief = decodeBrief(task.brief);
+      // Structured routing restriction stored on the job ([free-only]).
+      if (task.free_only === undefined && typeof this.store.getJob === 'function') {
+        task.free_only = Boolean((await this.store.getJob(task.job_id).catch(() => null))?.free_only);
+      }
       if (brief.stage === STAGES.PLAN) await this.executePlan(task);
       else if (brief.stage === STAGES.RESEARCH) await this.executeResearch(task, brief);
       else if (brief.stage === STAGES.REVIEW) await this.executeReview(task, brief);
@@ -188,7 +217,7 @@ export class OfficeWorkflow {
     const agent = await this.store.getAgent('chief-of-staff');
     const preference = await this.providerPreference(task, STAGES.PLAN);
     const model = preference === 'deepseek' ? DEEPSEEK_MODEL : CHIEF_MODEL;
-    const request = officeRequest(task.goal, this.env);
+    const request = this.request(task);
     const job = chiefJob(request.goal);
     if (this.modelRunner) {
       await this.startStage(task, agent, 'CHIEF_PLANNING', `shared-pool:${job}`, `Chief of Staff is planning (job: ${job}; free-first shared Model Pool).`, preference, { job, dataClass: request.dataClass });
@@ -309,7 +338,7 @@ export class OfficeWorkflow {
     assertAgent(task, specialist.agentSlug);
     const agent = await this.store.getAgent(specialist.agentSlug);
     if (specialist.webTools) assertAuthorizedResearchTools(agent.allowed_tools || []);
-    const request = officeRequest(task.goal, this.env);
+    const request = this.request(task);
     if (this.modelRunner) {
       await this.startStage(task, agent, 'RESEARCH_WORKING', `shared-pool:${specialist.job}`, `${specialist.label} is working (job: ${specialist.job}; free-first shared Model Pool).`, MODEL_PROVIDER, { job: specialist.job, dataClass: request.dataClass, role });
     } else {
@@ -339,7 +368,7 @@ export class OfficeWorkflow {
     const agent = await this.store.getAgent('chief-of-staff');
     const preference = await this.providerPreference(task, STAGES.REVIEW);
     const model = preference === 'deepseek' ? DEEPSEEK_MODEL : CHIEF_MODEL;
-    const request = officeRequest(task.goal, this.env);
+    const request = this.request(task);
     const job = chiefJob(request.goal, { stage: 'review' });
     if (this.modelRunner) {
       await this.startStage(task, agent, 'CHIEF_REVIEW_STARTED', `shared-pool:${job}`, `Chief is reviewing the specialist result (job: ${job}; free-first shared Model Pool).`, preference, { job, dataClass: request.dataClass });
@@ -407,21 +436,33 @@ export class OfficeWorkflow {
     assertAgent(task, employee.slug);
     const agent = await this.store.getAgent(employee.slug);
     const webTools = employee.webTools && hasWebTools(agent.allowed_tools);
-    const request = officeRequest(task.goal, this.env);
+    const request = this.request(task);
     await this.startStage(task, agent, 'SPECIALIST_WORKING', `shared-pool:${employee.job}`, `${employee.label} is working on: ${brief.title}${brief.revision ? ' (revision)' : ''}.`, MODEL_PROVIDER,
       { job: employee.job, dataClass: request.dataClass, role: employee.key });
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     const upstream = (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content);
     const previous = brief.revision ? upstream.find((entry) => entry.task_id === brief.revisesTaskId)?.content : null;
     const knowledge = await this.knowledgeFor(context, employee);
-    const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.specialist({
-      agent, role: employee.key, goal: request.goal, brief: brief.brief, title: brief.title,
-      upstream: brief.revision ? upstream.filter((entry) => entry.task_id !== brief.revisesTaskId) : upstream,
-      context: context?.project ? projectLine(context) : '', knowledge, revision: brief.revision || null, previous, webTools, onActivity,
-      execution: this.modelExecution(task, STAGES.SPECIALIST),
+    const inputs = brief.revision ? upstream.filter((entry) => entry.task_id !== brief.revisesTaskId) : upstream;
+    // AUDIT: deterministic numeric checks first; the model reviews second.
+    const checks = employee.key === 'audit' ? numericChecks(inputs) : null;
+    if (checks && (checks.findings.length || checks.passed.length)) {
+      await this.store.emit({
+        jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity', level: checks.findings.length ? 'warning' : 'info',
+        message: checks.findings.length ? `AUDIT code checks: ${checks.findings.length} numeric inconsistenc${checks.findings.length === 1 ? 'y' : 'ies'} found.` : `AUDIT code checks passed (${checks.passed.length}).`,
+        payload: { kind: 'audit_numeric_checks', failed: checks.findings.map((finding) => ({ code: finding.code, owner: finding.owner, severity: finding.severity, expected: finding.expected, actual: finding.actual })), passed: checks.passed.length },
+      });
+    }
+    const work = (stage, revision, prior) => this.withHeartbeat(task, (onActivity) => this.executors.specialist({
+      agent, role: employee.key, goal: request.goal, brief: brief.brief, title: brief.title, upstream: inputs,
+      context: context?.project ? projectLine(context) : '', knowledge, revision, previous: prior, webTools, onActivity,
+      codeChecks: checks ? codeChecksBlock(checks) : '',
+      execution: this.modelExecution(task, stage),
       toolBroker: this.toolSession(task, STAGES.SPECIALIST),
-      ...(this.modelRunner ? { run: this.poolRun(task, STAGES.SPECIALIST, { job: employee.job, request, preference: MODEL_PROVIDER }) } : {}),
+      ...(this.modelRunner ? { run: this.poolRun(task, stage, { job: employee.job, request, preference: MODEL_PROVIDER, fresh: stage !== STAGES.SPECIALIST }) } : {}),
     }));
+    let outcome = await work(STAGES.SPECIALIST, brief.revision || null, previous);
+    outcome = await this.qualityGates(task, employee, outcome, { request, brief, checks, redo: (instruction, prior, round) => work(`${STAGES.SPECIALIST}:validation${round}`, instruction, prior) });
     const parsed = parseOutputSummary(outcome.text);
     await this.recordOutcome(task, outcome, `${employee.label} finished: ${brief.title}.`);
     const stored = await this.persistOutputs(task, employee, outcome.text, context);
@@ -435,10 +476,74 @@ export class OfficeWorkflow {
     await this.store.completeTask(task, outcome, parsed.summary.slice(0, 300) || summarize(outcome.text));
   }
 
+  // Code gates around an employee's output, in source-of-truth order:
+  // clean text → evidence quality → FINANCE deterministic validation (with
+  // automatic return to FINANCE) → SOCIAL calendar → AUDIT code findings.
+  // requireModel: a FINANCE workstream (whose figures CHIEF will use) must back
+  // its figures with a structured model; a quick direct answer is checked
+  // only when it carries one.
+  async qualityGates(task, employee, outcome, { request, brief = {}, checks = null, redo = null, requireModel = true }) {
+    const emit = (message, payload, level = 'info') => this.store.emit({ jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity', level, message, payload });
+    let current = { ...outcome, text: cleanOutput(outcome.text) };
+    const merge = (next) => {
+      current = {
+        ...next, text: cleanOutput(next.text),
+        tokensIn: (current.tokensIn || 0) + (next.tokensIn || 0), tokensOut: (current.tokensOut || 0) + (next.tokensOut || 0),
+        costUsd: Number(((current.costUsd || 0) + (next.costUsd || 0)).toFixed(8)), durationMs: (current.durationMs || 0) + (next.durationMs || 0),
+        evidence: next.evidence || current.evidence,
+      };
+    };
+    if (employee.key === 'finance') {
+      if (request.drills.financeError && !brief.revision) {
+        const drill = injectFinanceError(current.text);
+        if (drill.injected) {
+          current.text = drill.text;
+          await emit(`Drill: a deliberately wrong ${drill.injected.field} (${drill.injected.value}) was written into FINANCE's output before validation.`, { kind: 'finance_drill', stage: 'before_validation', ...drill.injected }, 'warning');
+        }
+      }
+      let validation = validateFinance(current.text);
+      let round = 0;
+      const failing = (result) => (requireModel ? needsCorrection(result) : result.state === FINANCE_STATES.INCONSISTENT);
+      while (redo && failing(validation) && round < 2 && !(validation.state === FINANCE_STATES.INSUFFICIENT && round >= 1)) {
+        round += 1;
+        await emit(`FINANCE validation ${validation.state}: ${validation.issues.length} issue${validation.issues.length === 1 ? '' : 's'} — returned to FINANCE (round ${round}).`,
+          { kind: 'finance_validation', state: validation.state, round, returned: true, issues: validation.issues.slice(0, 8) }, 'warning');
+        merge(await redo(revisionInstruction(validation), current.text, round));
+        validation = validateFinance(current.text);
+      }
+      const applies = validation.calculated || (requireModel && validation.figures);
+      if (applies) current.text = publishFinance(current.text, validation);
+      if (applies) await emit(`FINANCE validation: ${validation.state}${round ? ` after ${round} correction round${round === 1 ? '' : 's'}` : ''}.`,
+        { kind: 'finance_validation', state: validation.state, final: true, rounds: round, issues: validation.issues.slice(0, 8),
+          calculated: validation.calculated ? { year_revenue: validation.calculated.year_revenue ?? null, year_costs: validation.calculated.year_costs, net: validation.calculated.net ?? null, break_even_month: validation.calculated.break_even_month ?? null, months: validation.calculated.months } : null },
+        validation.state === FINANCE_STATES.VERIFIED ? 'info' : 'warning');
+      if (request.drills.financeErrorAudit && !brief.revision) {
+        const drill = injectFinanceError(current.text);
+        if (drill.injected) {
+          current.text = drill.text;
+          await emit(`Drill: a deliberately wrong ${drill.injected.field} (${drill.injected.value}) was written into FINANCE's output AFTER its validation — AUDIT and CHIEF must catch it.`, { kind: 'finance_drill', stage: 'after_validation', ...drill.injected }, 'warning');
+        }
+      }
+    }
+    if (current.evidence?.searchDegraded) {
+      const gated = evidenceGate(current.text, current.evidence);
+      current.text = gated.text;
+      await emit(`Web search was unavailable for ${employee.label} (${current.evidence.searchError || 'provider quota'}); continued with ${current.evidence.fetchOk || 0} directly fetched page${current.evidence.fetchOk === 1 ? '' : 's'}${gated.insufficient ? ' — evidence INSUFFICIENT' : ''}.`,
+        { kind: 'search_degraded', error: current.evidence.searchError || null, fetched: current.evidence.fetchOk || 0, insufficient: gated.insufficient, downgraded: gated.downgraded || 0 }, 'warning');
+    }
+    if (employee.key === 'social') {
+      const calendar = socialCalendar(current.text);
+      current.text = calendar.text;
+      if (calendar.converted) await emit(`SOCIAL's calendar table (${calendar.converted} posts) was saved as a calendar artifact.`, { kind: 'calendar_structured', entries: calendar.converted });
+    }
+    if (employee.key === 'audit' && checks) current.text = enforceAudit(current.text, checks);
+    return current;
+  }
+
   async executeSynthesis(task, brief) {
     assertAgent(task, 'chief-of-staff');
     const agent = await this.store.getAgent('chief-of-staff');
-    const request = officeRequest(task.goal, this.env);
+    const request = this.request(task);
     const job = chiefJob(request.goal, { stage: 'review' });
     await this.startStage(task, agent, 'CHIEF_SYNTHESIS', this.modelRunner ? `shared-pool:${job}` : CHIEF_MODEL, 'Chief is reviewing the employees’ work and consolidating the result.', MODEL_PROVIDER,
       this.modelRunner ? { job, dataClass: request.dataClass } : null);
@@ -447,8 +552,35 @@ export class OfficeWorkflow {
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     const streams = Array.isArray(brief.workstreams) ? brief.workstreams : [];
     const revisable = brief.round === 1 && streams.filter((stream) => stream.agent !== 'coding').length >= 1;
+    // Critical-fact gate: FINANCE figures are re-validated by code and AUDIT's
+    // numeric findings are read before CHIEF writes anything.
+    const gate = chiefGate(outputs);
+    if (gate.finance.length || gate.openAudit.length) {
+      await this.store.emit({
+        jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity', level: gate.blocked ? 'warning' : 'info',
+        message: gate.blocked ? `Chief fact gate: FINANCE figures are not verified${gate.openAudit.length ? ` and AUDIT has ${gate.openAudit.length} blocked numeric finding(s)` : ''}.`
+          : `Chief fact gate: ${gate.facts.length} validated financial figure${gate.facts.length === 1 ? '' : 's'} will be preserved.`,
+        payload: { kind: 'fact_gate', round: brief.round, blocked: gate.blocked, facts: gate.facts, finance: gate.finance.map((entry) => ({ task_id: entry.taskId, state: entry.validation.state, issues: entry.validation.issues.length })), open_audit: gate.openAudit.length },
+      });
+    }
+    if (revisable && gate.blocked) {
+      const revisions = [];
+      for (const entry of gate.unverified) {
+        const stream = streams.find((candidate) => candidate.taskId === entry.taskId) || streams.find((candidate) => candidate.agent === 'finance');
+        if (stream && !revisions.some((revision) => revision.workstream === stream.id)) revisions.push({ workstream: stream.id, instruction: revisionInstruction(entry.validation).slice(0, 4000) });
+      }
+      for (const finding of gate.openAudit) {
+        const stream = streams.find((candidate) => candidate.agent === finding.owner);
+        if (stream && stream.agent !== 'coding' && !revisions.some((revision) => revision.workstream === stream.id)) {
+          revisions.push({ workstream: stream.id, instruction: `AUDIT numeric finding (BLOCKED): ${finding.detail} Expected ${finding.expected || '—'}, stated ${finding.actual || '—'}. ${finding.fix || ''}`.trim() });
+        }
+      }
+      if (revisions.length) {
+        return this.requestRevisions(task, { text: '', tokensIn: 0, tokensOut: 0, costUsd: 0, model: 'no model call (fact gate)' }, brief, streams, revisions.slice(0, WORKFLOW_LIMITS.maxRevisions));
+      }
+    }
     const synthesize = (allowRevision) => this.withHeartbeat(task, (onActivity) => this.executors.synthesize({
-      agent, goal: request.goal, synthesisBrief: brief.synthesisBrief, outputs, allowRevision, workstreams: streams,
+      agent, goal: request.goal, synthesisBrief: brief.synthesisBrief, outputs, allowRevision, workstreams: streams, facts: factsBlock(gate),
       context: context?.project ? projectLine(context) : '', onActivity,
       execution: this.modelExecution(task, `${STAGES.SYNTHESIS}:${allowRevision ? 1 : 2}`),
       toolBroker: this.toolSession(task, STAGES.SYNTHESIS),
@@ -459,6 +591,21 @@ export class OfficeWorkflow {
     if (revisions.length) return this.requestRevisions(task, outcome, brief, streams, revisions);
     // A malformed revision request is never shown to Fahad as the answer.
     if (/^\s*(```(?:json)?\s*)?\{\s*"revise"/.test(outcome.text)) outcome = await synthesize(false);
+    // CHIEF may not restate a financial figure differently from the validated
+    // calculation, nor repeat a figure already proven wrong.
+    const enforced = enforceFacts(cleanOutput(outcome.text), gate);
+    let finalText = enforced.text;
+    if (gate.blocked) {
+      finalText = `## Not closed — blocked finding\nThe financial figures did not pass code validation${gate.openAudit.length ? ' and AUDIT has unresolved BLOCKED numeric findings' : ''}. They are not presented as fact; FINANCE must correct them before this project can close.\n\n${finalText}`;
+    }
+    if (enforced.removed || gate.blocked) {
+      await this.store.emit({
+        jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity', level: 'warning',
+        message: `Chief fact gate: ${enforced.removed} statement${enforced.removed === 1 ? '' : 's'} contradicting the validated figures ${enforced.removed === 1 ? 'was' : 'were'} removed${gate.blocked ? '; the result is marked NOT CLOSED' : ''}.`,
+        payload: { kind: 'fact_gate_enforced', removed: enforced.removed, blocked: gate.blocked },
+      });
+    }
+    outcome = { ...outcome, text: finalText };
     await this.recordOutcome(task, outcome, 'Chief final result is ready to save.');
     await this.persistOutputs(task, officeAgent('chief'), outcome.text, context);
     await this.store.completeTask(task, outcome, summarize(outcome.text));
@@ -512,8 +659,8 @@ export class OfficeWorkflow {
       const inputs = upstream.map((entry) => `### ${officeAgent(entry.agent_slug)?.label || entry.agent_slug} — ${entry.title}\n${String(entry.content).slice(0, 6000)}`).join('\n\n');
       const session = await this.store.createCodingSession({
         workspaceId: context.project.id, title: brief.title, repository, conversationId: context.conversationId || null, createdBy: 'chief-of-staff',
-        ...(officeRequest(task.goal, this.env).freeOnly ? { routing: { allowPaid: false } } : {}),
-        objective: [brief.brief, inputs ? `\nINPUTS FROM THE OFFICE:\n${inputs}` : '', `\nOriginal objective from Fahad: ${officeRequest(task.goal, this.env).goal}`].join('\n').slice(0, 40_000),
+        ...(this.request(task).freeOnly ? { routing: { allowPaid: false } } : {}),
+        objective: [brief.brief, inputs ? `\nINPUTS FROM THE OFFICE:\n${inputs}` : '', `\nOriginal objective from Fahad: ${this.request(task).goal}`].join('\n').slice(0, 40_000),
       });
       text = `## Summary\nThe Coding Agent started the development task "${brief.title}" on \`${repository}\`.\n\n## Work\nTask: [${brief.title}](#/task/${session.id}) — it plans, edits, tests, opens a pull request and follows CI on its own.\n\n## Handoff\nProgress is visible under Tasks; approvals it needs appear under Needs attention.\n\n## Decisions for Fahad\nNone now; the Coding Agent will ask if it needs approval.`;
       payload = { kind: 'task_launched', session_id: session.id, repository };
@@ -530,7 +677,7 @@ export class OfficeWorkflow {
     if (!employee || employee.executor !== 'office') throw new Error(`Unknown Office employee ${brief.agent}`);
     assertAgent(task, employee.slug);
     const agent = await this.store.getAgent(employee.slug);
-    const request = officeRequest(task.goal, this.env);
+    const request = this.request(task);
     const consults = brief.followUp ? (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content) : [];
     await this.startStage(task, agent, 'DIRECT_WORKING', `shared-pool:${employee.job}`,
       consults.length ? `${employee.label} is answering Fahad with input from ${consults.map((entry) => officeAgent(entry.agent_slug)?.label || entry.agent_slug).join(', ')}.` : `${employee.label} is answering Fahad.`,
@@ -546,7 +693,7 @@ export class OfficeWorkflow {
         employee: key, question: `Fahad asked ${employee.label}: "${request.goal.slice(0, 1500)}". Give ${employee.label} the input from your specialty that this needs.`,
       })));
     }
-    const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
+    let outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
       agent, role: employee.key, goal: request.goal, context: context?.text || '', knowledge, consults, allowConsult,
       webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
       execution: this.modelExecution(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT),
@@ -555,6 +702,17 @@ export class OfficeWorkflow {
     }));
     const requests = allowConsult ? parseConsultRequest(outcome.text, employee.key) : [];
     if (requests.length) return this.requestConsults(task, outcome, employee, requests);
+    const gated = await this.qualityGates(task, employee, outcome, {
+      request, brief, requireModel: false,
+      redo: (instruction, prior, round) => this.withHeartbeat(task, (onActivity) => this.executors.direct({
+        agent, role: employee.key, goal: `${request.goal}\n\nREVISION REQUIRED BEFORE THIS ANSWER CAN BE SENT:\n${instruction}\n\nYOUR PREVIOUS ANSWER:\n${String(prior).slice(0, 12_000)}\nReturn the complete corrected answer.`,
+        context: context?.text || '', knowledge, consults, allowConsult: false, webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
+        execution: this.modelExecution(task, `${STAGES.DIRECT}:validation${round}`),
+        toolBroker: this.toolSession(task, STAGES.DIRECT),
+        ...(this.modelRunner ? { run: this.poolRun(task, `${STAGES.DIRECT}:validation${round}`, { job: employee.job, request, preference: MODEL_PROVIDER, fresh: true }) } : {}),
+      })),
+    });
+    outcome = gated;
     await this.recordOutcome(task, outcome, `${employee.label} answered.`);
     await this.persistOutputs(task, employee, outcome.text, context);
     await this.store.completeTask(task, outcome, summarize(outcome.text));
@@ -593,7 +751,7 @@ export class OfficeWorkflow {
     if (!employee || employee.retired || employee.executor === 'chief' || !asker) throw new Error(`Invalid consult ${brief.from} → ${brief.agent}`);
     assertAgent(task, employee.slug);
     const agent = await this.store.getAgent(employee.slug);
-    const request = officeRequest(task.goal, this.env);
+    const request = this.request(task);
     // Advice from CODING is analysis, not engineering: route it as research.
     const job = employee.executor === 'coding' ? 'research' : employee.job;
     await this.startStage(task, agent, 'CONSULT_WORKING', `shared-pool:${job}`, `${employee.label} is answering ${asker.label}.`, MODEL_PROVIDER,
@@ -609,8 +767,9 @@ export class OfficeWorkflow {
       toolBroker: this.toolSession(task, STAGES.CONSULT),
       ...(this.modelRunner ? { run: this.poolRun(task, STAGES.CONSULT, { job, request, preference: MODEL_PROVIDER }) } : {}),
     }));
-    await this.recordOutcome(task, outcome, `${employee.label} answered ${asker.label}.`);
-    await this.store.completeTask(task, outcome, summarize(outcome.text));
+    const answer = { ...outcome, text: cleanOutput(outcome.text) };
+    await this.recordOutcome(task, answer, `${employee.label} answered ${asker.label}.`);
+    await this.store.completeTask(task, answer, summarize(answer.text));
   }
 
   // Artifacts (structured outputs the Hub renders) and cited sources (curated
@@ -711,7 +870,7 @@ export class OfficeWorkflow {
   // A stage run on the shared Model Pool: the stage names its job type; the
   // shared router chooses the model. Audit, checkpoints and provider switches
   // go to the same durable records as before.
-  poolRun(task, stage, { job, request, preference = MODEL_PROVIDER, validate = null, drillFailover = false }) {
+  poolRun(task, stage, { job, request, preference = MODEL_PROVIDER, validate = null, drillFailover = false, fresh = false }) {
     const execution = this.modelExecution(task, stage);
     return async (args) => this.modelRunner.run({
       job,
@@ -728,7 +887,7 @@ export class OfficeWorkflow {
       context: execution.gatewayContext,
       validate,
       beforeCall: drillFailover ? failoverDrill() : null,
-      resume: task.wait_info?.checkpoint || null,
+      resume: fresh ? null : task.wait_info?.checkpoint || null,
       hooks: {
         onAttempt: execution.onAttempt,
         onCheckpoint: execution.onCheckpoint,
@@ -933,26 +1092,29 @@ export function safeError(error) {
     .slice(0, 500);
 }
 
-const FREE_ONLY_MARKER = /\[(free-only|مجاني فقط)\]/i;
-const FREE_ONLY_MARKERS = /\[(free-only|مجاني فقط)\]/gi;
 
 // The request as Office sees it: owner drill markers and the confidential
 // marker are removed from what models receive; the data class is decided
 // once per job (office/pool-runner.js classifyOfficeData).
-export function officeRequest(goal, env = process.env) {
+export function officeRequest(goal, env = process.env, { freeOnly: storedFreeOnly = false } = {}) {
   const raw = String(goal || '');
   const drillsEnabled = !/^(0|false|no)$/i.test(String(env.OFFICE_DRILLS_ENABLED || ''));
   const drills = {
     failover: drillsEnabled && /\[drill:failover\]/i.test(raw),
     escalate: drillsEnabled && /\[drill:escalate\]/i.test(raw),
+    // A deliberately wrong FINANCE total, written before FINANCE's own
+    // validation (…-error) or after it, so only AUDIT/CHIEF can catch it.
+    financeError: drillsEnabled && /\[drill:finance-error\]/i.test(raw),
+    financeErrorAudit: drillsEnabled && /\[drill:finance-error-audit\]/i.test(raw),
   };
   // [free-only] keeps this one objective on free routes; it only narrows
   // routing (the workspace policy and every other job are unaffected).
   // It is removed before classification so it never hides [confidential].
-  const freeOnly = FREE_ONLY_MARKER.test(raw);
-  const text = freeOnly ? raw.replace(FREE_ONLY_MARKERS, ' ').replace(/[ \t]{2,}/g, ' ').trim() : raw;
+  const marker = extractFreeOnly(raw);
+  const freeOnly = storedFreeOnly || marker.freeOnly;
+  const text = marker.text;
   const { dataClass, reason } = classifyOfficeData(text, { env });
-  const cleaned = text.replace(/\[drill:(failover|escalate)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').replace(/[ \t]{2,}/g, ' ').trim();
+  const cleaned = text.replace(/\[drill:(failover|escalate|finance-error|finance-error-audit)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').replace(/[ \t]{2,}/g, ' ').trim();
   return { goal: cleaned || raw, dataClass, dataClassReason: reason, drills, freeOnly };
 }
 

@@ -25,7 +25,7 @@ export function upstreamBlock(outputs = []) {
 }
 
 // A workstream done by one employee, following the output contract.
-export async function performOfficeWork({ agent, role, goal, brief, title, upstream = [], context = '', knowledge = [], revision = null, previous = null, webTools = false, run = runModel, onActivity, execution = {} }) {
+export async function performOfficeWork({ agent, role, goal, brief, title, upstream = [], context = '', knowledge = [], revision = null, previous = null, webTools = false, codeChecks = '', run = runModel, onActivity, execution = {} }) {
   const employee = officeAgent(role);
   return run({
     ...execution,
@@ -50,6 +50,7 @@ export async function performOfficeWork({ agent, role, goal, brief, title, upstr
       context ? `PROJECT CONTEXT:\n${context}` : '',
       knowledgeBlock(knowledge),
       `INPUTS FROM OTHER EMPLOYEES:\n${upstreamBlock(upstream)}`,
+      codeChecks ? `\n${codeChecks}` : '',
       revision ? `\nREVISION REQUESTED BY THE CHIEF: ${revision}\nYOUR PREVIOUS VERSION:\n${String(previous || '').slice(0, MAX_INPUT_CHARS)}\nReturn the complete revised deliverable.` : '',
     ].filter(Boolean).join('\n'),
   });
@@ -57,7 +58,7 @@ export async function performOfficeWork({ agent, role, goal, brief, title, upstr
 
 // The Chief consolidates every output. In the first round it may instead ask
 // for revisions (JSON), bounded by the workflow limits.
-export async function synthesizeWorkflow({ agent, goal, synthesisBrief, outputs, allowRevision, workstreams = [], context = '', run = runModel, onActivity, execution = {} }) {
+export async function synthesizeWorkflow({ agent, goal, synthesisBrief, outputs, allowRevision, workstreams = [], context = '', facts = '', run = runModel, onActivity, execution = {} }) {
   return run({
     ...execution,
     maxTurns: CHIEF_MAX_TURNS,
@@ -86,6 +87,7 @@ export async function synthesizeWorkflow({ agent, goal, synthesisBrief, outputs,
       `ORIGINAL OBJECTIVE: ${goal}`,
       `WHAT THE RESULT MUST COVER: ${synthesisBrief}`,
       context ? `PROJECT CONTEXT:\n${context}` : '',
+      facts ? `\n${facts}` : '',
       '',
       `EMPLOYEE OUTPUTS:\n${upstreamBlock(outputs)}`,
     ].filter(Boolean).join('\n'),

@@ -157,6 +157,8 @@ async function main() {
     }
   }
 
+  // Tasks already running finish (or are recovered later if interrupted).
+  await workflow.drainInFlight?.().catch(() => {});
   clearInterval(heartbeatTimer);
   log('Runtime stopped cleanly.');
 }

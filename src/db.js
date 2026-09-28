@@ -1,6 +1,7 @@
 // Supabase is the durable workflow authority. State transitions that require
 // locking or idempotency stay in the existing service-role-only RPCs.
 
+import { extractFreeOnly } from './office/markers.js';
 import { buildJobContext } from './job-context.js';
 import { createClient } from '@supabase/supabase-js';
 import { FAILURE_CLASS, GatewayError } from './model-gateway/contracts.js';
@@ -196,7 +197,10 @@ export class SupabaseStore {
   }
 
   async createJob({ title, goal, priority = 'normal', projectId = null, requestedProvider = 'auto', conversationId = null }) {
-    const values = { title, goal, priority, status: 'planning', requested_provider: requestedProvider };
+    // Control markers become structured routing metadata, never message text.
+    const request = extractFreeOnly(goal);
+    const values = { title: extractFreeOnly(title).text || request.text.slice(0, 120), goal: request.text, priority, status: 'planning', requested_provider: requestedProvider };
+    if (request.freeOnly) values.free_only = true;
     if (projectId) values.project_id = projectId;
     if (conversationId) values.conversation_id = conversationId;
     const { data, error } = await this.db

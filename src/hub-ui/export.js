@@ -23,8 +23,9 @@ export function artifactRows(artifact) {
       ...arr(data.items).map((item) => [item.category, item.item, item.one_time ?? '', item.monthly ?? '', (Number(item.one_time) || 0) + (Number(item.monthly) || 0) * 12, item.basis, item.note, data.currency || ''])];
     case 'compliance_matrix': return [['Requirement', 'Jurisdiction', 'Applicability', 'Status', 'Classification', 'Uncertainty', 'Source', 'Source date'],
       ...arr(data.items).map((item) => [item.requirement, item.jurisdiction, item.applicability, item.status, item.classification, item.uncertainty, item.source, item.source_date])];
-    case 'audit_report': return [['Verdict', 'Issue', 'Severity', 'Area', 'Owner', 'Fix'], ...arr(data.findings).map((finding) => [data.verdict, finding.title, finding.severity, finding.area, finding.owner, finding.detail])];
-    case 'content_calendar': return [['When', 'Platform', 'Format', 'Hook', 'Caption'], ...arr(data.entries).map((entry) => [entry.date, entry.platform, entry.format, entry.hook, entry.caption])];
+    case 'audit_report': return [['Verdict', 'Issue', 'Severity', 'Area', 'Owner', 'Detail', 'Expected', 'Stated', 'Fix'], ...arr(data.findings).map((finding) => [data.verdict, finding.title, finding.severity, finding.area, finding.owner, finding.detail, finding.expected, finding.actual, finding.fix])];
+    case 'content_calendar': return [['When', 'Time', 'Platform', 'Pillar', 'Format', 'Hook', 'Caption / script', 'CTA', 'Status', 'Notes'],
+      ...arr(data.entries).map((entry) => [entry.date, entry.time ? `${entry.time}${entry.time_basis === 'DATA' ? '' : ' (assumption)'}` : '', entry.platform, entry.pillar, entry.format, entry.hook, entry.caption, entry.cta, entry.status, entry.notes])];
     case 'checklist': return [['Item', 'Status', 'Owner', 'Note'], ...arr(data.items).map((item) => [item.text, item.status, item.owner, item.note])];
     case 'timeline': return [['Milestone', 'Start', 'End', 'Status', 'Detail'], ...arr(data.items).map((item) => [item.label, item.start, item.end, item.status, item.detail])];
     case 'kanban': return [['Column', 'Card', 'Detail', 'Priority'], ...arr(data.columns).flatMap((column) => arr(column.cards).map((card) => [column.name, card.title, card.detail, card.priority]))];

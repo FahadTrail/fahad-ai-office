@@ -147,19 +147,49 @@ export async function webSearch({ query }, { env = process.env, fetchFn = fetch,
 
 export function resetSearchCooldowns() { searchCooldown.clear(); }
 
-export function createOfficeToolExecutor({ env = process.env, fetchFn = fetch, resolve = lookup, allowSearch = true } = {}) {
-  return async (call) => {
+// One executor per model run. When the search provider is unavailable (quota,
+// rate limit, outage) the run is marked "search degraded" once: later
+// web_search calls return the same degraded result without retrying, the
+// model is told to continue with web_fetch, and report() tells the workflow
+// exactly what evidence was actually retrieved.
+const DEGRADED_CODES = new Set(['SEARCH_RATE_LIMITED', 'SEARCH_FAILED', 'SEARCH_UNAVAILABLE']);
+
+export function createOfficeToolExecutor({ env = process.env, fetchFn = fetch, resolve = lookup, allowSearch = true, search = webSearch, fetchPage = webFetch } = {}) {
+  const state = { searchDegraded: false, searchError: null, searchOk: 0, searchFailures: 0, fetchOk: 0, fetchFailures: 0, fetchedUrls: [] };
+  const degraded = () => ({ ok: false, result: {
+    error: 'SEARCH_DEGRADED', degraded: true,
+    message: `Web search is unavailable right now (${state.searchError}). Do not call web_search again in this task. Continue with web_fetch on official or well-known URLs you can name, and label any claim you could not check as UNKNOWN.`,
+  } });
+  const executor = async (call) => {
     try {
-      if (call.name === 'web_fetch') return { ok: true, result: await webFetch(call.arguments || {}, { fetchFn, resolve }) };
+      if (call.name === 'web_fetch') {
+        const page = await fetchPage(call.arguments || {}, { fetchFn, resolve });
+        if (page?.error) state.fetchFailures += 1;
+        else { state.fetchOk += 1; if (page?.url && state.fetchedUrls.length < 40) state.fetchedUrls.push(page.url); }
+        return { ok: true, result: page };
+      }
       if (call.name === 'web_search') {
         if (!allowSearch) throw toolError('SEARCH_NOT_ALLOWED_FOR_DATA_CLASS', 'Web search is disabled for confidential tasks');
-        return { ok: true, result: await webSearch(call.arguments || {}, { env, fetchFn }) };
+        if (state.searchDegraded) return degraded();
+        try {
+          const result = await search(call.arguments || {}, { env, fetchFn });
+          state.searchOk += 1;
+          return { ok: true, result };
+        } catch (error) {
+          if (!DEGRADED_CODES.has(error.code) || (error.code === 'SEARCH_FAILED' && error.status && ![429, 500, 502, 503, 504].includes(error.status))) throw error;
+          state.searchFailures += 1;
+          state.searchDegraded = true;
+          state.searchError = `${error.code}${error.status ? ` HTTP ${error.status}` : ''}`;
+          return degraded();
+        }
       }
       throw toolError('TOOL_UNKNOWN', `Unknown tool ${call.name}`);
     } catch (error) {
       return { ok: false, result: { error: error.code || 'TOOL_FAILED', message: String(error.message || 'Tool failed').slice(0, 300) } };
     }
   };
+  executor.report = () => ({ ...state, fetchedUrls: [...state.fetchedUrls] });
+  return executor;
 }
 
 function toolError(code, message, status = null) {
