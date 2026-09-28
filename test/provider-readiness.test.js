@@ -49,7 +49,9 @@ test('provider catalogs keep chat model ids only and rule out models a provider 
     assert.deepEqual(byId['groq:qwen/qwen3.8-27b'].unavailableReasons, ['CATALOG_MODEL_NOT_IN_PROVIDER_CATALOG'], 'a removed/renamed model is never called');
     assert.deepEqual(byId['groq:openai/gpt-oss-120b'].unavailableReasons, []);
     assert.equal(byId['groq:openai/gpt-oss-120b'].requestTokenLimit, 8000, 'Groq free plan: 8K tokens per minute bounds each request');
-    assert.equal(byId['groq:openai/gpt-oss-120b'].capabilities.contextWindow, 8000);
+    // A per-minute token rate is not a context window (router sprint, fix A).
+    assert.equal(byId['groq:openai/gpt-oss-120b'].capabilities.contextWindow, 131_072);
+    assert.equal(byId['groq:openai/gpt-oss-120b'].capabilities.tokensPerMinute, 8000);
   } finally {
     setProviderCatalog('groq', null);
   }

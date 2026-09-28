@@ -15,13 +15,46 @@ export function knowledgeBlock(items = []) {
 
 const MAX_INPUT_CHARS = 12_000;
 
-export function upstreamBlock(outputs = []) {
+export function upstreamBlock(outputs = [], { compact = false } = {}) {
   if (!outputs.length) return 'none';
   return outputs.map((output) => {
     const who = officeAgent(output.agent_slug)?.label || output.agent_slug;
     const content = String(output.content || output.summary || '');
+    if (compact) return `### From ${who} — ${output.title}\n${handoffPacket(content)}`;
     return `### From ${who} — ${output.title}\n${content.length > MAX_INPUT_CHARS ? `${content.slice(0, MAX_INPUT_CHARS)}\n…[truncated]` : content}`;
   }).join('\n\n');
+}
+
+// Structured handoff between employees: the next employee needs the facts,
+// decisions, validated figures and artifacts, not the whole transcript.
+// Kept VERBATIM: the code-written "Validated figures" section and every
+// artifact block (structured data). The prose deliverable is shortened.
+const PACKET_WORK_CHARS = 2_500;
+const PACKET_ARTIFACT_CHARS = 3_000;
+export function handoffPacket(markdown) {
+  const text = String(markdown || '');
+  const artifacts = [...text.matchAll(/```artifact\n[\s\S]*?\n```/g)].map((match) => match[0]);
+  const prose = text.replace(/```artifact\n[\s\S]*?\n```/g, '');
+  const section = (name) => {
+    const match = prose.match(new RegExp(`^##\\s*${name}[^\\n]*\\n([\\s\\S]*?)(?=^##\\s|$(?![\\s\\S]))`, 'mi'));
+    return match ? match[1].trim() : '';
+  };
+  const summary = section('Summary');
+  const work = section('Work');
+  const handoff = section('Handoff');
+  const decisions = section('Decisions for Fahad');
+  const facts = section('Validated figures \\(calculated by code\\)');
+  const open = section('Open (issues|questions)[^\\n]*') || section('Risks');
+  if (!summary && !work && !handoff) return text.length > PACKET_WORK_CHARS * 2 ? `${text.slice(0, PACKET_WORK_CHARS * 2)}\n…[shortened]` : text;
+  return [
+    summary && `SUMMARY: ${summary}`,
+    facts && `KEY FACTS (validated by code — use exactly):\n${facts}`,
+    work && `DELIVERABLE (shortened):\n${work.length > PACKET_WORK_CHARS ? `${work.slice(0, PACKET_WORK_CHARS)}\n…[shortened]` : work}`,
+    handoff && `HANDOFF NOTES: ${handoff}`,
+    decisions && !/^none\.?$/i.test(decisions) && `DECISIONS FOR FAHAD: ${decisions}`,
+    open && `UNRESOLVED: ${open}`,
+    artifacts.length && `ARTIFACTS:\n${artifacts.map((block) => (block.length > PACKET_ARTIFACT_CHARS ? `${block.slice(0, PACKET_ARTIFACT_CHARS)}…` : block)).join('\n')}`,
+  ].filter(Boolean).join('\n');
 }
 
 // A workstream done by one employee, following the output contract.
@@ -49,7 +82,8 @@ export async function performOfficeWork({ agent, role, goal, brief, title, upstr
       `CHIEF'S BRIEF: ${brief}`,
       context ? `PROJECT CONTEXT:\n${context}` : '',
       knowledgeBlock(knowledge),
-      `INPUTS FROM OTHER EMPLOYEES:\n${upstreamBlock(upstream)}`,
+      // AUDIT reviews the full outputs; everyone else gets handoff packets.
+      `INPUTS FROM OTHER EMPLOYEES:\n${upstreamBlock(upstream, { compact: employee.key !== 'audit' })}`,
       codeChecks ? `\n${codeChecks}` : '',
       revision ? `\nREVISION REQUESTED BY THE CHIEF: ${revision}\nYOUR PREVIOUS VERSION:\n${String(previous || '').slice(0, MAX_INPUT_CHARS)}\nReturn the complete revised deliverable.` : '',
     ].filter(Boolean).join('\n'),

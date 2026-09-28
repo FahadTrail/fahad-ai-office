@@ -145,7 +145,40 @@ export async function webSearch({ query }, { env = process.env, fetchFn = fetch,
   throw toolError(lastStatus === 429 ? 'SEARCH_RATE_LIMITED' : 'SEARCH_FAILED', `Search provider returned HTTP ${lastStatus}; use web_fetch on known sources`, lastStatus);
 }
 
-export function resetSearchCooldowns() { searchCooldown.clear(); }
+export function resetSearchCooldowns() { searchCooldown.clear(); searchBreaker.reset(); }
+
+// Process-wide search circuit breaker. Per-run degradation alone still let
+// every new task rediscover the same outage (production: 78 of 80 searches
+// failed). After BREAKER_THRESHOLD failures within BREAKER_WINDOW_MS the
+// breaker opens: web_search is not offered to models and not called until
+// it closes (15 min, doubling to 60 min while failures continue). One
+// success closes it.
+const BREAKER_THRESHOLD = 3;
+const BREAKER_WINDOW_MS = 10 * 60_000;
+export const searchBreaker = {
+  failures: [], openUntil: 0, openings: 0, lastError: null,
+  now: () => Date.now(),
+  isOpen() { return this.now() < this.openUntil; },
+  recordFailure(code) {
+    const now = this.now();
+    this.lastError = code;
+    this.failures = [...this.failures.filter((at) => now - at < BREAKER_WINDOW_MS), now];
+    if (this.failures.length >= BREAKER_THRESHOLD) {
+      this.openings += 1;
+      this.openUntil = now + Math.min(60, 15 * 2 ** (this.openings - 1)) * 60_000;
+      this.failures = [];
+    }
+  },
+  recordSuccess() { this.failures = []; this.openUntil = 0; this.openings = 0; this.lastError = null; },
+  reset() { this.failures = []; this.openUntil = 0; this.openings = 0; this.lastError = null; },
+  status() { return { state: this.isOpen() ? 'SEARCH_DEGRADED' : 'OK', openUntil: this.isOpen() ? new Date(this.openUntil).toISOString() : null, lastError: this.lastError }; },
+};
+
+// The web tools offered to a model right now: web_search is withheld while
+// the breaker is open, so no model turn is spent discovering the outage.
+export function officeWebTools() {
+  return searchBreaker.isOpen() ? OFFICE_WEB_TOOLS.filter((tool) => tool.name !== 'web_search') : OFFICE_WEB_TOOLS;
+}
 
 // One executor per model run. When the search provider is unavailable (quota,
 // rate limit, outage) the run is marked "search degraded" once: later
@@ -171,12 +204,19 @@ export function createOfficeToolExecutor({ env = process.env, fetchFn = fetch, r
       if (call.name === 'web_search') {
         if (!allowSearch) throw toolError('SEARCH_NOT_ALLOWED_FOR_DATA_CLASS', 'Web search is disabled for confidential tasks');
         if (state.searchDegraded) return degraded();
+        if (searchBreaker.isOpen()) {
+          state.searchDegraded = true;
+          state.searchError = `SEARCH_DEGRADED (${searchBreaker.lastError || 'repeated failures'})`;
+          return degraded();
+        }
         try {
           const result = await search(call.arguments || {}, { env, fetchFn });
           state.searchOk += 1;
+          searchBreaker.recordSuccess();
           return { ok: true, result };
         } catch (error) {
           if (!DEGRADED_CODES.has(error.code) || (error.code === 'SEARCH_FAILED' && error.status && ![429, 500, 502, 503, 504].includes(error.status))) throw error;
+          searchBreaker.recordFailure(error.code);
           state.searchFailures += 1;
           state.searchDegraded = true;
           state.searchError = `${error.code}${error.status ? ` HTTP ${error.status}` : ''}`;
@@ -188,7 +228,7 @@ export function createOfficeToolExecutor({ env = process.env, fetchFn = fetch, r
       return { ok: false, result: { error: error.code || 'TOOL_FAILED', message: String(error.message || 'Tool failed').slice(0, 300) } };
     }
   };
-  executor.report = () => ({ ...state, fetchedUrls: [...state.fetchedUrls] });
+  executor.report = () => ({ ...state, fetchedUrls: [...state.fetchedUrls], searchBreaker: searchBreaker.status() });
   return executor;
 }
 

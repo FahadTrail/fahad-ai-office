@@ -16,10 +16,11 @@ import { randomUUID } from 'node:crypto';
 import { createModelPool, PRICING } from '../model-gateway/agentic/model-pool.js';
 import { AgentTurnGateway, estimateTokens } from '../model-gateway/agentic/turn-gateway.js';
 import { resolveRouting } from '../model-gateway/agentic/routing-policy.js';
+import { relaxedJob } from '../model-gateway/agentic/capabilities.js';
 import { userText, toolResult } from '../model-gateway/agentic/conversation.js';
 import { authorizedRoutes } from '../workspace-policy/engine.js';
 import { findSecretMaterial } from '../coding-agent/policy.js';
-import { OFFICE_WEB_TOOLS, createOfficeToolExecutor } from './web-tools.js';
+import { createOfficeToolExecutor, officeWebTools } from './web-tools.js';
 
 export const DATA_CLASS = Object.freeze({ GENERAL: 'general', CONFIDENTIAL: 'confidential' });
 
@@ -124,7 +125,8 @@ export class OfficeModelRunner {
     });
     const searchRoute = pool.find((route) => route.provider === 'gemini');
     const executeTool = this.toolExecutorFactory({ env: this.env, fetchFn: this.fetchFn, allowSearch: !requiresPrivateData || Boolean(searchRoute?.privacyApproved) });
-    const tools = useWebTools ? OFFICE_WEB_TOOLS : [];
+    // web_search is withheld while the search circuit breaker is open.
+    const tools = useWebTools ? officeWebTools() : [];
 
     const completed = [];
     const path = [];
@@ -141,6 +143,7 @@ export class OfficeModelRunner {
     // conversation) instead of being saved half-finished.
     let partial = '';
     let continuations = 0;
+    let relaxedFrom = null;
 
     for (const call of Array.isArray(resume?.completedToolCalls) ? resume.completedToolCalls.slice(0, 40) : []) {
       if (!call?.name) continue;
@@ -149,9 +152,14 @@ export class OfficeModelRunner {
       completed.push({ key: `${call.name}:${JSON.stringify(args)}`, name: call.name, args, result: { resumed: true, summary }, summary });
     }
     const handoff = () => {
-      if (!completed.length) return [userText(prompt)];
+      // A draft cut off mid-answer (output limit, then the route failed) is
+      // handed over as REFERENCE, never accepted as-is: the next model writes
+      // the complete answer, which is validated like any other.
+      const draft = partial.trim() ? `\n\nDRAFT FROM THE PREVIOUS MODEL (unverified, cut off before it finished). Reuse what is correct and write the COMPLETE answer:\n${partial.slice(0, 12_000)}` : '';
+      partial = '';
+      if (!completed.length) return [userText(`${prompt}${draft}`)];
       const lines = completed.map((entry, index) => `${index + 1}. ${entry.name}(${JSON.stringify(entry.args)}) → ${entry.summary}`);
-      return [userText(`${prompt}\n\nCHECKPOINT — work already completed on this task by a previous model. Do NOT repeat these tool calls; build on their results:\n${lines.join('\n')}`)];
+      return [userText(`${prompt}\n\nCHECKPOINT — work already completed on this task by a previous model. Do NOT repeat these tool calls; build on their results:\n${lines.join('\n')}${draft}`)];
     };
     if (completed.length) messages = handoff();
     const checkpoint = async (kind, detail) => {
@@ -217,6 +225,17 @@ export class OfficeModelRunner {
           },
         });
       } catch (error) {
+        // Before waiting: a low-risk job may drop one capability level
+        // (formatting, content, classification). Never legal, security,
+        // finance, synthesis or CHIEF/AUDIT orchestration.
+        const relaxed = ['NO_ELIGIBLE_PROVIDER', 'ALL_PROVIDERS_UNAVAILABLE'].includes(error.code) && !relaxedFrom ? relaxedJob(job) : null;
+        if (relaxed) {
+          relaxedFrom = job;
+          job = relaxed.name;
+          escalations.push({ from: `job:${relaxedFrom}`, code: 'LOWER_TIER_FALLBACK', checkpoint: checkpointSequence });
+          await (hooks.onEscalation || (async () => {}))({ fromRoute: `job:${relaxedFrom}`, reason: 'LOWER_TIER_FALLBACK', checkpointSequence });
+          continue;
+        }
         lastEvaluation = error.evaluations || null;
         error.officeRouting = { job, dataClass, path, switches, escalations, evaluations: lastEvaluation };
         // What this step already did, so a resumed attempt does not redo it.

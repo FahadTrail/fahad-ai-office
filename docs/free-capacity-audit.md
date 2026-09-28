@@ -314,10 +314,10 @@ needed to fix capacity**.
 
 | Area | Waste found (MEASURED) | Fix | Estimated saving |
 |---|---|---|---|
-| Coding: CI polling by the model | One session: 23 `github.ci_status` calls, 22 of them repeats, each a model turn re-sending about 30K tokens (about 0.6M tokens) | The controller already polls CI deterministically. Refuse or redirect model-initiated `ci_status` / `deploy.status` repeats and resume the model only on a CI result. | 10–25% of medium and heavy sessions |
+| ~~Coding: CI polling by the model~~ **CORRECTED 2026-09-28** | The 23 `github.ci_status` rows are **controller polls** (30 s apart, no model turn in between; the model has no CI tool). They cost **0 model tokens**. | No change needed. A regression test now locks CI/deploy polling to the controller (`test/router-efficiency.test.js` O). | 0% (the original claim was wrong) |
 | Coding: turn budget on small tasks | A JSDoc-only change took 34 turns and 621K tokens, against 70–150K for similar tasks | Task-size estimate, then a turn cap and a forced "finish now" (as the Office already does) | Up to 70% on outliers |
 | Coding: transcript growth | Input per turn 8K → 57K average | Rolling summary of old tool results (compaction exists; lower its trigger); read-dedupe (exists: 5 repeats of 112 reads) | 20–35% |
-| Coding overall | — | The three rows above together | **40–55% of Coding tokens** |
+| Coding overall | — | Turn budget + transcript compaction (rows above; the CI row was a wrong claim) | **about 15–30% of Coding tokens (ESTIMATE, revised down from 40–55%)** |
 | Office: failing web search | 78 of 80 searches failed, each costing a turn | A global search circuit breaker (per hour, not per task) plus a real free search API | 5–10% of research tokens, plus much better research |
 | Office: FINANCE web tools | Repo fetches on given-assumption tasks | `webTools: false` for FINANCE unless the brief asks for market data | 10–20% of FINANCE tokens |
 | Office: partial answer lost on 429 | 4,000 output tokens discarded | Keep the partial and continue on the next route (continuation already exists for length cut-offs) | Strong-tier quota |
