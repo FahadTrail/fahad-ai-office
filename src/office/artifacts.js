@@ -181,11 +181,55 @@ export const ARTIFACT_TYPES = Object.freeze({
 
 const BLOCK = /```artifact\s*\n([\s\S]*?)```/g;
 
+// End index (exclusive) of the JSON object starting at `from`, or -1.
+function jsonEnd(text, from) {
+  let index = from;
+  while (index < text.length && /\s/.test(text[index])) index += 1;
+  if (text[index] !== '{') return -1;
+  let depth = 0;
+  let inString = false;
+  for (; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (char === '\\') index += 1;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    else if (char === '{' || char === '[') depth += 1;
+    else if (char === '}' || char === ']') {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return -1;
+}
+
+// Models sometimes forget the closing fence of an artifact block (a long
+// calendar followed directly by "## Handoff"). The block is closed right
+// after its JSON object, so the deliverable is not silently lost.
+export function repairArtifactFences(markdown) {
+  const text = String(markdown || '');
+  if (!text.includes('```artifact')) return text;
+  const open = /```artifact[ \t]*\n/g;
+  let output = '';
+  let cursor = 0;
+  let match;
+  while ((match = open.exec(text))) {
+    const start = match.index + match[0].length;
+    const end = jsonEnd(text, start);
+    if (end < 0) continue;
+    const close = text.indexOf('```', end);
+    if (close >= 0 && !text.slice(end, close).trim()) continue;
+    output += `${text.slice(cursor, end)}\n\`\`\``;
+    cursor = end;
+  }
+  return output + text.slice(cursor);
+}
+
 // Every artifact block in an output → validated artifacts (max 6).
 export function parseArtifacts(markdown) {
   const artifacts = [];
   const errors = [];
-  for (const match of String(markdown || '').matchAll(BLOCK)) {
+  for (const match of repairArtifactFences(markdown).matchAll(BLOCK)) {
     if (artifacts.length >= 6) break;
     let raw;
     try { raw = JSON.parse(match[1]); } catch { errors.push('invalid JSON'); continue; }

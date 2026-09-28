@@ -6,7 +6,7 @@
 //   chiefGate         — the validated facts CHIEF must preserve
 //   enforceFacts      — CHIEF text cannot carry a figure that contradicts them
 //   evidenceGate      — degraded web search is recorded, never hidden
-import { ARTIFACT_TYPES, realUrl } from './artifacts.js';
+import { ARTIFACT_TYPES, realUrl, repairArtifactFences } from './artifacts.js';
 import { officeAgent } from './agents.js';
 import { FINANCE_STATES, agrees, artifactBlocks, fmt, mapArtifactBlocks, needsCorrection, parseAmount, proseClaims, validateFinance, validatedFacts } from './finance.js';
 
@@ -23,7 +23,7 @@ const PROCESS_LINE = /^\s*(?:now,? (?:that )?i (?:have|will|'ll|can)|let me\b|le
 const NARRATION_LINE = /^\s*(?:now,? (?:that )?i (?:have|will|'ll|can)\b|let me (?:now )?(?:check|look|build|create|draft|compile|gather|verify|research|search|start|begin|put together|fetch|review|pull|calculate|summari[sz]e|think)|i(?:'ll| will| am going to) (?:now )?(?:research|build|create|start|look|check|search|draft|prepare|compile|write|use|fetch|gather|verify|review|begin)|based on (?:the |my )?(?:tool|search|fetch|web)\b)/i;
 
 export function cleanOutput(markdown) {
-  let text = String(markdown || '').replace(/^﻿/, '');
+  let text = repairArtifactFences(String(markdown || '').replace(/^\uFEFF/, ''));
   // Everything before the first section heading is dropped when it is only
   // process narration (short, no artifact, no table).
   const first = text.search(/^##?\s/m);

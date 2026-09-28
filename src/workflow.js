@@ -778,6 +778,13 @@ export class OfficeWorkflow {
     const saved = { artifacts: 0, sources: 0 };
     const base = { project_id: context?.project?.id || task.project_id || null, job_id: task.job_id, task_id: task.task_id, agent_slug: employee.slug };
     const { artifacts } = parseArtifacts(text);
+    // The stored validation state always describes the stored content.
+    if (employee.key === 'finance' && artifacts.some((entry) => entry.type === 'financial_model')) {
+      const current = validateFinance(text);
+      for (const entry of artifacts) {
+        if (entry.type === 'financial_model' && entry.data.validation) entry.data.validation = { state: current.state, issues: current.issues.slice(0, 12) };
+      }
+    }
     if (artifacts.length && typeof this.store.saveArtifacts === 'function') {
       saved.artifacts = await this.store.saveArtifacts(artifacts.map((entry) => ({ ...base, conversation_id: context?.conversationId || null, ...entry })))
         .then(() => artifacts.length).catch(() => 0);
