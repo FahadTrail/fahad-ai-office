@@ -283,6 +283,7 @@ export class OfficeModelRunner {
         const equivalent = paidEquivalentUsd(totals.inputTokens, totals.outputTokens);
         return {
           text, provider: route.provider, model: route.model, routeId: route.id, billingClass: route.billingClass, job, dataClass,
+          evidence: typeof executeTool.report === 'function' && tools.length ? executeTool.report() : null,
           tokensIn: totals.inputTokens, tokensOut: totals.outputTokens, costUsd: totals.costUsd, durationMs: Date.now() - started,
           path, switches, escalations, toolsUsed, checkpoints: checkpointSequence,
           savings: equivalent == null ? null : { basis: `ESTIMATE — same tokens at the ${PREVIOUS_OFFICE_ROUTE} published list price`, paidEquivalentUsd: equivalent, actualUsd: totals.costUsd, estimatedSavingUsd: Number(Math.max(0, equivalent - totals.costUsd).toFixed(6)) },

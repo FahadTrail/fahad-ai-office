@@ -50,7 +50,11 @@ export const OFFICE_AGENTS = Object.freeze([
     deliverable: 'Financial model', artifacts: ['financial_model', 'chart', 'table'],
     contract: [
       'Mark every figure KNOWN (from a source or Fahad), ESTIMATED (your estimate with reasoning) or ASSUMPTION. Never present an estimate as fact.',
-      'Include a "financial_model" artifact (line items with basis) and a "chart" artifact (monthly costs, scenarios or break-even).',
+      'Your job is the assumptions and the structure; the Office does the arithmetic in code. Include ONE "financial_model" artifact with every cost line',
+      '(one_time / monthly, the month it starts, basis), a "revenue" block with your revenue assumptions when revenue matters (price, customers added per month,',
+      'churn, trial months — or an explicit monthly schedule), and "claims" with the headline figures you state (year_revenue, year_costs, net, break_even_month).',
+      'Code recalculates totals, monthly schedules, margins and break-even from your inputs and REJECTS any stated figure that does not match.',
+      'Do not hand-draw monthly schedule charts or tables — the Office draws the calculated schedule. If break-even is not reached in the period, say so.',
     ],
   },
   {
@@ -64,7 +68,9 @@ export const OFFICE_AGENTS = Object.freeze([
     deliverable: 'Readiness review', artifacts: ['audit_report', 'checklist'],
     contract: [
       'Include an "audit_report" artifact with a verdict (PASS / NEEDS WORK / BLOCKED) and findings, each with severity',
-      '(low/medium/high/critical), area and the responsible employee key (research, creative, product, finance, coding, social, legal).',
+      '(low/medium/high/critical/blocked), area, the responsible employee key (research, creative, product, finance, coding, social, legal) and the fix.',
+      'Numbers are checked by code before your review: never contradict a CODE CHECK. Your review covers interpretation, assumptions, missing information,',
+      'business logic and risk.',
       'Return issues to their owner; do not rewrite their work yourself.',
     ],
   },
@@ -74,7 +80,9 @@ export const OFFICE_AGENTS = Object.freeze([
     deliverable: 'Content & campaign plan', artifacts: ['content_calendar', 'table'],
     contract: [
       'Use fresh research for trends and platform behaviour; say when you could not verify something current.',
-      'Include a "content_calendar" artifact (date, platform, format, hook). Brief CREATIVE on visuals in the Handoff. Drafts only; nothing is published.',
+      'The calendar itself is a "content_calendar" artifact with EVERY post (date, platform, pillar, format, hook, caption or script, cta, status, notes) —',
+      'not a text list. Give an exact posting time only when you have platform or account data for it (time_basis "DATA"); otherwise omit it or label it',
+      '"ASSUMPTION". Brief CREATIVE on visuals in the Handoff. Drafts only; nothing is published.',
     ],
   },
   {
@@ -156,6 +164,7 @@ export const OUTPUT_CONTRACT = [
   '## Handoff — what the Chief or the next employee must know or do next.',
   '## Decisions for Fahad — only decisions that genuinely need the owner (or "None").',
   'Add ## Sources with links when you used the web. Never invent facts, figures or sources; label estimates as estimates.',
+  'Start directly with "## Summary": no narration of your process ("Now I have…", "Let me…").',
 ];
 
 // Parses the sections of a specialist output (tolerant of missing ones).

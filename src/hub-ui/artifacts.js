@@ -78,14 +78,23 @@ function financial(data) {
   const categories = [...items.reduce((map, item) => map.set(item.category || 'Other', (map.get(item.category || 'Other') || 0) + firstYear(item)), new Map())].sort((x, y) => y[1] - x[1]);
   const top = Math.max(1, ...categories.map(([, value]) => value));
   const uncertain = items.filter((item) => (item.basis || 'ESTIMATED') !== 'KNOWN').reduce((sum, item) => sum + firstYear(item), 0);
-  return `<div class="art-kpis"><div><span>Setup (one-time)</span><strong class="num">${esc(fmt(oneTime, currency))}</strong></div><div><span>Monthly</span><strong class="num">${esc(fmt(monthly, currency))}</strong></div>
+  // Figures calculated by code (office/finance.js) and the validation state.
+  const calc = data.calculated && typeof data.calculated === 'object' ? data.calculated : null;
+  const state = String(data.validation?.state || '');
+  const verdict = state ? `<div class="fin-validation fv-${esc(state.toLowerCase().replace(/\s+/g, '-'))}">${tag(state, { VERIFIED: 'ok', INCONSISTENT: 'bad' }[state] || 'warn')}
+      <span class="small">${state === 'VERIFIED' ? 'Every stated figure matches the calculation from these assumptions.' : state === 'INCONSISTENT' ? 'Some stated figures disagree with the calculation — do not use them.' : 'Not enough structured data to verify the figures.'}</span></div>` : '';
+  const calcKpis = calc && calc.year_revenue !== undefined ? `<div class="art-kpis"><div><span>Revenue · ${esc(calc.months)} months</span><strong class="num">${esc(fmt(calc.year_revenue, currency))}</strong></div>
+      <div><span>Costs · ${esc(calc.months)} months</span><strong class="num">${esc(fmt(calc.year_costs, currency))}</strong></div><div><span>Net</span><strong class="num">${esc(fmt(calc.net, currency))}</strong></div>
+      <div><span>Cash break-even</span><strong class="num">${calc.break_even_month ? `Month ${esc(calc.break_even_month)}` : 'Not reached'}</strong></div></div>` : '';
+  return `${verdict}${calcKpis}<div class="art-kpis"><div><span>Setup (one-time)</span><strong class="num">${esc(fmt(oneTime, currency))}</strong></div><div><span>Monthly</span><strong class="num">${esc(fmt(monthly, currency))}</strong></div>
       <div><span>Annual running</span><strong class="num">${esc(fmt(monthly * 12, currency))}</strong></div><div><span>First year total</span><strong class="num">${esc(fmt(annual, currency))}</strong></div></div>
     ${annual > 0 ? `<div class="fin-basis" role="img" aria-label="First-year cost by basis">${byBasis.filter(([, value]) => value > 0).map(([basis, value]) => `<span class="fb-${basis.toLowerCase()}" style="flex:${value}" title="${esc(basis)}: ${esc(fmt(value, currency))}"></span>`).join('')}</div>
       <div class="fin-basis-legend">${byBasis.map(([basis, value]) => `<span><i class="fb-${basis.toLowerCase()}"></i>${esc(basis)} <span class="num">${esc(fmt(value, currency))}</span></span>`).join('')}</div>` : ''}
     ${categories.length > 1 ? `<div class="fin-cats">${categories.map(([name, value]) => `<div class="fin-cat"><span dir="auto">${esc(name)}</span><span class="fin-bar"><i style="width:${Math.max(2, (value / top) * 100).toFixed(1)}%"></i></span><span class="num">${esc(fmt(value, currency))}</span></div>`).join('')}</div>` : ''}
     ${table(['Category', 'Item', 'One-time', 'Monthly', 'First year', 'Basis', 'Note'], items.map((item) => [esc(item.category), esc(item.item), esc(fmt(n(item.one_time))), esc(fmt(n(item.monthly))), esc(fmt(firstYear(item))), tag(item.basis || 'ESTIMATED', basisKind[item.basis] || 'warn'), esc(item.note)]))}
     ${uncertain > 0 ? `<div class="fin-sens small">Sensitivity (derived): if the ESTIMATED and ASSUMPTION lines are 20% higher, the first year is <strong class="num">${esc(fmt(annual + uncertain * 0.2, currency))}</strong>; 20% lower, <strong class="num">${esc(fmt(annual - uncertain * 0.2, currency))}</strong>.</div>` : ''}
-    <div class="xs faint">Totals are sums of the lines above. KNOWN = sourced · ESTIMATED = reasoned estimate · ASSUMPTION = to confirm.</div>`;
+    ${arr(data.validation?.issues, 8).length ? `<ul class="fin-issues small">${arr(data.validation.issues, 8).map((entry) => `<li dir="auto">${esc(entry.detail)}</li>`).join('')}</ul>` : ''}
+    <div class="xs faint">${calc ? 'Revenue, costs, net and break-even are calculated by code from the assumptions. ' : ''}Totals are sums of the lines above. KNOWN = sourced · ESTIMATED = reasoned estimate · ASSUMPTION = to confirm.</div>`;
 }
 
 function riskMatrix(data) {
@@ -161,21 +170,21 @@ const RENDER = {
   },
   audit_report: (data) => {
     const findings = arr(data.findings);
-    const order = { critical: 0, high: 1, medium: 2, low: 3 };
-    const counts = ['critical', 'high', 'medium', 'low'].map((severity) => [severity, findings.filter((finding) => finding.severity === severity).length]);
+    const order = { blocked: 0, critical: 1, high: 2, medium: 3, low: 4 };
+    const counts = ['blocked', 'critical', 'high', 'medium', 'low'].filter((severity, index) => index || findings.some((finding) => finding.severity === 'blocked')).map((severity) => [severity, findings.filter((finding) => finding.severity === severity).length]);
     return `<div class="audit-head"><div class="audit-verdict v-${esc(String(data.verdict || 'PASS').replace(/\s+/g, '-').toLowerCase())}">${esc(data.verdict || 'PASS')}</div>
       <div class="audit-counts">${counts.map(([severity, value]) => `<span class="ac-${severity}"><strong class="num">${value}</strong> ${severity}</span>`).join('')}</div></div>
     ${findings.length ? table(['Issue', 'Severity', 'Area', 'Owner', 'Fix', 'Status'], findings.toSorted((x, y) => (order[x.severity] ?? 9) - (order[y.severity] ?? 9)).map((finding) => [
-      `<strong dir="auto">${esc(finding.title)}</strong>`, tag(finding.severity, { critical: 'bad', high: 'bad', medium: 'warn', low: 'muted' }[finding.severity]), esc(finding.area),
+      `<strong dir="auto">${esc(finding.title)}</strong>${finding.type ? `<div class="xs faint">${esc(finding.type)} · checked by code</div>` : ''}`, tag(finding.severity, { blocked: 'bad', critical: 'bad', high: 'bad', medium: 'warn', low: 'muted' }[finding.severity]), esc(finding.area),
       finding.owner ? `<span class="owner-cell">${esc(String(finding.owner).toUpperCase())}${finding.owner ? `<button type="button" class="btn btn-ghost btn-sm send-owner" data-send-owner="${esc(String(finding.owner).toLowerCase())}" data-issue="${esc(finding.title)}" data-detail="${esc(finding.detail || '')}" hidden>Send to ${esc(String(finding.owner).toUpperCase())}</button>` : ''}</span>` : '—',
-      `<span dir="auto">${esc(finding.detail)}</span>`, tag('open', 'muted')])) : '<div class="small muted">No findings.</div>'}`;
+      `<span dir="auto">${esc(finding.detail)}</span>${finding.expected || finding.actual ? `<div class="xs"><span class="faint">Expected</span> <span class="num">${esc(finding.expected || '—')}</span> · <span class="faint">stated</span> <span class="num">${esc(finding.actual || '—')}</span></div>` : ''}${finding.fix ? `<div class="xs muted" dir="auto">${esc(finding.fix)}</div>` : ''}`, tag('open', 'muted')])) : '<div class="small muted">No findings.</div>'}`;
   },
   content_calendar: (data) => {
     const entries = arr(data.entries);
     const groups = [...entries.reduce((map, entry) => map.set(entry.date || 'Unscheduled', [...(map.get(entry.date || 'Unscheduled') || []), entry]), new Map())];
     return `<div class="cal">${groups.map(([date, list]) => `<div class="cal-day"><div class="cal-date" dir="auto">${esc(date)}</div>${list.map((entry) => `<div class="cal-post">
-      <div class="row"><span class="tag">${esc(entry.platform || 'Platform')}</span>${entry.format ? `<span class="tag muted">${esc(entry.format)}</span>` : ''}</div>
-      <div class="cal-hook" dir="auto">${esc(entry.hook)}</div>${entry.caption ? `<div class="small muted" dir="auto">${esc(entry.caption)}</div>` : ''}</div>`).join('')}</div>`).join('')}</div>
+      <div class="row"><span class="tag">${esc(entry.platform || 'Platform')}</span>${entry.format ? `<span class="tag muted">${esc(entry.format)}</span>` : ''}${entry.pillar ? `<span class="tag muted">${esc(entry.pillar)}</span>` : ''}${entry.time ? `<span class="xs faint">${esc(entry.time)}${entry.time_basis === 'DATA' ? '' : ' (assumption)'}</span>` : ''}</div>
+      <div class="cal-hook" dir="auto">${esc(entry.hook)}</div>${entry.caption ? `<div class="small muted" dir="auto">${esc(entry.caption)}</div>` : ''}${entry.cta ? `<div class="xs" dir="auto"><span class="faint">CTA</span> ${esc(entry.cta)}</div>` : ''}${entry.notes ? `<div class="xs faint" dir="auto">${esc(entry.notes)}</div>` : ''}</div>`).join('')}</div>`).join('')}</div>
     <div class="xs faint">Drafts only — nothing is published without Fahad’s approval.</div>`;
   },
   evidence: (data) => `<ul class="art-evidence">${arr(data.claims).map((claim) => {

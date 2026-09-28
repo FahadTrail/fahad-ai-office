@@ -189,6 +189,21 @@ inside the built runtime image as root.
   `tools/hub-preview.mjs` + `tools/ui-screenshots.mjs`, using fictional
   preview data only.
 
+* V4.1 reliability closure (2026-09-28): FINANCE arithmetic is deterministic
+  (`src/office/finance.js`: calculation, validation, VERIFIED /
+  INCONSISTENT / INSUFFICIENT DATA, automatic return to FINANCE).
+  * AUDIT runs code checks before its model review.
+  * The CHIEF fact gate preserves validated figures and removes contradicting
+    ones.
+  * SOCIAL calendars are structured artifacts, and process narration is
+    stripped.
+  * Scheduling is dependency-aware (no batch barrier).
+  * `[free-only]` is stored as `jobs.free_only` (migration
+    `20261002090000_job_free_only`).
+  * Search degradation is explicit.
+
+  Details are in `docs/v41-reliability.md`.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,
