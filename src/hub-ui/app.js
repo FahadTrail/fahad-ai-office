@@ -204,7 +204,10 @@ async function refreshSidebar() {
   } catch {}
 }
 function markNav(key) {
-  document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.nav === key));
+  document.querySelectorAll('.nav-item, .nav-sub').forEach((item) => item.classList.toggle('active', item.dataset.nav === key));
+  // Deeper pages live under "More": open it when one of them is shown.
+  const more = document.getElementById('navMore');
+  if (more && more.querySelector(`[data-nav="${key}"]`)) more.open = true;
 }
 
 // ------------------------------------------------------------------ search

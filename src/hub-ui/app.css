@@ -228,6 +228,12 @@ table.table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .nav-item { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-2) var(--s-3); border-radius: var(--r-md); color: var(--text-muted); font-weight: 600; font-size: var(--fs-sm); text-decoration: none; }
 .nav-item:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .nav-item.active { background: var(--accent-soft); color: var(--text); }
+.nav-sub { display: block; padding: 2px var(--s-3) var(--s-2) calc(var(--s-3) + 22px); color: var(--text-faint); font-size: var(--fs-xs); font-weight: 600; text-decoration: none; }
+.nav-sub:hover, .nav-sub.active { color: var(--text); text-decoration: none; }
+.nav-more { margin-top: var(--s-3); border-top: 1px solid var(--border); padding-top: var(--s-2); }
+.nav-more > summary { list-style: none; cursor: pointer; }
+.nav-more > summary::-webkit-details-marker { display: none; }
+.nav-more[open] > summary { color: var(--text); }
 .nav-ico { width: 18px; text-align: center; }
 .recent-chats { display: flex; flex-direction: column; gap: 1px; margin: 0 0 var(--s-1) var(--s-5); }
 .recent-chats a { display: block; padding: 5px var(--s-2); border-radius: var(--r-sm); color: var(--text-muted); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none; }

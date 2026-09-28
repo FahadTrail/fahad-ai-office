@@ -24,17 +24,17 @@ const ORDER = ['high', 'balanced', 'light'];
 const MATERIALS = (dark) => ({
   plinth: { color: dark ? '#26282e' : '#f7f5f1', roughness: 0.9 },
   floor: { color: dark ? '#3a3a40' : '#ece3d6', roughness: 0.85 },
-  wood: { color: dark ? '#7a604a' : '#c9ab86', roughness: 0.55 },
-  walnut: { color: dark ? '#5b4435' : '#8a6a52', roughness: 0.5 },
-  white: { color: dark ? '#4a4e58' : '#fbfaf8', roughness: 0.6 },
-  metal: { color: dark ? '#8a8f99' : '#a9adb4', roughness: 0.35, metalness: 0.7 },
-  dark: { color: dark ? '#0d0f13' : '#23252a', roughness: 0.4, metalness: 0.3 },
-  bezel: { color: dark ? '#1a1c21' : '#d9d9dc', roughness: 0.35, metalness: 0.5 },
+  wood: { color: dark ? '#7a604a' : '#c9ab86', roughness: 0.45 },
+  walnut: { color: dark ? '#5b4435' : '#8a6a52', roughness: 0.4 },
+  white: { color: dark ? '#4a4e58' : '#fbfaf8', roughness: 0.55 },
+  metal: { color: dark ? '#9aa0aa' : '#b4b8bf', roughness: 0.28, metalness: 0.85 },
+  dark: { color: dark ? '#0d0f13' : '#23252a', roughness: 0.3, metalness: 0.4 },
+  bezel: { color: dark ? '#1a1c21' : '#d9d9dc', roughness: 0.25, metalness: 0.6 },
   wall: { color: dark ? '#434752' : '#ffffff', roughness: 0.92 },
   textile: { color: dark ? '#4c515c' : '#d9d4cc', roughness: 1 },
   plant: { color: dark ? '#3d5a45' : '#6f8f6f', roughness: 0.9, flatShading: true },
   pot: { color: dark ? '#4a4d55' : '#d8d2c8', roughness: 0.8 },
-  glass: { color: dark ? '#9fb4d0' : '#cfe0f0', roughness: 0.1, metalness: 0, transparent: true, opacity: dark ? 0.12 : 0.18, depthWrite: false },
+  glass: { color: dark ? '#9fb4d0' : '#dbe8f4', roughness: 0.04, metalness: 0.1, transparent: true, opacity: dark ? 0.14 : 0.22, depthWrite: false },
 });
 
 export function mountOffice3D(container, { state, dark = false, tokens = {}, quality = 'balanced', reducedMotion = false, on = {} }) {
@@ -77,6 +77,19 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   const fill = new THREE.DirectionalLight(dark ? '#7f95c9' : '#dbe7ff', dark ? 0.35 : 0.45);
   fill.position.set(24, 14, -10);
   scene.add(hemi, sun, fill);
+  // Image-based lighting: a soft studio environment gives wood, metal, glass
+  // and screens real reflections (PBR). Skipped on the light tier, where
+  // every per-pixel cost matters more than reflections.
+  if (tier !== 'light') try {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const room = new THREE.RoomEnvironment();
+    scene.environment = track(pmrem.fromScene(room, 0.04).texture);
+    scene.environmentIntensity = dark ? 0.28 : 0.3;
+    room.traverse?.((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); });
+    pmrem.dispose();
+    hemi.intensity = dark ? 0.75 : 0.7;
+    renderer.toneMappingExposure = dark ? 1.15 : 0.95;
+  } catch { /* lights alone still draw the Office */ }
 
   // ------------------------------------------------------------ helpers
   let mats = MATERIALS(dark);
