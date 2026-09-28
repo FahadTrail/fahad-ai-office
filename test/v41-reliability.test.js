@@ -336,3 +336,26 @@ test('no false alarms: scenarios, monthly figures, competitors and ordinary sent
   assert.match(chief, /Great, demand is strong\.[\s\S]*competitor[\s\S]*AED 78,000/);
   assert.equal(cleanOutput('## Summary\nGreat, demand is strong.\nLet me show you the plan: three steps.'), '## Summary\nGreat, demand is strong.\nLet me show you the plan: three steps.');
 });
+
+test('a calendar whose closing fence the model forgot is still saved as a calendar artifact', () => {
+  const entries = Array.from({ length: 28 }, (_, index) => ({ date: `Day ${index + 1}`, platform: index % 2 ? 'LinkedIn' : 'Instagram', hook: `Post ${index + 1}`, caption: 'Say "hello" {braces} [ok]' }));
+  const raw = `## Summary\nCalendar.\n\n## Work\n\`\`\`artifact\n${JSON.stringify({ type: 'content_calendar', title: 'Launch', entries })}\n\n## Handoff\nCREATIVE next.\n\n\`\`\`json\n{"x":1}\n\`\`\``;
+  const clean = cleanOutput(raw);
+  const calendar = parseArtifacts(clean).artifacts.find((entry) => entry.type === 'content_calendar');
+  assert.equal(calendar.data.entries.length, 28);
+  assert.match(clean, /## Handoff\nCREATIVE next\./);
+  assert.equal(parseArtifacts(raw).artifacts.length, 1, 'parsing is tolerant as well');
+});
+
+test('a FINANCE artifact is stored with the validation state of the content actually stored', async () => {
+  const plan = PLAN([{ id: 'money', agent: 'finance', title: 'Pilot model', brief: 'Model the pilot costs and revenue.', depends_on: [] }]);
+  const { store, workflow } = office({
+    goal: '[drill:finance-error-audit] Pilot launch plan.', plan,
+    specialist: async () => outcome(financeOutput()),
+    synthesize: async () => outcome('## Executive summary\nDone.'),
+  });
+  await drain(workflow);
+  const models = store.artifacts.filter((row) => row.type === 'financial_model');
+  assert.equal(models[0].data.validation.state, 'INCONSISTENT', 'the drill-altered artifact is not labelled VERIFIED');
+  assert.equal(models.at(-1).data.validation.state, 'VERIFIED', 'the corrected revision is');
+});
