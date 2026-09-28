@@ -10,7 +10,8 @@
 .office-live { margin: var(--s-2) 0 0; color: var(--text-muted); font-size: var(--fs-sm); display: flex; align-items: center; gap: var(--s-2); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st-completed); box-shadow: 0 0 0 4px color-mix(in srgb, var(--st-completed) 18%, transparent); }
 .live-dot.off { background: var(--st-waiting); box-shadow: none; }
-.ask-chief { display: flex; gap: var(--s-2); min-width: min(440px, 100%); }
+.ask-chief { display: flex; gap: var(--s-2); flex: 1 1 320px; min-width: min(320px, 100%); max-width: 460px; }
+.ask-chief .input { flex: 1; min-width: 0; }
 .ask-chief .input { border-radius: var(--r-full); padding-inline: var(--s-4); background: var(--surface); border-color: var(--border-strong); }
 .ask-chief .btn { border-radius: var(--r-full); }
 
@@ -245,4 +246,13 @@
 .o3d-project-card[hidden] { display: none; }
 .o3d-team { display: flex; flex-wrap: wrap; gap: 4px; }
 @media (max-width: 1099px) { .office-mode .om-btn[data-mode="immersive"] { display: none; } }
+/* Laptops (V5.1): the Office fits the screen. On short viewports the status
+   pills give way to the summary sentence, and the 3D stage fills the rest. */
+@media (max-width: 1400px) { .o3d-controls .input-sm { max-width: 150px; } }
+@media (max-height: 820px) {
+  .office.is-immersive .office-stats { display: none; }
+  .office.is-immersive .immersive { height: max(420px, calc(100vh - 215px)); }
+  .o3d-project-card { max-width: 250px; padding: 10px 12px; }
+  .o3d-project-card .o3d-team { display: none; }
+}
 @media (prefers-reduced-motion: reduce) { .o3d-label, .o3d-bar span, .o3d-loading { transition: none; } }

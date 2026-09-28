@@ -9,12 +9,13 @@
 // fetches or queries anything. Any rendering failure calls on.error() and the
 // Live Office falls back to the light Office.
 import * as THREE from '../vendor/three.js?v=__UI_VERSION__';
-import { CAMERA, ENTRANCE, PARTITIONS, PLINTH, WALLS, WINGS, WORKSPACES, anchor, focusPreset, wingPreset } from './layout.js?v=__UI_VERSION__';
+import { CAMERA, ENTRANCE, PARTITIONS, PLINTH, WALLS, WINGS, WORKSPACES, anchor, focusPreset, glanceYaw, wingPreset } from './layout.js?v=__UI_VERSION__';
 import { CODING_STAGES, motionFor, stateVisual } from './state-visuals.js?v=__UI_VERSION__';
 import { POSES, WING_ACCENTS, applyPose, createCharacterFactory } from './characters.js?v=__UI_VERSION__';
 import { drawBoard, drawEngineeringPanel, drawMonitor, drawProjectWall, surfacePalette } from './surfaces.js?v=__UI_VERSION__';
 import { LIGHTING, TRANSITION_MS, blendLighting, easeLight, resolveTime } from './lighting.js?v=__UI_VERSION__';
 import { addDecor, drawArt } from './decor.js?v=__UI_VERSION__';
+import { DETAIL_REPEAT, drawDetail } from './textures.js?v=__UI_VERSION__';
 
 const QUALITY = Object.freeze({
   high: { pixelRatio: 2, shadows: true, shadowSize: 2048, board: [1024, 512], monitor: [320, 200], fps: 60, plants: 1 },
@@ -25,20 +26,30 @@ const ORDER = ['high', 'balanced', 'light'];
 
 // Finishes (V5.1): warm oak floor, warm-white walls, walnut, brushed metal,
 // felt and stone, separated in tone so daylight never washes them together.
+// Wing floor finishes (colour multiplied by the procedural detail).
+const WING_FLOORS = Object.freeze({
+  atrium: { kind: 'stone', light: '#e2dbd0', dark: '#4d4c50', roughness: 0.34 },
+  intelligence: { kind: 'ash', light: '#dccfba', dark: '#4d443c', roughness: 0.55 },
+  strategy: { kind: 'walnut', light: '#b0906f', dark: '#3e3029', roughness: 0.45 },
+  creative: { kind: 'concrete', light: '#d3cdc3', dark: '#46433f', roughness: 0.6 },
+  build: { kind: 'resin', light: '#8a8c92', dark: '#2b2d32', roughness: 0.4 },
+});
+
 const MATERIALS = (dark) => ({
-  plinth: { color: dark ? '#24252a' : '#e9e5de', roughness: 0.9 },
-  floor: { color: dark ? '#4a4038' : '#d9c8b0', roughness: 0.5 },
+  plinth: { color: dark ? '#24252a' : '#ddd7ce', roughness: 0.9 },
+  floor: { color: dark ? '#4a4038' : '#d2bfa4', roughness: 0.58 },
   wood: { color: dark ? '#7a604a' : '#c29a70', roughness: 0.45 },
   walnut: { color: dark ? '#5b4435' : '#7a5a44', roughness: 0.38 },
-  white: { color: dark ? '#4a4e58' : '#f6f4f0', roughness: 0.5 },
+  white: { color: dark ? '#4a4e58' : '#ece8e2', roughness: 0.5 },
   metal: { color: dark ? '#9aa0aa' : '#a9adb4', roughness: 0.28, metalness: 0.85 },
   dark: { color: dark ? '#0d0f13' : '#2a2c31', roughness: 0.3, metalness: 0.4 },
   bezel: { color: dark ? '#1a1c21' : '#cfcfd3', roughness: 0.25, metalness: 0.6 },
-  wall: { color: dark ? '#3f4148' : '#f3f0eb', roughness: 0.92 },
+  wall: { color: dark ? '#3f4148' : '#e9e4dc', roughness: 0.92 },
   textile: { color: dark ? '#4c515c' : '#bdb4a7', roughness: 1 },
   felt: { color: dark ? '#383c46' : '#8c929c', roughness: 1 },
   feltWarm: { color: dark ? '#5a463c' : '#b8977e', roughness: 1 },
   stone: { color: dark ? '#55565c' : '#e3ddd3', roughness: 0.35 },
+  inlay: { color: dark ? '#6a6660' : '#cbbfae', roughness: 0.3 },
   plant: { color: dark ? '#3d5a45' : '#5f7f5f', roughness: 0.9, flatShading: true },
   pot: { color: dark ? '#4a4d55' : '#cfc7bb', roughness: 0.8 },
   // Emitters: task-lamp shades and pendants glow by evening and night
@@ -107,9 +118,28 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
 
   // ------------------------------------------------------------ helpers
   let mats = MATERIALS(dark);
+  // Without image-based lighting (light tier) metals have nothing to
+  // reflect and read as black: they become satin instead.
+  if (!hasEnvironment) for (const name of ['metal', 'dark', 'bezel']) mats[name] = { ...mats[name], metalness: Math.min(mats[name].metalness ?? 0, 0.3), roughness: Math.max(mats[name].roughness, 0.45) };
+  // Procedural detail (textures.js): drawn once, shared, repeated per metre.
+  const detailCache = new Map();
+  const detailTexture = (kind, area = null) => {
+    if (!detailCache.has(kind)) {
+      const c = document.createElement('canvas'); c.width = c.height = ['oak', 'walnut', 'stone'].includes(kind) && tier !== 'light' ? 1024 : 512;
+      const texture = track(new THREE.CanvasTexture(drawDetail(c, kind)));
+      texture.colorSpace = THREE.SRGBColorSpace; texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.anisotropy = tier === 'light' ? 1 : 4;
+      detailCache.set(kind, texture);
+    }
+    const base = detailCache.get(kind);
+    if (!area) return base;
+    const sized = track(base.clone());
+    sized.repeat.set(area[0] / DETAIL_REPEAT[kind], area[1] / DETAIL_REPEAT[kind]);
+    return sized;
+  };
+  const MATERIAL_DETAIL = { wood: 'grain', walnut: 'veneer', stone: 'stone', inlay: 'stone', felt: 'concrete', feltWarm: 'concrete', textile: 'concrete' };
   const materialCache = new Map();
   const material = (name) => {
-    if (!materialCache.has(name)) materialCache.set(name, track(new THREE.MeshStandardMaterial(mats[name])));
+    if (!materialCache.has(name)) materialCache.set(name, track(new THREE.MeshStandardMaterial({ ...mats[name], ...(MATERIAL_DETAIL[name] ? { map: detailTexture(MATERIAL_DETAIL[name]) } : {}) })));
     return materialCache.get(name);
   };
   const box = (w, h, d, mat, [x, y, z], parent, { shadow = true, receive = true } = {}) => {
@@ -210,28 +240,18 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   const world = new THREE.Group();
   scene.add(world);
   box(PLINTH.width, PLINTH.height, PLINTH.depth, 'plinth', [0, -PLINTH.height / 2, PLINTH.centerZ], world, { shadow: false });
-  const floorTexture = (() => {
-    const c = document.createElement('canvas'); c.width = 1024; c.height = 1024;
-    const g = c.getContext('2d');
-    g.fillStyle = mats.floor.color; g.fillRect(0, 0, 1024, 1024);
-    for (let row = 0; row < 32; row += 1) {
-      const offset = (row * 173) % 256;
-      for (let x = -offset; x < 1024; x += 256) {
-        const shade = ((row * 31 + x * 7) % 9) / 9;
-        g.fillStyle = dark ? `rgba(255,255,255,${0.012 + shade * 0.02})` : `rgba(120,90,50,${0.02 + shade * 0.035})`;
-        g.fillRect(x + 1, row * 32 + 1, 254, 30);
-      }
-    }
-    const texture = track(new THREE.CanvasTexture(c));
-    texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = 4;
-    return texture;
-  })();
-  const floor = new THREE.Mesh(track(new THREE.PlaneGeometry(PLINTH.width - 1.2, PLINTH.depth - 1.2)), track(new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 0.78 })));
+  // Floors (V5.1 final polish): oak planks across the Office and a finish
+  // per wing — stone slabs in the atrium, pale ash in Intelligence, walnut
+  // herringbone in Strategy, warm concrete in Creative, dark resin in Build.
+  const floorMaterials = [];
+  const floorMaterial = (options) => { const made = track(new THREE.MeshStandardMaterial(options)); floorMaterials.push(made); return made; };
+  const floor = new THREE.Mesh(track(new THREE.PlaneGeometry(PLINTH.width - 1.2, PLINTH.depth - 1.2)), floorMaterial({ ...mats.floor, map: detailTexture('oak', [PLINTH.width - 1.2, PLINTH.depth - 1.2]) }));
   floor.rotation.x = -Math.PI / 2; floor.position.set(0, 0.002, PLINTH.centerZ); floor.receiveShadow = true;
   world.add(floor);
   for (const wing of WINGS) {
-    const rug = new THREE.Mesh(track(new THREE.PlaneGeometry(wing.width, wing.depth)), track(new THREE.MeshStandardMaterial({
-      color: new THREE.Color(WING_ACCENTS[wing.id]).lerp(new THREE.Color(dark ? '#3a3a40' : '#f3eee6'), dark ? 0.88 : 0.8), roughness: 1, transparent: true, opacity: 0.85 })));
+    const finish = WING_FLOORS[wing.id];
+    const rug = new THREE.Mesh(track(new THREE.PlaneGeometry(wing.width, wing.depth)), floorMaterial({
+      color: dark ? finish.dark : finish.light, roughness: finish.roughness, map: detailTexture(finish.kind, [wing.width, wing.depth]) }));
     rug.rotation.x = -Math.PI / 2; rug.position.set(wing.x, 0.006, wing.z); rug.receiveShadow = true;
     world.add(rug);
   }
@@ -535,20 +555,25 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   let lightTween = null;
   const backdrop = container.parentElement || container;
   const applyLighting = (L) => {
-    hemi.color.set(L.sky); hemi.groundColor.set(L.ground); hemi.intensity = hasEnvironment ? L.hemi : L.hemi + 0.35;
+    // Light tier (no reflections): more ambient, more at night, and brighter
+    // pools, so the Office stays readable without adding real lights.
+    hemi.color.set(L.sky); hemi.groundColor.set(L.ground); hemi.intensity = hasEnvironment ? L.hemi : L.hemi + 0.35 + L.lamps * 0.55;
     sun.color.set(L.sunColor); sun.intensity = L.sun; sun.position.set(...L.sunPos);
     fill.color.set(L.fillColor); fill.intensity = L.fill;
     if (hasEnvironment) scene.environmentIntensity = L.env;
-    renderer.toneMappingExposure = L.exposure;
+    renderer.toneMappingExposure = hasEnvironment ? L.exposure : L.exposure + L.lamps * 0.28;
     material('lamp').emissiveIntensity = L.lamps * 1.5;
     material('pendant').emissiveIntensity = L.lamps * 1.1;
     material('cove').emissiveIntensity = L.washes * 0.55;
-    fx.poolWarm.opacity = L.pools * (dark ? 0.62 : 0.4);
+    fx.poolWarm.opacity = L.pools * (dark ? 0.62 : 0.4) * (hasEnvironment ? 1 : 1.3);
     fx.poolCool.opacity = L.glow * (dark ? 0.26 : 0.18);
     fx.window.opacity = L.windows * (dark ? 0.22 : 0.5);
     fx.wash.opacity = L.washes * 0.45;
     fx.accent.color.setScalar(0.4 + L.accents * 0.9);
     for (const made of screenMaterials) made.color.setScalar(L.screens);
+    // Light tier at night: a faint baked-looking lift on the floors (their
+    // own colour, emissive) keeps the plan readable without real lights.
+    if (!hasEnvironment) for (const made of floorMaterials) { if (made.emissiveMap !== made.map) { made.emissive.copy(made.color); made.emissiveMap = made.map; made.needsUpdate = true; } made.emissiveIntensity = L.lamps * 0.35; }
     const [sky, ground] = dark ? L.backdropDark : L.backdrop;
     backdrop.style.setProperty('--o3d-sky', sky);
     backdrop.style.setProperty('--o3d-ground', ground);
@@ -690,11 +715,14 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
     wake();
   };
   let focused = null;
+  const controlsHeight = () => (container.parentElement?.querySelector('.o3d-controls')?.offsetHeight || 40) + 14;
   // The overview distance is fitted to the stage so the whole plinth shows
   // at any aspect ratio.
   let overviewPreset = { ...CAMERA.overview };
   const fitOverview = () => {
     const corners = [];
+    // Keep the building clear of the view controls (one or two rows).
+    const top = Math.min(0.78, 1 - (2 * (controlsHeight() + 24)) / Math.max(1, container.clientHeight));
     // Fit the furnished area (walls, workspaces, entrance); the plinth's far
     // corners may be cropped slightly.
     for (const x of [-19.6, 19.6]) for (const z of [-15.6, 9.8]) for (const y of [0, 3.6]) corners.push(new THREE.Vector3(x, y, z));
@@ -704,7 +732,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
       const [tx, ty, tz] = CAMERA.overview.target;
       probe.position.set(tx + distance * sin * Math.sin(CAMERA.overview.azimuth), ty + distance * Math.cos(CAMERA.overview.polar), tz + distance * sin * Math.cos(CAMERA.overview.azimuth));
       probe.lookAt(tx, ty, tz); probe.updateMatrixWorld(); probe.updateProjectionMatrix();
-      return corners.every((corner) => { const p = corner.clone().project(probe); return Math.abs(p.x) < 1.1 && p.y < 0.78 && p.y > -1.02; });
+      return corners.every((corner) => { const p = corner.clone().project(probe); return Math.abs(p.x) < 1.1 && p.y < top && p.y > -1.02; });
     };
     let low = 20; let high = 140;
     for (let step = 0; step < 18; step += 1) { const mid = (low + high) / 2; if (fits(mid)) high = mid; else low = mid; }
@@ -797,7 +825,8 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
       }
       for (const workspace of workspaces.values()) {
         const motion = motionFor(workspace.visual, { reducedMotion });
-        applyPose(workspace.figure, workspace.pose, { time, ambient: motion.ambient, task: motion.task, seed: workspace.seed });
+        const glance = workspace.glance && now < workspace.glance.until ? workspace.glance.yaw : 0;
+        applyPose(workspace.figure, workspace.pose, { time, ambient: motion.ambient, task: motion.task, seed: workspace.seed, glance });
         if (workspace.completedAt && now - workspace.completedAt > 6000) { workspace.indicator.visible = false; workspace.completedAt = 0; }
         if (workspace.indicator.visible && !reducedMotion) {
           const pulse = workspace.visual.indicator === 'attention' ? 1 + Math.sin(time * 2.4) * 0.12 : 1;
@@ -864,7 +893,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
       // A workspace outside the frame hides its label instead of piling up at the edge.
       const onScreen = entry.visible && entry.x > -width / 2 && entry.x < rect.width + width / 2 && entry.y > -20 && entry.y < rect.height + 20;
       if (!onScreen) { button.style.visibility = 'hidden'; continue; }
-      top = Math.max(56, Math.min(rect.height - height - 10, top));
+      top = Math.max(controlsHeight() + 8, Math.min(rect.height - height - 10, top));
       const left = Math.max(8, Math.min(rect.width - width - 8, entry.x - width / 2));
       placed.push({ x: left + width / 2, top, width, height });
       button.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
@@ -922,9 +951,24 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   }
 
   // ------------------------------------------------------------ public API
+  // Glances: a real, fresh handoff turns both employees toward each other
+  // for a few seconds, once per handoff. Nothing moves without one.
+  const glanced = new Set();
+  const startGlances = () => {
+    if (reducedMotion) return;
+    for (const handoff of current.handoffs) {
+      const id = `${handoff.id}@${handoff.at}`;
+      if (!handoff.fresh || glanced.has(id)) continue;
+      glanced.add(id);
+      const until = performance.now() + 5000;
+      const from = workspaces.get(handoff.fromKey); const to = workspaces.get(handoff.toKey);
+      if (from && to) { from.glance = { yaw: glanceYaw(handoff.fromKey, handoff.toKey), until }; to.glance = { yaw: glanceYaw(handoff.toKey, handoff.fromKey), until }; }
+    }
+  };
   const update = (next) => {
     const previous = current;
     current = next;
+    startGlances();
     drawSurfaces();
     buildHandoffs();
     drawLabels();

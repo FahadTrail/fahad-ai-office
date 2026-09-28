@@ -15,6 +15,8 @@ const { chromium } = require('playwright');
 const WS = '11111111-1111-4111-8111-111111111111';
 const [outDir = 'shots-3d', ...flags] = process.argv.slice(2);
 const only = (flags.find((flag) => flag.startsWith('--only='))?.slice(7) || '').split(',').filter(Boolean);
+// --size=1280x720 renders every shot at that viewport (laptop QA).
+const forcedSize = flags.find((flag) => flag.startsWith('--size='))?.slice(7).split('x').map(Number) || null;
 mkdirSync(outDir, { recursive: true });
 
 // name → { theme, size, mode, steps(page) }
@@ -50,6 +52,7 @@ const V51 = {
   '10-project-mode': { theme: 'dark', steps: (page) => page.selectOption('#o3dProject', { index: 1 }) },
   '11-office-evening': { theme: 'light', light: 'evening' },
   '12-night-to-day': { theme: 'dark', steps: (page) => page.evaluate(() => window.__fahadOffice3d.light('day')) },
+  '13-night-light-tier': { theme: 'dark', quality: 'light' },
 };
 if (flags.includes('--set=v51')) { for (const key of Object.keys(SHOTS)) delete SHOTS[key]; Object.assign(SHOTS, V51); }
 
@@ -58,20 +61,20 @@ const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--ena
 const report = {};
 for (const [name, shot] of Object.entries(SHOTS)) {
   if (only.length && !only.includes(name)) continue;
-  const [width, height] = shot.size || [1440, 900];
+  const [width, height] = forcedSize || shot.size || [1440, 900];
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme: shot.theme, reducedMotion: shot.reducedMotion ? 'reduce' : 'no-preference' });
-  await context.addInitScript(([id, theme, mode, light]) => {
+  await context.addInitScript(([id, theme, mode, light, quality]) => {
     localStorage.setItem('hub-workspace-id', id); localStorage.setItem('hub-theme', theme);
-    localStorage.setItem('hub-office-mode', mode); localStorage.setItem('hub-office-quality', 'high');
+    localStorage.setItem('hub-office-mode', mode); localStorage.setItem('hub-office-quality', quality);
     if (light) localStorage.setItem('hub-office-light', light);
-  }, [WS, shot.theme, shot.mode || 'immersive', shot.light || '']);
+  }, [WS, shot.theme, shot.mode || 'immersive', shot.light || '', shot.quality || 'high']);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => { if (['error', 'warning'].includes(message.type()) && !/ERR_CERT|localStorage|GPU stall|Automatic fallback/.test(message.text())) errors.push(message.text()); });
   const started = Date.now();
   await page.goto(`${url}#/office`);
-  await page.waitForSelector(shot.mode === 'light' || width < 1100 ? '.station' : '.o3d-canvas', { timeout: 30_000 }).catch(() => {});
+  await page.waitForSelector(shot.mode === 'light' || width < 1024 ? '.station' : '.o3d-canvas', { timeout: 30_000 }).catch(() => {});
   const readyAt = Date.now() - started;
   await page.waitForTimeout(2500);
   if (shot.steps) { try { await shot.steps(page); } catch (error) { errors.push(`step: ${error.message.split('\n')[0]}`); } await page.waitForTimeout(2600); }

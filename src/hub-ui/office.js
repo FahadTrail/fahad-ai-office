@@ -55,10 +55,10 @@ export async function renderOffice(ctx) {
           <button type="button" class="btn btn-sm" id="o3dOverview">Overview</button>
           <label class="sr-only" for="o3dArea">Area</label><select class="input input-sm" id="o3dArea"><option value="">Whole Office</option><option value="atrium">Executive Atrium</option><option value="intelligence">Intelligence Wing</option><option value="strategy">Strategy Wing</option><option value="creative">Creative Studio</option><option value="build">Build Studio</option></select>
           <label class="sr-only" for="o3dProject">Project mode</label><select class="input input-sm" id="o3dProject"><option value="">All projects</option></select>
-          <label class="o3d-follow"><input type="checkbox" id="o3dFollow"> Follow work</label>
           <details class="o3d-handoffs"><summary id="o3dHandoffSummary">Handoffs</summary><ul id="o3dHandoffList"></ul></details>
           <details class="o3d-handoffs o3d-options"><summary>View</summary><div class="o3d-options-body">
             <label class="field-label" for="o3dLight">Light</label><select class="input input-sm" id="o3dLight"><option value="">Match theme</option><option value="day">Day</option><option value="evening">Evening</option><option value="night">Night</option></select>
+            <label class="o3d-follow"><input type="checkbox" id="o3dFollow"> Follow work</label>
             <label class="field-label" for="o3dQuality">Quality</label><select class="input input-sm" id="o3dQuality"><option value="">Auto</option><option value="high">High</option><option value="balanced">Balanced</option><option value="light">Light (fastest)</option></select></div></details>
         </div>
         <div class="o3d-project-card" id="o3dProjectCard" hidden aria-live="polite"></div>

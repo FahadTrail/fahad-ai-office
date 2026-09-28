@@ -12,7 +12,7 @@ import { POSES } from '../src/hub-ui/office3d/characters.js';
 import { drawBoard, drawEngineeringPanel, drawMonitor, drawProjectWall, surfacePalette } from '../src/hub-ui/office3d/surfaces.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
-const OFFICE3D = ['scene.js', 'surfaces.js', 'characters.js', 'layout.js', 'state-visuals.js', 'lighting.js', 'decor.js'];
+const OFFICE3D = ['scene.js', 'surfaces.js', 'characters.js', 'layout.js', 'state-visuals.js', 'lighting.js', 'decor.js', 'textures.js'];
 const NOW = Date.parse('2026-09-28T10:00:00Z');
 const agent = (key, state = 'AVAILABLE', extra = {}) => ({ key, slug: `${key}-slug`, label: key.toUpperCase(), state, detail: '', ...extra });
 const OFFICE = {

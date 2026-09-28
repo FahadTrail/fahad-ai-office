@@ -67,13 +67,32 @@ export function focusPreset(key) {
 }
 
 // A department view: the whole wing, framed from the Office's viewpoint.
+// Hand-framed department views where the generic framing is too wide:
+// the Build Studio centres CODING with the workbench and racks in frame.
+const WING_VIEWS = Object.freeze({
+  build: { target: [8.8, 0.9, -11.0], azimuth: 0.26, polar: 0.72, distance: 18.5 },
+});
+
 export function wingPreset(id) {
   const wing = WINGS.find((entry) => entry.id === id);
   if (!wing) return null;
+  if (WING_VIEWS[id]) return { ...WING_VIEWS[id], target: [...WING_VIEWS[id].target] };
   const span = Math.max(wing.width, wing.depth * 1.3);
   // Back studios are seen from higher up, over the glass partitions.
   const back = wing.z < -6;
   return { target: [wing.x, 0.9, wing.z - (back ? 0.2 : 0.6)], azimuth: back ? 0.3 : 0.4, polar: back ? 0.72 : 0.9, distance: (back ? 12 : 10) + span * 1.4 };
+}
+
+// A glance (V5.1 motion foundation): the head yaw, relative to facing the
+// desk, that turns an employee toward a colleague's workspace. Clamped: it
+// is a glance over the shoulder, never a full turn. Used only for a real,
+// fresh handoff between the two.
+export const GLANCE_LIMIT = 0.75;
+export function glanceYaw(fromKey, toKey) {
+  const from = WORKSPACES[fromKey]; const to = WORKSPACES[toKey];
+  if (!from || !to || fromKey === toKey) return 0;
+  const yaw = Math.atan2(-(to.x - from.x), -(to.z - from.z));
+  return Math.max(-GLANCE_LIMIT, Math.min(GLANCE_LIMIT, yaw));
 }
 
 // Desk anchor (screen height) for handoff arcs.

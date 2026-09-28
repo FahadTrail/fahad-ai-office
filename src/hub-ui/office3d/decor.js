@@ -79,7 +79,7 @@ export function addDecor(kit) {
 
   // ---------------------------------------------------------- executive atrium
   // A stone inlay under CHIEF edged by a flush light cove, and two tall plants.
-  const inlay = new THREE.Mesh(kit.track(new THREE.CylinderGeometry(3.7, 3.7, 0.012, 64)), kit.material('stone'));
+  const inlay = new THREE.Mesh(kit.track(new THREE.CylinderGeometry(3.7, 3.7, 0.012, 64)), kit.material('inlay'));
   inlay.position.set(0, 0.008, -0.7); inlay.receiveShadow = true;
   world.add(inlay);
   const ring = new THREE.Mesh(kit.track(new THREE.TorusGeometry(3.72, 0.018, 6, 120)), kit.material('cove'));

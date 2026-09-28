@@ -26,11 +26,11 @@ export const TIMES = Object.freeze(['day', 'evening', 'night']);
 
 export const LIGHTING = Object.freeze({
   day: Object.freeze({
-    sky: '#eef3fb', ground: '#cdbfab', hemi: 0.5,
-    sun: 3.1, sunColor: '#fff0d8', sunPos: [-30, 30, -6],
-    fill: 0.34, fillColor: '#d6e3f7',
-    env: 0.42, exposure: 0.86,
-    windows: 0.5, lamps: 0, pools: 0, glow: 0, washes: 0, accents: 0.25, screens: 0.9,
+    sky: '#eef3fb', ground: '#cdbfab', hemi: 0.48,
+    sun: 2.8, sunColor: '#fff0d8', sunPos: [-30, 30, -6],
+    fill: 0.32, fillColor: '#d6e3f7',
+    env: 0.36, exposure: 0.82,
+    windows: 0.5, lamps: 0, pools: 0, glow: 0, washes: 0, accents: 0.25, screens: 0.86,
     backdrop: ['#f4f5f7', '#e4e0da'], backdropDark: ['#2b2e36', '#1c1d22'],
   }),
   evening: Object.freeze({

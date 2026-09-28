@@ -220,12 +220,15 @@ export const POSES = Object.freeze({
 
 // Applies a pose with ambient motion (breathing) and — only when the real
 // state is active — a small task motion (hands at work).
-export function applyPose(figure, pose, { time, ambient, task, seed }) {
+// glance: extra head yaw toward a colleague during a real, fresh handoff
+// (the body follows a little); 0 otherwise.
+export function applyPose(figure, pose, { time, ambient, task, seed, glance = 0 }) {
   const breathe = Math.sin(time * 1.3 + seed) * 0.012 * ambient;
   const work = Math.sin(time * 7 + seed * 3) * 0.05 * task;
   figure.body.rotation.x += ((pose.lean + breathe) - figure.body.rotation.x) * 0.08;
   figure.head.rotation.x += ((pose.head + breathe * 2) - figure.head.rotation.x) * 0.08;
-  figure.head.rotation.y += ((pose.turn + Math.sin(time * 0.3 + seed) * 0.05 * ambient) - figure.head.rotation.y) * 0.05;
+  figure.head.rotation.y += ((pose.turn + glance + Math.sin(time * 0.3 + seed) * 0.05 * ambient) - figure.head.rotation.y) * 0.05;
+  figure.body.rotation.y += (glance * 0.3 - figure.body.rotation.y) * 0.04;
   for (const [arm, offset] of [[figure.left, 0], [figure.right, Math.PI]]) {
     arm.shoulder.rotation.x += ((pose.shoulder + (task ? Math.sin(time * 7 + seed + offset) * 0.04 * task : 0)) - arm.shoulder.rotation.x) * 0.1;
     arm.elbow.rotation.x += ((pose.elbow + work) - arm.elbow.rotation.x) * 0.1;

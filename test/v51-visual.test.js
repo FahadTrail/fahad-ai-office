@@ -81,7 +81,7 @@ test('camera: department views for every wing and calm, predictable framing', ()
   for (const wing of WINGS) {
     const preset = wingPreset(wing.id);
     assert.ok(preset, wing.id);
-    assert.ok(Math.abs(preset.target[0] - wing.x) < 0.01);
+    assert.ok(Math.abs(preset.target[0] - wing.x) < wing.width / 2 && Math.abs(preset.target[2] - wing.z) < wing.depth / 2, `${wing.id}: the view is aimed inside the wing`);
     assert.ok(preset.polar >= 0.6 && preset.polar <= 1.1 && preset.distance > 12 && preset.distance < CAMERA.overview.distance, wing.id);
   }
   assert.equal(wingPreset('nowhere'), null);
@@ -121,4 +121,83 @@ test('progressive disclosure: five primary items, the Office view options stay i
   assert.match(office, /<details class="o3d-handoffs o3d-options"><summary>View<\/summary>/, 'light and quality live under View');
   assert.match(office, /id="officeSummary"/);
   assert.doesNotMatch(read('src/hub-ui/app.js'), /<details class="disclosure" open><summary>Model pool/, 'the model table is behind a disclosure');
+});
+
+// ---- V5.1 final polish -------------------------------------------------
+const { DETAIL_KINDS, DETAIL_REPEAT, drawDetail } = await import('../src/hub-ui/office3d/textures.js');
+const { GLANCE_LIMIT, glanceYaw } = await import('../src/hub-ui/office3d/layout.js');
+const { applyPose, POSES } = await import('../src/hub-ui/office3d/characters.js');
+
+// A 2D-context stand-in that records fills (no DOM in Node).
+function fakeCanvas(size = 128) {
+  const calls = { fills: 0, strokes: 0 };
+  const g = new Proxy({ createRadialGradient: () => ({ addColorStop() {} }), createLinearGradient: () => ({ addColorStop() {} }),
+    fillRect: () => { calls.fills += 1; }, stroke: () => { calls.strokes += 1; } }, { get: (target, name) => (name in target ? target[name] : () => {}), set: () => true });
+  return { canvas: { width: size, height: size, getContext: () => g }, calls };
+}
+
+test('procedural material detail: every finish draws, deterministic, repeated per metre, no downloads', () => {
+  for (const kind of DETAIL_KINDS) {
+    const { canvas, calls } = fakeCanvas();
+    assert.equal(drawDetail(canvas, kind), canvas);
+    assert.ok(calls.fills > 0, kind);
+    assert.ok(DETAIL_REPEAT[kind] > 0.5 && DETAIL_REPEAT[kind] < 8, `${kind} tile size in metres`);
+  }
+  const first = fakeCanvas(); const second = fakeCanvas();
+  drawDetail(first.canvas, 'stone'); drawDetail(second.canvas, 'stone');
+  assert.deepEqual(first.calls, second.calls, 'seeded: the same Office every time');
+  const source = read('src/hub-ui/office3d/textures.js').replace(/\/\/.*$/gm, '');
+  assert.doesNotMatch(source, /fetch\(|new Image|\.png|\.jpg|url\(/);
+  const scene = read('src/hub-ui/office3d/scene.js');
+  // Each wing has its own floor finish; wood, stone and felt carry detail.
+  for (const wing of WINGS) assert.match(scene, new RegExp(`${wing.id}: \\{ kind: '`), wing.id);
+  assert.match(scene, /const MATERIAL_DETAIL = \{ wood: 'grain', walnut: 'veneer', stone: 'stone'/);
+});
+
+test('light tier at night stays readable without extra lights', () => {
+  const scene = read('src/hub-ui/office3d/scene.js');
+  assert.match(scene, /hemi\.intensity = hasEnvironment \? L\.hemi : L\.hemi \+ 0\.35 \+ L\.lamps \* 0\.55/);
+  assert.match(scene, /toneMappingExposure = hasEnvironment \? L\.exposure : L\.exposure \+ L\.lamps \* 0\.28/);
+  assert.match(scene, /if \(!hasEnvironment\) for \(const name of \['metal', 'dark', 'bezel'\]\)/, 'metals turn satin without reflections');
+  assert.match(scene, /if \(!hasEnvironment\) for \(const made of floorMaterials\)/, 'floors get a faint emissive lift at night on the light tier');
+  assert.ok(LIGHTING.day.exposure < 0.86 && LIGHTING.day.sun < 3, 'day is toned down from the washed-out pass');
+});
+
+test('Build Studio view is framed on CODING, tighter than the generic wing framing', () => {
+  const build = wingPreset('build');
+  const coding = WORKSPACES.coding;
+  assert.ok(Math.hypot(build.target[0] - coding.x, build.target[2] - coding.z) < 1.5, 'CODING is the focal point');
+  assert.ok(build.distance < 21, `distance ${build.distance}`);
+  const creative = wingPreset('creative');
+  assert.ok(build.distance < creative.distance);
+});
+
+test('motion foundation: a glance toward a colleague, only on a real fresh handoff', () => {
+  assert.equal(glanceYaw('finance', 'finance'), 0);
+  assert.equal(glanceYaw('finance', 'ghost'), 0);
+  // FINANCE sits right of PRODUCT: PRODUCT glances right (negative yaw), FINANCE left.
+  assert.ok(glanceYaw('product', 'finance') < 0 && glanceYaw('finance', 'product') > 0);
+  for (const from of Object.keys(WORKSPACES)) for (const to of Object.keys(WORKSPACES)) assert.ok(Math.abs(glanceYaw(from, to)) <= GLANCE_LIMIT);
+  // applyPose eases the head toward the glance; without one it stays facing the desk.
+  const group = () => ({ rotation: { x: 0, y: 0 } });
+  const figure = () => ({ body: group(), head: group(), left: { shoulder: group(), elbow: group() }, right: { shoulder: group(), elbow: group() } });
+  const turned = figure(); const still = figure();
+  for (let frame = 0; frame < 200; frame += 1) {
+    applyPose(turned, POSES.working, { time: 0, ambient: 0, task: 0, seed: 1, glance: 0.6 });
+    applyPose(still, POSES.working, { time: 0, ambient: 0, task: 0, seed: 1 });
+  }
+  assert.ok(Math.abs(turned.head.rotation.y - 0.6) < 0.01 && Math.abs(still.head.rotation.y) < 0.001);
+  const scene = read('src/hub-ui/office3d/scene.js');
+  assert.match(scene, /if \(!handoff\.fresh \|\| glanced\.has\(id\)\) continue;/, 'only fresh handoffs, once each');
+  assert.match(scene, /const startGlances = \(\) => \{\n    if \(reducedMotion\) return;/);
+  assert.doesNotMatch(scene, /Math\.random\(\)/, 'no random motion');
+});
+
+test('laptop layout: the Office fits a 1280×720 screen', () => {
+  const css = read('src/hub-ui/office.css');
+  assert.match(css, /@media \(max-height: 820px\) \{\n  \.office\.is-immersive \.office-stats \{ display: none; \}/);
+  assert.match(css, /\.ask-chief \{ display: flex; gap: var\(--s-2\); flex: 1 1 320px;/);
+  const office = read('src/hub-ui/office.js');
+  assert.ok(office.indexOf('id="o3dFollow"') > office.indexOf('<summary>View</summary>'), 'Follow work lives in the View menu');
+  assert.match(read('src/hub-ui/office3d/scene.js'), /Math\.max\(controlsHeight\(\) \+ 8,/, 'labels never sit under the view controls');
 });
