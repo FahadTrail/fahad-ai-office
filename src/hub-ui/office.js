@@ -3,6 +3,7 @@
 // from the Hub API, which derives them from real rows; nothing moves unless
 // the work behind it is real.
 import { roleMark, stationArt } from './characters.js?v=__UI_VERSION__';
+import { describeOffice, officeMode, presentationState, visualState } from './office-presentation.js?v=__UI_VERSION__';
 
 const FLOOR = [
   ['research', 'product', 'coding'],
@@ -24,21 +25,8 @@ export function ensureOfficeStyles() {
   return stylesheet;
 }
 
-// What the chip says. Role-specific wording only restates the real state
-// (RESEARCH working = researching); waiting names who it waits for.
-export function visualState(agent) {
-  const state = agent.state || 'AVAILABLE';
-  if (state === 'WORKING') return agent.key === 'research' ? 'RESEARCHING' : agent.key === 'creative' ? 'DESIGNING' : 'WORKING';
-  if (state === 'WAITING') {
-    if (/free model capacity/i.test(agent.detail || '')) return 'WAITING';
-    const match = String(agent.detail || '').match(/^Waiting for ([A-Z, ]+)$/);
-    if (match) { const names = match[1].split(',').map((name) => name.trim()).filter(Boolean); return names.length === 1 ? `WAITING FOR ${names[0]}` : 'WAITING'; }
-    return 'WAITING';
-  }
-  if (state === 'QUEUED') return 'UP NEXT';
-  return state;
-}
-const stateWord = (value) => value.charAt(0) + value.slice(1).toLowerCase();
+export { visualState };
+const stateWord = (value) => (value.charAt(0) + value.slice(1).toLowerCase()).replace(/\bfahad\b/, 'Fahad');
 
 export async function renderOffice(ctx) {
   const { api, esc, when, q, ws, view, setTitle, onChange, every, toast } = ctx;
@@ -48,11 +36,29 @@ export async function renderOffice(ctx) {
   view.innerHTML = `<div class="office" data-motion="${ctx.reducedMotion() ? 'reduced' : 'full'}">
     <header class="office-head">
       <div><h1>The Office</h1><p class="office-live"><span class="live-dot" id="liveDot" aria-hidden="true"></span><span id="liveText">Live — every state comes from real work</span></p></div>
+      <div class="office-mode" role="group" aria-label="Office view">
+        <button type="button" class="om-btn" data-mode="auto" aria-pressed="false">Auto</button>
+        <button type="button" class="om-btn" data-mode="immersive" aria-pressed="false">Immersive <span class="om-beta">beta</span></button>
+        <button type="button" class="om-btn" data-mode="light" aria-pressed="false">Light</button></div>
       <form class="ask-chief" id="askChief"><label class="sr-only" for="askChiefInput">Ask CHIEF</label>
         <input id="askChiefInput" class="input" dir="auto" autocomplete="off" placeholder="Ask CHIEF… e.g. «خل Legal يراجع»"><button class="btn btn-primary" type="submit">Send</button></form>
     </header>
     <div class="office-stats" id="officeStats" aria-live="polite"></div>
     <div class="office-body">
+      <section class="immersive" id="immersive" hidden aria-label="Immersive Office">
+        <div class="o3d-stage" id="o3dStage"></div>
+        <div class="o3d-loading" id="o3dLoading" role="status"><div class="o3d-mark" aria-hidden="true">F</div><strong>Entering the Office</strong>
+          <span class="small muted" id="o3dProgress">Loading the 3D engine…</span><div class="o3d-bar"><span id="o3dBar"></span></div>
+          <button type="button" class="btn btn-sm" id="o3dUseLight">Use light Office</button></div>
+        <div class="o3d-controls" role="toolbar" aria-label="Office view controls">
+          <button type="button" class="btn btn-sm" id="o3dOverview">Overview</button>
+          <label class="sr-only" for="o3dProject">Project</label><select class="input input-sm" id="o3dProject"><option value="">All projects</option></select>
+          <label class="o3d-follow"><input type="checkbox" id="o3dFollow"> Follow work</label>
+          <details class="o3d-handoffs"><summary id="o3dHandoffSummary">Handoffs</summary><ul id="o3dHandoffList"></ul></details>
+        </div>
+        <div class="o3d-project-card" id="o3dProjectCard" hidden aria-live="polite"></div>
+        <p class="sr-only" aria-live="polite" id="o3dSummary"></p>
+      </section>
       <section class="scene" id="scene" aria-label="Office floor"><div class="floor" id="floor"><svg class="handoff-layer" id="handoffLayer" role="group" aria-label="Handoffs between employees"></svg><div class="stations" id="stations"></div></div>
         <div class="scene-legend" aria-hidden="true"><span><i class="lg lg-working"></i>Working</span><span><i class="lg lg-waiting"></i>Waiting</span><span><i class="lg lg-needs"></i>Needs you</span><span><i class="lg lg-done"></i>Just delivered</span><span><i class="lg lg-handoff"></i>Handoff</span></div>
       </section>
@@ -82,14 +88,135 @@ export async function renderOffice(ctx) {
 
   let data = null;
   let signature = '';
+  let artifacts = [];
+  // Immersive (3D) or light (2.5D) Office — both render the same
+  // presentation state; the 3D engine is fetched only for immersive.
+  let mode = officeMode({ preference: readPref('hub-office-mode', 'auto'), capability: capability(ctx), autoImmersive: readPref('hub-office-auto-immersive', '') === 'on' });
+  let immersive = null;
+  let mounting = null;
   const load = async () => {
-    const next = await api(`/api/office${q({ workspaceId: ws() })}`);
-    const nextSignature = JSON.stringify(next);
+    const [next, library] = await Promise.all([
+      api(`/api/office${q({ workspaceId: ws() })}`),
+      mode.render === 'immersive' ? api(`/api/artifacts${q({ workspaceId: ws(), limit: 60 })}`).catch(() => ({ artifacts })) : Promise.resolve({ artifacts }),
+    ]);
+    const nextSignature = JSON.stringify([next, library.artifacts?.length, library.artifacts?.[0]?.id]);
     if (nextSignature === signature) return;
     signature = nextSignature;
     data = next;
-    drawStats(); drawStations(); drawSide(); drawHandoffs();
+    artifacts = library.artifacts || [];
+    drawStats(); drawSide();
+    if (mode.render === 'immersive') drawImmersive();
+    else { drawStations(); drawHandoffs(); }
   };
+  const presentation = () => presentationState({ office: data, artifacts });
+
+  const setMode = async (preference) => {
+    writePref('hub-office-mode', preference);
+    mode = officeMode({ preference, capability: capability(ctx), autoImmersive: readPref('hub-office-auto-immersive', '') === 'on' });
+    signature = '';
+    applyMode();
+    await load().catch((error) => toast(error.message));
+  };
+  const applyMode = () => {
+    const pref = readPref('hub-office-mode', 'auto');
+    view.querySelectorAll('.om-btn').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.mode === pref)));
+    const on3d = mode.render === 'immersive';
+    view.querySelector('#immersive').hidden = !on3d;
+    view.querySelector('#scene').hidden = on3d;
+    view.querySelector('.office').classList.toggle('is-immersive', on3d);
+    if (!on3d && immersive) { immersive.dispose(); immersive = null; }
+    if (!on3d && mode.reason && pref === 'immersive') toast(mode.reason);
+  };
+  view.querySelectorAll('.om-btn').forEach((button) => { button.onclick = () => setMode(button.dataset.mode); });
+  view.querySelector('#o3dUseLight').onclick = () => setMode('light');
+
+  const fallBack = (reason) => {
+    if (immersive) { try { immersive.dispose(); } catch { /* already gone */ } immersive = null; }
+    mode = { render: 'light', reason };
+    applyMode(); signature = '';
+    toast(reason);
+    load().catch(() => {});
+  };
+
+  const drawImmersive = async () => {
+    const state = presentation();
+    view.querySelector('#o3dSummary').textContent = describeOffice(state);
+    drawImmersiveControls(state);
+    if (immersive) { immersive.update(state); return; }
+    if (mounting) return mounting;
+    const progress = (text, pct) => { view.querySelector('#o3dProgress').textContent = text; view.querySelector('#o3dBar').style.width = `${pct}%`; };
+    view.querySelector('#o3dLoading').hidden = false;
+    mounting = (async () => {
+      try {
+        progress('Loading the 3D engine…', 20);
+        const module = await import('./office3d/scene.js?v=__UI_VERSION__');
+        progress('Building the Office…', 70);
+        await document.fonts?.ready;
+        const stage = view.querySelector('#o3dStage');
+        if (!stage || mode.render !== 'immersive') return;
+        const tokens = themeTokens();
+        immersive = module.mountOffice3D(stage, {
+          state: presentation(), dark: tokens.dark, tokens, quality: readPref('hub-office-quality', '') || mode.quality || 'balanced', reducedMotion: ctx.reducedMotion(),
+          on: {
+            select: (key) => { const employee = data.agents.find((agent) => agent.key === key); if (employee) openEmployee(ctx, employee.slug); },
+            handoff: (handoff) => openHandoff(ctx, handoff),
+            artifact: (artifact) => import('./library.js?v=__UI_VERSION__').then((library) => library.openArtifact(ctx, artifact)).catch((error) => toast(error.message)),
+            error: (error) => { console.warn('Immersive Office stopped:', error?.message || error); fallBack('The immersive Office stopped; showing the light Office.'); },
+            slow: () => fallBack('This device is too slow for the immersive Office; showing the light Office.'),
+          },
+        });
+        immersive.setFollow(readPref('hub-office-follow', '') === 'on');
+        // Read-only renderer statistics for visual/performance QA.
+        window.__fahadOffice3d = { stats: () => immersive?.stats() || null };
+        progress('Ready', 100);
+        view.querySelector('#o3dLoading').hidden = true;
+      } catch (error) {
+        console.warn('Immersive Office unavailable:', error?.message || error);
+        fallBack('The immersive Office could not start here; showing the light Office.');
+      } finally { mounting = null; }
+    })();
+    return mounting;
+  };
+
+  const drawImmersiveControls = (state) => {
+    const select = view.querySelector('#o3dProject');
+    const chosen = select.value;
+    select.innerHTML = `<option value="">All projects</option>${state.projects.map((project) => `<option value="${esc(project.id)}">${esc(project.title)}</option>`).join('')}`;
+    select.value = state.projects.some((project) => project.id === chosen) ? chosen : '';
+    drawProjectCard(state, select.value);
+    const list = view.querySelector('#o3dHandoffList');
+    view.querySelector('#o3dHandoffSummary').textContent = `Handoffs (${state.handoffs.length})`;
+    list.innerHTML = state.handoffs.length ? state.handoffs.slice(0, 20).map((handoff, index) => `<li><button type="button" class="o3d-handoff" data-index="${index}">
+      <span>${esc(handoff.from)} → ${esc(handoff.to)}</span><span class="xs muted" dir="auto">${esc(handoff.task || handoff.objective || '')} · ${esc(when(handoff.at))}</span></button></li>`).join('')
+      : '<li class="small muted">No handoffs in the last 24 hours.</li>';
+    list.querySelectorAll('.o3d-handoff').forEach((button) => { button.onclick = () => openHandoff(ctx, state.handoffs[Number(button.dataset.index)]); });
+  };
+  const drawProjectCard = (state, id) => {
+    const card = view.querySelector('#o3dProjectCard');
+    const project = state.projects.find((entry) => entry.id === id);
+    card.hidden = !project;
+    if (!project) return;
+    const team = state.employees.filter((employee) => project.team.includes(employee.key));
+    const needs = team.filter((employee) => employee.needsFahad).length;
+    card.innerHTML = `<div class="small muted">Project</div><strong dir="auto">${esc(project.title)}</strong>
+      <div class="progress" role="progressbar" aria-valuenow="${project.progress}" aria-valuemin="0" aria-valuemax="100" aria-label="Progress"><span style="width:${Math.max(3, project.progress)}%"></span></div>
+      <div class="small"><span class="num">${project.progress}%</span> · ${team.filter((employee) => employee.active).length} working · ${project.handoffs} handoff${project.handoffs === 1 ? '' : 's'}${needs ? ` · <strong>${needs} need${needs === 1 ? 's' : ''} you</strong>` : ''}</div>
+      <div class="o3d-team">${team.map((employee) => `<span class="state-chip" data-state="${esc(employee.state)}">${esc(employee.label)}</span>`).join('')}</div>
+      <a class="small" href="#/workflow/${esc(project.id)}">Open project →</a>`;
+  };
+  view.querySelector('#o3dProject').onchange = (event) => { immersive?.setProject(event.target.value); drawProjectCard(presentation(), event.target.value); };
+  view.querySelector('#o3dFollow').onchange = (event) => { immersive?.setFollow(event.target.checked); writePref('hub-office-follow', event.target.checked ? 'on' : ''); };
+  view.querySelector('#o3dFollow').checked = readPref('hub-office-follow', '') === 'on';
+  view.querySelector('#o3dOverview').onclick = () => immersive?.overview();
+  ctx.onLeave(() => { if (immersive) { immersive.dispose(); immersive = null; } });
+  // Daylight or evening: the scene follows the theme (rebuilt on change).
+  const themeWatch = new MutationObserver(() => { if (immersive) { immersive.dispose(); immersive = null; drawImmersive(); } });
+  themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  const schemeWatch = window.matchMedia?.('(prefers-color-scheme: dark)');
+  const onScheme = () => { if (immersive && !document.documentElement.dataset.theme) { immersive.dispose(); immersive = null; drawImmersive(); } };
+  schemeWatch?.addEventListener?.('change', onScheme);
+  ctx.onLeave(() => { themeWatch.disconnect(); schemeWatch?.removeEventListener?.('change', onScheme); });
+  applyMode();
 
   const drawStats = () => {
     const working = data.agents.filter((agent) => ACTIVE.has(agent.state)).length;
@@ -219,7 +346,7 @@ export async function renderOffice(ctx) {
     };
     scene.onpointerleave = () => { scene.style.setProperty('--ry', '0deg'); scene.style.setProperty('--rx', '0deg'); };
   }
-  const resize = () => drawHandoffs();
+  const resize = () => { if (mode.render !== 'immersive') drawHandoffs(); };
   window.addEventListener('resize', resize);
   ctx.onLeave(() => window.removeEventListener('resize', resize));
 
@@ -358,4 +485,39 @@ export function sheet(ctx, { title, body, size = 'lg' }) {
   requestAnimationFrame(() => { element.classList.add('open'); panel.focus(); });
   ctx.onLeave(() => element.isConnected && element.remove());
   return { element, set, close };
+}
+
+// ------------------------------------------------------------------ immersive helpers
+const readPref = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch { return fallback; } };
+const writePref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch { /* private mode */ } };
+
+// What this device can do, measured without loading the 3D engine.
+function capability(ctx) {
+  let webgl = false;
+  let weakGpu = false;
+  try {
+    const probe = document.createElement('canvas');
+    const gl = probe.getContext('webgl2');
+    webgl = Boolean(gl);
+    if (gl) {
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      const renderer = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
+      weakGpu = /swiftshader|llvmpipe|software|basic render|mesa offscreen/i.test(renderer);
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+    }
+  } catch { webgl = false; }
+  const fine = window.matchMedia?.('(pointer: fine)').matches;
+  return {
+    webgl, weakGpu, small: window.innerWidth < 1100, coarse: !fine, reducedMotion: ctx.reducedMotion(),
+    strong: (navigator.deviceMemory || 4) >= 8 && (navigator.hardwareConcurrency || 4) >= 8,
+  };
+}
+
+// Design tokens for the 3D surfaces, from the live theme.
+function themeTokens() {
+  const styles = getComputedStyle(document.documentElement);
+  const get = (name) => styles.getPropertyValue(name).trim();
+  const bg = get('--bg') || '#ffffff';
+  const dark = (() => { const match = bg.match(/^#([0-9a-f]{6})$/i); if (!match) return document.documentElement.dataset.theme === 'dark'; const n = parseInt(match[1], 16); return ((n >> 16) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114) < 128; })();
+  return { dark, text: get('--text'), muted: get('--text-muted'), accent: get('--accent'), success: get('--success'), warning: get('--warning'), danger: get('--danger') };
 }

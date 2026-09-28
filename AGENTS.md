@@ -204,6 +204,14 @@ inside the built runtime image as root.
 
   Details are in `docs/v41-reliability.md`.
 
+* V5 immersive Office (beta, branch `claude/v5-immersive-office`, merged only
+  after V4 is closed): a lazy-loaded Three.js Office — atrium, wings and
+  studios; real states, artifacts and handoffs; Project Mode; Follow work;
+  fail-safe fallback to the light Office. AUTO keeps the light Office until
+  Fahad enables immersive in Settings. Details are in
+  `docs/v5-immersive-office.md`; rebuild the engine with
+  `node tools/build-three.mjs`.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,

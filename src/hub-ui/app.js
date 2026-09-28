@@ -876,6 +876,11 @@ async function renderSettings() {
   view.innerHTML = `<div class="page stack"><div class="page-head"><div><h1>Settings</h1></div></div>
     <div class="card"><h2 class="card-title">Account</h2><p class="small muted">Signed in as the owner. Sessions last 7 days.</p><button class="btn" id="logout">Sign out</button></div>
     <div class="card"><h2 class="card-title">Appearance</h2><div class="chips" id="themeChips">${[['auto', 'System'], ['dark', 'Dark'], ['light', 'Light']].map(([value, label]) => `<button class="chip" data-theme-choice="${value}">${label}</button>`).join('')}</div></div>
+    <div class="card"><h2 class="card-title">Office view</h2>
+      <p class="small muted">The immersive 3D Office is in beta. Auto keeps the light Office unless you allow immersive below; small screens always use the light Office.</p>
+      <label class="check"><input type="checkbox" id="autoImmersive"> <span>Use the immersive Office for Auto on capable desktops</span></label>
+      <label class="small muted" for="officeQuality" style="display:block;margin-top:var(--s-3)">Immersive quality (advanced)</label>
+      <select class="input input-sm" id="officeQuality" style="max-width:220px"><option value="">Automatic</option><option value="high">High</option><option value="balanced">Balanced</option><option value="light">Light</option></select></div>
     <div class="card"><h2 class="card-title">Tools &amp; connectors</h2><p class="small muted">See <a href="#/integrations">Integrations</a> for every connector and the employees that use it.</p></div>
     <div class="card"><h2 class="card-title">System</h2><dl class="kv"><div><dt>Hub</dt><dd>${health?.ok ? 'Healthy' : 'Unknown'}</dd></div><div><dt>Version</dt><dd class="mono small">${esc(String(health?.version || '—').slice(0, 12))}</dd></div></dl>
       <p class="small muted" style="margin-top:var(--s-3)">Technical dashboards (Platform, detailed model pool, legacy Coding Agent form) remain in the <a href="./classic">classic view</a>.</p></div></div>`;
@@ -884,6 +889,12 @@ async function renderSettings() {
   const mark = () => document.querySelectorAll('[data-theme-choice]').forEach((chip) => chip.classList.toggle('active', chip.dataset.themeChoice === current));
   mark();
   bind(view, { '[data-theme-choice]': (_, element) => { current = element.dataset.themeChoice; try { localStorage.setItem('hub-theme', current); } catch {} applyTheme(current); mark(); } });
+  const pref = (key) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
+  const setPref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch {} };
+  $('#autoImmersive').checked = pref('hub-office-auto-immersive') === 'on';
+  $('#autoImmersive').onchange = (event) => setPref('hub-office-auto-immersive', event.target.checked ? 'on' : '');
+  $('#officeQuality').value = pref('hub-office-quality');
+  $('#officeQuality').onchange = (event) => setPref('hub-office-quality', event.target.value);
   $('#logout').onclick = async () => { await fetch('./api/auth/logout', { method: 'POST' }).catch(() => {}); location.reload(); };
 }
 

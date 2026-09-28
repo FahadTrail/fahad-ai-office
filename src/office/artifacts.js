@@ -48,7 +48,8 @@ export const ARTIFACT_TYPES = Object.freeze({
       const labels = list(raw.labels, 36).map((label) => text(label, 40));
       const series = list(raw.series, 6).map((entry) => ({ name: text(entry?.name, 60) || 'Series', values: list(entry?.values, labels.length).map(num) }))
         .filter((entry) => entry.values.some((value) => value !== null));
-      return labels.length && series.length ? { kind: oneOf(raw.kind, ['bar', 'line', 'pie'], 'bar'), unit: text(raw.unit, 20), labels, series } : null;
+      // calculated: drawn by code from a validated model (office/finance.js).
+      return labels.length && series.length ? { kind: oneOf(raw.kind, ['bar', 'line', 'pie'], 'bar'), unit: text(raw.unit, 20), labels, series, ...(raw.calculated === true ? { calculated: true } : {}) } : null;
     },
   },
   timeline: {
