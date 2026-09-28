@@ -1,8 +1,30 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-Last updated: 2026-09-28, about 20:30 UTC, after the provider expansion
-preparation. Read `AGENTS.md` first; it holds the permanent rules. This
-file is the live state.
+Last updated: 2026-09-28, about 21:30 UTC, after the final release
+readiness rehearsal. Read `AGENTS.md` first; it holds the permanent rules.
+This file is the live state. **The release procedure is
+`docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
+
+## RELEASE STATE (read this first)
+
+| Item | State |
+|---|---|
+| Current production commit | `main` `13f09ea` (V4 + V4.1). Rollback point R0. Verify with `/healthz` → `version`. |
+| PR #72 router (`claude/router-efficiency-v1`, `66cf3ee`) | Draft, CI green, 392 tests. Merge **first**. |
+| PR #73 providers (`claude/provider-expansion-prep`) | Draft, stacked on #72, CI green. Merge **second**, after #72 is verified in production. |
+| PR #71 V5.1 (`claude/v5-immersive-office`, `19c13b8`) | Draft, CI green. Merge **last**, only after Fahad's visual approval; merge `main` into it first. |
+| Merge order | #72 → deploy → smoke → #73 → deploy → (Mistral) → 24 h measurement → #71. |
+| Rehearsal | `main`→#72→#73 fast-forward with no conflicts: **401/401**. Adding #71: one docs conflict (this file, add/add): **430/430**. |
+| Migrations | Production has all 30; none of the three PRs adds one. |
+| Rollback points | R0 `13f09ea`; R1 = #72 merge; R2 = #73 merge; R3 = #71 merge. Mechanism: GitHub **Revert** on the merged PR (see runbook §4). |
+| Mistral | Code ready (#73); **no key**. Fahad's Free plan shows $10/month credits, but key creation is disabled ("Upgrade to use your API keys"). Likely cause: Studio not activated in Free mode. Owner path in runbook §5; **no card**. |
+| V4 status | **NOT CLOSED** at 21:25 UTC: job `abaccdad` is running (3 tasks done, 3 queued for the 00:00 UTC free-quota reset). The check-in fires at 00:40 UTC. |
+| Budget / routing | $2/month; `workspace_routing_policies` empty; no Mistral permission row. |
+
+**Exact next command after V4 CLOSED** (Phase A, then Phase B of the
+runbook): re-run the Phase A SQL, then on PR #72 confirm CI is green and ask
+Fahad to merge it with a merge commit. Nothing is merged by an agent.
+
 
 ## 0. DO NOT TOUCH
 
