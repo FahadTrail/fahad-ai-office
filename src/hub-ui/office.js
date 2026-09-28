@@ -52,8 +52,9 @@ export async function renderOffice(ctx) {
           <button type="button" class="btn btn-sm" id="o3dUseLight">Use light Office</button></div>
         <div class="o3d-controls" role="toolbar" aria-label="Office view controls">
           <button type="button" class="btn btn-sm" id="o3dOverview">Overview</button>
-          <label class="sr-only" for="o3dProject">Project</label><select class="input input-sm" id="o3dProject"><option value="">All projects</option></select>
+          <label class="sr-only" for="o3dProject">Project mode</label><select class="input input-sm" id="o3dProject"><option value="">All projects</option></select>
           <label class="o3d-follow"><input type="checkbox" id="o3dFollow"> Follow work</label>
+          <label class="sr-only" for="o3dQuality">Quality</label><select class="input input-sm" id="o3dQuality" title="Quality"><option value="">Quality: auto</option><option value="high">Quality: high</option><option value="balanced">Quality: balanced</option><option value="light">Quality: light</option></select>
           <details class="o3d-handoffs"><summary id="o3dHandoffSummary">Handoffs</summary><ul id="o3dHandoffList"></ul></details>
         </div>
         <div class="o3d-project-card" id="o3dProjectCard" hidden aria-live="polite"></div>
@@ -94,6 +95,8 @@ export async function renderOffice(ctx) {
   let mode = officeMode({ preference: readPref('hub-office-mode', 'auto'), capability: capability(ctx), autoImmersive: readPref('hub-office-auto-immersive', '') === 'on' });
   let immersive = null;
   let mounting = null;
+  // Read-only view mode and renderer statistics (visual/performance QA, preview panel).
+  window.__fahadOffice3d = { stats: () => immersive?.stats() || null, mode: () => mode };
   const load = async () => {
     const [next, library] = await Promise.all([
       api(`/api/office${q({ workspaceId: ws() })}`),
@@ -166,8 +169,6 @@ export async function renderOffice(ctx) {
           },
         });
         immersive.setFollow(readPref('hub-office-follow', '') === 'on');
-        // Read-only renderer statistics for visual/performance QA.
-        window.__fahadOffice3d = { stats: () => immersive?.stats() || null };
         progress('Ready', 100);
         view.querySelector('#o3dLoading').hidden = true;
       } catch (error) {
@@ -208,6 +209,9 @@ export async function renderOffice(ctx) {
   view.querySelector('#o3dFollow').onchange = (event) => { immersive?.setFollow(event.target.checked); writePref('hub-office-follow', event.target.checked ? 'on' : ''); };
   view.querySelector('#o3dFollow').checked = readPref('hub-office-follow', '') === 'on';
   view.querySelector('#o3dOverview').onclick = () => immersive?.overview();
+  // Quality: remount the scene at the chosen tier (auto = detected).
+  view.querySelector('#o3dQuality').value = readPref('hub-office-quality', '');
+  view.querySelector('#o3dQuality').onchange = (event) => { writePref('hub-office-quality', event.target.value); if (immersive) { immersive.dispose(); immersive = null; drawImmersive(); } };
   ctx.onLeave(() => { if (immersive) { immersive.dispose(); immersive = null; } });
   // Daylight or evening: the scene follows the theme (rebuilt on change).
   const themeWatch = new MutationObserver(() => { if (immersive) { immersive.dispose(); immersive = null; drawImmersive(); } });

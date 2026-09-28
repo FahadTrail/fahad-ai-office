@@ -215,7 +215,10 @@
 .o3d-label[data-state="COMPLETED"] .o3d-state { color: var(--st-completed); }
 .o3d-task { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: none; }
 .o3d-labels.zoomed .o3d-label.focused .o3d-task, .o3d-label:hover .o3d-task, .o3d-label:focus-visible .o3d-task { display: block; }
+.o3d-open { display: none; font-size: 11px; font-weight: 600; color: var(--accent); margin-top: 2px; }
+.o3d-labels.zoomed .o3d-label.focused .o3d-open { display: block; }
 .o3d-labels.zoomed .o3d-label:not(.focused) { opacity: .55; }
+.o3d-needs[hidden] { display: none; }
 .o3d-needs { display: inline-block; padding: 6px 12px; font-size: 12px; font-weight: 700; color: var(--st-needs); text-decoration: none; border-color: var(--st-needs); }
 .o3d-loading { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center;
   background: var(--surface); z-index: 3; transition: opacity var(--t-slow, .4s) var(--ease-out, ease); }

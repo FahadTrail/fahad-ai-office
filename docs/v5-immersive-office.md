@@ -175,3 +175,29 @@ fictional preview data. It produces the overview (light and dark), CHIEF,
 CODING, CREATIVE, a handoff, Project Mode (two projects), Needs Fahad,
 reduced motion, the light Office, and the tablet and mobile fallbacks. It
 also writes renderer statistics to `report.json`.
+
+## Private demo preview
+
+Fahad reviews V5 before it reaches production through a private, static
+demo preview. Nothing in it touches the production Office.
+
+* **Build:** `node tools/v5-preview-build.mjs <dir>` records the REAL Hub
+  handlers over the fictional demo scenario
+  (`testing/fixtures/v5-demo-data.js`, "Qahwa Run"). It writes the UI plus
+  `demo/data.json` and `demo/shim.js`.
+* **Hosting:** the folder is published as a private claude.ai artifact, so
+  only the owner's signed-in account can open it. It needs no server, no
+  Supabase, no model calls and no Telegram.
+* **Two moments of the same afternoon:**
+  * *Team at work:* CHIEF is planning, CODING is in CI, CREATIVE is
+    designing, FINANCE has VERIFIED figures (made by the real finance code),
+    RESEARCH is available, SOCIAL and AUDIT are waiting, and the handoffs
+    include fresh and completed ones.
+  * *CI passed — needs you:* CODING waits for the merge approval (Needs
+    Fahad), and CREATIVE hands off to SOCIAL.
+* **Labelling and writes:** the review panel is labelled
+  **V5 IMMERSIVE PREVIEW · DEMO DATA**. It shows the render quality, the
+  FPS and any fallback reason. Every write is refused with "Available in
+  production after V5 approval."
+* **Interaction:** clicking an employee (or Tab) flies the camera to that
+  workspace. Clicking again, or pressing Enter, opens the employee panel.

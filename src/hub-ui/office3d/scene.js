@@ -453,7 +453,10 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
   for (const key of workspaces.keys()) {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'o3d-label'; button.dataset.key = key;
-    button.onclick = () => on.select?.(key);
+    // First click flies to the workspace; a click on the focused workspace
+    // (or Enter from the keyboard) opens the employee panel.
+    button.onpointerdown = () => { button.dataset.armed = String(focused === key); };
+    button.onclick = () => { const open = button.dataset.armed !== 'false'; delete button.dataset.armed; if (open) on.select?.(key); else if (focused !== key) focus(key); };
     button.onfocus = () => focus(key);
     labels.append(button);
     labelFor.set(key, button);
@@ -493,7 +496,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
       const inProject = !selectedProject || current.projects.find((project) => project.id === selectedProject)?.team.includes(employee.key);
       button.dataset.state = employee.state;
       button.classList.toggle('dimmed', !inProject);
-      button.innerHTML = `<span class="o3d-name">${escape(employee.label)}</span><span class="o3d-state">${escape(stateWord(employee.visual))}</span>${employee.task ? `<span class="o3d-task" dir="auto">${escape(employee.task)}</span>` : ''}`;
+      button.innerHTML = `<span class="o3d-name">${escape(employee.label)}</span><span class="o3d-state">${escape(stateWord(employee.visual))}</span>${employee.task ? `<span class="o3d-task" dir="auto">${escape(employee.task)}</span>` : ''}<span class="o3d-open" aria-hidden="true">Open panel ›</span>`;
       button.setAttribute('aria-label', `${employee.label}: ${stateWord(employee.visual)}${employee.task ? ` — ${employee.task}` : ''}. Open workspace`);
     }
     beaconButton.hidden = !current.needsFahad;
@@ -596,7 +599,7 @@ export function mountOffice3D(container, { state, dark = false, tokens = {}, qua
       const employee = current.employees.find((entry) => entry.key === object.userData.key);
       if (employee?.artifact) return on.artifact?.(employee.artifact);
     }
-    if (object.userData.key) { focus(object.userData.key); on.select?.(object.userData.key); }
+    if (object.userData.key) { if (focused === object.userData.key) on.select?.(object.userData.key); else focus(object.userData.key); }
   };
 
   // ------------------------------------------------------------ loop
