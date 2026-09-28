@@ -1,5 +1,6 @@
 // Fahad AI Office — Workspace V2 client. No framework: hash routes render
 // views from the Hub's JSON API; polling keeps running work live.
+import { attentionSummary, employeesSummary, projectsSummary, tasksSummary } from './summaries.js';
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 import { loginErrorMessage } from './auth.js';
 import { ARTIFACT_LABELS, renderArtifact, splitArtifacts } from './artifacts.js';
@@ -495,11 +496,12 @@ const TASK_TABS = [['running', 'Running'], ['attention', 'Needs attention'], ['c
 
 async function renderTasks(tab) {
   setTitle('Tasks');
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Tasks</h1><p>Development work the Office is doing or has done.</p></div><a class="btn btn-primary" href="#/code">＋ New task</a></div>
+  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Tasks</h1><p class="page-summary" id="taskSummary" aria-live="polite">Development work the Office is doing or has done.</p></div><a class="btn btn-primary" href="#/code">＋ New task</a></div>
     <div class="tabs" role="tablist">${TASK_TABS.map(([key, label]) => `<a class="tab ${key === tab ? 'active' : ''}" role="tab" href="#/tasks/${key}">${label}</a>`).join('')}</div>
     <div id="taskList"></div></div>`;
   const load = async () => {
     const { tasks } = await api(`/api/tasks${q({ workspaceId: ws(), status: tab })}`);
+    $('#taskSummary').textContent = tasksSummary(tasks, tab);
     $('#taskList').innerHTML = tasks.length ? tasks.map(taskItem).join('') : `<div class="empty"><h3>Nothing here</h3><p>${tab === 'running' ? 'No task is running. Describe one in a chat or start one from the Coding Agent.' : 'No tasks in this group.'}</p></div>`;
   };
   await load();
@@ -732,7 +734,7 @@ function onLiveChange(fn, onLive) {
 async function renderEmployees() {
   setTitle('Employees');
   const data = await api(`/api/office${q({ workspaceId: ws() })}`);
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Employees</h1><p>Nine roles, no fixed models: each employee's work is routed to the best available model for its job, free first. Say their names in Arabic or English — CHIEF understands.</p></div></div>
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Employees</h1><p class="page-summary">${esc(employeesSummary(data.agents))}</p></div></div>
     <div class="office-grid">${data.agents.map((agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}" data-employee="${esc(agent.slug)}">
       <div class="row">${avatar(agent)}<div class="grow"><div class="title">${esc(agent.label)}</div><div class="xs faint">${esc(agent.deliverable || '')}</div></div>${statePill(agent.state)}</div>
       <div class="small muted">${esc(agent.scope)}</div>
@@ -797,8 +799,8 @@ async function renderAttention() {
       return `<section class="nf-group nf-${esc(priority.toLowerCase().replace(/\s+/g, '-'))}"><h2><span class="nf-level">${esc(priority)}</span><span class="small muted">${esc(hint)}</span></h2>
         ${list.map((item) => `<a class="nf-item" href="${href(item)}"><span class="nf-cat">${esc(item.category || item.kind)}</span><span class="grow"><span class="nf-title" dir="auto">${esc(item.title)}</span>${item.detail ? `<span class="nf-detail" dir="auto">${esc(humanError(item.detail))}</span>` : ''}</span><time class="xs faint" datetime="${esc(item.at)}">${when(item.at)}</time></a>`).join('')}</section>`;
     };
-    view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Needs Fahad</h1><p>Only what genuinely needs you: approvals, answers, legal and security decisions, failures and major completions.</p></div></div>
-      ${items.some((item) => item.priority !== 'INFO') ? '' : '<div class="nf-clear"><strong>All clear.</strong> Nothing needs you right now — the Office asks here and on Telegram when it does.</div>'}
+    view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Needs Fahad</h1><p class="page-summary">${esc(attentionSummary(items))}</p></div></div>
+      ${items.some((item) => item.priority !== 'INFO') ? '' : '<div class="nf-clear"><strong>All clear.</strong> The Office asks here and on Telegram when it needs you.</div>'}
       ${group('URGENT', 'Urgent', 'high-risk approvals and critical security findings')}${group('ACTION NEEDED', 'Action needed', 'a decision or an answer unblocks the work')}${group('INFO', 'For your information', 'major work that finished in the last 3 days')}</div>`;
   };
   await draw();
@@ -807,7 +809,7 @@ async function renderAttention() {
 
 async function renderProjects() {
   setTitle('Projects');
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Projects</h1><p>Each project keeps its chats, tasks, repository and memory together.</p></div></div>
+  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Projects</h1><p class="page-summary">${esc(projectsSummary(state.workspaces, ws()))}</p></div></div>
     ${state.workspaces.map((workspace) => `<a class="list-item" href="#/project/${esc(workspace.id)}"><div class="grow"><div class="title">${esc(workspace.name)}</div></div>${workspace.id === ws() ? pill('available', 'Current') : ''}</a>`).join('')}</div>`;
 }
 

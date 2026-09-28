@@ -689,3 +689,6 @@ p a, li a, .small a, .xs a, .sub a, .composer-hint a { text-decoration: underlin
 .art-scroll:focus-visible, .art-kanban:focus-visible { outline: none; box-shadow: var(--focus); }
 .fahad-mark { background: var(--accent-fill); }
 .decision-open .faint, .need .faint, .verdict + .faint { color: var(--text-muted); }
+
+/* V5.1: one human sentence at the top of each screen. */
+.page-summary { font-size: var(--fs-md, 1.0625rem); color: var(--text); font-weight: 500; letter-spacing: -0.005em; margin-top: var(--s-1); }
