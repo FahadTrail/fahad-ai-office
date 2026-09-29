@@ -213,3 +213,9 @@ test('free routes that never succeed, or succeed under 20% over ≥20 attempts, 
   assert.ok(!reasons['free:new'].some((reason) => /SUCCEED|SUCCESS/.test(reason)), 'small sample: not judged');
   assert.ok(!reasons['paid:dead'].some((reason) => /SUCCEED|SUCCESS/.test(reason)), 'paid routes are governed by budget and health, not this rule');
 });
+
+test('a coding grade on a route whose per-minute token limit is below one coding turn does not count as coding capacity', () => {
+  const qualifications = Object.assign(new Map([['groq:m', generalRecord()]]), { coding: new Map([['groq:m', codingRecord('CODING_SECONDARY')]]) });
+  assert.ok(!routeClasses(route('groq:m', { requestTokenLimit: 8_000 }), qualifications, { now, codingDataClass: 'PUBLIC' }).has('coding'));
+  assert.ok(routeClasses(route('groq:m'), qualifications, { now, codingDataClass: 'PUBLIC' }).has('coding'));
+});
