@@ -20,6 +20,8 @@ import { refreshOpenRouterCatalog } from './model-gateway/agentic/openrouter-cat
 import { refreshProviderCatalogs } from './model-gateway/agentic/provider-catalogs.js';
 import { QualificationStore, AutoQualifier } from './model-gateway/agentic/qualification.js';
 import { createModelPool } from './model-gateway/agentic/model-pool.js';
+import { CapacitySnapshotter } from './model-gateway/agentic/capacity-snapshots.js';
+import { capacityView } from './hub-capacity.js';
 import { rankFreeModels } from './model-gateway/agentic/capabilities.js';
 import { OfficeModelRunner } from './office/pool-runner.js';
 import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
@@ -53,6 +55,8 @@ const autoQualifier = /^(0|false|no)$/i.test(String(process.env.AUTO_QUALIFY_FRE
   store: qualificationStore,
   log,
 });
+// One compact capacity snapshot per UTC day (off until its migration exists).
+const capacitySnapshotter = new CapacitySnapshotter({ db, log, capacityView: () => capacityView({ db }) });
 const canaryRequests = new CanaryRequestRunner({ db, stateStore: providerStateStore, log, background: true, qualifier: autoQualifier });
 const toolBrokerStore = new SupabaseToolBrokerStore(db);
 const { client: safeCanaryClient, transport: safeCanaryTransport } = createSafeCanaryMcpClient();
@@ -144,6 +148,7 @@ async function main() {
       // Owner-requested live provider canaries (no-op unless one is queued).
       if (!progressed) await canaryRequests.maybeRun().catch((error) => log('WARN  canary runner:', error.message));
       if (!progressed && autoQualifier) autoQualifier.maybeRun();
+      if (!progressed) capacitySnapshotter.maybeRun();
       lastPollAt = Date.now();
       busy = false;
       heartbeat();

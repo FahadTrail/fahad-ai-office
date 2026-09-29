@@ -171,6 +171,7 @@ export function allowsDataClass(route, dataClass) {
 // The data class a task needs from the legacy boolean: private-data tasks
 // need PRIVATE, everything else is PUBLIC-safe.
 export function requiredDataClass({ dataClass = null, requiresPrivateData = true } = {}) {
-  if (dataClass) return DATA_CLASSES[rankOf(dataClass)];
+  // An unrecognized class fails closed (PRIVATE), never open to PUBLIC.
+  if (dataClass) return DATA_CLASSES.includes(String(dataClass).toUpperCase()) ? String(dataClass).toUpperCase() : 'PRIVATE';
   return requiresPrivateData ? 'PRIVATE' : 'PUBLIC';
 }
