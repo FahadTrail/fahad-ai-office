@@ -95,7 +95,14 @@ export class AgentTurnGateway {
       if (!allowsDataClass(route, needed)) reasons.push(['PRIVATE', 'CONFIDENTIAL'].includes(needed) && !route.privacyApproved ? 'PRIVACY_NOT_APPROVED' : 'DATA_CLASS_NOT_ALLOWED');
       // The quality floor guards autonomous coding. Other jobs are governed by
       // their own capability minimums (capabilities.js JOB_PROFILES).
-      if ((!job || CODING_JOBS.has(baseJobName(job) || '')) && route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
+      // A free route's measured coding grade (coding suite) outranks its
+      // claimed quality tier: a grade that meets the job's tier satisfies the
+      // floor (e.g. Gemma 26B: tier 3 claimed, CODING_PRIMARY measured).
+      if ((!job || CODING_JOBS.has(baseJobName(job) || '')) && route.qualityTier < minQualityTier) {
+        const graded = route.billingClass !== 'paid' && qualifications && baseJobName(job) === 'coding'
+          && !codingTierGaps(route, codingTier, qualifications.coding, now).length;
+        if (!graded) reasons.push('BELOW_QUALITY_FLOOR');
+      }
       // Capability before price: a free model that cannot do the job is not
       // offered the job. Planning scores are corrected by the route's own
       // measured qualification (never raised for strict, high-stakes jobs).
