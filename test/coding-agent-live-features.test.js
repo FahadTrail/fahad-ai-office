@@ -224,3 +224,40 @@ test('every checkpoint reason the controller writes is allowed by the database c
   // Production session fd8550d8 failed on checkpoint('waiting').
   for (const reason of used) assert.ok(allowed.has(reason), `checkpoint reason "${reason}" violates agent_checkpoints_reason_check`);
 });
+
+test('a route kept out only by the request size triggers one compaction, never a loop', { timeout: 120_000 }, async () => {
+  const { sizeOnlyBlocked } = await import('../src/coding-agent/controller.js');
+  const entry = (reasons) => ({ route: { id: 'x:y' }, reasons });
+  assert.equal(sizeOnlyBlocked([entry(['REQUEST_ABOVE_PROVIDER_TPM'])]), true);
+  assert.equal(sizeOnlyBlocked([entry(['REQUEST_ABOVE_PROVIDER_TPM', 'COOLDOWN_RATE_LIMITED'])]), true);
+  assert.equal(sizeOnlyBlocked([entry(['REQUEST_ABOVE_PROVIDER_TPM', 'PAID_ROUTE_NOT_ALLOWED'])]), false);
+  assert.equal(sizeOnlyBlocked([entry(['COOLDOWN_RATE_LIMITED'])]), false);
+
+  // After three answered turns every route reports a per-minute input quota
+  // far below any request (as Gemini did for Gemma: 16K/min).
+  class QuotaStore extends MemoryProviderStateStore {
+    successes = 0;
+    async recordSuccess(route, details) { this.successes += 1; return super.recordSuccess(route, details); }
+    async snapshot() {
+      const map = await super.snapshot();
+      if (this.successes < 3) return map;
+      const next = new Map(map);
+      for (const id of ['anthropic:claude-opus-5', 'deepseek:deepseek-flash']) next.set(id, { ...(map.get(id) || {}), rateLimit: { inputTokensPerMinute: 200 } });
+      return next;
+    }
+  }
+  await withRuntime({ providerStateStore: new QuotaStore() }, async ({ sessionStore, bare, worker }) => {
+    const created = await sessionStore.createSession({
+      workspaceId: WORKSPACE_ID, title: 'Fix add() bug', repository: REPOSITORY, objective,
+      config: { ...SESSION_CONFIG, fetchUrl: bare, pushUrl: bare },
+    });
+    const outcome = await worker.runOnce();
+    assert.equal(outcome.status, 'blocked');
+    const events = await sessionStore.listEvents(created.id);
+    const compactions = events.filter((event) => event.type === 'guard' && event.payload.compaction === 'request_size');
+    assert.equal(compactions.length, 1, 'one size compaction per iteration, then the reason is reported');
+    assert.ok(sessionStore.data.checkpoints[created.id].some((checkpoint) => checkpoint.reason === 'compaction'));
+    const session = await sessionStore.getSession(created.id);
+    assert.match(session.blocker, /REQUEST_ABOVE_PROVIDER_TPM/);
+  });
+});
