@@ -4,40 +4,42 @@ Last updated: 2026-09-29, after Capacity Expansion V2 (see its section below). R
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
 
-## CAPACITY V2 WAVE 2 (in progress — updated 2026-09-29 ~20:05 UTC)
+## CAPACITY V2 WAVE 2 (updated 2026-09-29 ~21:00 UTC)
 
-**Production:** `main` `a5c8d11`, which includes PRs #77, #78 and #79, all deployed and healthy. After every restart the Supabase self-check and Telegram report OK.
+**Production:** `main`, with PRs #77–#84 deployed and healthy. After every restart the Supabase self-check and Telegram report OK.
 
-**Open:** PR #80 (`claude/capacity-v2-report`). It contains:
-* a free route's coding grade satisfies the quality floor;
-* the coding-turn context rule;
-* Cloudflare 4006 handling and reset schedules;
-* owner-action facts;
-* the benchmark, failover and burn-in harnesses;
-* docs.
+**Migration** `20261003090000_capacity_snapshots`: applied and verified (fingerprint equal). Snapshots are written daily; `/api/capacity` → `capacity.history`, and now also `capacity.publicCoding`.
 
-Merge #80 when CI is green (owner-approved autonomy for non-destructive capacity fixes).
+**Free public coding works (MEASURED, production, $0).** Session `7986c750`:
+* Gemma 26B (Gemini free), pinned; small task on this public repository.
+* Wrote `test/pool-registry-allowance.test.js`: 7/7 pass, finish gate passed.
+* 7 turns, 86.7K tokens, $0, 20 min wall time.
+  * About 10 min of that was provider per-minute cooldowns.
+  * It survived a worker restart (resumed from checkpoint 19).
 
-**Migration** `20261003090000_capacity_snapshots`: applied and verified (fingerprint equal). Snapshots are written daily; `/api/capacity` → `capacity.history`.
+**Five bugs found by the benchmark, all fixed and deployed:**
+* #81: the coding worker never loaded catalog-discovered routes.
+* #82 (1/2): the static `coding ≥ 4 / reasoning ≥ 4` claims outranked the measured grade.
+* #82 (2/2): body-read timeouts leaked as `errorCode "23"`. PUBLIC coding capacity is now reported separately.
+* #83: the cooldown wait crashed on a checkpoint reason the DB rejects.
+* #84: Gemini's 429 quota numbers were ignored, so the backoff escalated to 8 min on requests that can never pass.
 
-**Coding grades (suite `c2-2026-09`, production):**
+**Coding grades (suite `c2-2026-09`):**
 
 | Route | Grade | Coding-turn capable? |
 |---|---|---|
-| `gemini:gemma-4-26b-a4b-it` | CODING_PRIMARY (12/12) | yes, after PR #80 (tier-3 claim fixed); slow, ~50 s per call |
-| `groq:openai/gpt-oss-120b` | CODING_SECONDARY (10/11) | no: 8K TPM is below a 30K turn |
-| `zhipu:glm-4.5-flash` | c1 failed on truncation; c2 run hit a network timeout | re-test pending |
+| `gemini:gemma-4-26b-a4b-it` | CODING_PRIMARY | yes: small job MEASURED. Its per-minute input quota throttles turns above ≈16–25K tokens; exact value is logged in `provider_status.rate_limit` after the next 429 (#84). |
+| `zhipu:glm-4.7-flash` | CODING_SMALL_TASKS | yes for small (200K context, no request cap; 1 concurrent). Second, independent pool. |
+| `groq:openai/gpt-oss-120b` | CODING_SECONDARY | no: 8K TPM is below one turn |
+| `groq:openai/gpt-oss-20b` | NOT_CODING_APPROVED | no |
+| OpenRouter nemotron-3-ultra/super | queued | pending (the OpenRouter slot was spent on 429ing Gemma routes) |
 
-Other routes are still in the queue: Gemini Flash, Gemma 31B, OpenRouter nemotron-3-ultra/super, GLM-4.7.
+**Failover drill:** see the live result in `docs/capacity-v2.md` §8 (session `12a9cad3`, Gemma → GLM-4.7-flash).
 
 **Next commands:**
-1. Grades: see the SQL in the section below (`kind = 'coding_qualification'`).
-2. Public coding benchmark, on the VPS or with the service key:
-   `node tools/coding-benchmark.mjs start --route=gemini:gemma-4-26b-a4b-it --task=small`
-   then `node tools/coding-benchmark.mjs report --session=<id>`.
-3. Failover, only once a second coding-turn-capable free route is graded:
-   `node tools/coding-benchmark.mjs failover --primary=<A> --secondary=<B> --after=3`.
-4. Burn-in after 24 h: `node tools/burnin-report.mjs --since=<deploy time>`.
+1. Grades: SQL on `provider_canary_runs` with `report->>'kind' = 'coding_qualification'`.
+2. Benchmark: `node tools/coding-benchmark.mjs start --route=<id> --task=small|medium`, then `report --session=<id>`. Or copy the config of `7986c750` with `create_coding_session`.
+3. Burn-in after 24 h: `node tools/burnin-report.mjs --since=2026-09-29T21:00:00Z`.
 
 **Privacy:** no free route is PRIVATE-eligible.
 * Groq: terms are explicit, but 8K TPM rules it out for coding.
