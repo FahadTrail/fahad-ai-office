@@ -131,3 +131,18 @@ test('a finished Coding task keeps its PR, CI and files from the final result', 
   const view = publicSession({ id: 's', status: 'completed', state: {}, result: { summary: 'Done', pr: { url: 'https://github.com/o/r/pull/9', number: 9 }, ci: { state: 'success' }, filesChanged: ['a.js'] } });
   assert.deepEqual([view.pr.number, view.ci.state, view.filesChanged], [9, 'success', ['a.js']]);
 });
+
+// Regression (2026-09-29): the capacity handler sat behind the workspace API
+// path gate, which did not list `capacity`, so GET /api/capacity was 404 in
+// production. It is served through the real HTTP stack now.
+test('GET /api/capacity is served by the Hub (read-only pools view)', async () => {
+  await withHub(async (base) => {
+    const response = await fetch(`${base}/api/capacity`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(typeof body.headline, 'string');
+    assert.ok(Array.isArray(body.pools) && body.pools.length > 0);
+    assert.equal((await fetch(`${base}/api/capacity`, { method: 'POST' })).status, 404, 'read-only');
+  });
+});
