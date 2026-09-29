@@ -265,8 +265,8 @@ export function validateFinance(markdown) {
   for (const block of blocks.filter((entry) => typeOf(entry.raw) === 'table')) {
     const table = ARTIFACT_TYPES.table.clean(block.raw);
     if (!table) continue;
-    issues.push(...tableTotalIssues(table, text(block.raw.title)));
-    issues.push(...monthlyTableIssues(table, text(block.raw.title), calculated));
+    if (block.raw.calculated === true) continue;
+    issues.push(...tableScheduleIssues(table, text(block.raw.title), calculated));
   }
   // 4. Prose (summary and body) must not contradict the calculation.
   for (const claim of proseClaims(prose)) {
@@ -341,7 +341,8 @@ function tableTotalIssues(table, title) {
     const block = table.rows.slice(start, index).filter((entry) => !TOTAL_ROW.test(String(entry[0] || '')));
     start = /subtotal/i.test(row[0]) ? index + 1 : start;
     for (let column = 1; column < row.length; column += 1) {
-      if (/%|rate|margin|price|month\b|basis|note/i.test(table.columns[column] || '')) continue;
+      // Rates, notes and running balances (cumulative cash) are not sums.
+      if (/%|rate|margin|price|month\b|basis|note|cumulative|running|balance|تراكمي/i.test(table.columns[column] || '')) continue;
       const stated = finite(row[column]);
       const values = block.map((entry) => finite(entry[column])).filter((value) => value !== null);
       if (stated === null || values.length < 2) continue;
@@ -355,32 +356,223 @@ function tableTotalIssues(table, title) {
   return issues;
 }
 
-// A table with one row per month and a revenue / costs / customers column is
-// compared with the calculated schedule.
-function monthlyTableIssues(table, title, calculated) {
-  const monthColumn = table.columns.findIndex((column) => /^(month|period|الشهر)/i.test(column));
+// Monthly schedule values must equal the calculator's, up to rounding to a
+// whole currency unit (V4.1 table gate: no percentage tolerance).
+export const SCHEDULE_TOLERANCE = Object.freeze({ relative: 0.0005, absolute: 1 });
+const MONTH_COLUMN = /^(month|period|mo\b|الشهر)/i;
+
+// Which calculated schedule a table column shows (null: not a schedule column).
+export function scheduleColumnKey(column) {
+  const lower = String(column || '').toLowerCase();
+  return /customers/.test(lower) ? (/^(net |active |total |paying )?customers\b/.test(lower) ? 'customers' : null)
+    : /cumulative|running (?:cash|total|net)|cash balance|تراكمي/.test(lower) ? 'cumulative'
+      : /\bnet\b|profit|loss|cash ?flow|صافي/.test(lower) ? 'net'
+        : /^(mrr|revenue|monthly revenue|sales|income)|revenue \(|mrr \(|إيراد/.test(lower) ? 'revenue'
+          : /^(total )?(costs?|expenses?|spend)\b|^total cost|تكاليف|مصاريف/.test(lower) ? 'costs' : null;
+}
+
+// A table with one row per month and a revenue / costs / net / cumulative
+// column is compared, row by row, with the calculated schedule.
+function monthlyTableIssues(table, title, calculated, tolerance = SCHEDULE_TOLERANCE) {
+  const monthColumn = table.columns.findIndex((column) => MONTH_COLUMN.test(column));
   if (monthColumn < 0) return [];
-  const rows = table.rows.filter((row) => !TOTAL_ROW.test(String(row[0] || '')));
+  const rows = table.rows.filter((row) => !TOTAL_ROW.test(String(row[0] || '')) && !YEAR_ROW.test(String(row[monthColumn] || '')));
   const issues = [];
   table.columns.forEach((column, index) => {
     if (index === monthColumn) return;
-    const lower = column.toLowerCase();
-    const key = /customers/.test(lower) ? (/^(net |active |total |paying )?customers\b/.test(lower) ? 'customers' : null) : /cumulative/.test(lower) ? 'cumulative'
-      : /\bnet\b|profit/.test(lower) ? 'net' : /^(mrr|revenue|monthly revenue)|revenue \(|mrr \(/.test(lower) ? 'revenue'
-      : /^(total )?costs?\b|^expenses/.test(lower) ? 'costs' : null;
+    const key = scheduleColumnKey(column);
     const expected = key && calculated.schedule[key];
     if (!expected || (key !== 'costs' && calculated.model === 'costs_only')) return;
     rows.forEach((row) => {
       const month = Math.round(finite(row[monthColumn]) || 0);
       const stated = finite(row[index]);
       if (!month || month > expected.length || stated === null) return;
-      if (!agrees(stated, expected[month - 1], { relative: 0.02 })) {
+      if (!agrees(stated, expected[month - 1], tolerance)) {
         issues.push(issue('TABLE_SCHEDULE_MISMATCH', `Table "${title}" shows ${column} ${fmt(stated)} in month ${month}; the calculated ${key} is ${fmt(expected[month - 1])}.`,
           { field: `table:${key}`, expected: expected[month - 1], actual: stated, evidence: title }));
       }
     });
   });
-  return issues.slice(0, 6);
+  return issues;
+}
+
+// ---------------------------------------------------------------- table gate
+// V4.1 table gate: when FINANCE's model is VERIFIED, every financial table,
+// chart and figure anywhere else (AUDIT's review, CHIEF's answer, another
+// employee's deliverable) is checked against the calculator — every monthly
+// row, every total / year row and every labelled headline figure. The
+// calculator is the only source of monthly financial truth.
+
+const YEAR_ROW = /^\s*(?:total|sum|year(?:\s*(?:1|one))?|annual|12[\s-]?months?|first[\s-]year|المجموع|الإجمالي|السنة)\b/i;
+// Figures about other companies or the market are not ours.
+const OTHER_PARTY = /competitor|market size|industry|\b(?:tam|sam|som)\b|منافس|السوق/i;
+const SCENARIO = /scenario|sensitiv|[-−+±]\s*\d+\s*%|price\s*[-−+]|customers\s*[-−+]|best case|worst case|سيناريو/i;
+
+// Markdown pipe tables in text: { columns, rows, source }.
+export function markdownTables(markdown) {
+  const tables = [];
+  const body = String(markdown || '').replace(BLOCK, (match) => ' '.repeat(match.length));
+  for (const match of body.matchAll(/(?:^[ \t]*\|[^\n]*\|[ \t]*(?:\n|$(?![\s\S]))){2,}/gm)) {
+    const lines = match[0].trim().split('\n').map((line) => line.trim().replace(/^\||\|$/g, '').split('|').map((cell) => cell.trim()));
+    const rows = lines.slice(1).filter((row) => !row.every((cell) => /^:?-{2,}:?$/.test(cell) || cell === ''));
+    if (!rows.length) continue;
+    tables.push({ columns: lines[0], rows, source: String(markdown).slice(match.index, match.index + match[0].length) });
+  }
+  return tables;
+}
+
+// Headline figure a labelled row states ("Total revenue (12 months) | 112,236").
+function headlineKey(label, context) {
+  const text = `${label}`.toLowerCase();
+  if (SCENARIO.test(text) || OTHER_PARTY.test(`${text} ${context}`)) return null;
+  if (/break[\s-]?even|التعادل/.test(text)) return /operat/.test(text) ? 'operating_break_even_month' : 'break_even_month';
+  const annual = /total|year|annual|12[\s-]?month|over \d+ months|إجمالي|سنوي/.test(`${text} ${context}`);
+  if (/one[\s-]?time|setup|fit[\s-]?out/.test(text)) return 'total_one_time';
+  if (/run[\s-]?rate|monthly (?:cost|burn)|burn rate/.test(text)) return 'monthly_run_rate';
+  if (/ending cash|closing cash|cash at (?:the )?end/.test(text)) return 'ending_cash';
+  if (!annual) return null;
+  if (/revenue|sales|income|إيراد/.test(text)) return 'year_revenue';
+  if (/\bnet\b|profit|loss|صافي|cumulative/.test(text)) return 'net';
+  if (/costs?|expenses?|spend|تكاليف|مصاريف/.test(text)) return 'year_costs';
+  return null;
+}
+
+const monthOf = (value) => { const match = String(value ?? '').match(/(?:month|m|الشهر)\s*(\d{1,2})|^\s*(\d{1,2})\s*$/i); return match ? Number(match[1] || match[2]) : null; };
+const numbersIn = (value) => [...String(value ?? '').matchAll(/-?\d[\d,]*(?:\.\d+)?\s*(?:k|m|mn|million|thousand)?\b/gi)].map((match) => parseAmount(match[0])).filter((number) => number !== null);
+
+// Every inconsistency between one table and the calculation.
+export function tableScheduleIssues(table, title, calculated, tolerance = SCHEDULE_TOLERANCE) {
+  // A key/value headline table ("Figure | Value") is not a list to sum: its
+  // "Total costs …" row is a headline, compared with the calculation below.
+  const headlineTable = /^(figure|metric|kpi|measure|indicator|key figure|headline)/i.test(String(table.columns[0] || ''));
+  const issues = [...(headlineTable ? [] : tableTotalIssues(table, title)), ...monthlyTableIssues(table, title, calculated, tolerance)];
+  const hasRevenue = calculated.model !== 'costs_only';
+  const monthColumn = table.columns.findIndex((column) => MONTH_COLUMN.test(column));
+  const last = calculated.months - 1;
+  const yearly = { revenue: calculated.year_revenue, costs: calculated.year_costs, net: calculated.net, cumulative: calculated.schedule.cumulative[last] };
+  for (const row of table.rows) {
+    const label = String(row[0] ?? '');
+    // Total / year rows of a schedule table: each schedule column = year total.
+    if (monthColumn >= 0 && (YEAR_ROW.test(label) || YEAR_ROW.test(String(row[monthColumn] ?? '')))) {
+      table.columns.forEach((column, index) => {
+        const key = index === monthColumn ? null : scheduleColumnKey(column);
+        const expected = key ? yearly[key] : undefined;
+        const stated = finite(row[index]);
+        if (expected === undefined || expected === null || stated === null || (key !== 'costs' && !hasRevenue)) return;
+        if (!agrees(stated, expected, tolerance)) {
+          issues.push(issue('TABLE_YEAR_TOTAL_MISMATCH', `Table "${title}" row "${label}" shows ${column} ${fmt(stated)}; the calculated ${calculated.months}-month ${key} is ${fmt(expected)}.`,
+            { field: `table:year_${key}`, expected, actual: stated, evidence: title }));
+        }
+      });
+      continue;
+    }
+    if (monthColumn >= 0) continue;
+    // Labelled headline rows ("Cash break-even | Month 11", "Net (12 months) | 9,489").
+    const key = headlineKey(label, `${title} ${table.columns.join(' ')}`);
+    if (!key) continue;
+    const cells = row.slice(1).join(' ');
+    if (/break_even/.test(key)) {
+      const stated = monthOf(cells);
+      if (!hasRevenue || stated === null) continue;
+      if (stated !== calculated.break_even_month && stated !== calculated.operating_break_even_month) {
+        issues.push(issue('BREAK_EVEN_MISMATCH', `Table "${title}" states ${label} as month ${stated}; the schedule breaks even in month ${calculated.break_even_month ?? '— (not reached)'}.`,
+          { field: 'table:break_even_month', expected: calculated.break_even_month, actual: stated, evidence: title }));
+      }
+      continue;
+    }
+    const expected = calculated[key];
+    const stated = numbersIn(cells).find((number) => Math.abs(number) >= 100);
+    if (expected === undefined || expected === null || stated === undefined) continue;
+    if (!agrees(stated, expected, tolerance)) {
+      issues.push(issue('TABLE_HEADLINE_MISMATCH', `Table "${title}" states ${label} ${fmt(stated)}; the calculation gives ${fmt(expected)}.`,
+        { field: `table:${key}`, expected, actual: stated, evidence: title }));
+    }
+  }
+  return dedupe(issues);
+}
+
+// A table that shows a monthly financial schedule (month column + at least
+// one revenue / costs / net / cumulative column).
+export function isScheduleTable(table) {
+  return table.columns.some((column) => MONTH_COLUMN.test(column)) && table.columns.some((column) => ['revenue', 'costs', 'net', 'cumulative'].includes(scheduleColumnKey(column)));
+}
+
+// A chart that depicts the schedule (not the calculator's own chart).
+function chartIssues(raw, calculated, tolerance) {
+  const chart = ARTIFACT_TYPES.chart.clean(raw);
+  if (!chart) return { schedule: false, issues: [] };
+  const issues = [];
+  let schedule = false;
+  for (const series of chart.series) {
+    const key = seriesKey(series.name, raw.title);
+    const expected = key && calculated.schedule[key];
+    if (!expected) continue;
+    schedule = true;
+    series.values.forEach((value, index) => {
+      if (index < expected.length && value !== null && !agrees(value, expected[index], tolerance)) {
+        issues.push(issue('CHART_MISMATCH', `Chart "${text(raw.title)}" series "${series.name}" shows ${fmt(value)} for ${chart.labels[index] || `month ${index + 1}`}; the calculated ${key} is ${fmt(expected[index])}.`,
+          { field: `chart:${key}`, expected: expected[index], actual: value, evidence: `${text(raw.title)} · ${series.name}` }));
+      }
+    });
+  }
+  return { schedule, issues: dedupe(issues) };
+}
+
+// Every financial table / chart in a text and its inconsistencies with the
+// calculation. kind: 'artifact' | 'markdown'; schedule: a monthly schedule.
+export function financialTables(markdown, calculated, tolerance = SCHEDULE_TOLERANCE) {
+  const found = [];
+  for (const block of artifactBlocks(markdown)) {
+    const type = typeOf(block.raw);
+    if (type === 'table') {
+      const table = ARTIFACT_TYPES.table.clean(block.raw);
+      if (!table) continue;
+      const issues = tableScheduleIssues(table, text(block.raw.title), calculated, tolerance);
+      const schedule = isScheduleTable(table);
+      if (schedule || issues.length) found.push({ kind: 'artifact', source: block.source, title: text(block.raw.title), schedule, calculated: block.raw.calculated === true, issues });
+    } else if (type === 'chart') {
+      const { schedule, issues } = chartIssues(block.raw, calculated, tolerance);
+      if (schedule || issues.length) found.push({ kind: 'artifact', source: block.source, title: text(block.raw.title), schedule, calculated: block.raw.calculated === true, issues });
+    }
+  }
+  for (const table of markdownTables(markdown)) {
+    const title = table.columns.join(' · ').slice(0, 80);
+    const issues = tableScheduleIssues(table, title, calculated, tolerance);
+    const schedule = isScheduleTable(table);
+    if (schedule || issues.length) found.push({ kind: 'markdown', source: table.source, title, schedule, calculated: false, issues });
+  }
+  return found;
+}
+
+// The calculator's own monthly schedule as a table artifact (the only
+// monthly financial table the Office presents).
+export function scheduleTable(calculated) {
+  if (!calculated || calculated.model === 'costs_only') return null;
+  const { revenue, costs, net, cumulative } = calculated.schedule;
+  const whole = (value) => fmt(Math.round(value));
+  return {
+    type: 'table', title: `Monthly schedule — calculated by code (${calculated.currency})`, calculated: true,
+    columns: ['Month', 'Revenue', 'Costs', 'Net', 'Cumulative cash'],
+    rows: [...revenue.map((value, index) => [String(index + 1), whole(value), whole(costs[index]), whole(net[index]), whole(cumulative[index])]),
+      ['Total', whole(calculated.year_revenue), whole(calculated.year_costs), whole(calculated.net), whole(cumulative[calculated.months - 1])]],
+  };
+}
+
+// Owner drill ([drill:finance-table]): the exact failure found in the V4.1
+// live acceptance — a model-written monthly table whose revenue drifts from
+// the calculator by AED 747 over the year (Sanad Desk: 111,489 revenue,
+// 9,489 net instead of 112,236 / 10,236).
+export function badScheduleTable(calculated, drift = 747) {
+  if (!calculated || calculated.model === 'costs_only') return null;
+  const { revenue, costs } = calculated.schedule;
+  const total = revenue.reduce((sum, value) => sum + value, 0);
+  const bad = revenue.map((value) => Math.round(value * (1 - drift / Math.max(1, total))));
+  bad[bad.length - 1] += Math.round(total - drift) - bad.reduce((sum, value) => sum + value, 0);
+  let running = 0;
+  const rows = bad.map((value, index) => { const flow = value - Math.round(costs[index]); running += flow; return [String(index + 1), fmt(value), fmt(Math.round(costs[index])), fmt(flow), fmt(running)]; });
+  const costTotal = Math.round(costs.reduce((sum, value) => sum + value, 0));
+  rows.push(['Total', fmt(Math.round(total - drift)), fmt(costTotal), fmt(Math.round(total - drift) - costTotal), '']);
+  return { type: 'table', title: `12-Month Financial Snapshot (${calculated.currency})`, columns: ['Month', 'Revenue', 'Total Cost', 'Net Cash Flow', 'Cumulative Net'], rows };
 }
 
 const MONEY = '(?:AED|USD|US\\$|\\$|€|درهم)?\\s*~?\\s*(-?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:k|m|mn|million|thousand|ألف|مليون)?)(?!\\d|[,.]\\d|\\s*(?:%|months?|customers|users|شهر|per month|a month|/\\s*mo|monthly|each month|شهري))';
