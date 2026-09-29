@@ -41,11 +41,11 @@ const ACTIONS = [
     id: 'privacy-review', priority: 6, provider: null,
     unlocks: 'Free coding on PRIVATE repositories. Today no free route may receive private code, so free coding capacity for private repos is 0.',
     steps: [
-      'Read the API data terms of Ollama, Cloudflare Workers AI and OpenCode Zen (zero-retention models).',
-      'Only if you accept them for private code: sudo bash ops/set-secret.sh OLLAMA_API_PRIVATE_DATA_APPROVED (value: true) — likewise CLOUDFLARE_API_PRIVATE_DATA_APPROVED and OPENCODE_ZEN_PRIVATE_DATA_APPROVED.',
+      'Read the API data terms. Z.ai (GLM Flash, already configured) and Groq state API data is not used for training and not stored (Groq: optional zero data retention in its console); Ollama, Cloudflare Workers AI and OpenCode Zen zero-retention models make similar statements.',
+      'Only if you accept them for private code: sudo bash ops/set-secret.sh ZHIPU_API_PRIVATE_DATA_APPROVED (value: true) — likewise GROQ_API_PRIVATE_DATA_APPROVED, OLLAMA_API_PRIVATE_DATA_APPROVED, CLOUDFLARE_API_PRIVATE_DATA_APPROVED and OPENCODE_ZEN_PRIVATE_DATA_APPROVED.',
       'Or mark PUBLIC repositories as dataClass "PUBLIC" when starting a Coding task (Hub API), which needs no approval.',
     ],
-    done: (env) => ['OLLAMA_API_PRIVATE_DATA_APPROVED', 'CLOUDFLARE_API_PRIVATE_DATA_APPROVED', 'OPENCODE_ZEN_PRIVATE_DATA_APPROVED'].some((name) => flag(env, name)),
+    done: (env) => ['ZHIPU_API_PRIVATE_DATA_APPROVED', 'GROQ_API_PRIVATE_DATA_APPROVED', 'OLLAMA_API_PRIVATE_DATA_APPROVED', 'CLOUDFLARE_API_PRIVATE_DATA_APPROVED', 'OPENCODE_ZEN_PRIVATE_DATA_APPROVED'].some((name) => flag(env, name)),
   },
   {
     id: 'openrouter-credit', priority: 7, provider: 'openrouter', unlocks: 'OpenRouter :free models go from 50 to 1,000 requests/day after a ONE-TIME $10 credit purchase (PUBLISHED). Costs money: your decision.',

@@ -55,6 +55,8 @@ declare -A SHAPE=(
   # Not secrets: the owner's reviewed decision that a provider may receive
   # PRIVATE data (private code). Set true only after reading the provider's
   # current API data terms. OpenCode applies it to zero-retention models only.
+  [ZHIPU_API_PRIVATE_DATA_APPROVED]='^(true|false)$'
+  [GROQ_API_PRIVATE_DATA_APPROVED]='^(true|false)$'
   [OLLAMA_API_PRIVATE_DATA_APPROVED]='^(true|false)$'
   [CLOUDFLARE_API_PRIVATE_DATA_APPROVED]='^(true|false)$'
   [OPENCODE_ZEN_PRIVATE_DATA_APPROVED]='^(true|false)$'

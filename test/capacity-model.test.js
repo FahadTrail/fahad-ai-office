@@ -175,3 +175,21 @@ test('capacity_snapshots migration is additive, RLS on, service role only', () =
   assert.match(sql, /grant select, insert, update, delete on table public\.capacity_snapshots to service_role/);
   assert.ok(!/\b(drop|truncate|delete from)\b/i.test(sql.replace(/grant select, insert, update, delete/i, '')), 'no destructive statement');
 });
+
+test('/api/capacity: a blocked paid account is never the fallback; stored snapshots come back as history', async () => {
+  const { capacityView } = await import('../src/hub-capacity.js');
+  const { memoryPostgrest } = await import('../testing/fixtures/memory-postgrest.js');
+  const db = memoryPostgrest({
+    provider_status: [{ provider: 'qwen', model: 'qwen3.8-flash', health: 'auth_error', cooldown_until: '2026-09-26T19:27:45Z', rate_limit: null }],
+    model_attempts: [],
+    workspace_policies: [{ monthly_budget_usd: 2, spent_usd: 0.5, reserved_usd: 0 }],
+    provider_canary_runs: [],
+    capacity_snapshots: [{ snapshot_date: '2026-09-29', taken_at: at, summary: { freeTokensPerDay: 3_122_007, coding: { tokensPerDay: 0 }, codingJobsPerDay: { small: 0 }, independentFreePools: 12, healthyPools: 11 } }],
+  });
+  const env = { GROQ_API_KEY: KEY, QWEN_API_KEY: KEY, QWEN_API_PRIVATE_DATA_APPROVED: 'true', DEEPSEEK_API_KEY: KEY, DEEPSEEK_API_TRAINING_OPTOUT_VERIFIED: 'true' };
+  const view = await capacityView({ db, now, env });
+  assert.equal(view.capacity.paidFallback.route, 'deepseek:deepseek-flash', 'qwen (auth_error) is skipped even though it is cheaper');
+  assert.equal(view.capacity.history.length, 1);
+  assert.equal(view.capacity.history[0].freeTokensPerDay, 3_122_007);
+  assert.equal(view.capacity.history[0].independentFreePools, 12);
+});
