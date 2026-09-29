@@ -14,7 +14,12 @@ const secret = (name) => `sudo bash ops/set-secret.sh ${name}`;
 const ACTIONS = [
   {
     id: 'mistral-key', facts: { signup: 'https://console.mistral.ai (Experiment plan)', secretEnv: 'MISTRAL_API_KEY', card: 'no (REPORTED)', phone: 'yes — SMS verification (REPORTED)', autoReloadRisk: 'none on the Experiment plan', adapterReady: true, independentPool: true, freeQuota: '≈1B tokens/month, ≈1 RPS (REPORTED; not counted until a live canary)', codingValue: 'high on paper (Codestral included, REPORTED); PUBLIC code only', privacyClass: 'PUBLIC', setupMinutes: 10 }, priority: 1, provider: 'mistral', unlocks: '≈1B tokens/month (REPORTED; exact limit in the Mistral console). PUBLIC data only: free-mode prompts may be used for training.',
-    steps: ['Create an API key in the Mistral console (Free mode).', secret('MISTRAL_API_KEY')],
+    steps: [
+      'Sign in at console.mistral.ai, choose the free Experiment plan and verify your phone number (SMS). No card is needed (REPORTED).',
+      'Optional, recommended: Admin Console → Privacy → turn OFF "Allow Mistral to use your data for model improvement" (free-mode prompts are used for training by default, REPORTED). Routes stay PUBLIC-only either way until a reviewed privacy flag.',
+      'API Keys → Create new key.',
+      secret('MISTRAL_API_KEY'),
+    ],
     done: (env) => set(env, 'MISTRAL_API_KEY'),
   },
   {

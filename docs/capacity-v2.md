@@ -336,3 +336,88 @@ Both runs used the small benchmark task: a new unit-test file on this public rep
 **Not yet measured:**
 * A medium job on free routes. GLM is graded SMALL_TASKS only; Gemma's per-minute input quota refuses turns above ≈16–25K tokens.
 * Either provider's daily cap. Gemini does not publish Gemma's quota; Z.ai publishes none.
+
+## 9. Capacity finalization (2026-09-29)
+
+### Private free coding: final review
+
+The official pages could not be opened from the sandbox (egress policy). Evidence comes from search excerpts of the official pages and is labelled accordingly. Nothing changes routing: private code still goes only to routes with an owner flag.
+
+| Provider | Training on API data | Retention | Class | What would change it |
+|---|---|---|---|---|
+| Gemini API free | Used to improve products, and human reviewers may read it; "do not submit sensitive, confidential, or personal information" (Gemini API terms, Unpaid Services) | — | **PUBLIC_ONLY** | Only a paid project; none is planned |
+| Groq | Not used (Services Agreement) | None by default; optional zero data retention | PRIVATE-eligible candidate | Fahad sets `GROQ_API_PRIVATE_DATA_APPROVED`. Of no coding value: 8K tokens/min is below a small job's turn |
+| Z.ai GLM Flash | Excerpts say API content is not used "unless you explicitly agree", but independent reviews call the terms unpublished or contradictory | "processed in real time, not saved" | **disabled** (evidence conflicts) | Fahad reads the official Terms and the DPA and decides on `ZHIPU_API_PRIVATE_DATA_APPROVED` |
+| Mistral free (Experiment) | Used by default; opt-out in Admin Console → Privacy (REPORTED) | REPORTED 30 days | PUBLIC_ONLY until opted out | The opt-out, then a reviewed flag |
+| OpenRouter `:free` | Depends on the upstream; may log | — | PUBLIC_ONLY | none |
+| OpenCode Zen | Zero retention for most providers; some free models train (e.g. Muse Spark) | per model | per model: NORMAL or PUBLIC | a key (see owner actions) |
+
+**PRIVATE free coding = 0 jobs/day.** No free route has unambiguous, verified no-training and no-retention terms *and* the capacity to code.
+
+### Owner unlocks, ranked by capacity gain ÷ effort (at most 5)
+
+| # | Action | Expected gain | Coding benefit | Privacy benefit | Card / SMS / auto-reload | Secret | Time |
+|---|---|---|---|---|---|---|---|
+| 1 | **Mistral** key (Experiment plan) | ≈1B tokens/month REPORTED, ≈30× today's measured free volume. Not counted until a canary | Codestral + Mistral Large for PUBLIC code (REPORTED); an independent medium-coding pool | none until opted out | no card / **SMS** / none | `MISTRAL_API_KEY` | 10 min |
+| 2 | **LLM7** token | 1M tokens/day PUBLISHED (≈+30%) | PUBLIC small coding; models vary | none | no / no / none | `LLM7_API_KEY` | 5 min |
+| 3 | **Cloudflare** Workers AI token + account id | 10K neurons/day PUBLISHED (token equivalent UNKNOWN) | small (qwen2.5-coder-32b) | NORMAL: the only small PRIVATE-coding candidate with published no-training terms | no / no / none on the Free plan | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | 10 min |
+| 4 | **Z.ai privacy review** | 0 tokens; changes the class of an existing pool | PRIVATE small coding via GLM-4.7-flash | the only existing PRIVATE path | — | `ZHIPU_API_PRIVATE_DATA_APPROVED` | 30 min reading |
+| 5 | **OpenCode Zen** key | limited-time free models, no published limit | untested | NORMAL on zero-retention models | card UNKNOWN / no / **auto-reload ON by default: disable it** | `OPENCODE_ZEN_API_KEY` | 10 min |
+
+Deferred, with reasons:
+* Ollama Cloud: small unpublished allowance and 1 concurrent request.
+* SambaNova, Fireworks, Together: one-time credit or no free tier.
+* HF Inference: ≈200K tokens/month.
+* Cerebras: trial ended.
+* The OpenRouter $10 credit is a purchase, so it is Fahad's decision and not an unlock.
+
+### Mistral (phase 9)
+
+| Fact | Label |
+|---|---|
+| A free Experiment plan with all API models (incl. Codestral), ≈1B tokens/month, ≈1 RPS | REPORTED (third-party summaries); the official limits page is in the console |
+| Phone (SMS) verification, no card | REPORTED |
+| Free-mode data used for training by default; opt-out in Admin Console → Privacy | REPORTED |
+| Paid plans: no training by default; zero data retention on request | REPORTED |
+| Fahad's account | no key is set (OBSERVED: `MISTRAL_API_KEY` absent) |
+| Code | ready: route, pricing class `free`, monthly reset, 429 "per month" detection, qualification hook, owner action with exact steps |
+
+Mistral's ≈1B/month is **not** in any capacity number until a live canary and a qualification pass.
+
+### OpenCode Zen (phase 10)
+
+* Free models such as Big Pickle, Space Bunny Free and LongCat are limited-time promotions with no published numeric limit.
+* Most providers are zero-retention and do not train; some free models do train and are excluded or PUBLIC.
+* **Auto-reload ($20 when below $5) must be disabled** before any balance exists.
+* The adapter, catalog gating and privacy classes are ready. The status stays OWNER_ACTION_REQUIRED.
+
+### LLM7, Cloudflare, Ollama (phase 11)
+
+All three have:
+* an adapter;
+* key-presence readiness;
+* catalog discovery (Cloudflare and Ollama);
+* a capacity pool, reset schedule (LLM7 rolling, Cloudflare 00:00 UTC, Ollama monthly) and health;
+* a privacy class (LLM7 PUBLIC, Cloudflare and Ollama NORMAL);
+* canary and qualification hooks, with tests.
+
+Ollama is deferred on value (see above), not on engineering.
+
+### OmniRoute (phase 12)
+
+**OMNIROUTE = DISCOVERY TOOL, NOT CAPACITY SOURCE.**
+
+| Bucket | Count |
+|---|---|
+| Total listed | 352 |
+| Rejected: consumer login / OAuth reuse | 35 |
+| Rejected: browser cookie / reverse-engineered | 42 |
+| Rejected: terms forbid | 10 |
+| Not an LLM pool | 46 |
+| No recurring free allowance | 173 |
+| "Candidates" by wording | 46 |
+| of which: resellers of the same upstream quotas | 25 |
+| of which: already integrated | 5 |
+| of which: adapters ready, waiting on owner keys | 5 |
+| of which: deferred | 11 |
+| **New independent pools found and integrated this sprint** | **0** |
