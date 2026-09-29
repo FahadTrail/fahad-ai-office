@@ -31,7 +31,7 @@ never used.
 | Gemini (Google AI Studio) | Google, per model | Yes, 1 per model | API key | Flash ≈20 RPD, Flash-Lite ≈500 RPD (REPORTED); Flash-Lite ≈2.31M tokens/day ESTIMATED from MEASURED request size | 00:00 Pacific | PUBLIC (free tier may be used to improve products) | Qualified; coding suite running | none | **ACTIVE** |
 | Groq | Groq, per model | Yes, 1 per model | API key | 30 RPM, 1K RPD, **8K TPM (MEASURED from headers)**, 200K TPD (PUBLISHED) | rolling | NORMAL per terms (no training, no retention by default; optional zero data retention). Treated PUBLIC until the owner flag | 8K tokens/min is below one agentic coding turn (≈30K input): small checks only | optional privacy flag | **ACTIVE** (general); not a coding pool |
 | OpenRouter `:free` | OpenRouter key-wide | Yes, 1 for all `:free` models | API key | 50 RPD, 20 RPM (PUBLISHED); 1,000 RPD after a one-time $10 credit | 00:00 UTC | PUBLIC (upstreams may log) | nemotron-3-ultra qualified; coding suite running | optional $10 | **ACTIVE** |
-| Z.ai GLM Flash | Z.ai | Yes, 1 | API key | $0 models; 1 concurrent request; no daily cap published | — | NORMAL per terms (API data not stored, not used for training). Treated PUBLIC until the owner flag | glm-4.5/4.7-flash qualified (general); coding suite running | **privacy flag = best private-coding candidate** | **ACTIVE** |
+| Z.ai GLM Flash | Z.ai | Yes, 1 | API key | $0 models; 1 concurrent request; no daily cap published | — | PUBLIC (default). Privacy policy (re-checked 2026-09-29): API content is "processed in real-time … not saved on their servers"; a Data Processing Addendum makes Z.ai (Jingsheng Hengxing Technology Pte. Ltd, Singapore) a processor. **No explicit "not used for training" statement could be confirmed**, so the evidence is incomplete | glm-4.5/4.7-flash qualified (general); coding suite running | owner reads the DPA before any privacy flag | **ACTIVE** (PUBLIC/general) |
 | Mistral (La Plateforme, Experiment plan) | Mistral | Yes | API key; phone (SMS) verification, no card (REPORTED) | ≈1B tokens/month, ≈1 RPS (REPORTED) | monthly | PUBLIC (free-mode data may be used for training) | Codestral included (REPORTED); not measured | create key with phone verification | **OWNER_ACTION_REQUIRED** |
 | LLM7 | LLM7 | Yes | token | 1M tokens/day rolling, 60 RPM, 250/h (PUBLISHED) | rolling 24 h | PUBLIC | public-code only; best-effort service | create token | **OWNER_ACTION_REQUIRED** |
 | Cloudflare Workers AI | Cloudflare | Yes | API token + account id | 10,000 neurons/day (PUBLISHED; tokens per neuron model-specific, UNKNOWN until measured) | 00:00 UTC | NORMAL (no training or retention) | small: gpt-oss-120b, qwen2.5-coder-32b | token + account id; stay on Free plan | **OWNER_ACTION_REQUIRED** |
@@ -52,10 +52,9 @@ never used.
 
 ## Conclusion
 
-* **Private free coding:** the only legitimate path with keys that already exist is **Z.ai GLM Flash**. Its API terms state no storage and no training.
-  * Fahad reviews the terms and sets `ZHIPU_API_PRIVATE_DATA_APPROVED=true`.
-  * GLM Flash must pass the coding suite.
-  * It serves one request at a time.
-* **Groq** has the same privacy terms, but its free 8K tokens/minute limit cannot carry agentic coding.
+* **Private free coding:** no existing-key free provider is private-eligible yet.
+  * **Groq** has unambiguous terms (Services Agreement: Groq may not train on inputs or outputs; no retention by default; zero data retention can be switched on). It is a PRIVATE-ELIGIBLE CANDIDATE, but its free 8K tokens/minute cannot carry agentic coding.
+  * **Z.ai GLM Flash** states no storage, but no explicit no-training statement could be confirmed from primary text (the DPA page cannot be read from here). It is a candidate with incomplete evidence: Fahad must read the DPA before `ZHIPU_API_PRIVATE_DATA_APPROVED` is considered.
+  * Private code is never routed to either route until Fahad sets the flag.
 * **Public coding:** the Office repository `FahadTrail/fahad-ai-office` is public, so tasks on it may be marked `dataClass: "PUBLIC"` and use any free route with a coding grade.
 * **Largest capacity unlock:** Mistral (≈1B tokens/month REPORTED, PUBLIC only), then LLM7 (1M/day PUBLISHED).

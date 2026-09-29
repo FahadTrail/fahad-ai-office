@@ -41,7 +41,7 @@ const ACTIONS = [
     id: 'privacy-review', priority: 6, provider: null,
     unlocks: 'Free coding on PRIVATE repositories. Today no free route may receive private code, so free coding capacity for private repos is 0.',
     steps: [
-      'Read the API data terms. Z.ai (GLM Flash, already configured) and Groq state API data is not used for training and not stored (Groq: optional zero data retention in its console); Ollama, Cloudflare Workers AI and OpenCode Zen zero-retention models make similar statements.',
+      'Read the API data terms. Groq (already configured): its Services Agreement forbids training on inputs/outputs, no retention by default, optional zero data retention — but its free 8K tokens/minute cannot carry coding. Z.ai (GLM Flash, already configured): states API content is not stored; read its Data Processing Addendum for training use before approving. Ollama, Cloudflare Workers AI and OpenCode Zen zero-retention models state no training/retention.',
       'Only if you accept them for private code: sudo bash ops/set-secret.sh ZHIPU_API_PRIVATE_DATA_APPROVED (value: true) — likewise GROQ_API_PRIVATE_DATA_APPROVED, OLLAMA_API_PRIVATE_DATA_APPROVED, CLOUDFLARE_API_PRIVATE_DATA_APPROVED and OPENCODE_ZEN_PRIVATE_DATA_APPROVED.',
       'Or mark PUBLIC repositories as dataClass "PUBLIC" when starting a Coding task (Hub API), which needs no approval.',
     ],

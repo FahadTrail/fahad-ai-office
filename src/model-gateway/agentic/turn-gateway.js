@@ -20,6 +20,8 @@ import { codingTierGaps } from './coding-qualification.js';
 export { assertFreeRouteHonest, sameModelFamily, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 
 const CODING_JOBS = new Set(['coding', 'qa_security']);
+const DEAD_ROUTE_MIN_ATTEMPTS = 20;
+const LOW_SUCCESS_RATE = 0.2;
 // High-value work that may use scarce free pools first (see order()).
 export const HIGH_VALUE_JOBS = new Set(['synthesis', 'finance', 'finance_critical', 'qa_security', 'coding', 'research']);
 const KEY_WIDE_BLOCKERS = /_(CREDENTIAL_INVALID|ACCOUNT_NOT_ACTIVATED|ACCOUNT_OVERDUE|PERMISSION_MISSING|REGION_NOT_SUPPORTED)$/;
@@ -120,6 +122,16 @@ export class AgentTurnGateway {
         reasons.push(`COOLDOWN_POOL_${String(pooled.health).toUpperCase()}`);
         cooldownUntil = pooled.cooldownUntil;
       } else if (route.secretRef && blockedSecrets.has(route.secretRef)) reasons.push('PROVIDER_CREDENTIAL_BLOCKED');
+      // Evidence-based demotion of free routes (Capacity V2 wave 2): a route
+      // that never answered, or answers under 20% of the time over a real
+      // sample, costs failover hops and shared quota without output. It is
+      // left to the qualifier's back-off probes; one success reinstates it.
+      if (route.billingClass !== 'paid' && routeState) {
+        const successes = Number(routeState.requests || 0);
+        const attempts = successes + Number(routeState.failures || 0);
+        if (successes === 0 && attempts >= DEAD_ROUTE_MIN_ATTEMPTS) reasons.push('NEVER_SUCCEEDED');
+        else if (attempts >= DEAD_ROUTE_MIN_ATTEMPTS && successes / attempts < LOW_SUCCESS_RATE) reasons.push('LOW_SUCCESS_RATE');
+      }
       if (excludedRouteIds.includes(route.id)) reasons.push('FAILED_THIS_TURN');
       if (policyExcludedRouteIds.includes(route.id)) reasons.push('EXCLUDED_BY_ROUTING_POLICY');
       if (budgetExhaustedRouteIds.includes(route.id)) reasons.push('ROUTE_BUDGET_EXHAUSTED');
