@@ -97,6 +97,8 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
       freeTokensPerMonth: model.perClass.general.tokensPerMonth,
       freeTokensToday: model.perClass.general.tokensToday,
       coding: { ...model.perClass.coding, jobsPerDay: model.codingJobsPerDay, dataClass: model.codingDataClass },
+      // PUBLIC code only (public repositories): never used for private code.
+      publicCoding: { ...model.perClass.coding_public, jobsPerDay: model.publicCodingJobsPerDay, dataClass: 'PUBLIC' },
       strongReasoning: model.perClass.strong_reasoning,
       research: model.perClass.research,
       finance: model.perClass.finance,
@@ -118,6 +120,7 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
         date: row.snapshot_date, takenAt: row.taken_at,
         freeTokensPerDay: row.summary?.freeTokensPerDay ?? null, strongReasoningPerDay: row.summary?.strongReasoning?.tokensPerDay ?? null,
         codingTokensPerDay: row.summary?.coding?.tokensPerDay ?? null, codingJobsPerDay: row.summary?.codingJobsPerDay || null,
+        publicCodingJobsPerDay: row.summary?.publicCodingJobsPerDay || null,
         independentFreePools: row.summary?.independentFreePools ?? null, healthyPools: row.summary?.healthyPools ?? null,
         tokensUsed: row.summary?.tokensToday ?? null, costUsd: row.summary?.costUsd || null,
       })),
