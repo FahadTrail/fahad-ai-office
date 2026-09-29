@@ -7,7 +7,8 @@ import { createModelPool, modelPoolDefinitions } from '../src/model-gateway/agen
 import { capacityPool, poolSummary } from '../src/model-gateway/agentic/capacity-pools.js';
 import { allowsDataClass, DATA_CLASSES, poolFacts, publishedTokenAllowance, requiredDataClass, routeDataClass } from '../src/model-gateway/agentic/pool-registry.js';
 import { CONTRACT_FIELDS, contractViolations, routeContract, routeLifecycle } from '../src/model-gateway/agentic/provider-contract.js';
-import { qualificationGaps, QUALIFICATION_SUITE_VERSION } from '../src/model-gateway/agentic/qualification.js';
+import { MemoryQualificationStore, qualificationBackoffUntil, qualificationCandidates, qualificationGaps, QUALIFICATION_SUITE_VERSION } from '../src/model-gateway/agentic/qualification.js';
+import { createCodingRuntime } from '../src/coding-agent/runtime.js';
 import { AgentTurnGateway } from '../src/model-gateway/agentic/turn-gateway.js';
 import { MemoryProviderStateStore } from '../src/model-gateway/agentic/provider-state.js';
 import { setProviderCatalog, parseCatalog } from '../src/model-gateway/agentic/provider-catalogs.js';
@@ -194,4 +195,39 @@ test('OmniRoute harvest: consumer logins, cookies and reverse-engineered apps ar
     chipotle: 'REJECTED_WEB_SCRAPING', aihorde: 'REJECTED_WEB_SCRAPING', kiro: 'REJECTED_CONSUMER_LOGIN', 'qwen-web': 'REJECTED_WEB_SCRAPING',
     llm7: 'CANDIDATE', together: 'NO_RECURRING_FREE', freebuff: 'REJECTED_CONSUMER_LOGIN', aimlapi: 'NO_RECURRING_FREE',
   });
+});
+
+test('qualification back-off: a refused model waits a day, a transient failure an hour (no 20-minute re-probing)', async () => {
+  const now = Date.parse('2026-09-29T12:00:00Z');
+  const at = (minutesAgo) => new Date(now - minutesAgo * 60_000).toISOString();
+  assert.ok(qualificationBackoffUntil({ errorCode: 'HTTP_404', testedAt: at(60) }, now));
+  assert.equal(qualificationBackoffUntil({ errorCode: 'HTTP_404', testedAt: at(25 * 60) }, now), null);
+  assert.ok(qualificationBackoffUntil({ errorCode: 'HTTP_429', testedAt: at(30) }, now));
+  assert.equal(qualificationBackoffUntil({ errorCode: 'HTTP_429', testedAt: at(61) }, now), null);
+  assert.equal(qualificationBackoffUntil(null, now), null);
+
+  const store = new MemoryQualificationStore();
+  const route = (id) => ({ id, provider: id.split(':')[0], model: id.split(':')[1], billingClass: 'free', protocolClient: {}, unavailableReasons: [], qualityTier: 1 });
+  const pool = [route('gemini:dead'), route('groq:busy'), route('zhipu:fresh')];
+  await store.save([
+    { routeId: 'gemini:dead', status: 'error', errorCode: 'HTTP_404', testedAt: at(120) },
+    { routeId: 'groq:busy', status: 'error', errorCode: 'HTTP_429', testedAt: at(90) },
+  ]);
+  const ids = qualificationCandidates(pool, { qualifications: await store.snapshot(), now, maxPerProvider: null }).map((r) => r.id);
+  assert.deepEqual(ids.toSorted(), ['groq:busy', 'zhipu:fresh']);
+  // A later success clears the error record.
+  await store.save([{ routeId: 'gemini:dead', status: 'qualified', suiteVersion: QUALIFICATION_SUITE_VERSION, testedAt: at(1) }]);
+  assert.equal((await store.snapshot()).errors.has('gemini:dead'), false);
+});
+
+test('coding runtime hands qualification evidence to routing (and tolerates a failing store)', async () => {
+  const evidence = qualified(['ollama:gpt-oss:120b']);
+  const base = { sessionStore: {}, providerStateStore: new MemoryProviderStateStore(), policyStore: null, auditStore: {}, pool: [] };
+  const ok = createCodingRuntime({ ...base, qualificationStore: { snapshot: async () => evidence } });
+  const policy = await ok.routingFor({ workspaceId: 'w' }, {});
+  assert.equal(policy.qualifications, evidence);
+  const broken = createCodingRuntime({ ...base, qualificationStore: { snapshot: async () => { throw new Error('db down'); } } });
+  assert.equal((await broken.routingFor({ workspaceId: 'w' }, {})).qualifications, null);
+  const none = createCodingRuntime(base);
+  assert.equal((await none.routingFor({ workspaceId: 'w' }, {})).qualifications, null);
 });

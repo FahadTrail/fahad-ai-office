@@ -7,6 +7,13 @@ import { MemoryProviderStateStore } from '../src/model-gateway/agentic/provider-
 import { rankFreeModels } from '../src/model-gateway/agentic/capabilities.js';
 import { failoverPair, runAgenticCanary } from '../src/canary/agentic-canary.js';
 import { providerReasonHint } from '../src/model-gateway/agentic/http.js';
+import { QUALIFICATION_SUITE_VERSION } from '../src/model-gateway/agentic/qualification.js';
+
+// Discovered free routes take work only after a passed qualification
+// (Capacity V2 lifecycle); these tests are about privacy, ordering and the
+// free-only guard, so every route here is qualified.
+const allQualified = (pool) => new Map(pool.map((route) => [route.id, { status: 'qualified', suiteVersion: QUALIFICATION_SUITE_VERSION, testedAt: new Date().toISOString(),
+  skills: { instruction: true, structured: true, reasoning: true, coding: true, writing: true, reading: true, tools: true } }]));
 
 const KEY = ['sk', 'or', 'v1', 'x'.repeat(40)].join('-');
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -71,7 +78,7 @@ test('each admitted free model is its own FREE, free-only, public-data-only rout
   const gateway = new AgentTurnGateway({ pool, stateStore: new MemoryProviderStateStore() });
   const coding = await gateway.evaluate({ requiresPrivateData: true, job: 'coding' });
   for (const entry of coding.filter((item) => item.route.provider === 'openrouter')) assert.ok(entry.reasons.includes('PRIVACY_NOT_APPROVED'), entry.route.id);
-  const research = await gateway.evaluate({ requiresPrivateData: false, job: 'research' });
+  const research = await gateway.evaluate({ requiresPrivateData: false, job: 'research', qualifications: allQualified(pool) });
   const order = gateway.order(research, { job: 'research', strategy: 'economy' }).map((route) => route.id);
   assert.deepEqual(order.slice(0, 2), ['openrouter:deepseek/deepseek-r1-0528:free', 'openrouter:openai/gpt-oss-120b:free'], 'free first');
   assert.equal(order.at(-1), 'deepseek:deepseek-flash', 'paid last');
@@ -101,7 +108,7 @@ test('free-only guard: a billed response is refused, costed honestly, quarantine
   const settled = [];
   const gateway = new AgentTurnGateway({ pool, stateStore: store, minQualityTier: 1, now: () => now.value, sleepFn: async () => {} });
   const result = await gateway.turn({ tools: [], prepare: async () => ({ system: 'S', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }),
-    routing: { requiresPrivateData: false, strategy: 'quality', job: 'research' }, hooks: { settle: async (reservation, usd) => settled.push(usd) } });
+    routing: { requiresPrivateData: false, strategy: 'quality', job: 'research', qualifications: allQualified(pool) }, hooks: { settle: async (reservation, usd) => settled.push(usd) } });
   assert.equal(result.route.id, 'openrouter:openai/gpt-oss-120b:free');
   assert.ok(bodies.every((body) => body.usage?.include === true), 'usage accounting requested on every free-only call');
   assert.ok(bodies.every((body) => !('models' in body) && !('route' in body)), 'no paid fallback list is ever sent');

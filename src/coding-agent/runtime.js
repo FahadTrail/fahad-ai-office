@@ -33,6 +33,9 @@ export function createCodingRuntime({
   providerStateStore,
   policyStore,
   routingStore = null,
+  // Qualification evidence (Capacity V2): discovered free routes take coding
+  // work only after a passed qualification; without the store they never do.
+  qualificationStore = null,
   auditStore,
   modelAttemptSink = async () => {},
   pool = null,
@@ -98,7 +101,8 @@ export function createCodingRuntime({
       const policy = await policyStore.getPolicy(session.workspaceId);
       authorizedRouteIds = authorizedRoutes(modelPool, policy);
     }
-    return { ...routing, exhaustedRoutes: capped, authorizedRouteIds };
+    const qualifications = qualificationStore ? await qualificationStore.snapshot().catch(() => null) : null;
+    return { ...routing, exhaustedRoutes: capped, authorizedRouteIds, qualifications };
   };
 
   // Paid model turns reserve their worst-case cost against the workspace's
@@ -138,7 +142,7 @@ export function createCodingRuntime({
     env,
     build,
   });
-  return { controller, gateway, pool: modelPool, mode };
+  return { controller, gateway, pool: modelPool, mode, routingFor };
 }
 
 export class CodingWorker {

@@ -384,6 +384,7 @@ class SessionRun {
       effort: policy.effort,
       policyExcludedRouteIds: policy.excludedRoutes || [],
       budgetExhaustedRouteIds: policy.exhaustedRoutes || [],
+      qualifications: policy.qualifications || null,
       // Autonomous coding needs a coding-capable, tool-calling model with a
       // large context; free models below that are never handed the task.
       job: 'coding',

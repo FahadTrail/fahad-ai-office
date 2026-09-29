@@ -8,6 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 import { SupabaseAgentSessionStore } from './agent-state/session-store.js';
 import { SupabaseProviderStateStore } from './model-gateway/agentic/provider-state.js';
 import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
+import { QualificationStore } from './model-gateway/agentic/qualification.js';
 import { SupabaseWorkspacePolicyStore } from './workspace-policy/supabase-store.js';
 import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
 import { CodingWorker, createCodingRuntime } from './coding-agent/runtime.js';
@@ -65,6 +66,7 @@ async function main() {
     providerStateStore: new SupabaseProviderStateStore(db),
     policyStore: new SupabaseWorkspacePolicyStore(db),
     routingStore: new SupabaseRoutingPolicyStore(db),
+    qualificationStore: new QualificationStore(db),
     auditStore,
     modelAttemptSink: async (session, attempt) => {
       const { error } = await db.from('model_attempts').upsert(modelAttemptRow(session, attempt), { onConflict: 'id' });

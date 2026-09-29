@@ -224,12 +224,17 @@ export class QualificationStore {
       .order('completed_at', { ascending: false }).limit(300);
     if (error) return this.cache?.map || new Map();
     const map = new Map();
+    const errors = new Map();
     for (const row of data || []) {
       for (const result of row.report?.results || []) {
         // Newest first: a later error never hides an earlier valid result.
         if (!map.has(result.routeId) && result.status !== 'error') map.set(result.routeId, result);
+        // The newest error of a route with no newer valid result drives the
+        // qualifier's back-off (a dead route is not re-probed every cycle).
+        if (result.status === 'error' && !map.has(result.routeId) && !errors.has(result.routeId)) errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
       }
     }
+    map.errors = errors;
     this.cache = { at: this.now(), map };
     return map;
   }
@@ -247,9 +252,28 @@ export class QualificationStore {
 }
 
 export class MemoryQualificationStore {
-  constructor() { this.map = new Map(); }
-  async snapshot() { return new Map(this.map); }
-  async save(results) { for (const result of results) if (result.status !== 'error') this.map.set(result.routeId, result); }
+  constructor() { this.map = new Map(); this.errors = new Map(); }
+  async snapshot() { return Object.assign(new Map(this.map), { errors: new Map(this.errors) }); }
+  async save(results) {
+    for (const result of results) {
+      if (result.status !== 'error') { this.map.set(result.routeId, result); this.errors.delete(result.routeId); }
+      else this.errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
+    }
+  }
+}
+
+// Back-off after a failed qualification (Capacity V2, Part 21): a provider
+// that refuses the model (400/403/404: not served to this key, invalid, no
+// access) is re-tested after a day; a transient failure (429, 5xx, network)
+// after an hour. Before this, dead routes were re-probed every 20 minutes
+// (production 2026-09-29: ~74 HTTP 404 calls/day each for two Gemini ids).
+export const QUALIFICATION_BACKOFF_MS = Object.freeze({ permanent: 24 * 3600_000, transient: 3600_000 });
+const PERMANENT_ERROR = /^HTTP_(400|401|403|404|405|410|422)$|NOT_FOUND|UNSUITABLE|INVALID_REQUEST|AUTH|NO_CREDITS|NOT_ACTIVATED/i;
+export function qualificationBackoffUntil(error, now = Date.now()) {
+  if (!error?.testedAt) return null;
+  const wait = PERMANENT_ERROR.test(String(error.errorCode || '')) ? QUALIFICATION_BACKOFF_MS.permanent : QUALIFICATION_BACKOFF_MS.transient;
+  const until = Date.parse(error.testedAt) + wait;
+  return until > now ? new Date(until).toISOString() : null;
 }
 
 // Picks which routes to qualify this cycle: configured non-paid routes that
@@ -261,6 +285,7 @@ export function qualificationCandidates(pool, { qualifications, state, now = Dat
     .filter((route) => route.billingClass !== 'paid' && route.protocolClient && !route.unavailableReasons?.length)
     .filter((route) => !qualificationValid(qualifications?.get(route.id), now))
     .filter((route) => !isCoolingDown(state?.get(route.id), now))
+    .filter((route) => !qualificationBackoffUntil(qualifications?.errors?.get(route.id), now))
     // Never-tested first, then the most capable (the likeliest to take
     // critical work), so the first cycles cover what matters most.
     .toSorted((left, right) => Number(Boolean(qualifications?.get(left.id))) - Number(Boolean(qualifications?.get(right.id)))

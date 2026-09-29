@@ -337,7 +337,7 @@ function openRouterFreeRoutes(env, catalog) {
     endpoint: 'https://openrouter.ai/api/v1/chat/completions', secretEnv: 'OPENROUTER_API_KEY', secretRef: 'env://OPENROUTER_API_KEY',
     qualityTier: Number(env.OPENROUTER_QUALITY_TIER || 3), costTier: 1, contextWindow: entry.contextLength,
     ...(entry.maxOutputTokens ? { maxOutputTokens: Math.min(entry.maxOutputTokens, 16_000) } : {}),
-    billingClass: BILLING_CLASS.FREE, pricing: null, freeOnly: true, discovered: true,
+    billingClass: BILLING_CLASS.FREE, pricing: null, freeOnly: true, discovered: true, requiresQualification: true,
     privacyApproved: false, privacyNote: 'OpenRouter free endpoints may log or train on prompts: public/non-private data only',
     extraHeaders: { 'x-title': 'Fahad AI Office' },
     catalogFlags: { structuredOutput: entry.structuredOutput, vision: entry.vision },
@@ -357,7 +357,7 @@ function geminiExtraRoutes(env) {
   const wanted = configured.length ? configured : GEMINI_EXTRA_DEFAULT;
   const primary = new Set([env.GEMINI_MODEL || 'gemini-flash-latest', env.GEMINI_LITE_MODEL || 'gemini-flash-lite-latest']);
   return wanted.filter((model) => catalog.models.includes(model) && !primary.has(model)).map((model) => ({
-    provider: 'gemini', model, protocol: 'gemini', discovered: true,
+    provider: 'gemini', model, protocol: 'gemini', discovered: true, requiresQualification: true,
     secretEnv: 'GEMINI_API_KEY', secretRef: 'env://GEMINI_API_KEY', qualityTier: 3, costTier: 1,
     contextWindow: Math.min(Number(catalog.contexts?.[model]) || 128_000, 1_000_000),
     billingClass: billing(env, 'GEMINI_BILLING_CLASS', 'free'), pricing: null,
