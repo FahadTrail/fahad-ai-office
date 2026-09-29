@@ -4,7 +4,64 @@ Last updated: 2026-09-29, after Capacity Expansion V2 (see its section below). R
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
 
-## CAPACITY V2 WAVE 2 (updated 2026-09-29 ~21:00 UTC)
+## CAPACITY FINALIZATION + 24 H BURN-IN (updated 2026-09-29 ~22:00 UTC)
+
+**BURN-IN RUNNING.**
+* `BURNIN_START_UTC = 2026-09-29T21:56:00Z`, ends 2026-09-30T21:56Z.
+* Production runs `343a1bf` (deploy 79). Startup checks OK: Supabase read-only tools VERIFIED, Telegram live.
+* Checkpoints are scheduled in this session at +1 h, +6 h, +12 h and +24 h (routines named "Burn-in checkpoint …").
+* Numbers per checkpoint: SQL in `docs/capacity-v2.md` §9 ("24-hour burn-in: checkpoint SQL"). On the VPS: `node tools/burnin-report.mjs --since=2026-09-29T21:56:00Z`.
+* **Do not deploy during the burn-in unless a critical fix requires it.** A deploy that lands mid-task stalls an Office task for up to 20 min: the stale-task requeue. Record any deploy here, with its time.
+
+**Merged this sprint:**
+
+| PR | What it changed |
+|---|---|
+| #86 | The coding suite's ten-task call gets 300 s: a grader artifact, not a capability test |
+| #87 | Per-size coding turns (10K/16K/30K); the reported TPM is a limit; compaction happens when only the request size blocks a route |
+| #88 | Finalization docs, burn-in SQL, job-summary fix |
+
+**Measured today (production, $0):**
+
+| Measurement | Result |
+|---|---|
+| Gemma 26B quota | reported by Gemini: **16,000 input tokens/min** (`provider_status.rate_limit`) |
+| Free coding turn sizes | small/medium: p50 5.5K, p90 9.1K, max 16.4K |
+| Small PUBLIC coding job | completed on Gemma alone (87K tokens, 20 min) and with Gemma → GLM failover (98K, 7.5 min) |
+| Medium PUBLIC coding, run 1 (`f94a2cbe`) | blocked at iteration 12: the next turn (≈16.4K) exceeded Gemma's 16K/min. Fixed in #87 by compacting |
+| Medium PUBLIC coding, run 2 (`ed64507a`) | running on Gemma after the fix |
+| Multi-pool load test (`668ad9a5`) | CHIEF + RESEARCH + FINANCE, free-only, completed at **$0** on Groq (3 models) + OpenRouter (Nemotron-ultra), with Gemini failing over. 29 calls (19 OK), ≈72K tokens. FINANCE validation caught a wrong "net" and was corrected to **VERIFIED** (break-even 1,325 cups/month = 51/day). The CHIEF fact gate kept 8 figures and removed 2 contradictions |
+| Free coverage since 2026-09-28 | **100 % of calls free, $0**. Paid fallback is 0 %, partly because the $2 budget is spent ($2.38) |
+
+**Coding grades (c2):**
+
+| Route | Grade |
+|---|---|
+| Gemma 26B (Gemini) | CODING_PRIMARY, 16K/min |
+| GLM-4.7-flash (Z.ai) | CODING_SMALL_TASKS |
+| dots-3-note-preview (OpenRouter shared pool) | **CODING_PRIMARY (new)** |
+| Groq gpt-oss-120b | SECONDARY, but 8K/min is below a small turn |
+| gpt-oss-20b | NOT approved |
+
+Nemotron-ultra, GLM-4.5-flash, Gemini Flash and Gemma 31B are still pending; errors back off and are retried automatically.
+
+**Privacy:** PRIVATE free coding = 0. See `docs/capacity-v2.md` §9 for the per-provider verdicts.
+
+**Owner actions (≤5, ranked):**
+1. Mistral key (SMS);
+2. LLM7 token;
+3. Cloudflare token + account id;
+4. Z.ai privacy review;
+5. OpenCode Zen key (disable auto-reload).
+
+Exact steps are in `/api/capacity` → `ownerActions`.
+
+**Next command:** wait for the +24 h checkpoint. Then:
+* write the final report (phases 19–22);
+* decide CORE READY / NOT READY;
+* update this file.
+
+## CAPACITY V2 WAVE 2 (history — updated 2026-09-29 ~21:00 UTC)
 
 **Production:** `main`, with PRs #77–#84 deployed and healthy. After every restart the Supabase self-check and Telegram report OK.
 
