@@ -44,6 +44,8 @@ const REGISTRY = [
   [/llama-3\.3-70b|llama3\.3-70b/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 5, vision: false, structuredOutput: true , arabic: 3 }],
   [/llama-3\.1-8b|llama3\.1-8b/i, { coding: 2, reasoning: 2, research: 2, writing: 3, speed: 5, vision: false, structuredOutput: false , arabic: 2 }],
   [/qwen-?3-(coder|235b)/i, { coding: 4, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true }],
+  // Mistral Medium (La Plateforme default route): planning estimate; qualification corrects it.
+  [/mistral-medium/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 4, vision: true, structuredOutput: true , arabic: 4 }],
   [/mistral-large|magistral-medium/i, { coding: 4, reasoning: 4, research: 4, writing: 4, speed: 3, vision: false, structuredOutput: true , arabic: 4 }],
   [/codestral|devstral/i, { coding: 4, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
   [/mistral-small|ministral/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true , arabic: 3 }],
@@ -110,11 +112,13 @@ export function capabilityProfile(definition, env = {}) {
   const flags = definition.catalogFlags || {};
   profile.vision = typeof override?.vision === 'boolean' ? override.vision : known ? Boolean(known.vision) : Boolean(flags.vision);
   profile.structuredOutput = typeof override?.structuredOutput === 'boolean' ? override.structuredOutput : known ? Boolean(known.structuredOutput) : Boolean(flags.structuredOutput);
-  // A free tier that caps tokens per request/minute (Groq free: 8K TPM)
-  // limits what one request can carry, whatever the model's own window.
+  // The context window is the MODEL's window. A provider's tokens-per-minute
+  // limit (Groq free: 8K TPM) is a RATE, not a window: it is kept apart and
+  // checked per request by the gateway (REQUEST_ABOVE_FREE_TIER_LIMIT).
   const requestLimit = Number(definition.requestTokenLimit);
   profile.modelContextWindow = definition.contextWindow;
-  profile.contextWindow = Number.isFinite(requestLimit) && requestLimit > 0 ? Math.min(definition.contextWindow, requestLimit) : definition.contextWindow;
+  profile.contextWindow = definition.contextWindow;
+  profile.tokensPerMinute = Number.isFinite(requestLimit) && requestLimit > 0 ? requestLimit : null;
   profile.longContext = profile.contextWindow >= 200_000;
   profile.costClass = definition.billingClass === 'paid' ? ['low', 'low', 'medium', 'high', 'premium'][Math.max(0, Math.min(4, (definition.costTier || 1) - 1))] : definition.billingClass;
   profile.privacyClass = definition.privacyApproved ? 'private-data-approved' : 'public-data-only';
@@ -124,11 +128,22 @@ export function capabilityProfile(definition, env = {}) {
 
 // What each kind of work needs. `min` scores are hard floors; `weights`
 // rank eligible routes by fit. Office roles map onto these jobs.
+// `minContext` is a planning default. When the request size is known the
+// gateway requires the ACTUAL request (input + output) plus a safety margin
+// instead — except for `growingContext` jobs, whose transcript keeps growing
+// during a session (autonomous coding), where the fixed floor stays.
+// `strictEvidence`: qualification evidence may never raise a score for this
+// job (high-stakes work keeps its documented floor).
 export const JOB_PROFILES = Object.freeze({
-  coding: { label: 'Autonomous coding', min: { coding: 4, reasoning: 4 }, toolCalling: true, minContext: 100_000, weights: { coding: 3, reasoning: 2 } },
-  qa_security: { label: 'QA / security review', min: { coding: 4, reasoning: 4 }, toolCalling: true, minContext: 100_000, weights: { reasoning: 3, coding: 2 } },
+  coding: { label: 'Autonomous coding', min: { coding: 4, reasoning: 4 }, toolCalling: true, minContext: 100_000, growingContext: true, strictEvidence: true, weights: { coding: 3, reasoning: 2 } },
+  qa_security: { label: 'QA / security review', min: { coding: 4, reasoning: 4 }, toolCalling: true, minContext: 100_000, growingContext: true, strictEvidence: true, weights: { reasoning: 3, coding: 2 } },
   research: { label: 'Research & analysis', min: { research: 3, reasoning: 3 }, toolCalling: true, minContext: 32_000, weights: { research: 3, reasoning: 2, writing: 1 } },
-  finance: { label: 'Finance & numbers', min: { reasoning: 4 }, structuredOutput: true, minContext: 32_000, weights: { reasoning: 3, research: 1 } },
+  // FINANCE after V4.1: arithmetic is deterministic code (office/finance.js)
+  // and every figure is validated before use, so routine interpretation
+  // (cost model, P&L, break-even, scenarios) needs a solid, qualified model,
+  // not the strongest one. High-risk financial judgment keeps the top floor.
+  finance: { label: 'Finance interpretation (arithmetic by code)', min: { reasoning: 3 }, structuredOutput: true, minContext: 16_000, weights: { reasoning: 3, research: 1 } },
+  finance_critical: { label: 'High-risk financial judgment', min: { reasoning: 4, writing: 4 }, structuredOutput: true, minContext: 32_000, strictEvidence: true, weights: { reasoning: 3, writing: 1 } },
   content: { label: 'Content writing', min: { writing: 3 }, minContext: 16_000, weights: { writing: 3, research: 1 } },
   branding: { label: 'Branding', min: { writing: 3, reasoning: 3 }, minContext: 16_000, weights: { writing: 3, reasoning: 1 } },
   seo: { label: 'SEO', min: { research: 3, writing: 3 }, minContext: 16_000, weights: { research: 2, writing: 2 } },
@@ -138,17 +153,56 @@ export const JOB_PROFILES = Object.freeze({
   // review, critical decisions) needs stronger reasoning and writing and
   // escalates automatically when no free model qualifies.
   orchestration: { label: 'Chief orchestration', min: { reasoning: 3, writing: 3 }, minContext: 8_000, weights: { reasoning: 2, writing: 1, speed: 1 } },
-  synthesis: { label: 'High-stakes synthesis / final review', min: { reasoning: 4, writing: 4 }, minContext: 32_000, weights: { reasoning: 3, writing: 2 } },
+  synthesis: { label: 'High-stakes synthesis / final review', min: { reasoning: 4, writing: 4 }, minContext: 32_000, strictEvidence: true, weights: { reasoning: 3, writing: 2 } },
 });
+
+// Low-risk jobs that may drop one capability level when every normal route
+// is unavailable (instead of waiting). Legal, security, finance, synthesis
+// and orchestration (CHIEF and AUDIT) are never relaxed.
+export const TOLERANT_JOBS = Object.freeze(new Set(['content', 'branding', 'seo', 'classification']));
+export function relaxedJob(job) {
+  const name = typeof job === 'string' ? job : null;
+  if (!name || !TOLERANT_JOBS.has(name)) return null;
+  const base = JOB_PROFILES[name];
+  return Object.freeze({ ...base, name: `${name}:relaxed`, baseJob: name, label: `${base.label} (lower tier)`,
+    min: Object.fromEntries(Object.entries(base.min || {}).map(([score, value]) => [score, Math.max(2, value - 1)])) });
+}
+
+// High-risk financial work: investment, valuation, funding, debt, tax or an
+// explicit [critical] marker. Everything else is routine interpretation of
+// numbers the finance engine calculates.
+const FINANCE_CRITICAL = /\[critical\]|\b(invest(ment|or)?s?|valuation|fund ?rais|equity|cap table|acquisition|merger|loan|debt|tax(es|ation)?|vat|ipo|due diligence|bankrupt|insolven)\b|استثمار|تقييم|قرض|ديون|ضريب|استحواذ|تمويل/i;
+export function financeJob(text) {
+  return FINANCE_CRITICAL.test(String(text || '')) ? 'finance_critical' : 'finance';
+}
 
 export function jobProfile(job) {
   if (!job) return null;
   if (typeof job === 'object') return job;
-  return JOB_PROFILES[job] || null;
+  if (JOB_PROFILES[job]) return JOB_PROFILES[job];
+  if (typeof job === 'string' && job.endsWith(':relaxed')) return relaxedJob(job.slice(0, -':relaxed'.length));
+  return null;
 }
 
-// Reasons this route cannot do the job ([] when it can).
-export function capabilityGaps(capabilities, job) {
+// Name of the job family ("content:relaxed" → "content").
+export function baseJobName(job) {
+  if (!job) return null;
+  if (typeof job === 'object') return job.baseJob || job.name || null;
+  return String(job).replace(/:relaxed$/, '');
+}
+
+export const CONTEXT_MARGIN = 1.25;
+export const CONTEXT_FLOOR = 8_000;
+
+// Context the request really needs: input + output with a safety margin.
+export function requiredContext(estimatedInputTokens, outputTokens) {
+  const need = Number(estimatedInputTokens || 0) + Number(outputTokens || 0);
+  return need > 0 ? Math.max(CONTEXT_FLOOR, Math.ceil(need * CONTEXT_MARGIN)) : null;
+}
+
+// Reasons this route cannot do the job ([] when it can). With `needContext`
+// (the actual request size), a non-growing job needs only that much window.
+export function capabilityGaps(capabilities, job, { needContext = null } = {}) {
   const profile = jobProfile(job);
   if (!profile || !capabilities) return [];
   const gaps = [];
@@ -158,7 +212,8 @@ export function capabilityGaps(capabilities, job) {
   if (profile.toolCalling && !capabilities.toolCalling) gaps.push('TOOL_CALLING_REQUIRED');
   if (profile.structuredOutput && !capabilities.structuredOutput) gaps.push('STRUCTURED_OUTPUT_REQUIRED');
   if (profile.vision && !capabilities.vision) gaps.push('VISION_REQUIRED');
-  if (profile.minContext && capabilities.contextWindow < profile.minContext) gaps.push('CONTEXT_WINDOW_TOO_SMALL');
+  const floor = profile.growingContext || !needContext ? Math.max(profile.minContext || 0, needContext || 0) : needContext;
+  if (floor && capabilities.contextWindow < floor) gaps.push('CONTEXT_WINDOW_TOO_SMALL');
   return gaps;
 }
 

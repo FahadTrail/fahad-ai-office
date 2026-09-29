@@ -579,6 +579,12 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
       }
     }
 
+    // ---- capacity (read-only: independent pools, resets, usage)
+    if (method === 'GET' && path === '/api/capacity') {
+      const { capacityView } = await import('./hub-capacity.js');
+      return sendJson(response, 200, { ok: true, ...(await capacityView({ db })) }), true;
+    }
+
     // ---- models (simplified pool; AUTO routing)
     if (method === 'GET' && path === '/api/models') {
       const requested = url.searchParams.get('workspaceId');

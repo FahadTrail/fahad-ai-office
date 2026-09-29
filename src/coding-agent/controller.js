@@ -19,6 +19,7 @@ import { CODING_BROKER, MODEL_TOOL_TO_BROKER, modelToolSpecs } from './tools.js'
 import { classifyChangedPaths, findSecretMaterial, grantablePaths, redact, safeSlug } from './policy.js';
 import { PROTECTED_CHANGE_TOOL } from '../agent-state/session-store.js';
 import { ReadTracker, elideOldToolResults } from './context-budget.js';
+import { taskSize, turnBudgetAction } from './turn-budget.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
 
 export const DEFAULT_LIMITS = Object.freeze({
@@ -31,7 +32,9 @@ export const DEFAULT_LIMITS = Object.freeze({
   maxCiRounds: 3,
   // Old tool output is elided first (context-budget.js); compaction into a
   // continuation summary is the backstop for very long sessions.
-  compactAtChars: 240_000,
+  // (Router sprint: 160K characters ≈ 45K tokens per turn; heavy production
+  // sessions averaged 34–57K input tokens per turn before compaction.)
+  compactAtChars: 160_000,
   maxOutputTokens: 16_000,
   ciPollMs: 30_000,
   ciTimeoutMs: 45 * 60 * 1000,
@@ -364,7 +367,10 @@ class SessionRun {
       this.state.efficiency.elisions += 1;
       await this.event('checkpoint', `Context trimmed: ${elided.results} old tool outputs shortened (${elided.savedChars} characters).`, { elided: elided.results, savedChars: elided.savedChars });
     }
-    if (transcriptChars(this.transcript.messages) > this.c.limits.compactAtChars) await this.compact();
+    if (this.forceCompact || transcriptChars(this.transcript.messages) > this.c.limits.compactAtChars) {
+      this.forceCompact = false;
+      await this.compact();
+    }
     const estimatedInputTokens = estimateTokens(system, this.transcript.messages, tools);
     const policy = await this.c.routingFor(this.session, this.config.routing) || {};
     const routing = {
@@ -528,9 +534,23 @@ class SessionRun {
       if (outcome.finished) finished = true;
     }
     this.transcript.pending = null;
-    const nudges = this.noProgressNudges(calls, results);
+    const nudges = [...this.noProgressNudges(calls, results), ...await this.turnBudgetNotes()];
     this.transcript.messages.push({ role: 'user', content: [...results, ...nudges.map((note) => ({ type: 'text', text: note }))] });
     return finished;
+  }
+
+  // Runaway-loop detection by task size: compact + re-plan, then finish or
+  // escalate. Never fails good work (see turn-budget.js).
+  async turnBudgetNotes() {
+    this.state.turnBudget ||= { size: taskSize(`${this.session.title || ''}\n${this.session.objective || ''}`), done: {} };
+    const budget = this.state.turnBudget;
+    const step = turnBudgetAction(this.session.iteration, budget.size, budget.done);
+    if (!step) return [];
+    budget.done[step.action] = this.session.iteration;
+    if (step.action === 'replan') this.forceCompact = true;
+    await this.event('guard', `Turn budget: ${budget.size} task at ${this.session.iteration} turns (expected about ${step.expected}) — ${step.action === 'replan' ? 'compacting and re-planning' : 'asked to finish or escalate'}.`,
+      { kind: 'turn_budget', size: budget.size, iteration: this.session.iteration, expected: step.expected, action: step.action }, 'warning');
+    return [step.note];
   }
 
   noProgressNudges(calls, results) {

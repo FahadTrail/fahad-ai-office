@@ -8,7 +8,7 @@
 //   evidenceGate      — degraded web search is recorded, never hidden
 import { ARTIFACT_TYPES, realUrl, repairArtifactFences } from './artifacts.js';
 import { officeAgent } from './agents.js';
-import { FINANCE_STATES, agrees, artifactBlocks, fmt, mapArtifactBlocks, needsCorrection, parseAmount, proseClaims, validateFinance, validatedFacts } from './finance.js';
+import { FINANCE_STATES, SCHEDULE_TOLERANCE, agrees, artifactBlocks, financialTables, fmt, mapArtifactBlocks, needsCorrection, parseAmount, proseClaims, scheduleTable, validateFinance, validatedFacts } from './finance.js';
 
 const BLOCK = /```artifact\s*\n[\s\S]*?```/g;
 const typeOf = (raw) => String(raw?.type || '').toLowerCase();
@@ -85,7 +85,8 @@ export function socialCalendar(markdown, { timesVerified = false } = {}) {
 
 // ------------------------------------------------------------ AUDIT
 
-const BLOCKING = new Set(['TOTAL_MISMATCH', 'BREAK_EVEN_MISMATCH', 'BREAK_EVEN_NOT_REACHED', 'BREAK_EVEN_UNSUPPORTED', 'SUMMARY_MISMATCH', 'TABLE_TOTAL_MISMATCH', 'CLAIM_UNSUPPORTED']);
+const BLOCKING = new Set(['TOTAL_MISMATCH', 'BREAK_EVEN_MISMATCH', 'BREAK_EVEN_NOT_REACHED', 'BREAK_EVEN_UNSUPPORTED', 'SUMMARY_MISMATCH', 'TABLE_TOTAL_MISMATCH', 'CLAIM_UNSUPPORTED',
+  'TABLE_SCHEDULE_MISMATCH', 'TABLE_YEAR_TOTAL_MISMATCH', 'TABLE_HEADLINE_MISMATCH', 'CHART_MISMATCH']);
 
 const FIXES = {
   TOTAL_MISMATCH: 'State the calculated figure, or change the assumptions that produce it.',
@@ -97,14 +98,47 @@ const FIXES = {
   CHART_MISMATCH: 'Remove the hand-drawn chart; the Office draws the calculated schedule.',
   TABLE_TOTAL_MISMATCH: 'Correct the total so it equals the sum of its rows.',
   TABLE_SCHEDULE_MISMATCH: 'Use the calculated monthly schedule, or remove the table.',
+  TABLE_YEAR_TOTAL_MISMATCH: 'Use the calculated monthly schedule and its totals, or remove the table.',
+  TABLE_HEADLINE_MISMATCH: 'State the validated figure, or remove the row.',
   NO_STRUCTURED_MODEL: 'Provide a financial_model artifact with the cost lines, revenue assumptions and claims.',
   UNSUPPORTED_FIGURES: 'Back every figure with a structured financial_model.',
 };
+
+// The calculation of the VERIFIED FINANCE model among these outputs (the
+// only source of monthly financial truth), or null.
+export function verifiedCalculation(outputs = []) {
+  for (const output of outputs) {
+    if (officeAgent(output.agent_slug)?.key !== 'finance' || !output.content) continue;
+    const validation = validateFinance(output.content);
+    if (validation.state === FINANCE_STATES.VERIFIED && validation.calculated) return validation.calculated;
+  }
+  return null;
+}
+
+// Worst issue first: a wrong year total or headline is what a reader acts on.
+const ISSUE_RANK = ['BREAK_EVEN_MISMATCH', 'TABLE_YEAR_TOTAL_MISMATCH', 'TABLE_HEADLINE_MISMATCH', 'TABLE_TOTAL_MISMATCH', 'TABLE_SCHEDULE_MISMATCH', 'CHART_MISMATCH'];
+const rank = (entry) => { const index = ISSUE_RANK.indexOf(entry.code); return index < 0 ? ISSUE_RANK.length : index; };
+
+// One BLOCKED finding per financial table / chart that contradicts the
+// calculator (every monthly row, total and headline was compared).
+export function tableFinding(entry, owner, ownerLabel) {
+  const sorted = [...entry.issues].sort((a, b) => rank(a) - rank(b));
+  const head = sorted[0];
+  const months = entry.issues.filter((item) => item.code === 'TABLE_SCHEDULE_MISMATCH' || item.code === 'CHART_MISMATCH').length;
+  return {
+    type: 'NUMERIC_INCONSISTENCY', code: head.code, title: `${ownerLabel}: financial table contradicts the calculation`, severity: 'blocked',
+    area: owner, owner, table: entry.title,
+    detail: `${head.detail}${sorted.length > 1 ? ` (${sorted.length} mismatches in "${entry.title}"${months ? `, ${months} monthly value${months === 1 ? '' : 's'}` : ''})` : ''}`,
+    expected: fmtMaybe(head.expected), actual: fmtMaybe(head.actual), evidence: entry.title, fix: FIXES[head.code] || FIXES.TABLE_SCHEDULE_MISMATCH,
+    mismatches: sorted.slice(0, 12).map((item) => ({ code: item.code, field: item.field, expected: item.expected, actual: item.actual })),
+  };
+}
 
 // Deterministic checks AUDIT runs on every upstream output before its review.
 export function numericChecks(upstream = []) {
   const findings = [];
   const passed = [];
+  const calculated = verifiedCalculation(upstream);
   for (const output of upstream) {
     const employee = officeAgent(output.agent_slug);
     if (!employee || !output.content) continue;
@@ -125,7 +159,16 @@ export function numericChecks(upstream = []) {
       }
       continue;
     }
-    // Other employees: every table total must equal its rows.
+    // Other employees, with a VERIFIED calculation: every financial table and
+    // chart (artifact or Markdown) is compared row by row with the calculator.
+    if (calculated) {
+      const tables = financialTables(output.content, calculated);
+      for (const entry of tables.filter((item) => item.issues.length)) findings.push(tableFinding(entry, employee.key, employee.label));
+      const clean = tables.filter((item) => !item.issues.length);
+      if (clean.length) passed.push(`${employee.label} "${output.title}": ${clean.length} financial table${clean.length === 1 ? '' : 's'} match the calculation.`);
+      continue;
+    }
+    // Without a calculation: every table total must equal its rows.
     for (const block of artifactBlocks(output.content).filter((entry) => typeOf(entry.raw) === 'table')) {
       const table = ARTIFACT_TYPES.table.clean(block.raw);
       if (!table) continue;
@@ -136,7 +179,45 @@ export function numericChecks(upstream = []) {
       }
     }
   }
-  return { findings, passed };
+  return { findings, passed, calculated };
+}
+
+// Removes every model-written monthly schedule and every financial table or
+// chart that contradicts the calculator; the calculator's own schedule table
+// takes the place of the first one removed. Models may explain the numbers,
+// never restate a second schedule.
+export function sanitizeFinancial(markdown, calculated, { replace = true } = {}) {
+  let text = String(markdown || '');
+  if (!calculated) return { text, removed: [], issues: [] };
+  const tables = financialTables(text, calculated).filter((entry) => entry.issues.length || (entry.schedule && !entry.calculated));
+  if (!tables.length) return { text, removed: [], issues: [] };
+  const hasCalculator = artifactBlocks(text).some((block) => typeOf(block.raw) === 'table' && block.raw.calculated === true
+    && !financialTables(block.source, calculated).some((entry) => entry.issues.length));
+  const replacement = replace && !hasCalculator ? scheduleTable(calculated) : null;
+  let placed = false;
+  for (const entry of tables) {
+    const at = text.indexOf(entry.source);
+    if (at < 0) continue;
+    let insert = '';
+    if (replacement && !placed && entry.schedule) {
+      insert = `> The monthly figures below are the calculator's schedule (a model-written table ${entry.issues.length ? 'contradicted it' : 'restated it'} and was replaced).\n\n\`\`\`artifact\n${JSON.stringify(replacement)}\n\`\`\`\n`;
+      placed = true;
+    }
+    text = `${text.slice(0, at)}${insert}${text.slice(at + entry.source.length)}`;
+  }
+  return { text: text.replace(/\n{3,}/g, '\n\n').trim(), removed: tables, issues: tables.flatMap((entry) => entry.issues), replaced: placed };
+}
+
+// AUDIT's own draft is held to the same rule: a financial table in AUDIT's
+// review that contradicts the calculator is a BLOCKED finding and is removed
+// before anyone reads it (resolved: the table no longer exists).
+export function auditOwnTables(markdown, checks) {
+  const calculated = checks?.calculated;
+  if (!calculated) return { text: String(markdown || ''), findings: [] };
+  const sanitized = sanitizeFinancial(markdown, calculated);
+  const findings = sanitized.removed.filter((entry) => entry.issues.length)
+    .map((entry) => ({ ...tableFinding(entry, 'audit', 'AUDIT'), resolved: true, resolution: 'Table removed and replaced by the calculator schedule before delivery.' }));
+  return { text: sanitized.text, findings };
 }
 
 const fmtMaybe = (value) => (typeof value === 'number' ? fmt(value) : value ?? '');
@@ -159,8 +240,9 @@ export function enforceAudit(markdown, { findings, passed }) {
   if (!findings.length && !passed.length) return String(markdown || '');
   let text = String(markdown || '');
   let found = false;
-  const verdictFor = (current, list) => (list.some((finding) => finding.severity === 'blocked') ? 'BLOCKED'
-    : list.some((finding) => ['high', 'critical'].includes(finding.severity)) && current === 'PASS' ? 'NEEDS WORK' : current);
+  // A resolved finding (its table was removed by code) is reported, not open.
+  const verdictFor = (current, list) => (list.some((finding) => finding.severity === 'blocked' && !finding.resolved) ? 'BLOCKED'
+    : list.some((finding) => ['high', 'critical'].includes(finding.severity) && !finding.resolved) && current === 'PASS' ? 'NEEDS WORK' : current);
   text = mapArtifactBlocks(text, (raw) => {
     if (typeOf(raw) !== 'audit_report' || found) return null;
     found = true;
@@ -172,7 +254,7 @@ export function enforceAudit(markdown, { findings, passed }) {
     text += `\n\n\`\`\`artifact\n${JSON.stringify({ type: 'audit_report', title: 'Numeric validation', verdict: verdictFor('PASS', findings), findings })}\n\`\`\``;
   }
   const section = ['## Code checks (deterministic)', ...passed.map((line) => `- PASSED — ${line}`),
-    ...findings.map((finding) => `- FAILED (${finding.severity.toUpperCase()}, owner ${finding.owner.toUpperCase()}) — ${finding.detail}`)].join('\n');
+    ...findings.map((finding) => `- FAILED (${finding.severity.toUpperCase()}, owner ${finding.owner.toUpperCase()})${finding.resolved ? ' — RESOLVED BY CODE' : ''} — ${finding.detail}${finding.resolved ? ` ${finding.resolution}` : ''}`)].join('\n');
   return `${text.replace(/\n## Code checks \(deterministic\)[\s\S]*?(?=\n## |$(?![\s\S]))/, '').trim()}\n\n${section}`;
 }
 
@@ -194,19 +276,37 @@ export function chiefGate(outputs = []) {
     if (officeAgent(output.agent_slug)?.key !== 'audit' || !output.content) continue;
     for (const block of artifactBlocks(output.content).filter((entry) => typeOf(entry.raw) === 'audit_report')) {
       for (const finding of Array.isArray(block.raw.findings) ? block.raw.findings : []) {
-        if (finding?.type === 'NUMERIC_INCONSISTENCY' && finding.severity === 'blocked') auditBlocked.push(finding);
-        const stated = parseAmount(finding?.actual);
-        if (finding?.type === 'NUMERIC_INCONSISTENCY' && stated !== null && Math.abs(stated) >= 100) banned.push(stated);
+        if (finding?.type !== 'NUMERIC_INCONSISTENCY') continue;
+        if (finding.severity === 'blocked') auditBlocked.push(finding);
+        // A table finding bans its wrong totals, headlines and cumulative
+        // values (not every monthly value, which may legitimately recur).
+        const wrong = Array.isArray(finding.mismatches)
+          ? finding.mismatches.filter((entry) => entry.code !== 'BREAK_EVEN_MISMATCH' && (entry.code !== 'TABLE_SCHEDULE_MISMATCH' || /cumulative/.test(entry.field || '')) && entry.code !== 'CHART_MISMATCH').map((entry) => entry.actual)
+          : [parseAmount(finding.actual)];
+        for (const stated of wrong) if (typeof stated === 'number' && Math.abs(stated) >= 100) banned.push(stated);
       }
     }
   }
   const unverified = finance.filter((entry) => needsCorrection(entry.validation));
-  // An AUDIT numeric finding is resolved once the owner's current output
-  // re-validates as VERIFIED.
-  const openAudit = auditBlocked.filter((finding) => finding.owner !== 'finance' || !finance.length || unverified.length);
   const verified = finance.filter((entry) => entry.validation.state === FINANCE_STATES.VERIFIED);
+  const calculated = verified[0]?.validation.calculated || null;
+  // An employee's financial tables are clean when its latest output has no
+  // table contradicting the calculator.
+  const tablesClean = (owner) => {
+    const latest = outputs.filter((output) => officeAgent(output.agent_slug)?.key === owner && output.content).at(-1);
+    return Boolean(calculated && latest && !financialTables(latest.content, calculated).some((entry) => entry.issues.length));
+  };
+  // An AUDIT numeric finding is resolved once the owner's current output
+  // re-validates as VERIFIED, when code already removed the table (resolved),
+  // or when the owner's current tables match the calculator.
+  const openAudit = auditBlocked.filter((finding) => {
+    if (finding.resolved === true) return false;
+    if (finding.owner === 'finance') return !finance.length || unverified.length > 0;
+    if (Array.isArray(finding.mismatches) && finding.owner !== 'audit') return !tablesClean(finding.owner);
+    return true;
+  });
   return {
-    finance, verified, unverified, openAudit, banned: [...new Set(banned)],
+    finance, verified, unverified, openAudit, banned: [...new Set(banned)], calculated,
     facts: verified.flatMap((entry) => validatedFacts(entry.validation)),
     blocked: unverified.length > 0 || openAudit.length > 0,
   };
@@ -217,7 +317,8 @@ export function factsBlock(gate) {
   const lines = ['VALIDATED FACTS (calculated by code from FINANCE\'s assumptions — the source of truth):'];
   if (gate.facts.length) {
     lines.push(...gate.facts.map((fact) => `${fact.key} = ${fact.value}  (${fact.label})`));
-    lines.push('Use these exact values wherever you mention them. Never compute, round differently or restate a different total, revenue, cost, margin or break-even.');
+    lines.push('Use these exact values wherever you mention them. Never compute, round differently or restate a different total, revenue, cost, margin or break-even.',
+      'Never write your own monthly schedule table or chart (revenue, costs, net or cumulative by month): the Office attaches the calculator\'s schedule; any other schedule is removed. Explain the numbers, do not recalculate them.');
   }
   for (const entry of gate.unverified) {
     lines.push(`FINANCE "${entry.title}" is ${entry.validation.state}: its figures are NOT verified. Do not present any of its numbers as fact; report it under "Open issues & risks".`,
@@ -232,22 +333,58 @@ const PERIOD_WORDS = /first[\s-]year|year[\s-]?(?:one|1)\b|12[\s-]?month|annual|
 // Lines about other companies or the market are not our figures.
 const OTHER_PARTY = /competitor|market size|industry|\b(?:tam|sam|som)\b|منافس|السوق/i;
 
+// Figures written in text, with the token as written (for its precision).
+const FIGURE = /-?\d[\d,]*(?:\.\d+)?\s*(?:k|m|mn|million|thousand|ألف|مليون)?\b(?!\s*%)/gi;
+const figures = (line) => [...String(line).matchAll(FIGURE)].map((match) => ({ token: match[0], value: parseAmount(match[0]) }))
+  .filter((entry) => entry.value !== null && !/^(?:19|20)\d\d$/.test(entry.token.trim()));
+
+// A written figure states a validated value when it equals it at the
+// precision it is written with ("112,236", "112K", "AED 0.11M"); a nearby
+// but different figure ("111,489") does not.
+export function statesValue(token, value, good) {
+  if (typeof good !== 'number' || value === null) return false;
+  if (agrees(value, good, SCHEDULE_TOLERANCE)) return true;
+  const raw = String(token).trim().toLowerCase();
+  const decimals = (raw.match(/\.(\d+)/) || [, ''])[1].length;
+  let unit = 1;
+  if (/(k|thousand|ألف)$/.test(raw)) unit = 1000 / 10 ** decimals;
+  else if (/(m|mn|million|مليون)$/.test(raw)) unit = 1_000_000 / 10 ** decimals;
+  else if (!decimals) unit = 10 ** Math.min(((raw.replace(/[^\d]/g, '').match(/0+$/) || [''])[0]).length, 6);
+  return unit > 1 && Math.abs(Math.abs(value) - Math.abs(good)) <= unit / 2;
+}
+
+const MONTH_REF = /\bmonth\s*(\d{1,2})\b|\bM(\d{1,2})\b|الشهر\s*(\d{1,2})/g;
+const SCHEDULE_WORDS = [['cumulative', /cumulative|running (?:cash|total)|cash (?:balance|position)|تراكمي/i], ['net', /\bnet\b|profit|loss|cash[\s-]?flow|صافي|ربح/i],
+  ['revenue', /revenue|mrr|sales|income|إيراد/i], ['costs', /costs?|expenses?|spend|burn|تكاليف|مصاريف/i]];
+
 // Removes any line of CHIEF's text (prose, Markdown table rows, artifact
 // tables) that carries a figure contradicting the validated calculation or a
-// figure already proven wrong; then appends the validated figures.
+// figure already proven wrong; replaces every model-written monthly schedule
+// with the calculator's; then appends the validated figures. `remaining`
+// counts contradictions still present afterwards (must be 0).
 export function enforceFacts(markdown, gate) {
-  if (!gate.facts.length && !gate.unverified.length && !gate.banned.length) return { text: String(markdown || ''), removed: 0 };
-  const calc = gate.verified[0]?.validation.calculated || null;
+  if (!gate.facts.length && !gate.unverified.length && !gate.banned.length) return { text: String(markdown || ''), removed: 0, tables: 0, remaining: 0 };
+  const calc = gate.calculated || gate.verified[0]?.validation.calculated || null;
   let removed = 0;
-  const numbers = (line) => [...String(line).matchAll(/-?\d[\d,]*(?:\.\d+)?\s*(?:k|m|mn|million|thousand|ألف|مليون)?\b/gi)]
-    .map((match) => parseAmount(match[0])).filter((value) => value !== null);
+  // 1. Financial tables and charts: only the calculator's schedule survives.
+  const sanitized = sanitizeFinancial(markdown, calc);
+  removed += sanitized.removed.length;
+  const monthConflict = (line, values) => {
+    if (!calc?.schedule) return false;
+    const months = [...line.matchAll(MONTH_REF)].map((match) => Number(match[1] || match[2] || match[3])).filter((month) => month >= 1 && month <= calc.months);
+    const keys = SCHEDULE_WORDS.filter(([key, pattern]) => pattern.test(line) && (key === 'costs' || calc.model !== 'costs_only')).map(([key]) => key);
+    if (!months.length || !keys.length) return false;
+    const candidates = [...keys.flatMap((key) => months.map((month) => calc.schedule[key]?.[month - 1])),
+      calc.year_revenue, calc.year_costs, calc.net, calc.total_one_time, calc.monthly_run_rate, calc.ending_mrr, calc.ending_cash, calc.starting_cash].filter((value) => typeof value === 'number');
+    return values.some(({ token, value }) => Math.abs(value) >= 100 && !candidates.some((good) => statesValue(token, value, good)));
+  };
   const conflicts = (line) => {
-    const values = numbers(line);
+    const values = figures(line);
     if (!values.length) return false;
-    if (gate.banned.some((bad) => values.some((value) => Math.abs(value) >= 100 && agrees(value, bad, { relative: 0.005 })))) return true;
+    if (gate.banned.some((bad) => values.some(({ value }) => Math.abs(value) >= 100 && agrees(value, bad, { relative: 0.005 })))) return true;
     if (!FINANCE_WORDS.test(line) || OTHER_PARTY.test(line)) return false;
     // Unverified FINANCE: no money figure from it may be stated as fact.
-    if (!calc) return gate.unverified.length > 0 && values.some((value) => Math.abs(value) >= 1000) && /AED|USD|\$|€|درهم|revenue|cost|إيراد|تكاليف/i.test(line);
+    if (!calc) return gate.unverified.length > 0 && values.some(({ value }) => Math.abs(value) >= 1000) && /AED|USD|\$|€|درهم|revenue|cost|إيراد|تكاليف/i.test(line);
     const beMatch = line.match(/break[\s-]?even[^|\n]{0,60}?month\s*(\d{1,2})|month\s*(\d{1,2})[^|\n]{0,30}break[\s-]?even|التعادل[^|\n]{0,40}?الشهر\s*(\d{1,2})/i);
     if (beMatch) {
       const month = Number(beMatch[1] || beMatch[2] || beMatch[3]);
@@ -255,22 +392,28 @@ export function enforceFacts(markdown, gate) {
       if (!negated && month !== calc.break_even_month && month !== calc.operating_break_even_month) return true;
       if (negated && calc.break_even_month !== null && calc.break_even_month <= month) return true;
     }
+    // A figure for a named month must be that month's calculated value.
+    if (monthConflict(line, values)) return true;
     if (!PERIOD_WORDS.test(line)) return false;
-    const big = values.filter((value) => Math.abs(value) >= 1000);
+    const big = values.filter(({ value }) => Math.abs(value) >= 1000);
     if (!big.length) return false;
     const known = [calc.year_revenue, calc.year_costs, calc.net, calc.total_one_time, calc.total_fixed, calc.total_variable, calc.ending_mrr, calc.monthly_run_rate, calc.starting_cash, calc.ending_cash,
-      ...(calc.sensitivity || []).flatMap((entry) => [entry.year_revenue, entry.net])].filter((value) => typeof value === 'number');
+      calc.schedule?.cumulative?.[calc.months - 1], ...(calc.sensitivity || []).flatMap((entry) => [entry.year_revenue, entry.net])].filter((value) => typeof value === 'number');
     const kind = /revenue|sales|إيراد/i.test(line) ? calc.year_revenue : /cost|expense|spend|تكاليف|مصاريف/i.test(line) ? calc.year_costs : /\bnet\b|profit|loss|صافي|ربح/i.test(line) ? calc.net : null;
     if (kind === null || kind === undefined) return false;
-    return !big.some((value) => known.some((good) => agrees(Math.abs(value), Math.abs(good), { relative: 0.03 })));
+    // Every large figure on the line must state a validated value at its
+    // written precision (a near miss such as 111,489 for 112,236 is wrong).
+    return big.some(({ token, value }) => !known.some((good) => statesValue(token, value, good)));
   };
   const blocks = [];
-  let text = String(markdown || '').replace(BLOCK, (match) => {
+  let text = sanitized.text.replace(BLOCK, (match) => {
     // Artifact tables written by CHIEF are checked row by row; a table with a
     // contradicting row is dropped (the validated table below replaces it).
+    // The calculator's own schedule (checked above) is kept as is.
     try {
       const raw = JSON.parse(match.replace(/^```artifact\s*\n|```$/g, ''));
-      if (['table', 'chart'].includes(typeOf(raw))) {
+      const calculatorOwn = raw.calculated === true && calc && !financialTables(match, calc).some((entry) => entry.issues.length);
+      if (['table', 'chart'].includes(typeOf(raw)) && !calculatorOwn) {
         const rows = typeOf(raw) === 'table' ? (raw.rows || []).map((row) => `${(raw.columns || []).join(' ')} ${(row || []).join(' ')}`)
           : (raw.series || []).map((series) => `${raw.title} ${series.name} ${(series.values || []).join(' ')}`);
         if (rows.some((row) => conflicts(`${raw.title || ''} ${row}`))) { removed += 1; blocks.push(''); return `\u0000${blocks.length - 1}\u0000`; }
@@ -294,7 +437,27 @@ export function enforceFacts(markdown, gate) {
   const section = ['## Validated financial figures (calculated by code)'];
   if (gate.facts.length) section.push('| Figure | Value |', '| --- | --- |', ...gate.facts.map((fact) => `| ${fact.label} | ${fact.value} |`));
   for (const entry of gate.unverified) section.push(`FINANCE "${entry.title}" did not pass validation (${entry.validation.state}); its figures are not presented as fact.`);
-  return { text: `${text}\n\n${section.join('\n')}`, removed };
+  const final = `${text}\n\n${section.join('\n')}`;
+  return { text: final, removed, tables: sanitized.removed.length, remaining: remainingContradictions(final, gate) };
+}
+
+// Final check on the text CHIEF delivers: model-written schedules, tables or
+// charts contradicting the calculator, and prose lines with a banned figure
+// or a near miss of a validated one. Anything > 0 means the answer cannot be
+// presented as verified.
+export function remainingContradictions(markdown, gate) {
+  const calc = gate.calculated || gate.verified?.[0]?.validation.calculated || null;
+  if (!calc) return 0;
+  const tables = financialTables(markdown, calc).filter((entry) => entry.issues.length || (entry.schedule && !entry.calculated)).length;
+  const prose = String(markdown || '').replace(BLOCK, '').split('\n').filter((line) => !/^\s*\|/.test(line))
+    .filter((line) => figures(line).some(({ value }) => Math.abs(value) >= 100 && gate.banned.some((bad) => agrees(value, bad, { relative: 0.005 })))).length;
+  const claims = proseClaims(String(markdown || '').replace(BLOCK, '')).filter((claim) => {
+    if (claim.kind === 'break_even') return claim.value !== calc.break_even_month && claim.value !== calc.operating_break_even_month;
+    if (claim.kind === 'break_even_not') return false;
+    const good = calc[claim.kind];
+    return typeof good === 'number' && !statesValue(claim.raw, claim.value, good) && !(calc.sensitivity || []).some((entry) => statesValue(claim.raw, claim.value, entry[claim.kind]));
+  }).length;
+  return tables + prose + claims;
 }
 
 // ------------------------------------------------------------ evidence

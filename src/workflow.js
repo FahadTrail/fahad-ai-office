@@ -2,8 +2,9 @@ import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validatePlan } from
 import { DISPATCHABLE, mentionedEmployees, officeAgent } from './office/agents.js';
 import { converseDirect, parseConsultRequest, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
 import { parseArtifacts, parseSources } from './office/artifacts.js';
-import { FINANCE_STATES, injectFinanceError, needsCorrection, publishFinance, revisionInstruction, validateFinance } from './office/finance.js';
-import { chiefGate, cleanOutput, codeChecksBlock, enforceAudit, enforceFacts, evidenceGate, factsBlock, numericChecks, socialCalendar } from './office/quality.js';
+import { FINANCE_STATES, badScheduleTable, injectFinanceError, needsCorrection, publishFinance, revisionInstruction, validateFinance } from './office/finance.js';
+import { auditOwnTables, chiefGate, cleanOutput, codeChecksBlock, enforceAudit, enforceFacts, evidenceGate, factsBlock, numericChecks, socialCalendar } from './office/quality.js';
+import { stepJob, stepWebTools } from './office/routing-hints.js';
 import { CAPACITY_LIMITS, capacityDecision } from './office/capacity.js';
 import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
 import { EscalationRequired, classifyOfficeData } from './office/pool-runner.js';
@@ -399,6 +400,13 @@ export class OfficeWorkflow {
     for (const [index, stream] of plan.workstreams.entries()) {
       const employee = officeAgent(stream.agent);
       const dependsOn = stream.dependsOn.map((id) => created.get(id).id);
+      // AUDIT checks every financial table against FINANCE's calculator, so
+      // it always receives the FINANCE outputs planned before it.
+      if (employee.key === 'audit') {
+        for (const other of plan.workstreams.slice(0, index)) {
+          if (officeAgent(other.agent)?.key === 'finance' && !dependsOn.includes(created.get(other.id).id)) dependsOn.push(created.get(other.id).id);
+        }
+      }
       const row = await this.store.ensureTask({
         jobId: task.job_id, agentSlug: employee.slug, title: stream.title,
         brief: encodeBrief(employee.executor === 'coding' ? STAGES.LAUNCH_DEV : STAGES.SPECIALIST, {
@@ -435,10 +443,12 @@ export class OfficeWorkflow {
     if (!employee || employee.executor !== 'office') throw new Error(`Unknown Office employee ${brief.agent}`);
     assertAgent(task, employee.slug);
     const agent = await this.store.getAgent(employee.slug);
-    const webTools = employee.webTools && hasWebTools(agent.allowed_tools);
     const request = this.request(task);
-    await this.startStage(task, agent, 'SPECIALIST_WORKING', `shared-pool:${employee.job}`, `${employee.label} is working on: ${brief.title}${brief.revision ? ' (revision)' : ''}.`, MODEL_PROVIDER,
-      { job: employee.job, dataClass: request.dataClass, role: employee.key });
+    const workText = `${request.goal}\n${brief.title || ''}\n${brief.brief || ''}`;
+    const webTools = stepWebTools(employee, hasWebTools(agent.allowed_tools), workText);
+    const job = stepJob(employee, workText);
+    await this.startStage(task, agent, 'SPECIALIST_WORKING', `shared-pool:${job}`, `${employee.label} is working on: ${brief.title}${brief.revision ? ' (revision)' : ''}.`, MODEL_PROVIDER,
+      { job, dataClass: request.dataClass, role: employee.key });
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     const upstream = (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content);
     const previous = brief.revision ? upstream.find((entry) => entry.task_id === brief.revisesTaskId)?.content : null;
@@ -459,7 +469,7 @@ export class OfficeWorkflow {
       codeChecks: checks ? codeChecksBlock(checks) : '',
       execution: this.modelExecution(task, stage),
       toolBroker: this.toolSession(task, STAGES.SPECIALIST),
-      ...(this.modelRunner ? { run: this.poolRun(task, stage, { job: employee.job, request, preference: MODEL_PROVIDER, fresh: stage !== STAGES.SPECIALIST }) } : {}),
+      ...(this.modelRunner ? { run: this.poolRun(task, stage, { job, request, preference: MODEL_PROVIDER, fresh: stage !== STAGES.SPECIALIST }) } : {}),
     }));
     let outcome = await work(STAGES.SPECIALIST, brief.revision || null, previous);
     outcome = await this.qualityGates(task, employee, outcome, { request, brief, checks, redo: (instruction, prior, round) => work(`${STAGES.SPECIALIST}:validation${round}`, instruction, prior) });
@@ -536,7 +546,27 @@ export class OfficeWorkflow {
       current.text = calendar.text;
       if (calendar.converted) await emit(`SOCIAL's calendar table (${calendar.converted} posts) was saved as a calendar artifact.`, { kind: 'calendar_structured', entries: calendar.converted });
     }
-    if (employee.key === 'audit' && checks) current.text = enforceAudit(current.text, checks);
+    if (employee.key === 'audit' && checks) {
+      // Drill ([drill:finance-table]): the live V4.1 failure — a model-written
+      // monthly table that drifts from the calculator — is placed in AUDIT's
+      // own draft, which code must block and remove.
+      if (request.drills.financeTable && checks.calculated && !brief.revision) {
+        const bad = badScheduleTable(checks.calculated);
+        if (bad) {
+          current.text = `${current.text}\n\n## Financial snapshot\n\`\`\`artifact\n${JSON.stringify(bad)}\n\`\`\``;
+          const total = bad.rows.at(-1);
+          await emit(`Drill: a wrong monthly financial table (revenue ${total[1]}, net ${total[3]}) was written into AUDIT's draft — code must block and remove it.`,
+            { kind: 'finance_table_drill', stage: 'audit_draft', revenue: total[1], net: total[3] }, 'warning');
+        }
+      }
+      const own = auditOwnTables(current.text, checks);
+      current.text = own.text;
+      if (own.findings.length) {
+        await emit(`AUDIT table gate: ${own.findings.length} financial table${own.findings.length === 1 ? '' : 's'} in AUDIT's own draft contradicted the calculation — BLOCKED and removed.`,
+          { kind: 'audit_table_gate', blocked: own.findings.map((finding) => ({ code: finding.code, table: finding.table, expected: finding.expected, actual: finding.actual, mismatches: finding.mismatches.length })) }, 'warning');
+      }
+      current.text = enforceAudit(current.text, { ...checks, findings: [...checks.findings, ...own.findings] });
+    }
     return current;
   }
 
@@ -593,16 +623,32 @@ export class OfficeWorkflow {
     if (/^\s*(```(?:json)?\s*)?\{\s*"revise"/.test(outcome.text)) outcome = await synthesize(false);
     // CHIEF may not restate a financial figure differently from the validated
     // calculation, nor repeat a figure already proven wrong.
-    const enforced = enforceFacts(cleanOutput(outcome.text), gate);
-    let finalText = enforced.text;
-    if (gate.blocked) {
-      finalText = `## Not closed — blocked finding\nThe financial figures did not pass code validation${gate.openAudit.length ? ' and AUDIT has unresolved BLOCKED numeric findings' : ''}. They are not presented as fact; FINANCE must correct them before this project can close.\n\n${finalText}`;
+    let draft = cleanOutput(outcome.text);
+    // Drill ([drill:finance-table]): CHIEF's draft carries the same wrong
+    // monthly table; the fact gate must replace or remove it.
+    if (request.drills.financeTable && gate.calculated) {
+      const bad = badScheduleTable(gate.calculated);
+      if (bad) {
+        draft = `${draft}\n\n## 12-month snapshot\n\`\`\`artifact\n${JSON.stringify(bad)}\n\`\`\``;
+        const total = bad.rows.at(-1);
+        await this.store.emit({ jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity', level: 'warning',
+          message: `Drill: a wrong monthly financial table (revenue ${total[1]}, net ${total[3]}) was written into CHIEF's draft — the fact gate must replace it.`,
+          payload: { kind: 'finance_table_drill', stage: 'chief_draft', revenue: total[1], net: total[3] } });
+      }
     }
-    if (enforced.removed || gate.blocked) {
+    const enforced = enforceFacts(draft, gate);
+    let finalText = enforced.text;
+    // VERIFIED figures never ship next to a contradiction: anything the gate
+    // could not remove keeps the result NOT CLOSED.
+    const blocked = gate.blocked || enforced.remaining > 0;
+    if (blocked) {
+      finalText = `## Not closed — blocked finding\nThe financial figures did not pass code validation${gate.openAudit.length ? ' and AUDIT has unresolved BLOCKED numeric findings' : ''}${enforced.remaining ? ` and ${enforced.remaining} contradiction${enforced.remaining === 1 ? '' : 's'} with the calculation remain` : ''}. They are not presented as fact; FINANCE must correct them before this project can close.\n\n${finalText}`;
+    }
+    if (enforced.removed || blocked) {
       await this.store.emit({
         jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity', level: 'warning',
-        message: `Chief fact gate: ${enforced.removed} statement${enforced.removed === 1 ? '' : 's'} contradicting the validated figures ${enforced.removed === 1 ? 'was' : 'were'} removed${gate.blocked ? '; the result is marked NOT CLOSED' : ''}.`,
-        payload: { kind: 'fact_gate_enforced', removed: enforced.removed, blocked: gate.blocked },
+        message: `Chief fact gate: ${enforced.removed} statement${enforced.removed === 1 ? '' : 's'} or table${enforced.removed === 1 ? '' : 's'} contradicting the validated figures ${enforced.removed === 1 ? 'was' : 'were'} removed${enforced.tables ? ` (${enforced.tables} financial table${enforced.tables === 1 ? '' : 's'} replaced by the calculator schedule)` : ''}${blocked ? '; the result is marked NOT CLOSED' : ''}.`,
+        payload: { kind: 'fact_gate_enforced', removed: enforced.removed, tables: enforced.tables, remaining: enforced.remaining, blocked },
       });
     }
     outcome = { ...outcome, text: finalText };
@@ -695,10 +741,10 @@ export class OfficeWorkflow {
     }
     let outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
       agent, role: employee.key, goal: request.goal, context: context?.text || '', knowledge, consults, allowConsult,
-      webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
+      webTools: stepWebTools(employee, hasWebTools(agent.allowed_tools), request.goal), onActivity,
       execution: this.modelExecution(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT),
       toolBroker: this.toolSession(task, STAGES.DIRECT),
-      ...(this.modelRunner ? { run: this.poolRun(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT, { job: employee.job, request, preference: MODEL_PROVIDER }) } : {}),
+      ...(this.modelRunner ? { run: this.poolRun(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT, { job: stepJob(employee, request.goal), request, preference: MODEL_PROVIDER }) } : {}),
     }));
     const requests = allowConsult ? parseConsultRequest(outcome.text, employee.key) : [];
     if (requests.length) return this.requestConsults(task, outcome, employee, requests);
@@ -706,10 +752,10 @@ export class OfficeWorkflow {
       request, brief, requireModel: false,
       redo: (instruction, prior, round) => this.withHeartbeat(task, (onActivity) => this.executors.direct({
         agent, role: employee.key, goal: `${request.goal}\n\nREVISION REQUIRED BEFORE THIS ANSWER CAN BE SENT:\n${instruction}\n\nYOUR PREVIOUS ANSWER:\n${String(prior).slice(0, 12_000)}\nReturn the complete corrected answer.`,
-        context: context?.text || '', knowledge, consults, allowConsult: false, webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
+        context: context?.text || '', knowledge, consults, allowConsult: false, webTools: stepWebTools(employee, hasWebTools(agent.allowed_tools), request.goal), onActivity,
         execution: this.modelExecution(task, `${STAGES.DIRECT}:validation${round}`),
         toolBroker: this.toolSession(task, STAGES.DIRECT),
-        ...(this.modelRunner ? { run: this.poolRun(task, `${STAGES.DIRECT}:validation${round}`, { job: employee.job, request, preference: MODEL_PROVIDER, fresh: true }) } : {}),
+        ...(this.modelRunner ? { run: this.poolRun(task, `${STAGES.DIRECT}:validation${round}`, { job: stepJob(employee, request.goal), request, preference: MODEL_PROVIDER, fresh: true }) } : {}),
       })),
     });
     outcome = gated;
@@ -753,13 +799,13 @@ export class OfficeWorkflow {
     const agent = await this.store.getAgent(employee.slug);
     const request = this.request(task);
     // Advice from CODING is analysis, not engineering: route it as research.
-    const job = employee.executor === 'coding' ? 'research' : employee.job;
+    const job = employee.executor === 'coding' ? 'research' : stepJob(employee, String(brief.question || ''));
     await this.startStage(task, agent, 'CONSULT_WORKING', `shared-pool:${job}`, `${employee.label} is answering ${asker.label}.`, MODEL_PROVIDER,
       { job, dataClass: request.dataClass, role: employee.key });
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     // A consult is advice only: CODING answers from its expertise and never
     // starts engineering work (no repository or tools here).
-    const webTools = employee.executor === 'office' && employee.webTools && hasWebTools(agent.allowed_tools);
+    const webTools = employee.executor === 'office' && stepWebTools(employee, hasWebTools(agent.allowed_tools), String(brief.question || ''));
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
       agent, role: employee.key, goal: String(brief.question || '').slice(0, 2000), consultFrom: asker.label,
       context: context?.project ? projectLine(context) : '', allowConsult: false, webTools, onActivity,
@@ -1113,6 +1159,8 @@ export function officeRequest(goal, env = process.env, { freeOnly: storedFreeOnl
     // validation (…-error) or after it, so only AUDIT/CHIEF can catch it.
     financeError: drillsEnabled && /\[drill:finance-error\]/i.test(raw),
     financeErrorAudit: drillsEnabled && /\[drill:finance-error-audit\]/i.test(raw),
+    // A wrong model-written monthly table in AUDIT's and CHIEF's drafts.
+    financeTable: drillsEnabled && /\[drill:finance-table\]/i.test(raw),
   };
   // [free-only] keeps this one objective on free routes; it only narrows
   // routing (the workspace policy and every other job are unaffected).
@@ -1121,7 +1169,7 @@ export function officeRequest(goal, env = process.env, { freeOnly: storedFreeOnl
   const freeOnly = storedFreeOnly || marker.freeOnly;
   const text = marker.text;
   const { dataClass, reason } = classifyOfficeData(text, { env });
-  const cleaned = text.replace(/\[drill:(failover|escalate|finance-error|finance-error-audit)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').replace(/[ \t]{2,}/g, ' ').trim();
+  const cleaned = text.replace(/\[drill:(failover|escalate|finance-error|finance-error-audit|finance-table)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').replace(/[ \t]{2,}/g, ' ').trim();
   return { goal: cleaned || raw, dataClass, dataClassReason: reason, drills, freeOnly };
 }
 

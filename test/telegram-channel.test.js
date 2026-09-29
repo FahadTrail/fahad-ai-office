@@ -198,3 +198,75 @@ test('the Hub shows Telegram from evidence: start-up check, pairing, first deliv
   assert.equal(live.status, 'Connected');
   assert.deepEqual(live.employees, ['CHIEF']);
 });
+
+// Regression (2026-09-29): a network error on the conversation lookup was
+// read as "not found" and a second "Telegram · CHIEF" conversation was
+// created. The lookup is now retry-safe and idempotent.
+function conversationDb(rows, { failures = 0, throwInstead = false } = {}) {
+  const state = { failures, inserts: 0, lookups: 0 };
+  const db = { from: () => {
+    let insertRow = null; let ordered = false;
+    const filters = [];
+    const api = {
+      select: () => api, limit: () => api, maybeSingle: () => api, single: () => api,
+      eq: (key, value) => (filters.push((row) => row[key] === value), api),
+      order: (key, { ascending }) => (ordered = { key, ascending }, api),
+      insert: (row) => (insertRow = row, api),
+      then: (resolve, reject) => {
+        if (insertRow) { state.inserts += 1; const row = { id: `conv-${rows.length + 1}`, archived: false, created_at: `2026-09-29T00:0${rows.length}:00Z`, ...insertRow }; rows.push(row); return resolve({ data: row, error: null }); }
+        state.lookups += 1;
+        if (state.failures > 0) {
+          state.failures -= 1;
+          if (throwInstead) return reject(new TypeError('fetch failed'));
+          return resolve({ data: null, error: { message: 'fetch failed' } });
+        }
+        let matched = rows.filter((row) => filters.every((fn) => fn(row)));
+        if (ordered) matched = matched.toSorted((a, b) => (a[ordered.key] < b[ordered.key] ? -1 : 1) * (ordered.ascending ? 1 : -1));
+        return resolve({ data: matched[0] || null, error: null });
+      },
+    };
+    return api;
+  } };
+  return { db, state };
+}
+const EXISTING = () => [{ id: 'conv-old', project_id: 'ws', title: 'Telegram · CHIEF', archived: false, created_at: '2026-09-27T11:00:48Z' }];
+const bridgeWith = (db) => new OfficeBridge({ db, store: { createJob: async () => ({ id: 'j1' }) }, workspaceId: 'ws' });
+
+test('a failed conversation lookup never creates a duplicate (retried, then fails closed)', async () => {
+  for (const throwInstead of [false, true]) {
+    // One transient failure: retried, the existing conversation is used.
+    const rows = EXISTING();
+    const { db, state } = conversationDb(rows, { failures: 1, throwInstead });
+    assert.equal(await bridgeWith(db).conversation(), 'conv-old');
+    assert.equal(state.inserts, 0);
+    assert.equal(rows.length, 1);
+    // A lasting outage: the lookup fails and nothing is inserted.
+    const down = EXISTING();
+    const outage = conversationDb(down, { failures: 99, throwInstead });
+    await assert.rejects(bridgeWith(outage.db).conversation(), /Could not look up the telegram conversation/);
+    assert.equal(outage.state.inserts, 0);
+    assert.equal(down.length, 1);
+  }
+});
+
+test('the oldest open conversation always wins, and concurrent callers share one lookup', async () => {
+  const rows = [
+    { id: 'conv-new', project_id: 'ws', title: 'Telegram · CHIEF', archived: false, created_at: '2026-09-29T00:32:03Z' },
+    ...EXISTING(),
+    { id: 'conv-archived', project_id: 'ws', title: 'Telegram · CHIEF', archived: true, created_at: '2026-09-20T00:00:00Z' },
+  ];
+  const { db } = conversationDb(rows);
+  assert.equal(await bridgeWith(db).conversation(), 'conv-old');
+  // No conversation yet: an outbox poll and a message at the same time
+  // create exactly one.
+  const empty = [];
+  const fresh = conversationDb(empty);
+  const bridge = bridgeWith(fresh.db);
+  const ids = await Promise.all([bridge.conversation(), bridge.conversation(), bridge.conversation()]);
+  assert.equal(fresh.state.inserts, 1);
+  assert.equal(new Set(ids).size, 1);
+  assert.equal(empty.length, 1);
+  // Later calls reuse it.
+  assert.equal(await bridge.conversation(), ids[0]);
+  assert.equal(fresh.state.inserts, 1);
+});

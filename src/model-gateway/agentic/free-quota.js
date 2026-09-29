@@ -110,7 +110,9 @@ function nextMidnight(timeZone, now) {
 // wording (Gemini "PerDay" quota ids, Groq "requests per day (RPD)",
 // OpenRouter "free-models-per-day", GitHub "UserByModelByDay", …). Only a
 // boolean leaves this function; provider text is never stored.
-const DAILY_PATTERN = /per.?day|perday|daily|\bRPD\b|\bTPD\b|by.?day|per 86400s/i;
+// Also monthly allowances (Mistral free mode: tokens per month): any used-up
+// scheduled allowance waits for its reset instead of being probed again.
+const DAILY_PATTERN = /per.?day|perday|daily|\bRPD\b|\bTPD\b|by.?day|per 86400s|per.?month|monthly|tokens? per month/i;
 export function isDailyQuotaText(text) {
   return DAILY_PATTERN.test(String(text || ''));
 }

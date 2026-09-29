@@ -39,7 +39,7 @@ export const ARTIFACT_TYPES = Object.freeze({
     clean: (raw) => {
       const columns = list(raw.columns, 12).map((column) => text(column, 80));
       const rows = list(raw.rows, 80).map((row) => list(row, columns.length || 12).map((cell) => text(cell, 300)));
-      return columns.length && rows.length ? { columns, rows } : null;
+      return columns.length && rows.length ? { columns, rows, ...(raw.calculated === true ? { calculated: true } : {}) } : null;
     },
   },
   chart: {
@@ -144,8 +144,11 @@ export const ARTIFACT_TYPES = Object.freeze({
         area: text(finding?.area, 40), owner: text(finding?.owner, 30), detail: text(finding?.detail, 400),
         // Deterministic (code) findings carry their evidence.
         ...(finding?.type ? { type: text(finding.type, 40), code: text(finding.code, 40), expected: text(finding.expected, 60), actual: text(finding.actual, 60), evidence: text(finding.evidence, 200) } : {}),
-        ...(finding?.fix ? { fix: text(finding.fix, 300) } : {}) })).filter((finding) => finding.title);
-      const blocked = findings.some((finding) => finding.severity === 'blocked');
+        ...(finding?.fix ? { fix: text(finding.fix, 300) } : {}),
+        // Resolved by code (e.g. a wrong table removed before delivery): kept
+        // as evidence, no longer open.
+        ...(finding?.resolved === true ? { resolved: true, resolution: text(finding.resolution, 200) } : {}) })).filter((finding) => finding.title);
+      const blocked = findings.some((finding) => finding.severity === 'blocked' && !finding.resolved);
       return { verdict: blocked ? 'BLOCKED' : oneOf(raw.verdict, ['PASS', 'NEEDS WORK', 'BLOCKED'], findings.length ? 'NEEDS WORK' : 'PASS'), findings };
     },
   },
