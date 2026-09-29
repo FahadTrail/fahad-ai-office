@@ -124,6 +124,11 @@ export class AgentTurnGateway {
       // A per-minute token RATE (not a window): the request must leave room
       // for a useful answer inside one minute's allowance.
       if (route.requestTokenLimit && outputTokens < Math.min(maxOutputTokens, MIN_USEFUL_OUTPUT_TOKENS)) reasons.push('REQUEST_ABOVE_FREE_TIER_LIMIT');
+      // The provider REPORTED its per-minute input-token quota (Gemini 429
+      // QuotaFailure): a request above it can never pass, however long the
+      // route rests, so it is not offered that request (no cooldown wait).
+      const reportedInputTpm = Number(routeState?.rateLimit?.inputTokensPerMinute || 0);
+      if (reportedInputTpm > 0 && estimatedInputTokens > reportedInputTpm) reasons.push('REQUEST_ABOVE_PROVIDER_TPM');
       const pooled = pools.get(poolInfo.id);
       let cooldownUntil = routeState?.cooldownUntil || null;
       if (isCoolingDown(routeState, now)) reasons.push(`COOLDOWN_${String(routeState.health || 'unavailable').toUpperCase()}`);

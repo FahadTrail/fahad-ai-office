@@ -262,3 +262,41 @@ test('a timeout while reading the response body is a NETWORK failure, not DOMExc
   assert.equal(error.networkCode, 'TimeoutError');
   assert.equal(classifyProviderError(error).code, 'PROVIDER_NETWORK');
 });
+
+test('Gemini 429 quota details: the reported per-minute input-token quota and retry delay are kept as numbers', async () => {
+  const { postJson, googleQuotaDetails } = await import('../src/model-gateway/agentic/http.js');
+  const body = { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'You exceeded your current quota', details: [
+    { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count', quotaId: 'GenerateContentInputTokensPerModelPerMinute-FreeTier', quotaValue: '15000' }] },
+    { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '37s' },
+  ] } };
+  assert.deepEqual(googleQuotaDetails(body), { retryAfterSeconds: 37, inputTokensPerMinute: 15_000, requestsPerMinute: null });
+  assert.deepEqual(googleQuotaDetails({ error: { message: 'x' } }), { retryAfterSeconds: null, inputTokensPerMinute: null, requestsPerMinute: null });
+  const fetchFn = async () => new Response(JSON.stringify(body), { status: 429, headers: { 'content-type': 'application/json' } });
+  const error = await postJson({ fetchFn, url: 'https://generativelanguage.googleapis.com/x', headers: {}, body: {}, provider: 'gemini' }).catch((caught) => caught);
+  assert.equal(error.status, 429);
+  assert.equal(error.retryAfter, 37);
+  assert.equal(error.rateLimit.inputTokensPerMinute, 15_000);
+  assert.equal(error.quotaScope, undefined, 'a per-minute quota is not a daily one');
+  assert.ok(!JSON.stringify(error.rateLimit).includes('exceeded'), 'no provider text kept');
+});
+
+test('a request above the provider-reported input TPM is not offered to that route; a coding turn above it is not coding capacity', async () => {
+  const { AgentTurnGateway } = await import('../src/model-gateway/agentic/turn-gateway.js');
+  const { MemoryProviderStateStore } = await import('../src/model-gateway/agentic/provider-state.js');
+  const { routeClasses } = await import('../src/model-gateway/agentic/capacity-model.js');
+  const route = {
+    id: 'gemini:gemma', provider: 'gemini', model: 'gemma', billingClass: 'free', qualityTier: 4, contextWindow: 256_000, unavailableReasons: [],
+    capabilities: { coding: 4, reasoning: 4, toolCalling: true, structuredOutput: true, contextWindow: 256_000 }, protocolClient: {},
+  };
+  const store = new MemoryProviderStateStore();
+  await store.recordFailure(route, Object.assign(new Error('x'), { code: 'PROVIDER_RATE_LIMIT', failureClass: 'retry', retryAfter: 37, rateLimit: { inputTokensPerMinute: 15_000 } }));
+  const gateway = new AgentTurnGateway({ pool: [route], stateStore: store, now: () => Date.now() + 60_000 });
+  const reasons = async (estimatedInputTokens) => (await gateway.evaluate({ dataClass: 'PUBLIC', estimatedInputTokens, maxOutputTokens: 2_000 }))[0].reasons;
+  assert.ok((await reasons(20_000)).includes('REQUEST_ABOVE_PROVIDER_TPM'));
+  assert.deepEqual(await reasons(10_000), [], 'a smaller request still fits');
+  const general = { status: 'qualified', suiteVersion: 'q1-2026-09', testedAt: new Date().toISOString(), skills: { coding: true, tools: true, reasoning: true, structured: true, instruction: true, reading: true, writing: true } };
+  const coding = { status: 'qualified', grade: 'CODING_PRIMARY', suiteVersion: 'c2-2026-09', testedAt: new Date().toISOString() };
+  const qualifications = Object.assign(new Map([[route.id, general]]), { coding: new Map([[route.id, coding]]) });
+  assert.ok(routeClasses({ ...route, dataClass: 'PUBLIC' }, qualifications, {}).has('coding_public'));
+  assert.ok(!routeClasses({ ...route, dataClass: 'PUBLIC' }, qualifications, { state: { rateLimit: { inputTokensPerMinute: 15_000 } } }).has('coding_public'), '15K TPM cannot carry a 30K coding turn');
+});

@@ -59,7 +59,7 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
     && state.get(route.id)?.health !== 'auth_error')
     .toSorted((left, right) => (left.pricing.inputPerMillion + left.pricing.outputPerMillion) - (right.pricing.inputPerMillion + right.pricing.outputPerMillion))[0] || null;
   const model = capacityModel({
-    routes: pool, pools, qualifications, now,
+    routes: pool, pools, qualifications, now, states: state,
     attemptsByPool: new Map([...byPool].map(([id, rows]) => [id, rows.month])),
     paid: fallback ? { routeId: fallback.id, pricing: fallback.pricing, remainingUsd: budget.remaining, daysLeftInMonth: Math.ceil((nextMonth.getTime() - now) / 86_400_000) } : null,
   });

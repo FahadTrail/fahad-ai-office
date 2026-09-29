@@ -35,14 +35,18 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
     const cloudflareDaily = /"code":\s*4006\b|daily free allocation/i.test(errorText);
     const dailyQuota = cloudflareDaily || (response.status === 429 && isDailyQuotaText(errorText));
     const reason = providerReasonHint(response.status, errorText);
+    const google = googleQuotaDetails(payload);
+    const reported = google.inputTokensPerMinute || google.requestsPerMinute
+      ? Object.freeze({ ...(rateLimit || {}), ...(google.inputTokensPerMinute ? { inputTokensPerMinute: google.inputTokensPerMinute } : {}), ...(google.requestsPerMinute ? { requestsPerMinute: google.requestsPerMinute } : {}) })
+      : rateLimit;
     throw providerError(`${provider} request failed`, {
       status: cloudflareDaily ? 429 : response.status,
       ...(dailyQuota ? { quotaScope: 'day' } : {}),
       ...(reason ? { reason } : {}),
       type: typeof type === 'string' ? type : String(type ?? ''),
-      retryAfter: response.headers.get('retry-after'),
+      retryAfter: response.headers.get('retry-after') ?? google.retryAfterSeconds,
       providerRequestId: requestId,
-      rateLimit,
+      rateLimit: reported,
     });
   }
   // The timeout also covers reading the body: slow reasoning models behind
@@ -62,6 +66,32 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
     });
   }
   return { body: payload, requestId, rateLimit };
+}
+
+// Google (Gemini API) states the quota it enforced in the 429 body:
+// google.rpc.QuotaFailure violations (quotaId such as
+// "GenerateContentInputTokensPerModelPerMinute-FreeTier", quotaValue "15000")
+// and google.rpc.RetryInfo ("retryDelay": "37s"). Only numbers are kept.
+export function googleQuotaDetails(payload) {
+  const details = Array.isArray(payload?.error?.details) ? payload.error.details : [];
+  const result = { retryAfterSeconds: null, inputTokensPerMinute: null, requestsPerMinute: null };
+  for (const detail of details) {
+    const kind = String(detail?.['@type'] || '');
+    if (kind.endsWith('RetryInfo')) {
+      const seconds = Number(String(detail.retryDelay || '').match(/^(\d+(?:\.\d+)?)s$/)?.[1]);
+      if (Number.isFinite(seconds) && seconds > 0) result.retryAfterSeconds = Math.ceil(seconds);
+    }
+    if (kind.endsWith('QuotaFailure')) {
+      for (const violation of Array.isArray(detail.violations) ? detail.violations : []) {
+        const id = String(violation?.quotaId || violation?.quotaMetric || '');
+        const value = Number(violation?.quotaValue);
+        if (!Number.isFinite(value) || value <= 0 || !/PerMinute/i.test(id)) continue;
+        if (/InputToken|input_token/i.test(id)) result.inputTokensPerMinute = value;
+        else if (/Requests?PerMinute|request_count/i.test(id)) result.requestsPerMinute = value;
+      }
+    }
+  }
+  return result;
 }
 
 // Maps a provider's error wording to a short, fixed reason code so an
