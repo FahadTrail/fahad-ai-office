@@ -421,3 +421,28 @@ Ollama is deferred on value (see above), not on engineering.
 | of which: adapters ready, waiting on owner keys | 5 |
 | of which: deferred | 11 |
 | **New independent pools found and integrated this sprint** | **0** |
+
+### 24-hour burn-in: checkpoint SQL
+
+Read-only; replace `:start`. The CLI equivalent is `node tools/burnin-report.mjs --since=<start>`.
+
+```sql
+with w as (select * from model_attempts where started_at >= :start),
+p as (
+  select provider, count(*) calls,
+    count(*) filter (where status = 'succeeded') ok,
+    count(*) filter (where status <> 'succeeded') failed,
+    count(*) filter (where error_code ~ 'RATE|QUOTA') rate_limited,
+    sum(input_tokens + output_tokens) filter (where status = 'succeeded') ok_tokens,
+    sum(cached_input_tokens) cached, sum(reasoning_tokens) reasoning,
+    percentile_cont(0.5) within group (order by duration_ms) filter (where status = 'succeeded') p50_ms,
+    round(sum(cost_usd)::numeric, 4) cost
+  from w group by provider)
+select (select json_agg(p order by ok_tokens desc nulls last) from p) providers,
+  (select count(*) filter (where coalesce(cost_usd, 0) > 0) from w where status = 'succeeded') paid_calls,
+  (select count(*) from w where status = 'succeeded') ok_calls,
+  (select count(*) from agent_sessions where created_at >= :start) coding_sessions,
+  (select count(*) from jobs where created_at >= :start) office_jobs,
+  (select coalesce(sum(wait_count), 0) from tasks where created_at >= :start) capacity_waits,
+  (select count(*) from agent_events where created_at >= :start and type = 'provider_switch') failovers;
+```
