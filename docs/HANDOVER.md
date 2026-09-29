@@ -18,7 +18,7 @@ This file is the live state. **The release procedure is
 | Migrations | Production has all 30; none of the three PRs adds one. |
 | Rollback points | R0 `13f09ea`; R1 = #72 merge; R2 = #73 merge; R3 = #71 merge. Mechanism: GitHub **Revert** on the merged PR (see runbook §4). |
 | Mistral | Code ready (#73); **no key**. Fahad's Free plan shows $10/month credits, but key creation is disabled ("Upgrade to use your API keys"). Likely cause: Studio not activated in Free mode. Owner path in runbook §5; **no card**. |
-| V4 status | **NOT CLOSED** at 21:25 UTC: job `abaccdad` is running (3 tasks done, 3 queued for the 00:00 UTC free-quota reset). The check-in fires at 00:40 UTC. |
+| V4 status | **NOT CLOSED** (verdict 2026-09-29 00:45 UTC). Job `abaccdad` completed at 00:07 UTC with $0 and 0 paid attempts. The drill value 427,618 was caught and returned to FINANCE, which was VERIFIED after one round (AED 112,236 / 102,000 / 10,236, break-even month 12). AUDIT code checks ran, the fact gate removed 1 contradicting statement, the injected value is absent, and Telegram delivered. **Remaining blocker:** a month-by-month cash table written by AUDIT and copied into CHIEF's final answer uses model-made monthly revenue. It ends at cumulative +9,489 (implied revenue 111,489), contradicting the VERIFIED net 10,236 (the calculator's chart ends at +10,236). The fact gate and AUDIT's numeric checks only compare headline totals, not table rows. The fix touches the CHIEF fact gate / AUDIT checks (protected V4.1 logic): **needs Fahad's go-ahead**, then a re-run of the drill job. |
 | Budget / routing | $2/month; `workspace_routing_policies` empty; no Mistral permission row. |
 
 **Exact next command after V4 CLOSED** (Phase A, then Phase B of the
