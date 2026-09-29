@@ -206,3 +206,21 @@ test('CI log excerpts include failures printed long before the end of the log', 
   assert.doesNotMatch(excerpt, /^2026-09-25T/m, 'timestamps stripped');
   assert.equal(ciLogExcerpt('ok 1 - a\n# pass 1', { tailLines: 50 }), 'ok 1 - a\n# pass 1', 'a clean log is just its tail');
 });
+
+test('every checkpoint reason the controller writes is allowed by the database constraint', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const migrations = readdirSync(new URL('../supabase/migrations/', import.meta.url)).toSorted();
+  let allowed = null;
+  for (const file of migrations) {
+    const sql = readFileSync(new URL(`../supabase/migrations/${file}`, import.meta.url), 'utf8');
+    for (const match of sql.matchAll(/reason text not null check \(reason in \(([^)]*)\)\)|agent_checkpoints_reason_check[^;]*reason in \(([^)]*)\)/g)) {
+      allowed = new Set([...(match[1] || match[2]).matchAll(/'([a-z_]+)'/g)].map((item) => item[1]));
+    }
+  }
+  assert.ok(allowed?.size, 'constraint found in the migrations');
+  const source = readFileSync(new URL('../src/coding-agent/controller.js', import.meta.url), 'utf8');
+  const used = new Set([...source.matchAll(/this\.checkpoint\('([a-z_]+)'\)/g)].map((match) => match[1]));
+  assert.ok(used.size >= 5);
+  // Production session fd8550d8 failed on checkpoint('waiting').
+  for (const reason of used) assert.ok(allowed.has(reason), `checkpoint reason "${reason}" violates agent_checkpoints_reason_check`);
+});
