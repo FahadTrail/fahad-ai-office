@@ -193,3 +193,29 @@ test('/api/capacity: a blocked paid account is never the fallback; stored snapsh
   assert.equal(view.capacity.history[0].freeTokensPerDay, 3_122_007);
   assert.equal(view.capacity.history[0].independentFreePools, 12);
 });
+
+test('free routes that never succeed, or succeed under 20% over ≥20 attempts, are demoted; paid routes and small samples are not', async () => {
+  const { AgentTurnGateway } = await import('../src/model-gateway/agentic/turn-gateway.js');
+  const { MemoryProviderStateStore } = await import('../src/model-gateway/agentic/provider-state.js');
+  const mk = (id, billingClass = 'free') => ({ id, provider: id.split(':')[0], model: id.split(':')[1], billingClass, qualityTier: 5, contextWindow: 128_000, unavailableReasons: [], capabilities: { reasoning: 4, toolCalling: true, contextWindow: 128_000 }, protocolClient: {}, pricing: billingClass === 'paid' ? { inputPerMillion: 1, outputPerMillion: 1 } : null });
+  const routes = [mk('free:dead'), mk('free:flaky'), mk('free:good'), mk('free:new'), mk('paid:dead', 'paid')];
+  const stateStore = new MemoryProviderStateStore();
+  stateStore.rows.set('free:dead', { requests: 0, failures: 41 });
+  stateStore.rows.set('free:flaky', { requests: 3, failures: 24 });
+  stateStore.rows.set('free:good', { requests: 152, failures: 6 });
+  stateStore.rows.set('free:new', { requests: 0, failures: 5 });
+  stateStore.rows.set('paid:dead', { requests: 0, failures: 30 });
+  const gateway = new AgentTurnGateway({ pool: routes, stateStore, minQualityTier: 1 });
+  const reasons = Object.fromEntries((await gateway.evaluate({ requiresPrivateData: false, estimatedInputTokens: 500, maxOutputTokens: 500 })).map((entry) => [entry.route.id, entry.reasons]));
+  assert.ok(reasons['free:dead'].includes('NEVER_SUCCEEDED'));
+  assert.ok(reasons['free:flaky'].includes('LOW_SUCCESS_RATE'));
+  assert.ok(!reasons['free:good'].some((reason) => /SUCCEED|SUCCESS/.test(reason)));
+  assert.ok(!reasons['free:new'].some((reason) => /SUCCEED|SUCCESS/.test(reason)), 'small sample: not judged');
+  assert.ok(!reasons['paid:dead'].some((reason) => /SUCCEED|SUCCESS/.test(reason)), 'paid routes are governed by budget and health, not this rule');
+});
+
+test('a coding grade on a route whose per-minute token limit is below one coding turn does not count as coding capacity', () => {
+  const qualifications = Object.assign(new Map([['groq:m', generalRecord()]]), { coding: new Map([['groq:m', codingRecord('CODING_SECONDARY')]]) });
+  assert.ok(!routeClasses(route('groq:m', { requestTokenLimit: 8_000 }), qualifications, { now, codingDataClass: 'PUBLIC' }).has('coding'));
+  assert.ok(routeClasses(route('groq:m'), qualifications, { now, codingDataClass: 'PUBLIC' }).has('coding'));
+});

@@ -30,7 +30,7 @@
 import { spawnSync } from 'node:child_process';
 import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 
-export const CODING_SUITE_VERSION = 'c1-2026-09';
+export const CODING_SUITE_VERSION = 'c2-2026-09';
 export const CODING_QUALIFICATION_MAX_AGE_MS = 30 * 24 * 3600_000;
 export const CODING_CHECKS = Object.freeze(['read', 'fix', 'implement', 'edge', 'tests', 'diff', 'security', 'async', 'plan', 'scope', 'tools', 'context']);
 export const CODING_GRADES = Object.freeze(['NOT_CODING_APPROVED', 'CODING_SMALL_TASKS', 'CODING_SECONDARY', 'CODING_PRIMARY']);
@@ -285,9 +285,18 @@ export async function qualifyCodingRoute(route, { now = () => Date.now(), maxOut
   };
   const base = { routeId: route.id, provider: route.provider, model: route.model, suiteVersion: CODING_SUITE_VERSION, kind: 'coding', testedAt: new Date(startedAt).toISOString() };
   let checks;
+  let diagnostics = null;
   try {
-    const main = await call({ system: SYSTEM, messages: [text(MAIN_PROMPT)], tools: [] });
-    checks = { ...gradeCodingAnswer(replyText(main)), tools: false, context: null };
+    // The one-call answer holds several functions and a diff: reasoning-by-
+    // default models (e.g. GLM Flash) need room to finish the JSON, within
+    // the route's per-request token limit (Groq free: 8K tokens/minute).
+    const mainBudget = Math.max(2_000, Math.min(8_000, route.requestTokenLimit ? route.requestTokenLimit - 2_000 : 8_000));
+    const main = await call({ system: SYSTEM, messages: [text(MAIN_PROMPT)], tools: [], maxOutputTokens: mainBudget });
+    const answer = replyText(main);
+    checks = { ...gradeCodingAnswer(answer), tools: false, context: null };
+    // Metadata only (never the model output): tells a parse failure apart
+    // from ten wrong answers.
+    diagnostics = { answerParsed: parseObject(answer) !== null, mainOutputTokens: main?.usage?.outputTokens ?? null, mainBudget };
     // K: a bounded read → write loop.
     const messages = [text(TOOL_PROMPT)];
     const writes = [];
@@ -309,7 +318,7 @@ export async function qualifyCodingRoute(route, { now = () => Date.now(), maxOut
     checks.tools = gradeToolFix(writes);
     // L: long context, only where the route's window and rate limits allow.
     if (contextTestable(route)) {
-      const long = await call({ system: SYSTEM, messages: [text(`${longContextFixture()}\n\n${CONTEXT_QUESTION}`)], tools: [], maxOutputTokens: 200 });
+      const long = await call({ system: SYSTEM, messages: [text(`${longContextFixture()}\n\n${CONTEXT_QUESTION}`)], tools: [], maxOutputTokens: 1_000 });
       checks.context = /^\D*7\D*$/.test(replyText(long));
     }
   } catch (error) {
@@ -318,7 +327,7 @@ export async function qualifyCodingRoute(route, { now = () => Date.now(), maxOut
   const grade = codingGrade(checks);
   const passed = CODING_CHECKS.filter((check) => checks[check] === true).length;
   const tested = CODING_CHECKS.filter((check) => checks[check] !== null).length;
-  return { ...base, status: grade === 'NOT_CODING_APPROVED' ? 'failed' : 'qualified', grade, checks, passed, tested, durationMs: now() - startedAt, usage };
+  return { ...base, status: grade === 'NOT_CODING_APPROVED' ? 'failed' : 'qualified', grade, checks, passed, tested, diagnostics, durationMs: now() - startedAt, usage };
 }
 
 export function codingQualificationValid(record, now = Date.now()) {

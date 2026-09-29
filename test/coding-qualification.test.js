@@ -164,3 +164,15 @@ test('auto-qualifier grades coding every cycle: one route per provider, max 3, a
   assert.ok(results.backlog >= 2, 'the rest stays in the backlog (short interval)');
   assert.equal((await store.snapshot()).coding.errors.size, 3, 'errors recorded → back-off applies next cycle');
 });
+
+test('coding suite records parse diagnostics and gives the main answer room within the route request limit', async () => {
+  const budgets = [];
+  const mkRoute = (extra) => ({ ...scriptedRoute({ answers: [[{ type: 'text', text: 'not json' }], [{ type: 'text', text: 'done' }]] }), ...extra });
+  const wrap = (route) => ({ ...route, protocolClient: { turn: async (input) => { budgets.push(input.maxOutputTokens); return route.protocolClient.turn(input); } } });
+  const plain = await qualifyCodingRoute(wrap(mkRoute({ contextWindow: 32_000 })));
+  assert.equal(plain.diagnostics.answerParsed, false);
+  assert.equal(plain.diagnostics.mainBudget, 8_000);
+  const groq = await qualifyCodingRoute(wrap(mkRoute({ contextWindow: 32_000, requestTokenLimit: 8_000 })));
+  assert.equal(groq.diagnostics.mainBudget, 6_000);
+  assert.equal(budgets[0], 8_000);
+});

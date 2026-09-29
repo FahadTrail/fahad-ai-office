@@ -35,6 +35,8 @@ export const MEASURED_JOB_TOKENS = Object.freeze({
 });
 // When a pool publishes only a request limit and we have no measurement yet.
 const DEFAULT_TOKENS_PER_REQUEST = 6_000;
+// Measured input size of one Coding Agent turn (production sessions, 2026-09).
+export const CODING_TURN_TOKENS = 30_000;
 const HEALTH_FACTOR = { available: 1, degraded: 0.5, exhausted: 0, not_configured: 0 };
 
 const skillsOk = (record, skills) => skills.every((skill) => record?.skills?.[skill]);
@@ -55,7 +57,11 @@ export function routeClasses(route, qualifications, { now = Date.now(), codingDa
   if (skillsOk(general, JOB_SKILLS.research)) classes.add('research');
   if (qualified && skillsOk(general, JOB_SKILLS.finance)) classes.add('finance');
   const coding = qualifications?.coding?.get?.(route.id);
-  if (codingQualificationValid(coding, now) && CODING_GRADES.indexOf(coding.grade) >= 1 && allowsDataClass(route, codingDataClass)) classes.add('coding');
+  // A coding turn re-sends the transcript (measured ≈30K input tokens): a
+  // route whose per-request/minute token limit is below that cannot run the
+  // Coding Agent, whatever its grade on the short suite.
+  const fitsCodingTurn = !route.requestTokenLimit || route.requestTokenLimit >= CODING_TURN_TOKENS;
+  if (codingQualificationValid(coding, now) && CODING_GRADES.indexOf(coding.grade) >= 1 && allowsDataClass(route, codingDataClass) && fitsCodingTurn) classes.add('coding');
   return classes;
 }
 
