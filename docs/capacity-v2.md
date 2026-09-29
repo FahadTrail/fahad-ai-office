@@ -251,3 +251,53 @@ which uses a hidden prompt. Never paste a key into a chat.
 * Coding-suite grades of the configured free models (the first cycles after deploy).
 * Cloudflare tokens per neuron for the chosen models.
 * LLM7, Ollama and Zen limits once keys exist.
+
+## 8. Wave 2: production activation (2026-09-29)
+
+### Deploys and migration
+
+| Step | Commit | Result |
+|---|---|---|
+| Migration `20261003090000_capacity_snapshots` | — | Applied 18:56 UTC. Additive, RLS on, `service_role` only. Production fingerprint equals the repository (963 objects, aggregate md5 `0182959f…`). |
+| PR #77 (wave 1) | `5c53d27` | Deployed 19:00. Healthy; Supabase self-check and Telegram OK; first snapshot written 19:00:33. |
+| PR #78 | `984cd90` | Deployed 19:18. The paid fallback skips blocked accounts (MEASURED: snapshot fallback went from `qwen:qwen3.8-flash`, account not activated, to `deepseek:deepseek-flash`). The coding scheduler grades ≤3 routes per cycle, one per provider. |
+| PR #79 | `a5c8d11` | Demotes dead or low-success free routes; coding suite c2; coding capacity only from routes that fit a coding turn. |
+
+### Direct free pools, calibrated (MEASURED = production `model_attempts`, 14 days)
+
+| Pool | Successful / failed calls | Tokens per call | Limits | Effective contribution |
+|---|---|---|---|---|
+| Groq gpt-oss-120b | 28 / 0 | 2.3K avg, 6.6K max | 8K TPM and 1,000 RPD MEASURED from headers; 200K TPD PUBLISHED | ≤200K tokens/day, general work. Cannot carry a 30K coding turn. |
+| Groq qwen3.8-27b | 4 / 4 (rate limits) | 2.0K | same per-model limits | ≤200K/day × 50% success |
+| Groq gpt-oss-20b | 1 / 0 | 2.2K | same | ≤200K/day (little evidence) |
+| Gemini Flash-Lite | 14 / 0 | 4.6K avg, 17.4K max; 14 s | ≈500 RPD REPORTED; no exhaustion observed | ≈2.3M/day ESTIMATED (REPORTED limit × MEASURED size) |
+| Gemini Flash | 20 / 33 (quota) | 4.4K | ≈20 RPD REPORTED; quota exhausted observed daily | ≈33K/day |
+| Gemma 26B | 13 / 0 | 2.9K; **51 s** per call | UNKNOWN | UNKNOWN (slow) |
+| Gemma 31B | 1 / 4 | 3.7K; 100 s | UNKNOWN | UNKNOWN |
+| OpenRouter `:free` (one shared pool) | busy days: 45 / 53 / 50 successful requests | 6.3K avg on nemotron-3-ultra, **31K max** | 50 RPD PUBLISHED, matching MEASURED daily totals | **0.23–0.40M tokens/day MEASURED** (09-26: 236K, 09-27: 232K, 09-28: 399K) |
+| Z.ai GLM-4.5-Flash | 7 / 0 | — | 1 concurrent; no daily cap published | UNKNOWN (rate-only) |
+
+### OpenRouter cleanup
+
+OpenRouter capacity is **one pool of about 50 requests/day**, not a count of
+models.
+
+* Demoted by the evidence rule (PR #79; ≥20 attempts, 0 successes or under 20%):
+  * gemma-4-26b (0 / 41) and gemma-4-31b (0 / 34);
+  * qwen3.8-27b (0 / 21);
+  * nemotron-3.5-lightning (3 / 20);
+  * dots-3-note (3 / 27).
+* Never available to this key: inkling ×2 (HTTP 403). Unsuitable: openai/gpt-oss-120b:free (0 / 2).
+* Useful:
+  * nemotron-3-ultra carries the pool: 152 of 158 calls, calls up to 31K tokens;
+  * nemotron-super: 8 of 33 calls, mostly rate-limited;
+  * ling ×2 and laguna have too little evidence.
+
+### Privacy re-verification (Phase 4)
+
+| Provider | Training on API data | Retention | Evidence | Status |
+|---|---|---|---|---|
+| Groq | Forbidden by the Services Agreement unless the customer instructs it | None by default; up to 30 days only for abuse or debugging; zero data retention can be switched on in the console | official docs, via search excerpts | PRIVATE-ELIGIBLE CANDIDATE. Unusable for coding: 8K TPM. |
+| Z.ai | **No explicit statement confirmed** | privacy policy: API content "processed in real-time … not saved"; a DPA makes Z.ai a processor (Jingsheng Hengxing Technology Pte. Ltd, Singapore) | official pages via search; the DPA is not readable from the sandbox | Candidate, **evidence incomplete**. Fahad reads the DPA first. |
+| Gemini free tier | may be used to improve products | — | wave 1 | PUBLIC |
+| OpenRouter `:free` | depends on the upstream; may log | — | wave 1 | PUBLIC |
