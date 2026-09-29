@@ -13,6 +13,12 @@ This file is the live state. **The release procedure is
 * Numbers per checkpoint: SQL in `docs/capacity-v2.md` §9 ("24-hour burn-in: checkpoint SQL"). On the VPS: `node tools/burnin-report.mjs --since=2026-09-29T21:56:00Z`.
 * **Do not deploy during the burn-in unless a critical fix requires it.** A deploy that lands mid-task stalls an Office task for up to 20 min: the stale-task requeue. Record any deploy here, with its time.
 
+**Burn-in checkpoints** (window starts 2026-09-29T21:56Z):
+
+| Checkpoint | Calls ok/failed | OK tokens | Paid | Failovers | Waits | Notes |
+|---|---|---|---|---|---|---|
+| +1 h (22:57) | 5 / 10 (Gemini only: the medium benchmark's last turns; 10 per-minute 429s) | 54K | **0** | 0 | 0 | Medium PUBLIC benchmark `ed64507a` **completed**: 21 turns, 209.6K tokens, $0, 40.7 min, 2 size compactions. New grade: GLM-4.5-flash CODING_SMALL_TASKS (same Z.ai pool). OpenRouter `:free` answered 429 until 00:00 UTC. No dead providers beyond the known ones: Cerebras trial ended; inkling rejects the key. |
+
 **Merged this sprint:**
 
 | PR | What it changed |
