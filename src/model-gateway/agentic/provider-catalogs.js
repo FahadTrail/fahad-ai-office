@@ -138,8 +138,28 @@ export async function refreshProviderCatalogs({ env = process.env, fetchFn = fet
     if (!entry) continue;
     results[provider] = { ok: entry.ok, status: entry.status, count: entry.models.length, reason: entry.reason || null };
     const previous = CATALOGS.get(provider);
+    if (entry.ok && previous?.ok) {
+      const changes = catalogChanges(previous, entry);
+      if (changes) { results[provider].changes = changes; log(`Provider catalog changed (${provider}):`, JSON.stringify(changes)); }
+    }
     if (entry.ok || !previous?.ok) CATALOGS.set(provider, entry);
   }
   log('Provider catalogs refreshed:', JSON.stringify(results));
   return results;
+}
+
+// Model-list changes between two good catalog reads (Capacity V2, Part 20):
+// new models become discovery candidates, removed ones stop routing (for
+// authoritative catalogs) and a changed context window changes eligibility.
+// null when nothing changed.
+export function catalogChanges(previous, next) {
+  const before = new Set(previous?.models || []);
+  const after = new Set(next?.models || []);
+  const added = [...after].filter((model) => !before.has(model)).toSorted();
+  const removed = [...before].filter((model) => !after.has(model)).toSorted();
+  const contextChanged = [...after].filter((model) => before.has(model)
+    && Number(previous?.contexts?.[model] || 0) !== Number(next?.contexts?.[model] || 0)
+    && previous?.contexts?.[model] && next?.contexts?.[model])
+    .toSorted().map((model) => ({ model, from: previous.contexts[model], to: next.contexts[model] }));
+  return added.length || removed.length || contextChanged.length ? { added, removed, contextChanged } : null;
 }

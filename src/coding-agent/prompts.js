@@ -49,6 +49,19 @@ export function continuationMessage({ session, state, plan, nextAction, recentMe
   const lastTest = state.lastTest
     ? `${state.lastTest.command} → exit ${state.lastTest.exitCode} at ${state.lastTest.at}\n${truncate(state.lastTest.output || '', 3000)}`
     : 'No test run recorded yet.';
+  // Capacity V2 handoff (Part 13): what the next model must not have to
+  // rediscover — the repository, the size of the change, the owner's
+  // decisions and what is still open.
+  const changed = state.filesChanged?.length || 0;
+  const diffSummary = changed
+    ? `${changed} file(s) changed on ${session.workBranch || state.git?.branch || 'the work branch'} vs ${session.baseBranch || 'main'} (run git_diff before editing to see the exact changes).`
+    : 'No changes yet.';
+  const decisions = state.ownerMessages?.length ? state.ownerMessages.map((message) => `- Owner: ${truncate(message, 300)}`).join('\n') : '- none recorded';
+  const unresolved = [
+    ...(plan || []).filter((step) => !['done', 'completed', 'skipped'].includes(step.status)).map((step) => `- Plan step open: ${step.title}`),
+    ...(state.lastTest && state.lastTest.exitCode !== 0 ? [`- Last test run failed (exit ${state.lastTest.exitCode}).`] : []),
+    ...(state.lastGateFailure ? ['- A gate/CI failure is recorded below and not yet fixed.'] : []),
+  ];
   return [
     `CONTINUATION OF AN IN-PROGRESS TASK (${reason}${fromRoute ? `: previously handled by ${fromRoute}` : ''}${toRoute ? `, now ${toRoute}` : ''}).`,
     'You are continuing the SAME task. Do not restart from scratch: the working tree already contains the changes',
@@ -57,6 +70,7 @@ export function continuationMessage({ session, state, plan, nextAction, recentMe
     'OBJECTIVE (verbatim):',
     session.objective,
     '',
+    `REPOSITORY: ${session.repository || 'unknown'}    BASE: ${session.baseBranch || 'main'}`,
     `PHASE: ${session.phase}    ITERATION: ${session.iteration}`,
     `WORK BRANCH: ${session.workBranch || state.git?.branch || 'unknown'}    HEAD: ${state.git?.head || 'unknown'}`,
     '',
@@ -66,10 +80,17 @@ export function continuationMessage({ session, state, plan, nextAction, recentMe
     `NEXT ACTION: ${nextAction || 'Re-check the working tree and continue with the first unfinished plan step.'}`,
     '',
     `FILES CHANGED: ${files}`,
+    `DIFF SUMMARY: ${diffSummary}`,
     `FILES INSPECTED (recent): ${inspected}`,
     '',
     'IMPORTANT DISCOVERIES:',
     notes,
+    '',
+    'OWNER DECISIONS:',
+    decisions,
+    '',
+    'UNRESOLVED:',
+    unresolved.length ? unresolved.join('\n') : '- nothing recorded',
     '',
     'LAST TEST RUN:',
     lastTest,

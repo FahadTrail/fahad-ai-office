@@ -11,7 +11,7 @@ import { MemoryQualificationStore, qualificationBackoffUntil, qualificationCandi
 import { createCodingRuntime } from '../src/coding-agent/runtime.js';
 import { AgentTurnGateway } from '../src/model-gateway/agentic/turn-gateway.js';
 import { MemoryProviderStateStore } from '../src/model-gateway/agentic/provider-state.js';
-import { setProviderCatalog, parseCatalog } from '../src/model-gateway/agentic/provider-catalogs.js';
+import { catalogChanges, setProviderCatalog, parseCatalog } from '../src/model-gateway/agentic/provider-catalogs.js';
 import { harvest, parseTables } from '../tools/omniroute-harvest.mjs';
 
 const KEY = 'test-key-1234567890abcdef';
@@ -230,4 +230,11 @@ test('coding runtime hands qualification evidence to routing (and tolerates a fa
   assert.equal((await broken.routingFor({ workspaceId: 'w' }, {})).qualifications, null);
   const none = createCodingRuntime(base);
   assert.equal((await none.routingFor({ workspaceId: 'w' }, {})).qualifications, null);
+});
+
+test('catalog change detection: added, removed and context-window changes (null when unchanged)', () => {
+  const before = catalog(['a', 'b', 'c'], { a: 8_000, b: 32_000 });
+  assert.equal(catalogChanges(before, catalog(['c', 'b', 'a'], { a: 8_000, b: 32_000 })), null);
+  const changes = catalogChanges(before, catalog(['a', 'b', 'd'], { a: 16_000, b: 32_000 }));
+  assert.deepEqual(changes, { added: ['d'], removed: ['c'], contextChanged: [{ model: 'a', from: 8_000, to: 16_000 }] });
 });

@@ -21,6 +21,7 @@
 import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 import { isCoolingDown } from './provider-state.js';
 import { classifyProviderError } from '../contracts.js';
+import { codingCandidates, qualifyCodingRoute, CODING_SUITE_VERSION } from './coding-qualification.js';
 
 export const QUALIFICATION_SUITE_VERSION = 'q1-2026-09';
 export const QUALIFICATION_MAX_AGE_MS = 30 * 24 * 3600_000;
@@ -225,7 +226,16 @@ export class QualificationStore {
     if (error) return this.cache?.map || new Map();
     const map = new Map();
     const errors = new Map();
+    const coding = new Map();
+    const codingErrors = new Map();
     for (const row of data || []) {
+      if (row.report?.kind === 'coding_qualification') {
+        for (const result of row.report.results || []) {
+          if (!coding.has(result.routeId) && result.status !== 'error') coding.set(result.routeId, result);
+          if (result.status === 'error' && !coding.has(result.routeId) && !codingErrors.has(result.routeId)) codingErrors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
+        }
+        continue;
+      }
       for (const result of row.report?.results || []) {
         // Newest first: a later error never hides an earlier valid result.
         if (!map.has(result.routeId) && result.status !== 'error') map.set(result.routeId, result);
@@ -235,16 +245,17 @@ export class QualificationStore {
       }
     }
     map.errors = errors;
+    map.coding = Object.assign(coding, { errors: codingErrors });
     this.cache = { at: this.now(), map };
     return map;
   }
 
-  async save(results) {
+  async save(results, { kind = 'qualification', suiteVersion = QUALIFICATION_SUITE_VERSION } = {}) {
     const at = new Date(this.now()).toISOString();
     const clean = results.map(({ error, ...rest }) => rest);
     const { error } = await this.db.from('provider_canary_runs').insert({
       requested_by: 'auto-qualifier', status: 'completed', started_at: at, completed_at: at,
-      report: { kind: 'qualification', suiteVersion: QUALIFICATION_SUITE_VERSION, results: clean },
+      report: { kind, suiteVersion, results: clean },
     });
     this.cache = null;
     if (error) throw Object.assign(new Error('qualification write failed'), { code: 'QUALIFICATION_WRITE_FAILED' });
@@ -252,12 +263,15 @@ export class QualificationStore {
 }
 
 export class MemoryQualificationStore {
-  constructor() { this.map = new Map(); this.errors = new Map(); }
-  async snapshot() { return Object.assign(new Map(this.map), { errors: new Map(this.errors) }); }
-  async save(results) {
+  constructor() { this.map = new Map(); this.errors = new Map(); this.coding = new Map(); this.codingErrors = new Map(); }
+  async snapshot() {
+    return Object.assign(new Map(this.map), { errors: new Map(this.errors), coding: Object.assign(new Map(this.coding), { errors: new Map(this.codingErrors) }) });
+  }
+  async save(results, { kind = 'qualification' } = {}) {
+    const [map, errors] = kind === 'coding_qualification' ? [this.coding, this.codingErrors] : [this.map, this.errors];
     for (const result of results) {
-      if (result.status !== 'error') { this.map.set(result.routeId, result); this.errors.delete(result.routeId); }
-      else this.errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
+      if (result.status !== 'error') { map.set(result.routeId, result); errors.delete(result.routeId); }
+      else errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
     }
   }
 }
@@ -365,7 +379,7 @@ export class AutoQualifier {
         return true;
       });
     const results = Object.assign([], { backlog: Math.max(0, pending.length - candidates.length) });
-    if (!candidates.length) return results;
+    if (!candidates.length) return this.codingCycle(pool, qualifications, results);
     for (const route of candidates) {
       const result = await qualifyRoute(route, { now: this.now });
       if (result.status === 'error') await this.stateStore.recordFailure(route, classifyProviderError(result.error || { code: result.errorCode })).catch(() => {});
@@ -374,6 +388,25 @@ export class AutoQualifier {
     }
     await this.store.save(results);
     this.log('Qualified free models:', JSON.stringify(results.map((result) => ({ route: result.routeId, status: result.status, passed: result.passed ?? null, error: result.errorCode || null }))));
+    return results;
+  }
+
+  // Coding suite (coding-qualification.js): once the general backlog is
+  // empty, one route per cycle that passed the general suite with coding and
+  // tools is graded for coding work. Same back-off and daily caps apply.
+  async codingCycle(pool, qualifications, results) {
+    const [route] = codingCandidates(pool, { qualifications, now: this.now(), backoffUntil: qualificationBackoffUntil, maxRoutes: 1 })
+      .filter((candidate) => this.underDailyCap(candidate));
+    if (!route) return results;
+    this.dailyCount.counts[route.provider] = (this.dailyCount.counts[route.provider] || 0) + 1;
+    const result = await qualifyCodingRoute(route, { now: this.now });
+    if (result.status === 'error') await this.stateStore.recordFailure(route, classifyProviderError(result.error || { code: result.errorCode })).catch(() => {});
+    else await this.stateStore.recordSuccess(route, { usage: result.usage }).catch(() => {});
+    await this.store.save([result], { kind: 'coding_qualification', suiteVersion: CODING_SUITE_VERSION });
+    this.log('Coding qualification:', JSON.stringify({ route: result.routeId, grade: result.grade || null, passed: result.passed ?? null, error: result.errorCode || null }));
+    results.push(result);
+    // More coding candidates remain: keep the short backlog interval.
+    results.backlog = Math.max(0, codingCandidates(pool, { qualifications, now: this.now(), backoffUntil: qualificationBackoffUntil, maxRoutes: Infinity }).length - 1);
     return results;
   }
 }
