@@ -112,7 +112,7 @@ test('no eligible route is a human-facing blocker with reasons, not a guess', as
   const gateway = new AgentTurnGateway({ pool: [route('a:m', { unavailableReasons: ['CREDENTIAL_MISSING'] })], stateStore: new MemoryProviderStateStore() });
   await assert.rejects(gateway.turn({ tools: [], prepare: async () => ({}) }), (error) => {
     assert.equal(error.code, 'NO_ELIGIBLE_PROVIDER');
-    assert.deepEqual(error.evaluations, [{ id: 'a:m', reasons: ['CREDENTIAL_MISSING'], billingClass: error.evaluations[0].billingClass, cooldownUntil: null }]);
+    assert.deepEqual(error.evaluations, [{ id: 'a:m', reasons: ['CREDENTIAL_MISSING'], billingClass: error.evaluations[0].billingClass, pool: 'a:m', cooldownUntil: null }]);
     return true;
   });
 });

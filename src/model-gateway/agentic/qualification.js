@@ -33,6 +33,7 @@ export const JOB_SKILLS = Object.freeze({
   branding: ['writing', 'instruction'],
   seo: ['writing', 'reading'],
   finance: ['reasoning', 'structured'],
+  finance_critical: ['reasoning', 'structured', 'writing'],
   classification: ['structured', 'instruction'],
   orchestration: ['instruction', 'structured', 'reasoning'],
   synthesis: ['reasoning', 'writing', 'instruction'],
@@ -41,7 +42,7 @@ export const JOB_SKILLS = Object.freeze({
 });
 
 // Jobs a non-paid model may only take after passing its qualification.
-export const CRITICAL_JOBS = new Set(['synthesis', 'finance', 'coding', 'qa_security']);
+export const CRITICAL_JOBS = new Set(['synthesis', 'finance', 'finance_critical', 'coding', 'qa_security']);
 
 const EVAL_SYSTEM = 'You are being evaluated on following instructions precisely. Answer exactly as asked.';
 const EVAL_PROMPT = [
@@ -146,6 +147,8 @@ export function qualificationValid(record, now = Date.now()) {
 
 // Reasons a non-paid route may not take this job, from its qualification.
 export function qualificationGaps(route, job, qualifications, now = Date.now()) {
+  if (job && typeof job === 'object' && job.baseJob) job = job.baseJob;
+  if (typeof job === 'string') job = job.replace(/:relaxed$/, '');
   if (!qualifications || route.billingClass === 'paid' || !job || typeof job !== 'string') return [];
   const record = qualifications.get(route.id);
   const valid = qualificationValid(record, now);
@@ -153,6 +156,28 @@ export function qualificationGaps(route, job, qualifications, now = Date.now()) 
   const gaps = (JOB_SKILLS[job] || []).filter((skill) => record.skills?.[skill] === false).map((skill) => `QUALIFICATION_FAILED_${skill.toUpperCase()}`);
   if (CRITICAL_JOBS.has(job) && record.status !== 'qualified') gaps.push('NOT_QUALIFIED_FOR_CRITICAL_JOB');
   return gaps;
+}
+
+// Evidence-corrected capabilities. Planning scores are hand-set estimates;
+// a valid, passed qualification is measured evidence. A passed skill may
+// raise its score by ONE level, never above 4; a failed skill caps it at 2.
+// Jobs marked `strictEvidence` (coding, security review, final synthesis,
+// high-risk finance) never get a raise — only the safety cap applies.
+const SKILL_SCORES = Object.freeze({ reasoning: 'reasoning', writing: 'writing', coding: 'coding', reading: 'research' });
+export function evidenceCapabilities(capabilities, record, { strict = false, now = Date.now() } = {}) {
+  if (!capabilities || !qualificationValid(record, now) || !record.skills) return capabilities;
+  const next = { ...capabilities };
+  let changed = false;
+  for (const [skill, score] of Object.entries(SKILL_SCORES)) {
+    const passed = record.skills[skill];
+    const current = Number(next[score] || 0);
+    if (passed === false && current > 2) { next[score] = 2; changed = true; }
+    else if (passed === true && !strict && record.status === 'qualified' && current < 4) { next[score] = current + 1; changed = true; }
+  }
+  if (record.skills.structured === true && !next.structuredOutput && !strict) { next.structuredOutput = true; changed = true; }
+  if (!changed) return capabilities;
+  next.source = `${capabilities.source || 'registry'} + qualification ${String(record.testedAt || '').slice(0, 10)}`;
+  return Object.freeze(next);
 }
 
 // Job-specific evidence bonus used to order routes within a free class:

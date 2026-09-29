@@ -26,6 +26,9 @@ declare -A SHAPE=(
   [OPENROUTER_API_KEY]='^sk-or-[A-Za-z0-9_-]{20,}$'
   [CEREBRAS_API_KEY]='^csk-[A-Za-z0-9]{20,}$'
   [MISTRAL_API_KEY]='^[A-Za-z0-9]{24,64}$'
+  # Not a secret: whether the owner's Mistral plan is the free (Experiment)
+  # mode. Set to free only after checking Admin Console → Limits.
+  [MISTRAL_BILLING_CLASS]='^(free|paid)$'
   [GITHUB_MODELS_TOKEN]='^github_pat_[A-Za-z0-9_]{20,}$'
   [KIMI_API_KEY]='^sk-[A-Za-z0-9]{20,}$'
   [ZHIPU_API_KEY]='^[A-Za-z0-9._-]{20,128}$'
@@ -80,6 +83,21 @@ verify_qwen_key() {
 }
 if [[ $NAME == QWEN_API_KEY && ${SET_SECRET_SKIP_VERIFY:-} != 1 ]]; then
   verify_qwen_key || { unset value; exit 1; }
+fi
+
+# Mistral keys are verified with Mistral's own model list before anything
+# changes (HTTP 200 = valid key). The key goes to curl on stdin as a header.
+verify_mistral_key() {
+  local code
+  code=$(printf 'Authorization: Bearer %s\n' "$value" | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- https://api.mistral.ai/v1/models 2>/dev/null || true)
+  case $code in
+    200) echo 'Mistral accepted the key (api.mistral.ai/v1/models → HTTP 200).' ;;
+    401) echo 'Mistral rejected the key (HTTP 401): it is invalid or revoked; nothing changed.'; return 1 ;;
+    *) echo "Could not verify the key with Mistral (HTTP ${code:-none}); storing it anyway — the next live canary checks it." ;;
+  esac
+}
+if [[ $NAME == MISTRAL_API_KEY && ${SET_SECRET_SKIP_VERIFY:-} != 1 ]]; then
+  verify_mistral_key || { unset value; exit 1; }
 fi
 
 # Rewrite .env atomically with the same owner and mode: drop old NAME lines,
