@@ -14,6 +14,8 @@ export function snapshotSummary(view) {
     freeTokensPerMonth: capacity.freeTokensPerMonth ?? null,
     coding: pick(capacity.coding),
     codingJobsPerDay: Object.fromEntries(Object.entries(capacity.coding?.jobsPerDay || {}).map(([size, entry]) => [size, entry.jobsPerDay])),
+    publicCoding: pick(capacity.publicCoding),
+    publicCodingJobsPerDay: Object.fromEntries(Object.entries(capacity.publicCoding?.jobsPerDay || {}).map(([size, entry]) => [size, entry.jobsPerDay])),
     strongReasoning: pick(capacity.strongReasoning),
     research: pick(capacity.research),
     finance: pick(capacity.finance),

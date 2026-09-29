@@ -90,6 +90,11 @@ test('capacity model: per-class tokens, coding jobs/day by grade, projects/day f
   const publicModel = capacityModel({ routes, pools, qualifications, now, attemptsByPool: attempts, codingDataClass: 'PUBLIC' });
   assert.equal(publicModel.codingJobsPerDay.small.jobsPerDay, Math.floor(800_000 / MEASURED_JOB_TOKENS.coding.small));
   assert.equal(publicModel.codingJobsPerDay.large.jobsPerDay, 0, '800K/day is below one large job');
+  // The default (private) model reports PUBLIC coding capacity separately.
+  assert.deepEqual(model.publicCodingJobsPerDay, publicModel.codingJobsPerDay);
+  assert.equal(model.perClass.coding_public.tokensPerDay, 800_000);
+  assert.equal(model.perClass.coding_public.unknownPools, 1, 'ollama counts as a pool with an UNKNOWN allowance');
+  assert.equal(model.publicCodingJobsPerDay.small.unknownPools, 1);
   assert.equal(model.projectsPerDay.freeOnly.p50, Math.floor(1_000_000 / 65_000));
   assert.ok(model.projectsPerDay.freeFirstWithPaidFallback.p50 > model.projectsPerDay.freeOnly.p50);
   assert.equal(model.projectsPerDay.freeFirstWithPaidFallback.paidUsdPerDay, 0.75);
@@ -112,6 +117,8 @@ test('/api/capacity v2 fields: capacity per class, coding jobs, projects, paid f
   }
   assert.ok(capacity.freeTokensPerDay > 0);
   assert.equal(capacity.coding.dataClass, 'PRIVATE');
+  assert.equal(capacity.publicCoding.dataClass, 'PUBLIC', 'public-repository coding capacity is reported separately');
+  assert.ok(capacity.publicCoding.jobsPerDay.small);
   assert.equal(capacity.paidFallback.route, 'deepseek:deepseek-flash');
   assert.equal(capacity.paidFallback.silent, false);
   assert.equal(capacity.paidFallback.remainingUsd, 1.5);
@@ -146,7 +153,7 @@ test('data class requirement fails closed: unknown classes become PRIVATE', () =
 test('capacity snapshots: one per UTC day, metadata only, off when the table is missing, retried later on other errors', async () => {
   const writes = [];
   let clock = now;
-  const view = { capacity: { freeTokensPerDay: 5, coding: { tokensPerDay: 0, jobsPerDay: { small: { jobsPerDay: 0 } } }, pools: [{ id: 'p', state: 'available', effectivePerDay: 5, classes: ['general'], codingGrade: 'NOT_CODING_APPROVED', allowance: {} }] }, ownerActions: [{ id: 'x', status: 'pending' }] };
+  const view = { capacity: { freeTokensPerDay: 5, coding: { tokensPerDay: 0, jobsPerDay: { small: { jobsPerDay: 0 } } }, publicCoding: { tokensPerDay: 9, jobsPerDay: { small: { jobsPerDay: 3 } } }, pools: [{ id: 'p', state: 'available', effectivePerDay: 5, classes: ['general'], codingGrade: 'NOT_CODING_APPROVED', allowance: {} }] }, ownerActions: [{ id: 'x', status: 'pending' }] };
   let failure = null;
   const db = { from: () => ({ upsert: async (row) => { if (failure) return { error: failure }; writes.push(row); return { error: null }; } }) };
   const snapshotter = new CapacitySnapshotter({ db, capacityView: async () => view, now: () => clock });
@@ -155,6 +162,7 @@ test('capacity snapshots: one per UTC day, metadata only, off when the table is 
   assert.equal(writes.length, 1);
   assert.equal(writes[0].snapshot_date, '2026-09-29');
   assert.deepEqual(writes[0].summary.codingJobsPerDay, { small: 0 });
+  assert.deepEqual(writes[0].summary.publicCodingJobsPerDay, { small: 3 });
   assert.deepEqual(writes[0].summary.ownerActionsPending, ['x']);
   assert.ok(!('allowance' in writes[0].summary.pools[0]));
   clock += 86_400_000;

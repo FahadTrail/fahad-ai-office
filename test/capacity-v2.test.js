@@ -249,3 +249,16 @@ test('Cloudflare error 4006 (daily neurons used up) is a daily quota until 00:00
   assert.equal(nextResetAt(FREE_ALLOWANCES.cloudflare.reset, Date.parse('2026-09-29T20:00:00Z')), '2026-09-30T00:00:00.000Z');
   for (const provider of ['cloudflare', 'llm7', 'ollama', 'opencode']) assert.ok(FREE_ALLOWANCES[provider]?.reset, provider);
 });
+
+test('a timeout while reading the response body is a NETWORK failure, not DOMException code 23', async () => {
+  const { postJson } = await import('../src/model-gateway/agentic/http.js');
+  const { classifyProviderError } = await import('../src/model-gateway/contracts.js');
+  const fetchFn = async () => ({
+    ok: true, status: 200, headers: new Headers(),
+    json: async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); },
+  });
+  const error = await postJson({ fetchFn, url: 'https://openrouter.ai/x', headers: {}, body: {}, provider: 'openrouter' }).catch((caught) => caught);
+  assert.equal(error.code, 'NETWORK');
+  assert.equal(error.networkCode, 'TimeoutError');
+  assert.equal(classifyProviderError(error).code, 'PROVIDER_NETWORK');
+});

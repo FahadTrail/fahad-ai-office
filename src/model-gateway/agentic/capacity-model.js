@@ -21,7 +21,10 @@ import { capacityPool } from './capacity-pools.js';
 import { qualificationValid, JOB_SKILLS } from './qualification.js';
 import { codingQualificationValid, CODING_GRADES, CODING_TIERS } from './coding-qualification.js';
 
-export const JOB_CLASSES = Object.freeze(['general', 'coding', 'strong_reasoning', 'research', 'finance']);
+// `coding` counts routes allowed the configured coding data class (PRIVATE
+// by default); `coding_public` counts routes allowed PUBLIC code (public
+// repositories such as FahadTrail/fahad-ai-office), reported separately.
+export const JOB_CLASSES = Object.freeze(['general', 'coding', 'coding_public', 'strong_reasoning', 'research', 'finance']);
 
 // Measured in production (docs/capacity-v2.md §1): tokens per job, input +
 // output, all model calls of the job.
@@ -63,7 +66,9 @@ export function routeClasses(route, qualifications, { now = Date.now(), codingDa
   // The context must also hold a turn plus a useful answer (8K).
   const fitsCodingTurn = (!route.requestTokenLimit || route.requestTokenLimit >= CODING_TURN_TOKENS)
     && Number(route.contextWindow || 0) >= CODING_TURN_TOKENS + 8_000;
-  if (codingQualificationValid(coding, now) && CODING_GRADES.indexOf(coding.grade) >= 1 && allowsDataClass(route, codingDataClass) && fitsCodingTurn) classes.add('coding');
+  const codingCapable = codingQualificationValid(coding, now) && CODING_GRADES.indexOf(coding.grade) >= 1 && fitsCodingTurn;
+  if (codingCapable && allowsDataClass(route, codingDataClass)) classes.add('coding');
+  if (codingCapable && allowsDataClass(route, 'PUBLIC')) classes.add('coding_public');
   return classes;
 }
 
@@ -137,11 +142,13 @@ export function capacityModel({ routes, pools, qualifications = null, attemptsBy
   }));
 
   // Coding jobs/day per size: only pools whose best grade meets the tier.
-  const codingJobs = Object.fromEntries(Object.entries(MEASURED_JOB_TOKENS.coding).map(([size, tokens]) => {
+  const codingJobsFor = (jobClass) => Object.fromEntries(Object.entries(MEASURED_JOB_TOKENS.coding).map(([size, tokens]) => {
     const needed = CODING_TIERS[size];
-    const capacity = sumFor((row) => row.classes.includes('coding') && CODING_GRADES.indexOf(row.codingGrade) >= CODING_GRADES.indexOf(needed));
-    return [size, { jobsPerDay: Math.floor(capacity.tokens / tokens), tokensPerJob: tokens, minimumGrade: needed, pools: capacity.pools }];
+    const capacity = sumFor((row) => row.classes.includes(jobClass) && CODING_GRADES.indexOf(row.codingGrade) >= CODING_GRADES.indexOf(needed));
+    return [size, { jobsPerDay: Math.floor(capacity.tokens / tokens), tokensPerJob: tokens, minimumGrade: needed, pools: capacity.pools, unknownPools: capacity.unknownPools }];
   }));
+  const codingJobs = codingJobsFor('coding');
+  const publicCodingJobs = codingJobsFor('coding_public');
 
   // Mixed Office projects/day: free-only, and free-first with paid fallback.
   const general = perClass.general.tokensPerDay;
@@ -174,6 +181,7 @@ export function capacityModel({ routes, pools, qualifications = null, attemptsBy
     perClass,
     codingJobsPerDay: codingJobs,
     codingDataClass,
+    publicCodingJobsPerDay: publicCodingJobs,
     projectsPerDay: projects,
     independentFreePools: rows.length,
     unknownAllowancePools: rows.filter((row) => row.allowance.perDay == null).map((row) => row.id),

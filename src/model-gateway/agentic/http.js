@@ -45,7 +45,23 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
       rateLimit,
     });
   }
-  return { body: await response.json(), requestId, rateLimit };
+  // The timeout also covers reading the body: slow reasoning models behind
+  // OpenRouter send headers first and the body minutes later. A DOMException
+  // raised here (TimeoutError, code 23) is a network failure like any other.
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    throw providerError(`${provider} ${timedOut ? 'response timed out' : 'response could not be read'}`, {
+      code: 'NETWORK',
+      networkCode: timedOut ? 'TimeoutError' : 'BAD_RESPONSE_BODY',
+      providerRequestId: requestId,
+      rateLimit,
+      cause: error,
+    });
+  }
+  return { body: payload, requestId, rateLimit };
 }
 
 // Maps a provider's error wording to a short, fixed reason code so an
