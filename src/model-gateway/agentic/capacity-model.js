@@ -60,7 +60,9 @@ export function routeClasses(route, qualifications, { now = Date.now(), codingDa
   // A coding turn re-sends the transcript (measured ≈30K input tokens): a
   // route whose per-request/minute token limit is below that cannot run the
   // Coding Agent, whatever its grade on the short suite.
-  const fitsCodingTurn = !route.requestTokenLimit || route.requestTokenLimit >= CODING_TURN_TOKENS;
+  // The context must also hold a turn plus a useful answer (8K).
+  const fitsCodingTurn = (!route.requestTokenLimit || route.requestTokenLimit >= CODING_TURN_TOKENS)
+    && Number(route.contextWindow || 0) >= CODING_TURN_TOKENS + 8_000;
   if (codingQualificationValid(coding, now) && CODING_GRADES.indexOf(coding.grade) >= 1 && allowsDataClass(route, codingDataClass) && fitsCodingTurn) classes.add('coding');
   return classes;
 }

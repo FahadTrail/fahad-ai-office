@@ -219,3 +219,13 @@ test('a coding grade on a route whose per-minute token limit is below one coding
   assert.ok(!routeClasses(route('groq:m', { requestTokenLimit: 8_000 }), qualifications, { now, codingDataClass: 'PUBLIC' }).has('coding'));
   assert.ok(routeClasses(route('groq:m'), qualifications, { now, codingDataClass: 'PUBLIC' }).has('coding'));
 });
+
+test('every owner action states card, phone, auto-reload risk, secret name and whether the adapter is ready', () => {
+  for (const action of ownerActions({ env: {}, now })) {
+    for (const field of ['card', 'phone', 'autoReloadRisk', 'secretEnv', 'adapterReady', 'freeQuota', 'codingValue', 'privacyClass', 'setupMinutes']) {
+      assert.ok(field in action.facts, `${action.id}: ${field}`);
+    }
+  }
+  assert.match(ownerActions({ env: {}, now }).find((action) => action.id === 'opencode-key').facts.autoReloadRisk, /^YES/);
+  assert.match(ownerActions({ env: {}, now }).find((action) => action.id === 'mistral-key').facts.freeQuota, /not counted until a live canary/);
+});

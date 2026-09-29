@@ -30,10 +30,13 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
     // Only a boolean derived from the provider's text is kept: whether the
     // limit hit is a daily allowance (so the route waits for the reset).
     const errorText = JSON.stringify(payload?.error ?? payload ?? '').slice(0, 4000);
-    const dailyQuota = response.status === 429 && isDailyQuotaText(errorText);
+    // Cloudflare Workers AI answers error 4006 when the daily free neurons are
+    // used up (Free plan): a daily quota whatever the HTTP status says.
+    const cloudflareDaily = /"code":\s*4006\b|daily free allocation/i.test(errorText);
+    const dailyQuota = cloudflareDaily || (response.status === 429 && isDailyQuotaText(errorText));
     const reason = providerReasonHint(response.status, errorText);
     throw providerError(`${provider} request failed`, {
-      status: response.status,
+      status: cloudflareDaily ? 429 : response.status,
       ...(dailyQuota ? { quotaScope: 'day' } : {}),
       ...(reason ? { reason } : {}),
       type: typeof type === 'string' ? type : String(type ?? ''),

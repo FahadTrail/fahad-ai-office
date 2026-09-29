@@ -58,3 +58,24 @@ never used.
   * Private code is never routed to either route until Fahad sets the flag.
 * **Public coding:** the Office repository `FahadTrail/fahad-ai-office` is public, so tasks on it may be marked `dataClass: "PUBLIC"` and use any free route with a coding grade.
 * **Largest capacity unlock:** Mistral (≈1B tokens/month REPORTED, PUBLIC only), then LLM7 (1M/day PUBLISHED).
+
+## Deduplication by actual quota source (final)
+
+| Bucket | Count | Independent capacity? |
+|---|---|---|
+| OmniRoute registry entries | 352 | — |
+| Rejected: consumer login / OAuth reuse | 35 | never |
+| Rejected: browser cookie / reverse-engineered web app | 42 | never |
+| Rejected: terms forbid (incl. personal-use-only) | 10 | never |
+| Not an LLM pool (local, search, audio, proxy, system) | 46 | no |
+| API key, no recurring free allowance | 173 | no |
+| "Candidates" by recurring-free wording | 46 | see below |
+| of which: resellers / gateways over the same upstream providers | 25 | **no**: duplicates of Gemini, Groq, OpenRouter, DeepSeek, Mistral and similar quotas, with unknown provenance and retention |
+| of which: already integrated first-party pools (Gemini, Groq, OpenRouter, Z.ai via `glm-cn`, Cerebras) | 5 | already counted once |
+| of which: first-party pools with adapters ready and waiting for owner keys (Mistral, LLM7, Cloudflare, Ollama, OpenCode Zen) | 5 | yes, once each, after key + canary |
+| of which: first-party pools deferred (low value, one-time credit, identity verification, trial terms or CN real-name) | 11 | not now |
+
+**OmniRoute itself adds no independent quota.** It is a router over the
+same provider quotas, and its consumer-login and cookie routes are exactly
+what the Office policy forbids. It stays a discovery source (this harvest),
+never the main router.

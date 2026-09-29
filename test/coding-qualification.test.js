@@ -176,3 +176,18 @@ test('coding suite records parse diagnostics and gives the main answer room with
   assert.equal(groq.diagnostics.mainBudget, 6_000);
   assert.equal(budgets[0], 8_000);
 });
+
+test('a measured coding grade satisfies the coding quality floor for a free route; claims alone do not', async () => {
+  const route = {
+    id: 'gemini:gemma', provider: 'gemini', model: 'gemma', billingClass: 'free', qualityTier: 3, contextWindow: 128_000, unavailableReasons: [],
+    capabilities: { coding: 4, reasoning: 4, toolCalling: true, structuredOutput: true, contextWindow: 128_000 }, protocolClient: {},
+  };
+  const gateway = new AgentTurnGateway({ pool: [route], stateStore: new MemoryProviderStateStore(), minQualityTier: 4 });
+  const run = async (coding) => (await gateway.evaluate({
+    job: 'coding', dataClass: 'PUBLIC', codingTier: 'small', estimatedInputTokens: 20_000, maxOutputTokens: 4_000,
+    qualifications: Object.assign(new Map([general(route.id)]), { coding }),
+  }))[0].reasons;
+  assert.ok((await run(new Map())).includes('BELOW_QUALITY_FLOOR'), 'no grade: the claimed tier decides');
+  assert.ok(!(await run(new Map([[route.id, codingRecord('CODING_PRIMARY')]]))).includes('BELOW_QUALITY_FLOOR'), 'measured grade satisfies the floor');
+  assert.ok((await run(new Map([[route.id, codingRecord('NOT_CODING_APPROVED')]]))).includes('BELOW_QUALITY_FLOOR'));
+});

@@ -4,47 +4,45 @@ Last updated: 2026-09-29, after Capacity Expansion V2 (see its section below). R
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
 
-## CAPACITY V2 WAVE 2 (in progress, 2026-09-29)
+## CAPACITY V2 WAVE 2 (in progress — updated 2026-09-29 ~20:05 UTC)
 
-**Production:** `main` `5c53d27` (PR #77 merged 18:57 UTC; deploy run 69: "DEPLOYMENT SUCCESSFUL — now running commit 5c53d27; container healthy").
+**Production:** `main` `a5c8d11`, which includes PRs #77, #78 and #79, all deployed and healthy. After every restart the Supabase self-check and Telegram report OK.
 
-Verified after the restart (19:00 UTC):
-* Supabase tools self-check OK: read-only role, write blocked, scope enforced, no secret exposed.
-* Telegram channel OK: owner paired.
+**Open:** PR #80 (`claude/capacity-v2-report`). It contains:
+* a free route's coding grade satisfies the quality floor;
+* the coding-turn context rule;
+* Cloudflare 4006 handling and reset schedules;
+* owner-action facts;
+* the benchmark, failover and burn-in harnesses;
+* docs.
 
-**Migration `20261003090000_capacity_snapshots`: APPLIED** to production 18:56 UTC.
-* It is additive: one new table, RLS on, `service_role` arwd only, no policies.
-* The history row's version was aligned to `20261003090000` (metadata only).
-* Production fingerprint equals `supabase/verify/schema-fingerprint.txt`: 963 objects, aggregate md5 `0182959f56ed97e7c95e6e621fd32114`.
-* Rollback (only if needed): `drop table public.capacity_snapshots;` plus deleting its `schema_migrations` row. Nothing else depends on the table: the writer disables itself and `/api/capacity` returns empty history.
+Merge #80 when CI is green (owner-approved autonomy for non-destructive capacity fixes).
 
-**First snapshot: `capacity_snapshots` 2026-09-29, written 19:00:33** (written by production code):
-* 3.12M free tokens/day ESTIMATED over 12 independent pools;
-* strong reasoning 0.61M/day;
-* coding 0/day;
-* 48/14 Office projects/day.
+**Migration** `20261003090000_capacity_snapshots`: applied and verified (fingerprint equal). Snapshots are written daily; `/api/capacity` → `capacity.history`.
 
-**PR #78** (`claude/capacity-v2-wave2`, draft, **needs Fahad's merge approval**):
-* the paid fallback skips blocked accounts (production chose not-activated Qwen);
-* `capacity.history`;
-* Z.ai and Groq privacy flags in `set-secret.sh`;
-* the auto-qualifier grades coding every cycle (≤3, one per provider; caps applied before picking — fixes a capped OpenRouter route blocking all coding grading);
-* `docs/free-provider-harvest.md`.
+**Coding grades (suite `c2-2026-09`, production):**
 
-**Coding qualification** runs inside production (auto-qualifier). Read results with:
+| Route | Grade | Coding-turn capable? |
+|---|---|---|
+| `gemini:gemma-4-26b-a4b-it` | CODING_PRIMARY (12/12) | yes, after PR #80 (tier-3 claim fixed); slow, ~50 s per call |
+| `groq:openai/gpt-oss-120b` | CODING_SECONDARY (10/11) | no: 8K TPM is below a 30K turn |
+| `zhipu:glm-4.5-flash` | c1 failed on truncation; c2 run hit a network timeout | re-test pending |
 
-```sql
-select c.completed_at, r->>'routeId', r->>'status', r->>'grade', r->>'passed', r->'checks', r->>'errorCode'
-from provider_canary_runs c, jsonb_array_elements(c.report->'results') r
-where c.report->>'kind' = 'coding_qualification' order by c.completed_at desc;
-```
+Other routes are still in the queue: Gemini Flash, Gemma 31B, OpenRouter nemotron-3-ultra/super, GLM-4.7.
 
-Key findings so far:
-* `FahadTrail/fahad-ai-office` is a PUBLIC repository. Coding tasks on it may use `dataClass: "PUBLIC"`, so free routes with a coding grade can do public coding at $0.
-* The only legitimate free PRIVATE coding path with existing keys is Z.ai GLM Flash. Its API terms say no storage and no training; it needs Fahad's `ZHIPU_API_PRIVATE_DATA_APPROVED=true` plus a coding grade.
-* Groq has the same terms, but its 8K tokens/minute (MEASURED from headers) cannot carry a coding turn.
-* Self-hosting is not viable: the VPS is CPU-only (REPORTED).
-* No owner canary was queued: it would call 4 paid routes outside the spent $2 budget. Live free-route evidence comes from the auto-qualifier.
+**Next commands:**
+1. Grades: see the SQL in the section below (`kind = 'coding_qualification'`).
+2. Public coding benchmark, on the VPS or with the service key:
+   `node tools/coding-benchmark.mjs start --route=gemini:gemma-4-26b-a4b-it --task=small`
+   then `node tools/coding-benchmark.mjs report --session=<id>`.
+3. Failover, only once a second coding-turn-capable free route is graded:
+   `node tools/coding-benchmark.mjs failover --primary=<A> --secondary=<B> --after=3`.
+4. Burn-in after 24 h: `node tools/burnin-report.mjs --since=<deploy time>`.
+
+**Privacy:** no free route is PRIVATE-eligible.
+* Groq: terms are explicit, but 8K TPM rules it out for coding.
+* Z.ai: evidence is incomplete; Fahad must read its DPA.
+* Private code is never sent to free routes until Fahad sets a flag.
 
 ## CAPACITY EXPANSION V2 (branch `claude/capacity-expansion-v2`, PR open, NOT merged)
 

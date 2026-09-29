@@ -55,6 +55,32 @@ export const FREE_ALLOWANCES = Object.freeze({
     note: 'A free Experiment API allowance could not be confirmed on official pages (2026-09). If the owner states a free plan, limits are shown only in the Admin Console → Limits; free-plan prompts may be used for training.',
     source: 'https://docs.mistral.ai/getting-started/models/models_overview/',
   },
+  // Capacity V2 providers (adapters ready; inert until the owner sets a key).
+  cloudflare: {
+    reset: { kind: 'daily', timeZone: 'UTC' },
+    requestsPerDay: null,
+    note: '10,000 neurons/day shared by all Workers AI models, reset 00:00 UTC. A used-up allowance answers error 4006 on the Free plan (no billing).',
+    source: 'https://developers.cloudflare.com/workers-ai/platform/pricing/',
+  },
+  llm7: {
+    reset: { kind: 'rolling' },
+    requestsPerDay: null,
+    tokensPerDay: 1_000_000,
+    note: 'Free token: 1M tokens per rolling 24 h, 60 requests/min, 250 requests/hour.',
+    source: 'https://github.com/chigwell/llm7.io/blob/main/TERMS.md',
+  },
+  ollama: {
+    reset: { kind: 'monthly' },
+    requestsPerDay: null,
+    note: 'Free plan: small monthly allowance (not published), 1 concurrent request.',
+    source: 'https://ollama.com/pricing',
+  },
+  opencode: {
+    reset: { kind: 'none' },
+    requestsPerDay: null,
+    note: 'Limited-time free models; rate-limited, no numeric limit published.',
+    source: 'https://github.com/anomalyco/opencode/blob/dev/packages/web/src/content/docs/zen.mdx',
+  },
   qwen: {
     reset: { kind: 'one-time' },
     requestsPerDay: null,

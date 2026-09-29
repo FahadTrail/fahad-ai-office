@@ -238,3 +238,14 @@ test('catalog change detection: added, removed and context-window changes (null 
   const changes = catalogChanges(before, catalog(['a', 'b', 'd'], { a: 16_000, b: 32_000 }));
   assert.deepEqual(changes, { added: ['d'], removed: ['c'], contextChanged: [{ model: 'a', from: 8_000, to: 16_000 }] });
 });
+
+test('Cloudflare error 4006 (daily neurons used up) is a daily quota until 00:00 UTC; new providers have reset schedules', async () => {
+  const { postJson } = await import('../src/model-gateway/agentic/http.js');
+  const { FREE_ALLOWANCES, nextResetAt } = await import('../src/model-gateway/agentic/free-quota.js');
+  const fetchFn = async () => new Response(JSON.stringify({ success: false, errors: [{ code: 4006, message: 'you have used up your daily free allocation of 10,000 neurons' }] }), { status: 400, headers: { 'content-type': 'application/json' } });
+  const error = await postJson({ fetchFn, url: 'https://api.cloudflare.com/x', headers: {}, body: {}, provider: 'cloudflare' }).catch((caught) => caught);
+  assert.equal(error.status, 429);
+  assert.equal(error.quotaScope, 'day');
+  assert.equal(nextResetAt(FREE_ALLOWANCES.cloudflare.reset, Date.parse('2026-09-29T20:00:00Z')), '2026-09-30T00:00:00.000Z');
+  for (const provider of ['cloudflare', 'llm7', 'ollama', 'opencode']) assert.ok(FREE_ALLOWANCES[provider]?.reset, provider);
+});
