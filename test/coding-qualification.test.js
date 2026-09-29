@@ -218,3 +218,30 @@ test('a coding grade below the session tier keeps the capability minimums', asyn
   assert.ok(reasons.includes('CAPABILITY_CODING_BELOW_4'));
   assert.ok(reasons.includes('BELOW_QUALITY_FLOOR'));
 });
+
+test('the ten-task suite call gets twice a free route timeout; the tool loop keeps the route default', async () => {
+  const { CODING_SUITE_MAIN_TIMEOUT_MS } = await import('../src/model-gateway/agentic/coding-qualification.js');
+  const timeouts = [];
+  const route = scriptedRoute({ answers: [[{ type: 'text', text: 'not json' }], [{ type: 'text', text: 'done' }]] });
+  const wrapped = { ...route, contextWindow: 32_000, protocolClient: { turn: async (input) => { timeouts.push(input.timeoutMs ?? null); return route.protocolClient.turn(input); } } };
+  await qualifyCodingRoute(wrapped);
+  assert.equal(CODING_SUITE_MAIN_TIMEOUT_MS, 300_000);
+  assert.equal(timeouts[0], CODING_SUITE_MAIN_TIMEOUT_MS);
+  assert.ok(timeouts.slice(1).every((value) => value === null), 'other calls use the route timeout');
+});
+
+test('chat-completions honours a per-call timeout and otherwise its own', async () => {
+  const { ChatCompletionsProtocol } = await import('../src/model-gateway/agentic/chat-completions.js');
+  const seen = [];
+  const realTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => { seen.push(ms); return realTimeout.call(AbortSignal, ms); };
+  try {
+    const fetchFn = async () => new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const protocol = new ChatCompletionsProtocol({ apiKey: 'k-1234567890', endpoint: 'https://example.test/v1/chat/completions', fetchFn, timeoutMs: 150_000 });
+    await protocol.turn({ provider: 'p', model: 'm', system: 's', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], tools: [] });
+    await protocol.turn({ provider: 'p', model: 'm', system: 's', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], tools: [], timeoutMs: 300_000 });
+  } finally {
+    AbortSignal.timeout = realTimeout;
+  }
+  assert.deepEqual(seen, [150_000, 300_000]);
+});

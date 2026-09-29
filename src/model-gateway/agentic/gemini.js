@@ -19,7 +19,7 @@ export class GeminiProtocol {
     return Boolean(this.apiKey);
   }
 
-  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000 }) {
+  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, timeoutMs = null }) {
     if (!this.apiKey) throw providerError(`${provider} credential is unavailable`, { status: 401, type: 'authentication_error' });
     if (!/^[A-Za-z0-9._-]+$/.test(model)) throw providerError(`${provider} model id is invalid`, { status: 400, type: 'invalid_model' });
     const startedAt = Date.now();
@@ -27,7 +27,9 @@ export class GeminiProtocol {
       fetchFn: this.fetchFn,
       url: `${this.baseUrl}/models/${model}:generateContent`,
       provider,
-      timeoutMs: this.timeoutMs,
+      // A caller may allow one known-long call more time (the coding
+      // suite's ten-task answer); the route's own timeout is the default.
+      timeoutMs: timeoutMs || this.timeoutMs,
       headers: { 'x-goog-api-key': this.apiKey },
       body: {
         systemInstruction: { parts: [{ text: system }] },
