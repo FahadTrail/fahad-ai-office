@@ -1,8 +1,30 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-Last updated: 2026-09-28, about 19:30 UTC, at the end of the router and token
-efficiency sprint. Read `AGENTS.md` first; it holds the permanent rules. This
-file is the live state.
+Last updated: 2026-09-28, about 21:30 UTC, after the final release
+readiness rehearsal. Read `AGENTS.md` first; it holds the permanent rules.
+This file is the live state. **The release procedure is
+`docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
+
+## RELEASE STATE (read this first)
+
+| Item | State |
+|---|---|
+| Current production commit | `main` `13f09ea` (V4 + V4.1). Rollback point R0. Verify with `/healthz` → `version`. |
+| PR #72 router (`claude/router-efficiency-v1`, `66cf3ee`) | Draft, CI green, 392 tests. Merge **first**. |
+| PR #73 providers (`claude/provider-expansion-prep`) | Draft, stacked on #72, CI green. Merge **second**, after #72 is verified in production. |
+| PR #71 V5.1 (`claude/v5-immersive-office`, `19c13b8`) | Draft, CI green. Merge **last**, only after Fahad's visual approval; merge `main` into it first. |
+| Merge order | #72 → deploy → smoke → #73 → deploy → (Mistral) → 24 h measurement → #71. |
+| Rehearsal | `main`→#72→#73 fast-forward with no conflicts: **401/401**. Adding #71: one docs conflict (this file, add/add): **430/430**. |
+| Migrations | Production has all 30; none of the three PRs adds one. |
+| Rollback points | R0 `13f09ea`; R1 = #72 merge; R2 = #73 merge; R3 = #71 merge. Mechanism: GitHub **Revert** on the merged PR (see runbook §4). |
+| Mistral | Code ready (#73); **no key**. Fahad's Free plan shows $10/month credits, but key creation is disabled ("Upgrade to use your API keys"). Likely cause: Studio not activated in Free mode. Owner path in runbook §5; **no card**. |
+| V4 status | **V4 CLOSED** (2026-09-29). The remaining blocker, a model-written monthly table (revenue 111,489 / net 9,489) contradicting the VERIFIED FINANCE model (112,236 / 102,000 / 10,236, break-even month 12), was fixed by the financial table gate (PR #74, `docs/v41-reliability.md` → *Financial table gate*). Live acceptance job `ca6c8c0d` ($0): AUDIT blocked and removed the injected table, CHIEF replaced it with the calculator schedule, and Telegram delivered the correct answer. Release order: #72 (merged) → #73 → #71 after Fahad's visual approval. |
+| Budget / routing | $2/month; `workspace_routing_policies` empty; no Mistral permission row. |
+
+**Exact next command after V4 CLOSED** (Phase A, then Phase B of the
+runbook): re-run the Phase A SQL, then on PR #72 confirm CI is green and ask
+Fahad to merge it with a merge commit. Nothing is merged by an agent.
+
 
 ## 0. DO NOT TOUCH
 
@@ -42,6 +64,7 @@ file is the live state.
 | `claude/fahad-audit-readonly-466kck` | Capacity audit docs, `tools/capacity-matrix.mjs` | Docs only |
 | **`claude/router-efficiency-v1`** | **This sprint.** Based on the audit branch. | Draft PR, **do not merge** |
 | `claude/v5-immersive-office` | V5 / V5.1 immersive Office (its own handover copy lives there) | Draft PR #71, do not merge |
+| **`claude/provider-expansion-prep`** | Mistral readiness, CHIEF synthesis fallback, provider contract, capacity summary. Built **on top of** the router sprint branch. | Draft PR, do not merge (merge after #72) |
 
 ## 2. Router sprint: complete
 
@@ -85,8 +108,43 @@ test (O) locks this in.
 * Docs and tools: `docs/router-efficiency.md`, the correction in
   `docs/free-capacity-audit.md`, and `tools/router-replay.mjs` (new).
 
-**Tests:** `node --test` gives 392 pass, 0 fail (at the commit this handover
-was written for).
+**Tests:** `node --test` gives 392 pass, 0 fail on the router branch (401 on
+the provider-prep branch).
+
+## 2b. Provider expansion prep: complete
+
+Everything is in `docs/provider-expansion.md`:
+* **Mistral readiness** (VERIFIED / ASSUMPTION / UNKNOWN), including the
+  fixes: 9-character tool-call ids, no empty tools array, a monthly-quota
+  wait, a declared pool and a catalog check.
+* **Exact owner setup**, including the missing workspace authorization row.
+* **CHIEF synthesis fallback test.**
+* **NVIDIA and Cloudflare verdicts:** both not integrated, and why.
+* **An adding-a-provider checklist** with a metadata contract test.
+* **The capacity summary API:** `GET /api/capacity` returns `headline` and
+  `summary`.
+
+Files changed:
+* `src/model-gateway/agentic/chat-completions.js`,
+  `src/model-gateway/agentic/model-pool.js`,
+  `src/model-gateway/agentic/capacity-pools.js`,
+  `src/model-gateway/agentic/free-quota.js`;
+* `src/hub-capacity.js`;
+* `ops/set-secret.sh` (`MISTRAL_BILLING_CLASS`, Mistral key verification);
+* `test/provider-expansion.test.js`, `docs/provider-expansion.md`.
+
+Tests: `node --test` gives 401 pass, 0 fail.
+
+**Secrets still missing** (do not request them until Fahad decides):
+* `MISTRAL_API_KEY` (and `MISTRAL_BILLING_CLASS=free` if the free plan is
+  confirmed);
+* optionally, a free web-search API key.
+
+**Owner actions**, in order:
+1. Review PR #72, then the provider-prep PR.
+2. Merge both only after V4 CLOSED.
+3. Then follow the Mistral setup in `docs/provider-expansion.md` §2, which
+   includes the workspace authorization SQL (it needs approval).
 
 ## 3. What remains
 

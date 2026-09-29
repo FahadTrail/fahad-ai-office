@@ -1,3 +1,5 @@
+import { freeAllowance } from './free-quota.js';
+
 // Independent capacity pools.
 //
 // A "pool" is one quota that a provider actually enforces. Several models can
@@ -7,8 +9,10 @@
 // pools, not models: twenty free models on one quota are ONE source of
 // capacity, and when that quota is used up every model on it is unavailable.
 //
-// Nothing here states a quota number: pools are structural facts (which
-// models share a limit). Live numbers come only from provider_status.
+// Nothing here invents a quota number: pools are structural facts (which
+// models share a limit). Live state comes from provider_status; a remaining
+// estimate is shown only where the provider PUBLISHES a daily limit, labelled
+// as an estimate (published limit minus our audited use).
 
 // `shared`: the limit is enforced for the whole pool, so a quota/rate signal
 // on one member applies to every member.
@@ -29,6 +33,12 @@ const RULES = [
 const value = (field, route) => (typeof field === 'function' ? field(route) : field);
 
 export function capacityPool(route) {
+  // A provider definition may declare its own pool (preferred for new
+  // providers: metadata, not router code).
+  if (route.quotaPool?.id) {
+    const declared = route.quotaPool;
+    return Object.freeze({ id: declared.id, label: declared.label || declared.id, account: route.provider, shared: Boolean(declared.shared), scarce: Boolean(declared.scarce) });
+  }
   const rule = RULES.find((entry) => entry.test(route));
   if (!rule) return Object.freeze({ id: `${route.provider}:${route.model}`, label: `${route.provider} ${route.model}`, account: route.provider, shared: false, scarce: false });
   return Object.freeze({ id: rule.pool(route), label: value(rule.label, route), account: route.provider, shared: Boolean(value(rule.shared, route)), scarce: Boolean(value(rule.scarce, route)) });
@@ -65,8 +75,9 @@ export function poolSummary(pool, state, { now = Date.now(), usage = new Map() }
     if (route.billingClass === 'paid' || route.retired) continue;
     const info = route.capacityPool || capacityPool(route);
     const entry = pools.get(info.id) || { id: info.id, label: info.label, account: info.account, shared: info.shared, scarce: info.scarce,
-      billingClass: route.billingClass, models: [], configured: false, state: 'available', nextReset: null, reasons: [] };
+      billingClass: route.billingClass, models: [], configured: false, state: 'available', nextReset: null, reasons: [], allowance: null };
     entry.models.push(route.model);
+    entry.allowance ||= freeAllowance(route);
     if (!route.unavailableReasons?.length) entry.configured = true;
     const routeState = state.get(route.id);
     const cooling = routeState?.cooldownUntil && Date.parse(routeState.cooldownUntil) > now;
@@ -85,8 +96,36 @@ export function poolSummary(pool, state, { now = Date.now(), usage = new Map() }
     const state = !entry.configured ? 'not_configured'
       : cooling === 0 ? 'available'
         : entry.shared || cooling >= all ? ((entry.exhaustedMembers || 0) > 0 ? 'exhausted' : 'degraded') : 'degraded';
-    const used = usage.get(entry.id) || { tokensToday: 0, tokensMonth: 0, failedToday: 0 };
-    const { coolingMembers, exhaustedMembers, ...rest } = entry;
-    return { ...rest, state, ...used, estimatedCapacityLeft: null };
+    const used = usage.get(entry.id) || { tokensToday: 0, tokensMonth: 0, failedToday: 0, requestsToday: 0 };
+    const { coolingMembers, exhaustedMembers, allowance, ...rest } = entry;
+    let estimatedCapacityLeft = null;
+    if (state === 'exhausted') estimatedCapacityLeft = { requests: 0, basis: 'provider reported the allowance used up' };
+    else if (allowance?.requestsPerDay) {
+      // Per-model pools (Groq) have their own allowance; a shared pool has one.
+      estimatedCapacityLeft = { requests: Math.max(0, allowance.requestsPerDay - Number(used.requestsToday || 0)),
+        basis: 'ESTIMATED — published daily limit minus our audited use today (the key may also be used elsewhere)' };
+    }
+    return { ...rest, state, ...used, estimatedCapacityLeft };
   }).toSorted((left, right) => left.id.localeCompare(right.id));
+}
+
+// One-sentence owner summary (the Hub opens with a human sentence, not a
+// table). Counts independent pools, never model names.
+export function capacityHeadline(pools, { now = Date.now() } = {}) {
+  const configured = pools.filter((pool) => pool.state !== 'not_configured');
+  const available = configured.filter((pool) => pool.state === 'available');
+  const exhausted = configured.filter((pool) => pool.state === 'exhausted');
+  const degraded = configured.filter((pool) => pool.state === 'degraded');
+  const when = (iso) => {
+    const minutes = Math.max(0, Math.round((Date.parse(iso) - now) / 60_000));
+    return minutes < 90 ? `in ${minutes} min` : `in about ${Math.round(minutes / 60)} h`;
+  };
+  if (!configured.length) return 'No free model capacity is configured.';
+  const parts = [`${available.length} of ${configured.length} free capacity pools are available`];
+  if (degraded.length) parts.push(`${degraded.length} limited`);
+  if (exhausted.length) {
+    const next = exhausted.map((pool) => pool.nextReset).filter(Boolean).toSorted()[0];
+    parts.push(`${exhausted.length} used up${next ? ` (next reset ${when(next)})` : ''}`);
+  }
+  return `${parts.join('; ')}.`;
 }

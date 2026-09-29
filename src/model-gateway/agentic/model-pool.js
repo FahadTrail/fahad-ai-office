@@ -205,9 +205,15 @@ export function modelPoolDefinitions(env = process.env, { openRouterCatalog = ge
       // (MISTRAL_BILLING_CLASS=free) or supplies MISTRAL_PRICING_JSON.
       provider: 'mistral', model: env.MISTRAL_MODEL || 'mistral-medium-latest', protocol: 'chat-completions',
       endpoint: 'https://api.mistral.ai/v1/chat/completions', secretEnv: 'MISTRAL_API_KEY', secretRef: 'env://MISTRAL_API_KEY',
-      qualityTier: 4, costTier: 2, contextWindow: 128_000,
+      // 128K is Mistral Medium's published window (verify in the model card
+      // when the key is added; MISTRAL_CONTEXT_WINDOW overrides).
+      qualityTier: 4, costTier: 2, contextWindow: Number(env.MISTRAL_CONTEXT_WINDOW || 128_000),
       billingClass: billing(env, 'MISTRAL_BILLING_CLASS', 'paid'), pricing: readPricing(env, 'MISTRAL_PRICING_JSON'),
       privacyApproved: truthy(env.MISTRAL_API_PRIVATE_DATA_APPROVED), privacyFlag: 'MISTRAL_API_PRIVATE_DATA_APPROVED',
+      // Mistral accepts only 9-character alphanumeric tool-call ids.
+      protocolOptions: { toolCallIds: 'alnum9', omitEmptyTools: true },
+      quotaPool: { id: 'mistral:account', label: 'Mistral account (one organisation quota)', shared: true, scarce: false },
+      catalogBlocked: providerCatalogVerdict('mistral', env.MISTRAL_MODEL || 'mistral-medium-latest'),
     },
   ];
   return defs.map((definition) => {
@@ -324,6 +330,7 @@ export function defaultProtocolFactory(definition, { apiKey, fetchFn, env }) {
   return new ChatCompletionsProtocol({
     apiKey, pricing, fetchFn, endpoint: definition.endpoint, ...timeoutOption,
     maxTokensField: definition.maxTokensField || 'max_tokens', extraHeaders: definition.extraHeaders || {},
+    ...(definition.protocolOptions || {}),
     // Free-only routes ask OpenRouter for usage accounting and refuse any
     // response that reports a cost (see ChatCompletionsProtocol).
     ...(definition.freeOnly ? { freeOnly: true, extraBody: { usage: { include: true } } } : {}),
