@@ -12,7 +12,7 @@ This file is the live state. **The release procedure is
 
 **Free public coding works (MEASURED, production, $0).** Session `7986c750`:
 * Gemma 26B (Gemini free), pinned; small task on this public repository.
-* Wrote `test/pool-registry-allowance.test.js`: 7/7 pass, finish gate passed.
+* Wrote the benchmark's new unit-test file (kept in the sandbox, `publish: none`): 7/7 pass, finish gate passed.
 * 7 turns, 86.7K tokens, $0, 20 min wall time.
   * About 10 min of that was provider per-minute cooldowns.
   * It survived a worker restart (resumed from checkpoint 19).
