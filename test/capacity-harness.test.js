@@ -103,3 +103,45 @@ test('a job summary skips markdown headings, rules and tables (load test 668ad9a
   assert.equal(summarize('# Only a heading'), '# Only a heading', 'falls back to the first line');
   assert.equal(summarize(''), '');
 });
+
+test('burn-in report: labelled metrics, projections, coding capacity by size, coverage, ranked bottlenecks', () => {
+  const from = '2026-09-29T21:56:00Z';
+  const to = '2026-09-30T21:56:00Z';
+  const attempts = [
+    ...Array.from({ length: 10 }, () => ({ provider: 'gemini', model: 'gemma', status: 'succeeded', input_tokens: 9_000, output_tokens: 500, cached_input_tokens: 0, reasoning_tokens: 100, cost_usd: 0, duration_ms: 30_000 })),
+    ...Array.from({ length: 6 }, () => ({ provider: 'gemini', model: 'gemma', status: 'failed', input_tokens: 0, output_tokens: 0, cost_usd: 0, error_code: 'PROVIDER_RATE_LIMIT' })),
+    { provider: 'deepseek', model: 'deepseek-flash', status: 'succeeded', input_tokens: 1_000, output_tokens: 100, cost_usd: 0.001, duration_ms: 2_000 },
+  ];
+  const sessions = [
+    { status: 'completed', config: { codingTier: 'small', dataClass: 'PUBLIC' }, tokens_in: 86_000, tokens_out: 1_000, started_at: '2026-09-30T00:00:00Z', completed_at: '2026-09-30T00:20:00Z' },
+    { status: 'completed', config: { codingTier: 'medium', dataClass: 'PUBLIC' }, tokens_in: 198_000, tokens_out: 11_000, started_at: '2026-09-30T01:00:00Z', completed_at: '2026-09-30T01:40:00Z' },
+  ];
+  const events = [
+    { type: 'guard', payload: { waitMs: 121_000 } }, { type: 'guard', payload: { waitMs: 6_000 } },
+    { type: 'provider_switch', session_id: 's1', payload: {} }, { type: 'provider_switch', session_id: 's2', payload: { drill: true } },
+  ];
+  const summary = burninSummary({ attempts, sessions, jobs: [{ status: 'completed' }], tasks: [], statuses: [], snapshots: [{ snapshot_date: '2026-09-30', summary: { freeTokensPerDay: 3_000_000, projectsPerDay: { freeOnly: { p50: 48 } } } }], events, from, to });
+  assert.equal(summary.tokens.successful.value, 96_100);
+  assert.equal(summary.tokens.successful.basis, 'MEASURED');
+  assert.equal(summary.tokens.perDay.basis, 'MEASURED', 'a full day is measured, not scaled');
+  assert.equal(summary.tokens.projectedPerMonth.basis, 'ESTIMATED');
+  assert.equal(summary.tokens.reasoning.value, 1_000);
+  assert.equal(summary.coverage.freeCallsPct.value, 90.9);
+  assert.equal(summary.coverage.paidFallbackPct.value, 9.1);
+  assert.equal(summary.codingCapacity.bySize.small.tokensPerJob.value, 87_000);
+  assert.equal(summary.codingCapacity.publicSmallPerDay.value, 72, '1,440 min / 20 min per job');
+  assert.equal(summary.codingCapacity.publicMediumPerDay.value, 36);
+  assert.equal(summary.codingCapacity.publicLargePerMonth.basis, 'UNKNOWN', 'no large job: never a number');
+  assert.equal(summary.codingCapacity.privatePerDay.value, 0);
+  assert.equal(summary.resilience.codingFailovers.value, 1, 'drills are not counted as failovers');
+  assert.equal(summary.resilience.backoffWaitSeconds.value, 127);
+  assert.equal(summary.officeCapacity.mixedProjectsPerDay.value, 48);
+  const names = summary.bottlenecks.map((entry) => entry.bottleneck);
+  assert.ok(names.some((name) => /per-minute quotas and backoff waits: gemini \(6 × 429\)/.test(name)));
+  assert.ok(!names.some((name) => /gemini: reliability/.test(name)), 'rate limits are not reliability failures');
+  assert.ok(names.some((name) => /privacy/.test(name)));
+  assert.ok(names.some((name) => /large coding/.test(name)));
+  for (const entry of summary.bottlenecks) for (const key of ['bottleneck', 'engineeringFix', 'ownerAction', 'expectedGain']) assert.ok(key in entry, key);
+  const scale = summary.bottlenecks.filter((entry) => entry.impactTokensPerDay != null).map((entry) => entry.impactTokensPerDay);
+  assert.deepEqual(scale, scale.toSorted((a, b) => b - a), 'ranked by lost capacity');
+});
