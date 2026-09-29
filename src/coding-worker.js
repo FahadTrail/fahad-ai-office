@@ -9,6 +9,9 @@ import { SupabaseAgentSessionStore } from './agent-state/session-store.js';
 import { SupabaseProviderStateStore } from './model-gateway/agentic/provider-state.js';
 import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
 import { QualificationStore } from './model-gateway/agentic/qualification.js';
+import { refreshProviderCatalogs } from './model-gateway/agentic/provider-catalogs.js';
+import { refreshOpenRouterCatalog } from './model-gateway/agentic/openrouter-catalog.js';
+import { rankFreeModels } from './model-gateway/agentic/capabilities.js';
 import { SupabaseWorkspacePolicyStore } from './workspace-policy/supabase-store.js';
 import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
 import { CodingWorker, createCodingRuntime } from './coding-agent/runtime.js';
@@ -60,6 +63,14 @@ async function main() {
   const sessionStore = new SupabaseAgentSessionStore(db);
   const auditStore = new SupabaseToolBrokerStore(db);
   const build = { codeFingerprint: codeFingerprint(), startedAt: new Date().toISOString() };
+  // Provider catalogs decide which discovered free routes exist (Gemini
+  // extras such as Gemma, OpenRouter free models, catalog-gated providers).
+  // Read them before the pool is built, then every 6 hours.
+  const refreshCatalogs = () => Promise.all([
+    refreshOpenRouterCatalog({ log, rank: (left, right) => rankFreeModels(left, right, process.env) }).catch(() => null),
+    refreshProviderCatalogs({ log }).catch(() => null),
+  ]);
+  await refreshCatalogs();
   const runtime = createCodingRuntime({
     build,
     sessionStore,
@@ -74,6 +85,10 @@ async function main() {
     },
     log,
   });
+  setInterval(() => refreshCatalogs().then(() => {
+    const ids = runtime.refreshPool().filter((route) => !route.unavailableReasons.length).map((route) => route.id);
+    log(`model pool refreshed from provider catalogs; routable models: ${ids.length}`);
+  }).catch(() => null), 6 * 60 * 60 * 1000).unref();
   const routable = runtime.pool.filter((route) => !route.unavailableReasons.length).map((route) => route.id);
   log(`code ${build.codeFingerprint}; sandbox mode: ${runtime.mode}; routable models: ${routable.join(', ') || 'none'}`);
   // Read-only Supabase tools self-check (no model call; result is metadata).
