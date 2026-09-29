@@ -399,7 +399,7 @@ async function optional(query) {
 
 export async function handleWorkspaceApi({ db, request, response, url, sendJson, readJson, actor, store }) {
   const path = url.pathname;
-  if (!/^\/api\/(conversations|tasks|attention|projects|models|search)(\/|$)/.test(path)) return false;
+  if (!/^\/api\/(conversations|tasks|attention|projects|models|capacity|search)(\/|$)/.test(path)) return false;
   try {
     const method = request.method;
 
