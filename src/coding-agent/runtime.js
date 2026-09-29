@@ -49,7 +49,7 @@ export function createCodingRuntime({
   build = null,
 }) {
   const mode = sandboxMode || resolveSandboxMode(env);
-  const modelPool = pool || createModelPool({ env, fetchFn });
+  let modelPool = pool || createModelPool({ env, fetchFn });
   const gateway = new AgentTurnGateway({
     pool: modelPool,
     stateStore: providerStateStore,
@@ -142,7 +142,17 @@ export function createCodingRuntime({
     env,
     build,
   });
-  return { controller, gateway, pool: modelPool, mode, routingFor };
+  // Catalog-discovered routes (Gemini extras, OpenRouter free models, new
+  // providers) exist only after the provider catalogs are read: the worker
+  // refreshes them periodically and rebuilds the pool here. An injected pool
+  // (tests) is never replaced.
+  const refreshPool = () => {
+    if (pool) return modelPool;
+    modelPool = createModelPool({ env, fetchFn });
+    gateway.pool = modelPool;
+    return modelPool;
+  };
+  return { controller, gateway, get pool() { return modelPool; }, mode, routingFor, refreshPool };
 }
 
 export class CodingWorker {

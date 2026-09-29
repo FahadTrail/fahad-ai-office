@@ -76,3 +76,22 @@ test('burn-in summary: tokens per provider and pool, uptime, waits, paid fallbac
   assert.equal(summary.quotaResets.length, 1);
   assert.deepEqual(summary.office.byStatus, { completed: 1, failed: 1 });
 });
+
+test('coding runtime rebuilds its pool from refreshed provider catalogs (discovered Gemma becomes routable)', async () => {
+  const { createCodingRuntime } = await import('../src/coding-agent/runtime.js');
+  const { setProviderCatalog } = await import('../src/model-gateway/agentic/provider-catalogs.js');
+  const { MemoryProviderStateStore } = await import('../src/model-gateway/agentic/provider-state.js');
+  const env = { GEMINI_API_KEY: 'test-key-1234567890abcdef' };
+  setProviderCatalog('gemini', null);
+  const runtime = createCodingRuntime({ env, sessionStore: {}, providerStateStore: new MemoryProviderStateStore(), policyStore: null, auditStore: {}, sandboxMode: 'unisolated' });
+  const gemma = 'gemini:gemma-4-26b-a4b-it';
+  assert.ok(!runtime.pool.some((route) => route.id === gemma), 'no catalog yet: no discovered route');
+  setProviderCatalog('gemini', { ok: true, status: 200, fetchedAt: new Date().toISOString(), models: ['gemini-flash-latest', 'gemma-4-26b-a4b-it'], contexts: {} });
+  try {
+    runtime.refreshPool();
+    assert.ok(runtime.pool.some((route) => route.id === gemma));
+    assert.ok(runtime.gateway.pool.some((route) => route.id === gemma), 'the gateway routes over the refreshed pool');
+  } finally {
+    setProviderCatalog('gemini', null);
+  }
+});
