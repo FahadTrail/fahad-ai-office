@@ -45,7 +45,7 @@ const HEALTH_FACTOR = { available: 1, degraded: 0.5, exhausted: 0, not_configure
 const skillsOk = (record, skills) => skills.every((skill) => record?.skills?.[skill]);
 
 // Which job classes a route may take, from evidence (not claims).
-export function routeClasses(route, qualifications, { now = Date.now(), codingDataClass = 'PRIVATE' } = {}) {
+export function routeClasses(route, qualifications, { now = Date.now(), codingDataClass = 'PRIVATE', state = null } = {}) {
   const classes = new Set();
   const general = qualifications?.get?.(route.id);
   const qualified = qualificationValid(general, now) && general.status === 'qualified';
@@ -64,7 +64,11 @@ export function routeClasses(route, qualifications, { now = Date.now(), codingDa
   // route whose per-request/minute token limit is below that cannot run the
   // Coding Agent, whatever its grade on the short suite.
   // The context must also hold a turn plus a useful answer (8K).
+  // A per-minute input-token quota the provider REPORTED (Gemini 429
+  // QuotaFailure) counts the same way as a configured one.
+  const reportedTpm = Number(state?.rateLimit?.inputTokensPerMinute || 0);
   const fitsCodingTurn = (!route.requestTokenLimit || route.requestTokenLimit >= CODING_TURN_TOKENS)
+    && (!reportedTpm || reportedTpm >= CODING_TURN_TOKENS)
     && Number(route.contextWindow || 0) >= CODING_TURN_TOKENS + 8_000;
   const codingCapable = codingQualificationValid(coding, now) && CODING_GRADES.indexOf(coding.grade) >= 1 && fitsCodingTurn;
   if (codingCapable && allowsDataClass(route, codingDataClass)) classes.add('coding');
@@ -97,7 +101,7 @@ export function poolDailyTokens(facts, { measuredTokensPerRequest = null } = {})
 //   pools:        poolSummary() entries (state, usage today/month)
 //   attempts:     this month's model_attempts rows (for success rate and
 //                 tokens per request per pool), already grouped by pool id
-export function capacityModel({ routes, pools, qualifications = null, attemptsByPool = new Map(), now = Date.now(), codingDataClass = 'PRIVATE', paid = null }) {
+export function capacityModel({ routes, pools, qualifications = null, attemptsByPool = new Map(), now = Date.now(), codingDataClass = 'PRIVATE', paid = null, states = null }) {
   const poolById = new Map(pools.map((entry) => [entry.id, entry]));
   const members = new Map();
   for (const route of routes) {
@@ -115,7 +119,7 @@ export function capacityModel({ routes, pools, qualifications = null, attemptsBy
     const successRate = attempts.length >= 5 ? succeeded.length / attempts.length : null;
     const allowance = poolDailyTokens(facts, { measuredTokensPerRequest });
     const state = poolById.get(id)?.state || 'available';
-    const classes = new Set(poolRoutes.flatMap((route) => [...routeClasses(route, qualifications, { now, codingDataClass })]));
+    const classes = new Set(poolRoutes.flatMap((route) => [...routeClasses(route, qualifications, { now, codingDataClass, state: states?.get?.(route.id) || null })]));
     const bestCoding = poolRoutes.map((route) => codingGradeOf(route, qualifications, now))
       .reduce((best, grade) => (CODING_GRADES.indexOf(grade) > CODING_GRADES.indexOf(best) ? grade : best), 'NOT_CODING_APPROVED');
     const factor = (HEALTH_FACTOR[state] ?? 1) * (successRate ?? 1);
