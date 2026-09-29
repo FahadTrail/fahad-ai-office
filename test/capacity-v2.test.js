@@ -222,7 +222,7 @@ test('qualification back-off: a refused model waits a day, a transient failure a
 
 test('coding runtime hands qualification evidence to routing (and tolerates a failing store)', async () => {
   const evidence = qualified(['ollama:gpt-oss:120b']);
-  const base = { sessionStore: {}, providerStateStore: new MemoryProviderStateStore(), policyStore: null, auditStore: {}, pool: [] };
+  const base = { sessionStore: {}, providerStateStore: new MemoryProviderStateStore(), policyStore: null, auditStore: {}, pool: [], sandboxMode: 'unisolated' };
   const ok = createCodingRuntime({ ...base, qualificationStore: { snapshot: async () => evidence } });
   const policy = await ok.routingFor({ workspaceId: 'w' }, {});
   assert.equal(policy.qualifications, evidence);
