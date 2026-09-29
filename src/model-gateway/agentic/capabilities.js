@@ -39,6 +39,12 @@ const REGISTRY = [
   // Models, OpenRouter). Strong for text; not trusted with autonomous coding.
   // Qwen 3.8 27B (Groq free plan, Cerebras trial): strong reasoning for its size.
   [/qwen-?3\.8-27b/i, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true , arabic: 2 }],
+  // Capacity V2 routes (planning estimates; qualification corrects them).
+  [/gpt-oss:120b/, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true , arabic: 3 }],
+  [/qwen2\.5-coder-32b/i, { coding: 4, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
+  [/^big-pickle$|^space-bunny/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: false }],
+  [/longcat-2\.5/i, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: true }],
+  [/mimo-v2\.\d+/i, { coding: 3, reasoning: 3, research: 3, writing: 3, speed: 4, vision: false, structuredOutput: false }],
   [/(^|\/)(openai\/)?gpt-oss-120b/, { coding: 3, reasoning: 4, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true , arabic: 3 }],
   [/(^|\/)(openai\/)?gpt-oss-20b/, { coding: 2, reasoning: 3, research: 3, writing: 3, speed: 5, vision: false, structuredOutput: true , arabic: 2 }],
   [/llama-3\.3-70b|llama3\.3-70b/i, { coding: 3, reasoning: 3, research: 3, writing: 4, speed: 5, vision: false, structuredOutput: true , arabic: 3 }],

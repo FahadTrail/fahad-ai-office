@@ -10,7 +10,7 @@ const CATALOGS = new Map();
 
 // Chat-capable ids only: audio, speech, guard/safety classifiers, embeddings
 // and image models are not Office/Coding routes.
-const NON_CHAT = /whisper|orpheus|tts|speech|audio|prompt-guard|safeguard|guard|embed|embedding|moderation|image|imagen|veo|vision-only|rerank|ocr/i;
+const NON_CHAT = /whisper|orpheus|tts|speech|audio|prompt-guard|safeguard|guard|embed|embedding|\bbge-|moderation|image|imagen|veo|vision-only|rerank|ocr/i;
 
 export const PROVIDER_CATALOG_SOURCES = Object.freeze({
   groq: { url: 'https://api.groq.com/openai/v1/models', secretEnv: 'GROQ_API_KEY', auth: 'bearer' },
@@ -19,12 +19,18 @@ export const PROVIDER_CATALOG_SOURCES = Object.freeze({
   mistral: { url: 'https://api.mistral.ai/v1/models', secretEnv: 'MISTRAL_API_KEY', auth: 'bearer' },
   kimi: { url: 'https://api.moonshot.ai/v1/models', secretEnv: 'KIMI_API_KEY', auth: 'bearer' },
   qwen: { url: null, secretEnv: 'QWEN_API_KEY', auth: 'bearer' },
+  // Capacity V2 providers. Their lists decide which free models exist today:
+  // a promotion that ends removes the model id, which disables the route.
+  opencode: { url: 'https://opencode.ai/zen/v1/models', secretEnv: 'OPENCODE_ZEN_API_KEY', auth: 'bearer' },
+  llm7: { url: 'https://api.llm7.io/v1/models', secretEnv: 'LLM7_API_KEY', auth: 'bearer' },
+  ollama: { url: 'https://ollama.com/v1/models', secretEnv: 'OLLAMA_API_KEY', auth: 'bearer' },
+  cloudflare: { url: null, secretEnv: 'CLOUDFLARE_API_TOKEN', auth: 'bearer' },
 });
 
 // Only these providers' lists are complete enough to rule a configured
 // model out. Gemini aliases (…-latest) and Qwen/Kimi lists are shown for
 // diagnosis but never block a route.
-const AUTHORITATIVE = new Set(['groq', 'cerebras', 'mistral']);
+const AUTHORITATIVE = new Set(['groq', 'cerebras', 'mistral', 'opencode', 'llm7', 'ollama', 'cloudflare']);
 
 export function getProviderCatalog(provider) {
   const entry = CATALOGS.get(provider);
@@ -55,6 +61,12 @@ function qwenModelsUrl(env) {
   return chat.replace(/\/chat\/completions$/, '/models');
 }
 
+// Cloudflare's model list lives under the account (text-generation models).
+function cloudflareModelsUrl(env) {
+  const account = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+  return /^[a-f0-9]{32}$/i.test(account) ? `https://api.cloudflare.com/client/v4/accounts/${account}/ai/models/search?task=Text%20Generation&per_page=200` : null;
+}
+
 function credential(env, name) {
   const value = env[name];
   return typeof value === 'string' && value.trim().length >= 12 ? value.trim() : null;
@@ -72,6 +84,14 @@ export function parseCatalog(provider, body) {
       ids.push(id);
       if (Number(model.inputTokenLimit) > 0) contexts[id] = Number(model.inputTokenLimit);
     }
+  } else if (provider === 'cloudflare') {
+    for (const model of body?.result || []) {
+      const id = String(model.name || '');
+      if (!id || NON_CHAT.test(id)) continue;
+      ids.push(id);
+      const context = Number((model.properties || []).find((entry) => entry?.property_id === 'context_window')?.value);
+      if (context > 0) contexts[id] = context;
+    }
   } else {
     for (const model of body?.data || []) {
       const id = String(model.id || '');
@@ -81,7 +101,7 @@ export function parseCatalog(provider, body) {
       if (context > 0) contexts[id] = context;
     }
   }
-  ids = [...new Set(ids.filter((id) => /^[A-Za-z0-9._/:-]{2,160}$/.test(id)))].sort();
+  ids = [...new Set(ids.filter((id) => /^@?[A-Za-z0-9._/:-]{2,160}$/.test(id)))].sort();
   return { models: ids, contexts };
 }
 
@@ -90,7 +110,8 @@ export async function fetchProviderCatalog(provider, { env = process.env, fetchF
   if (!source) return null;
   const key = credential(env, source.secretEnv);
   if (!key) return { ok: false, status: null, reason: 'CREDENTIAL_MISSING', fetchedAt: new Date(now()).toISOString(), models: [] };
-  const url = provider === 'qwen' ? qwenModelsUrl(env) : source.url;
+  const url = provider === 'qwen' ? qwenModelsUrl(env) : provider === 'cloudflare' ? cloudflareModelsUrl(env) : source.url;
+  if (!url) return { ok: false, status: null, reason: 'ENDPOINT_NOT_CONFIGURED', fetchedAt: new Date(now()).toISOString(), models: [] };
   const headers = source.auth === 'goog' ? { 'x-goog-api-key': key } : { authorization: `Bearer ${key}` };
   try {
     const response = await fetchFn(url, { headers, signal: AbortSignal.timeout(timeoutMs) });

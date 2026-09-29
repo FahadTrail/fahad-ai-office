@@ -147,6 +147,13 @@ export function qualificationValid(record, now = Date.now()) {
 
 // Reasons a non-paid route may not take this job, from its qualification.
 export function qualificationGaps(route, job, qualifications, now = Date.now()) {
+  // Capacity V2 lifecycle: a discovered route of a new provider (DISCOVERED →
+  // CANARY → QUALIFIED → ACTIVE) takes no job at all until it has passed
+  // qualification — even without a qualification store (fail closed).
+  if (route.requiresQualification) {
+    const record = qualifications?.get(route.id);
+    if (!qualificationValid(record, now) || record.status !== 'qualified') return ['NOT_YET_QUALIFIED'];
+  }
   if (job && typeof job === 'object' && job.baseJob) job = job.baseJob;
   if (typeof job === 'string') job = job.replace(/:relaxed$/, '');
   if (!qualifications || route.billingClass === 'paid' || !job || typeof job !== 'string') return [];

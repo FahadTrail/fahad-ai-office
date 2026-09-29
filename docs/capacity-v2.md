@@ -69,8 +69,8 @@ api.llm7.io). GitHub is reachable. So:
   full:
   * OpenCode Zen: `anomalyco/opencode` → `packages/web/src/content/docs/zen.mdx`;
   * LLM7: `chigwell/llm7.io` → `TERMS.md`, `PRIVACY.md`;
-  * OmniRoute: `diegosouzapw/OmniRoute` → `docs/reference/PROVIDER_REFERENCE.md`,
-    `docs/reference/FREE_TIERS.md`.
+  * OmniRoute: https://github.com/diegosouzapw/OmniRoute/blob/main/docs/reference/PROVIDER_REFERENCE.md
+    and https://github.com/diegosouzapw/OmniRoute/blob/main/docs/reference/FREE_TIERS.md.
 * **OFFICIAL (search):** statements quoted from official-domain search
   results (Cloudflare, Ollama).
 * **REPORTED:** secondary aggregators only (freellm.net, costbench, …). Never

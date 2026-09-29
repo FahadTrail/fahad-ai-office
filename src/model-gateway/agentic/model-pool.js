@@ -215,11 +215,105 @@ export function modelPoolDefinitions(env = process.env, { openRouterCatalog = ge
       quotaPool: { id: 'mistral:account', label: 'Mistral account (one organisation quota)', shared: true, scarce: false },
       catalogBlocked: providerCatalogVerdict('mistral', env.MISTRAL_MODEL || 'mistral-medium-latest'),
     },
+    ...capacityV2Routes(env),
   ];
   return defs.map((definition) => {
     const route = { ...definition, id: `${definition.provider}:${definition.model}`, pricing: definition.pricing || PRICING[definition.model] || null, toolCalling: definition.toolCalling !== false };
     return Object.freeze({ ...route, capabilities: capabilityProfile(route, env) });
   });
+}
+
+// ------------------------------------------------------------ Capacity V2
+// New free pools (docs/capacity-v2.md §2). Every route here:
+//   * exists only while the provider's OWN model list contains the model
+//     (a promotion that ends removes the id → the route disappears);
+//   * starts DISCOVERED and needs a passed qualification before any job
+//     (`requiresQualification`), so an unknown model never serves production;
+//   * declares its data class from the provider's published terms (PUBLIC or
+//     NORMAL); PRIVATE only with the owner's reviewed `…_PRIVATE_DATA_APPROVED`.
+//
+// OpenCode Zen free models and their published data terms (zen.mdx, 2026-09):
+// zero-retention (NORMAL) vs "collected data may be used to improve the model"
+// or NVIDIA trial logging (PUBLIC). Contributor models that train on prompts
+// are never listed.
+const OPENCODE_FREE = Object.freeze({
+  'space-bunny-free': 'NORMAL', 'longcat-2.5-preview-free': 'NORMAL',
+  'big-pickle': 'PUBLIC', 'mimo-v2.6-flash-free': 'PUBLIC', 'mimo-v2.5-free': 'PUBLIC', 'ling-3.0-flash-fin-free': 'PUBLIC',
+  'nemotron-3-ultra-free': 'PUBLIC', 'nemotron-3.5-lightning-free': 'PUBLIC',
+});
+const EXCLUDED_FREE = /contributor|muse-spark/i;
+// LLM7 routes to many upstream models; only strong general/coding families
+// are admitted as candidates (each still needs qualification).
+const LLM7_ADMIT = /(gpt-oss|qwen.*coder|qwen3|deepseek|codestral|devstral|mistral-(medium|large)|glm-4\.[5-9]|glm-5|kimi|llama-3\.3-70b|llama-4)/i;
+const LLM7_MAX_ROUTES = 4;
+const OLLAMA_DEFAULT = ['gpt-oss:120b', 'qwen3-coder:480b', 'deepseek-v3.1:671b'];
+const CLOUDFLARE_DEFAULT = ['@cf/openai/gpt-oss-120b', '@cf/qwen/qwen2.5-coder-32b-instruct', '@cf/meta/llama-3.3-70b-instruct-fp8-fast'];
+
+const listEnv = (env, name, fallback) => {
+  const configured = String(env[name] || '').split(',').map((value) => value.trim()).filter((value) => /^[A-Za-z0-9@._/:-]{2,120}$/.test(value));
+  return configured.length ? configured : fallback;
+};
+
+// The provider catalog decides: no catalog yet → no route (never a guess).
+function catalogModels(provider) {
+  const entry = getProviderCatalogEntry(provider);
+  return entry ? { models: new Set(entry.models || []), contexts: entry.contexts || {} } : null;
+}
+
+export function capacityV2Routes(env = process.env) {
+  const routes = [];
+  const common = { protocol: 'chat-completions', costTier: 1, billingClass: BILLING_CLASS.FREE, pricing: null, discovered: true, requiresQualification: true };
+
+  const zen = catalogModels('opencode');
+  if (zen) {
+    for (const model of Object.keys(OPENCODE_FREE).filter((id) => zen.models.has(id) && !EXCLUDED_FREE.test(id))) {
+      const dataClass = OPENCODE_FREE[model];
+      routes.push({
+        ...common, provider: 'opencode', model, endpoint: 'https://opencode.ai/zen/v1/chat/completions',
+        secretEnv: 'OPENCODE_ZEN_API_KEY', secretRef: 'env://OPENCODE_ZEN_API_KEY', qualityTier: 3,
+        contextWindow: Math.min(Number(zen.contexts[model]) || 128_000, 1_000_000), promo: true, dataClass,
+        privacyApproved: dataClass === 'NORMAL' && truthy(env.OPENCODE_ZEN_PRIVATE_DATA_APPROVED), privacyFlag: 'OPENCODE_ZEN_PRIVATE_DATA_APPROVED',
+        quotaPool: { id: 'opencode:free', label: 'OpenCode Zen free models (one account rate limit; limited-time promotions)', shared: true, scarce: false },
+      });
+    }
+  }
+
+  const llm7 = catalogModels('llm7');
+  if (llm7) {
+    for (const model of [...llm7.models].filter((id) => LLM7_ADMIT.test(id) && !EXCLUDED_FREE.test(id)).slice(0, LLM7_MAX_ROUTES)) {
+      routes.push({
+        ...common, provider: 'llm7', model, endpoint: 'https://api.llm7.io/v1/chat/completions',
+        secretEnv: 'LLM7_API_KEY', secretRef: 'env://LLM7_API_KEY', qualityTier: 3,
+        contextWindow: Math.min(Number(llm7.contexts[model]) || 32_000, 256_000), dataClass: 'PUBLIC', privacyApproved: false,
+        privacyNote: 'LLM7 does not state how upstream models handle prompts: public/non-private data only.',
+        quotaPool: { id: 'llm7:free', label: 'LLM7.io free token (1M tokens per rolling 24 h)', shared: true, scarce: false },
+      });
+    }
+  }
+
+  const ollama = catalogModels('ollama');
+  for (const model of listEnv(env, 'OLLAMA_CLOUD_MODELS', OLLAMA_DEFAULT).filter((id) => ollama?.models.has(id))) {
+    routes.push({
+      ...common, provider: 'ollama', model, endpoint: 'https://ollama.com/v1/chat/completions',
+      secretEnv: 'OLLAMA_API_KEY', secretRef: 'env://OLLAMA_API_KEY', qualityTier: 4,
+      contextWindow: Math.min(Number(ollama.contexts[model]) || 128_000, 256_000), dataClass: 'NORMAL',
+      privacyApproved: truthy(env.OLLAMA_API_PRIVATE_DATA_APPROVED), privacyFlag: 'OLLAMA_API_PRIVATE_DATA_APPROVED',
+      quotaPool: { id: 'ollama:cloud', label: 'Ollama Cloud free plan (monthly usage, 1 concurrent request)', shared: true, scarce: true },
+    });
+  }
+
+  const account = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+  const cloudflare = catalogModels('cloudflare');
+  for (const model of listEnv(env, 'CLOUDFLARE_AI_MODELS', CLOUDFLARE_DEFAULT).filter((id) => cloudflare?.models.has(id))) {
+    routes.push({
+      ...common, provider: 'cloudflare', model,
+      endpoint: /^[a-f0-9]{32}$/i.test(account) ? `https://api.cloudflare.com/client/v4/accounts/${account}/ai/v1/chat/completions` : 'https://cloudflare.invalid/',
+      secretEnv: 'CLOUDFLARE_API_TOKEN', secretRef: 'env://CLOUDFLARE_API_TOKEN', qualityTier: /coder|gpt-oss-120b/.test(model) ? 4 : 3,
+      contextWindow: Math.min(Number(cloudflare.contexts[model]) || 32_000, 256_000), dataClass: 'NORMAL',
+      privacyApproved: truthy(env.CLOUDFLARE_API_PRIVATE_DATA_APPROVED), privacyFlag: 'CLOUDFLARE_API_PRIVATE_DATA_APPROVED',
+    });
+  }
+  return routes;
 }
 
 // Why the discovered catalog rules out a statically configured OpenRouter

@@ -5,6 +5,34 @@ readiness rehearsal. Read `AGENTS.md` first; it holds the permanent rules.
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
 
+## CAPACITY EXPANSION V2 (active sprint, branch `claude/capacity-expansion-v2`)
+
+**Read `docs/capacity-v2.md` first.** It has the baseline, provider research, decisions and the capacity model. Branch from `main` `199c1d6`; nothing is deployed from it yet.
+
+Done so far (commits on the branch):
+* Pool registry and data classes: `src/model-gateway/agentic/pool-registry.js`.
+  * Published/reported limits, reset kinds, UNKNOWN kept unknown.
+  * Data classes PUBLIC < NORMAL < PRIVATE < CONFIDENTIAL, enforced in `turn-gateway.js` (the legacy `requiresPrivateData` maps to PRIVATE/PUBLIC).
+* Provider contract and lifecycle: `provider-contract.js`.
+  * `contractViolations`, `routeContract`.
+  * `routeLifecycle`: NOT_CONFIGURED/RETIRED/BLOCKED/DISCOVERED/CANARY/QUALIFIED/ACTIVE.
+* New free providers, all catalog-gated: `model-pool.js` → `capacityV2Routes`. Every route has `requiresQualification`, which means `NOT_YET_QUALIFIED` for any job until qualified (fails closed).
+  * OpenCode Zen (8 free models, per-model data class; PUBLIC or NORMAL).
+  * LLM7 (1M tokens/day; PUBLIC).
+  * Ollama Cloud (NORMAL).
+  * Cloudflare Workers AI (NORMAL).
+* Secrets: `ops/set-secret.sh` knows `LLM7_API_KEY`, `OPENCODE_ZEN_API_KEY`, `OLLAMA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, plus 3 privacy-approval flags. Keys are verified with the provider before storing.
+* `tools/omniroute-harvest.mjs`: policy classification of OmniRoute's 352-provider registry (46 candidates; consumer-login, cookie and reverse-engineered providers rejected).
+* Tests: `test/capacity-v2.test.js`.
+
+Remaining (in order):
+* Coding qualification suite and coding grades.
+* Coding routing tiers.
+* Handoff additions: repository, diff summary, unresolved items.
+* Capacity model: effective tokens, coding and project estimates.
+* `/api/capacity` v2, owner action queue, daily snapshots (migration).
+* PR in waves; live canaries once keys exist.
+
 ## RELEASE STATE (read this first)
 
 | Item | State |
