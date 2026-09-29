@@ -26,7 +26,7 @@ export function snapshotSummary(view) {
     lifecycle: capacity.lifecycle || null,
     freeUtilizationToday: capacity.freeUtilizationToday ?? null,
     costUsd: capacity.costUsd || null,
-    pools: (capacity.pools || []).map((pool) => ({ id: pool.id, state: pool.state, effectivePerDay: pool.effectivePerDay, classes: pool.classes, codingGrade: pool.codingGrade })),
+    pools: (capacity.pools || []).map((pool) => ({ id: pool.id, state: pool.state, effectivePerDay: pool.effectivePerDay, classes: pool.classes, codingGrade: pool.codingGrade, codingTurnLimit: pool.codingTurnLimit ?? null, rateCeilingPerDay: pool.rateCeilingPerDay ?? null })),
     tokensToday: view?.summary?.tokensToday ?? null,
     ownerActionsPending: (view?.ownerActions || []).filter((action) => action.status === 'pending').map((action) => action.id),
   };

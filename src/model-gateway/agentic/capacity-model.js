@@ -29,7 +29,8 @@ export const JOB_CLASSES = Object.freeze(['general', 'coding', 'coding_public', 
 // Measured in production (docs/capacity-v2.md §1): tokens per job, input +
 // output, all model calls of the job.
 export const MEASURED_JOB_TOKENS = Object.freeze({
-  coding: { small: 120_000, medium: 500_000, large: 2_500_000 },
+  // small: free benchmarks 2026-09-29 measured 87K and 98K per job.
+  coding: { small: 95_000, medium: 500_000, large: 2_500_000 },
   project: { p50: 65_000, p90: 223_000 },
   answer: { p50: 2_800, p90: 18_000 },
   inputShare: 0.97,
@@ -38,8 +39,21 @@ export const MEASURED_JOB_TOKENS = Object.freeze({
 });
 // When a pool publishes only a request limit and we have no measurement yet.
 const DEFAULT_TOKENS_PER_REQUEST = 6_000;
-// Measured input size of one Coding Agent turn (production sessions, 2026-09).
-export const CODING_TURN_TOKENS = 30_000;
+// Input size of one Coding Agent turn by job size (production, 2026-09):
+// small/medium free benchmarks p90 9.1K, max 16.4K; earlier large sessions
+// p50 25K, p90 63K. A route counts for a job size only when its per-request
+// or per-minute limit holds such a turn.
+export const CODING_TURN_TOKENS_BY_SIZE = Object.freeze({ small: 10_000, medium: 16_000, large: 30_000 });
+export const CODING_TURN_TOKENS = CODING_TURN_TOKENS_BY_SIZE.large;
+
+// The largest coding turn a route can take: the smallest of its configured
+// per-minute limit, the per-minute input quota the provider REPORTED, and its
+// context minus room for an answer (8K).
+export function codingTurnLimit(route, state = null) {
+  const limits = [Number(route.requestTokenLimit || 0), Number(state?.rateLimit?.inputTokensPerMinute || 0)].filter((value) => value > 0);
+  const context = Math.max(0, Number(route.contextWindow || 0) - 8_000);
+  return Math.min(context, ...limits);
+}
 const HEALTH_FACTOR = { available: 1, degraded: 0.5, exhausted: 0, not_configured: 0 };
 
 const skillsOk = (record, skills) => skills.every((skill) => record?.skills?.[skill]);
@@ -60,20 +74,18 @@ export function routeClasses(route, qualifications, { now = Date.now(), codingDa
   if (skillsOk(general, JOB_SKILLS.research)) classes.add('research');
   if (qualified && skillsOk(general, JOB_SKILLS.finance)) classes.add('finance');
   const coding = qualifications?.coding?.get?.(route.id);
-  // A coding turn re-sends the transcript (measured ≈30K input tokens): a
-  // route whose per-request/minute token limit is below that cannot run the
-  // Coding Agent, whatever its grade on the short suite.
-  // The context must also hold a turn plus a useful answer (8K).
-  // A per-minute input-token quota the provider REPORTED (Gemini 429
-  // QuotaFailure) counts the same way as a configured one.
-  const reportedTpm = Number(state?.rateLimit?.inputTokensPerMinute || 0);
-  const fitsCodingTurn = (!route.requestTokenLimit || route.requestTokenLimit >= CODING_TURN_TOKENS)
-    && (!reportedTpm || reportedTpm >= CODING_TURN_TOKENS)
-    && Number(route.contextWindow || 0) >= CODING_TURN_TOKENS + 8_000;
+  // A coding turn re-sends the transcript: a route that cannot hold even a
+  // small job's turn cannot run the Coding Agent, whatever its suite grade.
+  // Larger job sizes are checked per size in capacityModel().
+  const fitsCodingTurn = codingTurnLimit(route, state) >= CODING_TURN_TOKENS_BY_SIZE.small;
   const codingCapable = codingQualificationValid(coding, now) && CODING_GRADES.indexOf(coding.grade) >= 1 && fitsCodingTurn;
   if (codingCapable && allowsDataClass(route, codingDataClass)) classes.add('coding');
   if (codingCapable && allowsDataClass(route, 'PUBLIC')) classes.add('coding_public');
   return classes;
+}
+
+function reportedTpm(routes, states) {
+  return Math.max(0, ...routes.map((route) => Number(states?.get?.(route.id)?.rateLimit?.inputTokensPerMinute || 0)));
 }
 
 function codingGradeOf(route, qualifications, now) {
@@ -120,6 +132,7 @@ export function capacityModel({ routes, pools, qualifications = null, attemptsBy
     const allowance = poolDailyTokens(facts, { measuredTokensPerRequest });
     const state = poolById.get(id)?.state || 'available';
     const classes = new Set(poolRoutes.flatMap((route) => [...routeClasses(route, qualifications, { now, codingDataClass, state: states?.get?.(route.id) || null })]));
+    const turnLimit = Math.max(0, ...poolRoutes.map((route) => codingTurnLimit(route, states?.get?.(route.id) || null)));
     const bestCoding = poolRoutes.map((route) => codingGradeOf(route, qualifications, now))
       .reduce((best, grade) => (CODING_GRADES.indexOf(grade) > CODING_GRADES.indexOf(best) ? grade : best), 'NOT_CODING_APPROVED');
     const factor = (HEALTH_FACTOR[state] ?? 1) * (successRate ?? 1);
@@ -127,7 +140,10 @@ export function capacityModel({ routes, pools, qualifications = null, attemptsBy
     rows.push({
       id, provider: facts.account, kind: facts.kind, state, dataClass: poolRoutes.map(routeDataClass).toSorted().at(-1),
       allowance, successRate, measuredTokensPerRequest: measuredTokensPerRequest && Math.round(measuredTokensPerRequest),
-      classes: [...classes].toSorted(), codingGrade: bestCoding,
+      classes: [...classes].toSorted(), codingGrade: bestCoding, codingTurnLimit: turnLimit,
+      // No published daily allowance but a REPORTED per-minute quota: the
+      // most the rate alone allows in a day. A ceiling, never summed.
+      rateCeilingPerDay: allowance.perDay == null && reportedTpm(poolRoutes, states) ? reportedTpm(poolRoutes, states) * 1_440 : null,
       effectivePerDay: effective, effectiveToday: allowance.perDay == null ? null : Math.round(allowance.perDay * factor),
       resetTimeZone: facts.resetTimeZone || null, confidence: facts.confidence,
     });
@@ -148,8 +164,9 @@ export function capacityModel({ routes, pools, qualifications = null, attemptsBy
   // Coding jobs/day per size: only pools whose best grade meets the tier.
   const codingJobsFor = (jobClass) => Object.fromEntries(Object.entries(MEASURED_JOB_TOKENS.coding).map(([size, tokens]) => {
     const needed = CODING_TIERS[size];
-    const capacity = sumFor((row) => row.classes.includes(jobClass) && CODING_GRADES.indexOf(row.codingGrade) >= CODING_GRADES.indexOf(needed));
-    return [size, { jobsPerDay: Math.floor(capacity.tokens / tokens), tokensPerJob: tokens, minimumGrade: needed, pools: capacity.pools, unknownPools: capacity.unknownPools }];
+    const capacity = sumFor((row) => row.classes.includes(jobClass) && CODING_GRADES.indexOf(row.codingGrade) >= CODING_GRADES.indexOf(needed)
+      && row.codingTurnLimit >= CODING_TURN_TOKENS_BY_SIZE[size]);
+    return [size, { jobsPerDay: Math.floor(capacity.tokens / tokens), tokensPerJob: tokens, minimumGrade: needed, turnTokens: CODING_TURN_TOKENS_BY_SIZE[size], pools: capacity.pools, unknownPools: capacity.unknownPools }];
   }));
   const codingJobs = codingJobsFor('coding');
   const publicCodingJobs = codingJobsFor('coding_public');
