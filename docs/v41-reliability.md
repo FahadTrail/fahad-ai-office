@@ -142,6 +142,51 @@ decides arithmetic.
   claims whose source was not actually fetched, and marks the evidence
   INSUFFICIENT when fewer than 2 pages were retrieved.
 
+## Financial table gate (V4.1 final blocker)
+
+Found live in job `abaccdad` (Sanad Desk). FINANCE was VERIFIED (revenue
+112,236, costs 102,000, net 10,236, break-even month 12), but AUDIT wrote its
+own "12-Month Financial Snapshot" with revenue 111,489 and net 9,489, and
+CHIEF copied it. Only headline figures were checked. Monthly tables were
+checked only inside FINANCE's output, with a 2% tolerance. AUDIT's own output
+was never checked, and CHIEF's row check needed words such as "annual".
+
+The FINANCE calculator is now the only source of monthly financial truth:
+
+* **Strict comparison** (`finance.js`): `financialTables()` finds every
+  financial table (artifact or Markdown) and chart. `tableScheduleIssues()`
+  compares each one with the calculation (whole-unit rounding only):
+  * every monthly revenue, cost, net and cumulative value;
+  * every Total/Year row;
+  * labelled headline rows (totals, net, break-even).
+
+  Non-financial tables are not touched. That covers tables with no month
+  column and no labelled financial row, as well as competitor/market tables.
+* **AUDIT** (`numericChecks`): with a VERIFIED calculation, every financial
+  table or chart from another employee that contradicts it becomes one
+  BLOCKED finding. The finding records the worst mismatch and lists all of
+  them. AUDIT's own draft is checked too (`auditOwnTables`): a contradictory
+  table is removed and replaced by the calculator's schedule, and it is
+  reported as a BLOCKED finding with `resolved: true` ("RESOLVED BY CODE").
+  AUDIT workstreams always depend on the FINANCE workstreams planned before
+  them, so AUDIT always has the calculator.
+* **CHIEF** (`enforceFacts`):
+  * `sanitizeFinancial()` removes every model-written monthly schedule and
+    every contradictory financial table or chart, and puts the calculator's
+    `scheduleTable()` in the place of the first schedule it removes.
+  * Prose is still checked. Headline lines must state a validated value at
+    their written precision: "112K" passes, "111,489" does not. A figure for
+    a named month must be that month's calculated value, and figures AUDIT
+    proved wrong are banned.
+  * `remainingContradictions()` re-checks the final text. If anything is
+    left, the result is NOT CLOSED, so VERIFIED never ships next to a
+    contradiction.
+* **Owners:** a table finding against another employee returns that
+  employee's workstream in round 1. It is resolved when their revised output
+  has no contradictory table.
+* **Models explain, code calculates:** CHIEF is told never to write its own
+  monthly schedule.
+
 ## Owner drills (live proof)
 
 * `[drill:finance-error]` writes a deliberately wrong headline total into
@@ -150,3 +195,9 @@ decides arithmetic.
 * `[drill:finance-error-audit]` writes it **after** FINANCE's validation.
   AUDIT and CHIEF must catch it, and CHIEF returns it to FINANCE.
 * In both cases the wrong figure must never reach the final answer.
+* `[drill:finance-table]` writes the live failure's table into AUDIT's draft
+  and into CHIEF's draft. The table's monthly revenue drifts from the
+  calculator by 747 over the year (Sanad Desk: 111,489 / net 9,489). AUDIT
+  must block and remove it, and CHIEF must replace it with the calculator
+  schedule. Events: `finance_table_drill`, `audit_table_gate` and
+  `fact_gate_enforced` (with `tables`, `remaining` and `blocked`).

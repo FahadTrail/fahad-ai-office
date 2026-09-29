@@ -2,8 +2,8 @@ import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validatePlan } from
 import { DISPATCHABLE, mentionedEmployees, officeAgent } from './office/agents.js';
 import { converseDirect, parseConsultRequest, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
 import { parseArtifacts, parseSources } from './office/artifacts.js';
-import { FINANCE_STATES, injectFinanceError, needsCorrection, publishFinance, revisionInstruction, validateFinance } from './office/finance.js';
-import { chiefGate, cleanOutput, codeChecksBlock, enforceAudit, enforceFacts, evidenceGate, factsBlock, numericChecks, socialCalendar } from './office/quality.js';
+import { FINANCE_STATES, badScheduleTable, injectFinanceError, needsCorrection, publishFinance, revisionInstruction, validateFinance } from './office/finance.js';
+import { auditOwnTables, chiefGate, cleanOutput, codeChecksBlock, enforceAudit, enforceFacts, evidenceGate, factsBlock, numericChecks, socialCalendar } from './office/quality.js';
 import { stepJob, stepWebTools } from './office/routing-hints.js';
 import { CAPACITY_LIMITS, capacityDecision } from './office/capacity.js';
 import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
@@ -400,6 +400,13 @@ export class OfficeWorkflow {
     for (const [index, stream] of plan.workstreams.entries()) {
       const employee = officeAgent(stream.agent);
       const dependsOn = stream.dependsOn.map((id) => created.get(id).id);
+      // AUDIT checks every financial table against FINANCE's calculator, so
+      // it always receives the FINANCE outputs planned before it.
+      if (employee.key === 'audit') {
+        for (const other of plan.workstreams.slice(0, index)) {
+          if (officeAgent(other.agent)?.key === 'finance' && !dependsOn.includes(created.get(other.id).id)) dependsOn.push(created.get(other.id).id);
+        }
+      }
       const row = await this.store.ensureTask({
         jobId: task.job_id, agentSlug: employee.slug, title: stream.title,
         brief: encodeBrief(employee.executor === 'coding' ? STAGES.LAUNCH_DEV : STAGES.SPECIALIST, {
@@ -539,7 +546,27 @@ export class OfficeWorkflow {
       current.text = calendar.text;
       if (calendar.converted) await emit(`SOCIAL's calendar table (${calendar.converted} posts) was saved as a calendar artifact.`, { kind: 'calendar_structured', entries: calendar.converted });
     }
-    if (employee.key === 'audit' && checks) current.text = enforceAudit(current.text, checks);
+    if (employee.key === 'audit' && checks) {
+      // Drill ([drill:finance-table]): the live V4.1 failure — a model-written
+      // monthly table that drifts from the calculator — is placed in AUDIT's
+      // own draft, which code must block and remove.
+      if (request.drills.financeTable && checks.calculated && !brief.revision) {
+        const bad = badScheduleTable(checks.calculated);
+        if (bad) {
+          current.text = `${current.text}\n\n## Financial snapshot\n\`\`\`artifact\n${JSON.stringify(bad)}\n\`\`\``;
+          const total = bad.rows.at(-1);
+          await emit(`Drill: a wrong monthly financial table (revenue ${total[1]}, net ${total[3]}) was written into AUDIT's draft — code must block and remove it.`,
+            { kind: 'finance_table_drill', stage: 'audit_draft', revenue: total[1], net: total[3] }, 'warning');
+        }
+      }
+      const own = auditOwnTables(current.text, checks);
+      current.text = own.text;
+      if (own.findings.length) {
+        await emit(`AUDIT table gate: ${own.findings.length} financial table${own.findings.length === 1 ? '' : 's'} in AUDIT's own draft contradicted the calculation — BLOCKED and removed.`,
+          { kind: 'audit_table_gate', blocked: own.findings.map((finding) => ({ code: finding.code, table: finding.table, expected: finding.expected, actual: finding.actual, mismatches: finding.mismatches.length })) }, 'warning');
+      }
+      current.text = enforceAudit(current.text, { ...checks, findings: [...checks.findings, ...own.findings] });
+    }
     return current;
   }
 
@@ -596,16 +623,32 @@ export class OfficeWorkflow {
     if (/^\s*(```(?:json)?\s*)?\{\s*"revise"/.test(outcome.text)) outcome = await synthesize(false);
     // CHIEF may not restate a financial figure differently from the validated
     // calculation, nor repeat a figure already proven wrong.
-    const enforced = enforceFacts(cleanOutput(outcome.text), gate);
-    let finalText = enforced.text;
-    if (gate.blocked) {
-      finalText = `## Not closed — blocked finding\nThe financial figures did not pass code validation${gate.openAudit.length ? ' and AUDIT has unresolved BLOCKED numeric findings' : ''}. They are not presented as fact; FINANCE must correct them before this project can close.\n\n${finalText}`;
+    let draft = cleanOutput(outcome.text);
+    // Drill ([drill:finance-table]): CHIEF's draft carries the same wrong
+    // monthly table; the fact gate must replace or remove it.
+    if (request.drills.financeTable && gate.calculated) {
+      const bad = badScheduleTable(gate.calculated);
+      if (bad) {
+        draft = `${draft}\n\n## 12-month snapshot\n\`\`\`artifact\n${JSON.stringify(bad)}\n\`\`\``;
+        const total = bad.rows.at(-1);
+        await this.store.emit({ jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity', level: 'warning',
+          message: `Drill: a wrong monthly financial table (revenue ${total[1]}, net ${total[3]}) was written into CHIEF's draft — the fact gate must replace it.`,
+          payload: { kind: 'finance_table_drill', stage: 'chief_draft', revenue: total[1], net: total[3] } });
+      }
     }
-    if (enforced.removed || gate.blocked) {
+    const enforced = enforceFacts(draft, gate);
+    let finalText = enforced.text;
+    // VERIFIED figures never ship next to a contradiction: anything the gate
+    // could not remove keeps the result NOT CLOSED.
+    const blocked = gate.blocked || enforced.remaining > 0;
+    if (blocked) {
+      finalText = `## Not closed — blocked finding\nThe financial figures did not pass code validation${gate.openAudit.length ? ' and AUDIT has unresolved BLOCKED numeric findings' : ''}${enforced.remaining ? ` and ${enforced.remaining} contradiction${enforced.remaining === 1 ? '' : 's'} with the calculation remain` : ''}. They are not presented as fact; FINANCE must correct them before this project can close.\n\n${finalText}`;
+    }
+    if (enforced.removed || blocked) {
       await this.store.emit({
         jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id, type: 'activity', level: 'warning',
-        message: `Chief fact gate: ${enforced.removed} statement${enforced.removed === 1 ? '' : 's'} contradicting the validated figures ${enforced.removed === 1 ? 'was' : 'were'} removed${gate.blocked ? '; the result is marked NOT CLOSED' : ''}.`,
-        payload: { kind: 'fact_gate_enforced', removed: enforced.removed, blocked: gate.blocked },
+        message: `Chief fact gate: ${enforced.removed} statement${enforced.removed === 1 ? '' : 's'} or table${enforced.removed === 1 ? '' : 's'} contradicting the validated figures ${enforced.removed === 1 ? 'was' : 'were'} removed${enforced.tables ? ` (${enforced.tables} financial table${enforced.tables === 1 ? '' : 's'} replaced by the calculator schedule)` : ''}${blocked ? '; the result is marked NOT CLOSED' : ''}.`,
+        payload: { kind: 'fact_gate_enforced', removed: enforced.removed, tables: enforced.tables, remaining: enforced.remaining, blocked },
       });
     }
     outcome = { ...outcome, text: finalText };
@@ -1116,6 +1159,8 @@ export function officeRequest(goal, env = process.env, { freeOnly: storedFreeOnl
     // validation (…-error) or after it, so only AUDIT/CHIEF can catch it.
     financeError: drillsEnabled && /\[drill:finance-error\]/i.test(raw),
     financeErrorAudit: drillsEnabled && /\[drill:finance-error-audit\]/i.test(raw),
+    // A wrong model-written monthly table in AUDIT's and CHIEF's drafts.
+    financeTable: drillsEnabled && /\[drill:finance-table\]/i.test(raw),
   };
   // [free-only] keeps this one objective on free routes; it only narrows
   // routing (the workspace policy and every other job are unaffected).
@@ -1124,7 +1169,7 @@ export function officeRequest(goal, env = process.env, { freeOnly: storedFreeOnl
   const freeOnly = storedFreeOnly || marker.freeOnly;
   const text = marker.text;
   const { dataClass, reason } = classifyOfficeData(text, { env });
-  const cleaned = text.replace(/\[drill:(failover|escalate|finance-error|finance-error-audit)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').replace(/[ \t]{2,}/g, ' ').trim();
+  const cleaned = text.replace(/\[drill:(failover|escalate|finance-error|finance-error-audit|finance-table)\]/gi, '').replace(/^\s*\[(confidential|private|سري)\]\s*/i, '').replace(/[ \t]{2,}/g, ' ').trim();
   return { goal: cleaned || raw, dataClass, dataClassReason: reason, drills, freeOnly };
 }
 

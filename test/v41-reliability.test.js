@@ -112,7 +112,10 @@ test('E. CHIEF cannot replace a validated financial value with a different numbe
   const text = finalText(store);
   assert.doesNotMatch(text, /229,000|month 7/);
   assert.match(text, /The team is ready\./);
-  assert.match(text, /Year-1 costs \| AED 17,000/, 'a correct row stays');
+  // V4.1 table gate: a table with any contradicting row is never kept; the
+  // validated figures (including the correct costs) replace it.
+  assert.doesNotMatch(text, /Year-1 revenue/, 'the contradictory table is removed');
+  assert.match(text, /Total costs over 12 months \| AED 17,000/);
   assert.match(text, /## Validated financial figures \(calculated by code\)[\s\S]*AED 78,000[\s\S]*month 4/);
   assert.ok(store.events.some((event) => event.payload?.kind === 'fact_gate_enforced' && event.payload.removed >= 2));
 });

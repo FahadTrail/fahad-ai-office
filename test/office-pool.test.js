@@ -141,10 +141,10 @@ test('Office data classes and drill markers', () => {
   assert.equal(classifyOfficeData(`key ${['sk', 'ant', 'x'.repeat(30)].join('-')}`).dataClass, 'confidential');
   assert.equal(classifyOfficeData('Anything', { env: { OFFICE_DEFAULT_DATA_CLASS: 'confidential' } }).dataClass, 'confidential');
   const request = officeRequest('[drill:failover] [drill:escalate] Plan a launch');
-  assert.deepEqual(request.drills, { failover: true, escalate: true, financeError: false, financeErrorAudit: false });
+  assert.deepEqual(request.drills, { failover: true, escalate: true, financeError: false, financeErrorAudit: false, financeTable: false });
   assert.equal(request.goal, 'Plan a launch');
-  assert.deepEqual(officeRequest('[drill:failover] x', { OFFICE_DRILLS_ENABLED: 'false' }).drills, { failover: false, escalate: false, financeError: false, financeErrorAudit: false });
-  assert.deepEqual(officeRequest('[drill:finance-error-audit] [drill:finance-error] x').drills, { failover: false, escalate: false, financeError: true, financeErrorAudit: true });
+  assert.deepEqual(officeRequest('[drill:failover] x', { OFFICE_DRILLS_ENABLED: 'false' }).drills, { failover: false, escalate: false, financeError: false, financeErrorAudit: false, financeTable: false });
+  assert.deepEqual(officeRequest('[drill:finance-error-audit] [drill:finance-error] x').drills, { failover: false, escalate: false, financeError: true, financeErrorAudit: true, financeTable: false });
   assert.equal(officeRequest('[drill:finance-error-audit] x').goal, 'x');
 });
 
