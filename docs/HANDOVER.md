@@ -34,7 +34,11 @@ This file is the live state. **The release procedure is
 | `groq:openai/gpt-oss-20b` | NOT_CODING_APPROVED | no |
 | OpenRouter nemotron-3-ultra/super | queued | pending (the OpenRouter slot was spent on 429ing Gemma routes) |
 
-**Failover drill:** see the live result in `docs/capacity-v2.md` §8 (session `12a9cad3`, Gemma → GLM-4.7-flash).
+**Two-pool failover: PASSED live.** Session `12a9cad3`:
+* The drill moved Gemma → GLM-4.7-flash.
+* Two further real rate limits switched GLM → Gemma → GLM from checkpoints.
+* Tests passed; 98K tokens, $0, 7.5 min.
+* Details are in `docs/capacity-v2.md` §8.
 
 **Next commands:**
 1. Grades: SQL on `provider_canary_runs` with `report->>'kind' = 'coding_qualification'`.
