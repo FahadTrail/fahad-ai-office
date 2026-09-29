@@ -14,6 +14,8 @@ import { baseJobName, capabilityGaps, jobFit, jobProfile, languageFit, languageG
 import { capacityPool, poolCooldowns } from './capacity-pools.js';
 import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 import { evidenceCapabilities, qualificationGaps, evidenceScore } from './qualification.js';
+import { allowsDataClass, requiredDataClass } from './pool-registry.js';
+import { codingTierGaps } from './coding-qualification.js';
 
 export { assertFreeRouteHonest, sameModelFamily, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 
@@ -52,6 +54,8 @@ export class AgentTurnGateway {
   // router share this so the UI shows exactly why a model is (not) used.
   async evaluate({
     requiresPrivateData = true,
+    dataClass = null,
+    codingTier = 'medium',
     estimatedInputTokens = 0,
     maxOutputTokens = 16_000,
     remainingBudgetUsd = Infinity,
@@ -83,7 +87,10 @@ export class AgentTurnGateway {
       const routeState = state.get(route.id) || null;
       const poolInfo = route.capacityPool || capacityPool(route);
       if (authorizedRouteIds && !authorizedRouteIds.includes(route.id)) reasons.push('WORKSPACE_NOT_AUTHORIZED');
-      if (requiresPrivateData && !route.privacyApproved) reasons.push('PRIVACY_NOT_APPROVED');
+      // Data class (Capacity V2): PUBLIC < NORMAL < PRIVATE < CONFIDENTIAL.
+      // The legacy boolean maps to PRIVATE (true) or PUBLIC (false).
+      const needed = requiredDataClass({ dataClass, requiresPrivateData });
+      if (!allowsDataClass(route, needed)) reasons.push(['PRIVATE', 'CONFIDENTIAL'].includes(needed) && !route.privacyApproved ? 'PRIVACY_NOT_APPROVED' : 'DATA_CLASS_NOT_ALLOWED');
       // The quality floor guards autonomous coding. Other jobs are governed by
       // their own capability minimums (capabilities.js JOB_PROFILES).
       if ((!job || CODING_JOBS.has(baseJobName(job) || '')) && route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
@@ -98,6 +105,10 @@ export class AgentTurnGateway {
       // Evidence before claims: a free model's own qualification results can
       // rule it out of a job, and critical jobs need a passed qualification.
       reasons.push(...qualificationGaps(route, job, qualifications, now));
+      // Coding tiers (Capacity V2, Part 12): with qualification evidence, a
+      // free route takes coding work only with a coding-suite grade that
+      // matches the job size (small / medium / large / critical).
+      if (qualifications && baseJobName(job) === 'coding') reasons.push(...codingTierGaps(route, codingTier, qualifications.coding, now));
       if (estimatedInputTokens + outputTokens > route.contextWindow) reasons.push('CONTEXT_TOO_LARGE');
       // A per-minute token RATE (not a window): the request must leave room
       // for a useful answer inside one minute's allowance.

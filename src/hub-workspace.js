@@ -535,6 +535,10 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
       if (typeof body.testCommand === 'string' && body.testCommand.trim()) config.testCommand = body.testCommand.trim().slice(0, 500);
       if (body.deploy === true) config.deploy = { mode: 'merge', workflow: 'deploy.yml' };
       if (['economy', 'balanced', 'quality'].includes(body.strategy)) config.routing = { strategy: body.strategy };
+      // Owner-only (authenticated Hub): the repository's data class and the
+      // job size for coding tiers. A model can never set these.
+      if (['PUBLIC', 'NORMAL', 'PRIVATE', 'CONFIDENTIAL'].includes(body.dataClass)) config.dataClass = body.dataClass;
+      if (['small', 'medium', 'large', 'critical'].includes(body.codingTier)) config.codingTier = body.codingTier;
       if (Array.isArray(body.supabaseProjects)) config.supabase = { projects: body.supabaseProjects.filter((ref) => /^[a-z0-9]{20}$/.test(ref)).slice(0, 5) };
       const conversationId = body.conversationId ? uuid(body.conversationId, 'conversationId') : null;
       const title = autoTitle(instruction).slice(0, 120);

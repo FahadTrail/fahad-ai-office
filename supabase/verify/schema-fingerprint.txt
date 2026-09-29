@@ -92,6 +92,7 @@ column|394e4d518b2001ef56e9354b60d34fbf|public.agent_events.payload jsonb null=N
 column|3aa3d29664dd826ce828b9a1203dc9c7|public.tool_executions.duration_ms integer null=YES default=
 column|3ad814ccc6c749b94f5b92c3138b6841|public.memory.updated_at timestamp with time zone null=NO default=now()
 column|3d8c3c2dfe145c7604291ac8d8f2a6b5|public.workspace_routing_policies.route_monthly_budget_usd jsonb null=NO default='{}'::jsonb
+column|3e6f9302793de583e5aa278d8336bcb2|public.capacity_snapshots.summary jsonb null=NO default=
 column|3f2705ae7392f81581ae3cb05ae73f16|public.continuity_checkpoints.stage text null=NO default=
 column|3fe34179d59128f81a67c0c4a18d155f|public.knowledge_items.source_date date null=YES default=
 column|40085e742f6a591635115051e83d8bb5|public.agent_sessions.spent_usd numeric null=NO default=0
@@ -378,6 +379,7 @@ column|db191c064a73874a9b504df1b4ed6293|public.workspace_policies.workspace_id u
 column|db6b11e5abaa2b694f87fa14f48bcbb3|public.provider_canary_runs.started_at timestamp with time zone null=YES default=
 column|dc856145685a3580fe638e2a939150c6|public.events.created_at timestamp with time zone null=NO default=clock_timestamp()
 column|deab7d08663ecd750393d35fc9d9655e|public.agents.model_tier text null=NO default='standard'::text
+column|dfac4a21d1ad214f1eaa06f27645243e|public.capacity_snapshots.snapshot_date date null=NO default=
 column|dfdf9db78385a77ee0e6a38d838c26fd|public.workspace_routing_policies.billing_priority ARRAY null=NO default=ARRAY['free'::text, 'included'::text, 'promo'::text, 'paid'::text]
 column|dffa88ca1941612b22f0ec06a560a8b1|public.artifacts.type text null=NO default=
 column|e193511238f198f7cdbabacb6b29ef90|public.knowledge_items.expires_at timestamp with time zone null=YES default=
@@ -392,6 +394,7 @@ column|ea1963639e1e38fb8d2680153cf1173f|public.continuity_checkpoints.payload js
 column|ea875c8db3405fbdebf4a3672c0bd4bc|public.workspace_tool_grants.decision text null=NO default='deny'::text
 column|ec3ac638dc4121950865a462e260a472|public.tool_executions.broker text null=NO default=
 column|eca2ae2843c1de17d47ab6115bd429a0|public.events.agent_id uuid null=YES default=
+column|ecaca1e37990f8e9410e791c26faa756|public.capacity_snapshots.taken_at timestamp with time zone null=NO default=now()
 column|ed02936ed3d5fb75ea3edb458d690456|public.provider_status.last_error_at timestamp with time zone null=YES default=
 column|ee00d5f8a3c2f9b1b08ea61a023dde13|public.continuity_tasks.completed_at timestamp with time zone null=YES default=
 column|ee7457b49ecd80a72201a08ab78a5657|public.runs.tokens_out integer null=NO default=0
@@ -465,6 +468,7 @@ constraint|1cfc7d14296d69ecda35e13e51500112|public.agent_sessions agent_sessions
 constraint|1d49361c0331af01757326b38b308d07|public.agent_sessions agent_sessions_work_branch_check CHECK (((work_branch IS NULL) OR (work_branch ~ '^[A-Za-z0-9._/-]{1,200}$'::text)))
 constraint|1dcb942cb53d8415898cc46e91550bd7|public.handoffs handoffs_from_agent_id_fkey FOREIGN KEY (from_agent_id) REFERENCES agents(id)
 constraint|1de8ed851fc2b85dcac20b9ca590a4b7|public.agent_checkpoints agent_checkpoints_reason_check CHECK ((reason = ANY (ARRAY['turn'::text, 'provider_switch'::text, 'approval'::text, 'phase'::text, 'com
+constraint|209ecf89decb2006293c2a10f2063d5a|public.capacity_snapshots capacity_snapshots_pkey PRIMARY KEY (snapshot_date)
 constraint|20bd4aaeaff1b0deb2d61a23a99ddf7a|public.agent_sessions agent_sessions_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
 constraint|2125aa97e3e30ea0e23ab9f82a2d8640|public.handoffs handoffs_pkey PRIMARY KEY (id)
 constraint|21d30577e0169f2bcd66ca92b1d5e848|public.agent_owner_inputs agent_owner_inputs_message_check CHECK (((char_length(btrim(message)) >= 1) AND (char_length(btrim(message)) <= 8000)))
@@ -541,6 +545,7 @@ constraint|632aef4d0fd32932df3634b830ca9388|public.jobs jobs_progress_check CHEC
 constraint|653c462bd26ce3c5f4f09ed4398936b6|public.tool_executions tool_executions_error_code_check CHECK (((error_code IS NULL) OR (error_code ~ '^[A-Z][A-Z0-9_]{2,80}$'::text)))
 constraint|66aa198751162e92a2d9d7311f6b513b|public.agent_sessions agent_sessions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON DELETE RESTRICT
 constraint|66df908c1206d0b108eddfe1939c0c6d|public.tool_executions tool_executions_run_id_fkey FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE RESTRICT
+constraint|68896a71bc9a610fdab8694c46ca49dc|public.capacity_snapshots capacity_snapshots_summary_check CHECK (((jsonb_typeof(summary) = 'object'::text) AND (pg_column_size(summary) <= 100000)))
 constraint|68f5b53ba8e5a5045223a6a35e8ca44b|public.tasks tasks_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 constraint|69c2ba92c26a32ea6d70eb6b61a189b2|public.workspace_policies workspace_policies_spent_usd_check CHECK ((spent_usd >= (0)::numeric))
 constraint|6a4b59b793589e3e65065151bd045395|public.provider_status provider_status_billing_class_check CHECK ((billing_class = ANY (ARRAY['included'::text, 'free'::text, 'promo'::text, 'paid'::text])))
@@ -853,6 +858,7 @@ index|7d0895be4ca9493ddc8811390fbc2b32|public CREATE UNIQUE INDEX continuity_han
 index|845a70d88db8ea9b8ca83b91a4cf14df|public CREATE UNIQUE INDEX continuity_tasks_idempotency_key_key ON public.continuity_tasks USING btree (idempotency_key)
 index|8544ee4439029736067365ef7c5b6205|public CREATE INDEX idx_results_job ON public.results USING btree (job_id)
 index|85667a48aa548f8720c850d04787bbdf|public CREATE UNIQUE INDEX agent_sessions_task_id_key ON public.agent_sessions USING btree (task_id)
+index|86993cc4eab41e7ce663807e71a065bf|public CREATE UNIQUE INDEX capacity_snapshots_pkey ON public.capacity_snapshots USING btree (snapshot_date)
 index|87944e8e7dde744a45f8ab151d8df75e|public CREATE INDEX workspace_tool_grants_lookup_idx ON public.workspace_tool_grants USING btree (workspace_id, broker, tool_name, action) WHERE enabled
 index|8914b93e098a350a2a4c070a944f5fcb|public CREATE UNIQUE INDEX jobs_pkey ON public.jobs USING btree (id)
 index|89d518a6e278d8a3efcddedc61c584a5|public CREATE INDEX idx_jobs_status ON public.jobs USING btree (status, created_at DESC)
@@ -919,6 +925,7 @@ publication|b6da8263c450bd4053553960629407a8|supabase_realtime public.handoffs
 publication|fb3c09d3f17d0431e0de564e355f7eee|supabase_realtime public.approvals
 table_acl|03e848914e98c5cfea7b1271efd25a21|public.continuity_usage rls=t service_role=arwdDxt/postgres
 table_acl|04184a9f6bb82c1fcbd2b9d1e8b83cb2|public.workspace_routing_policies rls=t service_role=arw/postgres
+table_acl|062e48b6b0fbf77add19be398f9edbdc|public.capacity_snapshots rls=t service_role=arwd/postgres
 table_acl|08cd372612a185d4f5bfc74009e1f829|public.tasks rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|15755150580ab0fe4fc3e949157cdd0c|public.files rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|1738651ed5dd0abe9fa1cf13d2ebbbc3|public.continuity_handoffs rls=t service_role=arwdDxt/postgres

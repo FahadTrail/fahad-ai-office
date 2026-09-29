@@ -375,6 +375,7 @@ class SessionRun {
     const policy = await this.c.routingFor(this.session, this.config.routing) || {};
     const routing = {
       requiresPrivateData: this.config.privateData,
+      dataClass: this.config.dataClass,
       estimatedInputTokens,
       remainingBudgetUsd: Math.max(0, this.session.budgetUsd - this.session.spentUsd),
       authorizedRouteIds: policy.authorizedRouteIds || this.c.authorizedRouteIds,
@@ -384,6 +385,9 @@ class SessionRun {
       effort: policy.effort,
       policyExcludedRouteIds: policy.excludedRoutes || [],
       budgetExhaustedRouteIds: policy.exhaustedRoutes || [],
+      qualifications: policy.qualifications || null,
+      // Job size for the coding tier gate: set on the task, else medium.
+      codingTier: this.config.codingTier || policy.codingTier || 'medium',
       // Autonomous coding needs a coding-capable, tool-calling model with a
       // large context; free models below that are never handed the task.
       job: 'coding',
@@ -993,6 +997,11 @@ function normalizeConfig(config) {
     publish: ['pull_request', 'branch', 'none'].includes(config.publish) ? config.publish : 'pull_request',
     waitForCi: config.waitForCi !== false,
     privateData: config.privateData !== false,
+    // Data class of the repository (Capacity V2, Part 11). Unset keeps the
+    // private default; PUBLIC / NORMAL are the owner's explicit statement
+    // that the code may go to free providers of that class.
+    dataClass: ['PUBLIC', 'NORMAL', 'PRIVATE', 'CONFIDENTIAL'].includes(config.dataClass) ? config.dataClass : null,
+    codingTier: ['small', 'medium', 'large', 'critical'].includes(config.codingTier) ? config.codingTier : null,
     allowPaid: config.allowPaid !== false && config.routing?.allowPaid !== false,
     routing: normalizeRouting(config.routing || {}),
     drill: Number.isInteger(config.drill?.failoverAfterIteration) && config.drill.failoverAfterIteration >= 1 && config.drill.failoverAfterIteration <= 100

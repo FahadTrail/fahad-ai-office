@@ -43,6 +43,21 @@ declare -A SHAPE=(
   # which the bot tells you when you send it /start before pairing).
   [TELEGRAM_BOT_TOKEN]='^[0-9]{5,}:[A-Za-z0-9_-]{20,}$'
   [TELEGRAM_OWNER_CHAT_ID]='^-?[0-9]{3,20}$'
+  # Capacity V2 free pools (docs/capacity-v2.md). Formats are not fully
+  # published, so the shape is a safety guard only (no whitespace, quotes or
+  # shell characters) and each provider verifies the key before it is stored.
+  [LLM7_API_KEY]='^[A-Za-z0-9._-]{20,512}$'
+  [OPENCODE_ZEN_API_KEY]='^[A-Za-z0-9._-]{20,512}$'
+  [OLLAMA_API_KEY]='^[A-Za-z0-9._-]{20,512}$'
+  [CLOUDFLARE_API_TOKEN]='^[A-Za-z0-9_-]{30,128}$'
+  # Not a secret: the Cloudflare account id (32 hex characters).
+  [CLOUDFLARE_ACCOUNT_ID]='^[a-f0-9]{32}$'
+  # Not secrets: the owner's reviewed decision that a provider may receive
+  # PRIVATE data (private code). Set true only after reading the provider's
+  # current API data terms. OpenCode applies it to zero-retention models only.
+  [OLLAMA_API_PRIVATE_DATA_APPROVED]='^(true|false)$'
+  [CLOUDFLARE_API_PRIVATE_DATA_APPROVED]='^(true|false)$'
+  [OPENCODE_ZEN_PRIVATE_DATA_APPROVED]='^(true|false)$'
 )
 if [[ -z $NAME || -z ${SHAPE[$NAME]+x} ]]; then
   echo "Usage: sudo bash ops/set-secret.sh NAME   (NAME is one of: ${!SHAPE[*]})"; exit 1
@@ -98,6 +113,28 @@ verify_mistral_key() {
 }
 if [[ $NAME == MISTRAL_API_KEY && ${SET_SECRET_SKIP_VERIFY:-} != 1 ]]; then
   verify_mistral_key || { unset value; exit 1; }
+fi
+
+# Capacity V2 keys are verified with the provider's own endpoint before
+# anything changes: the key's model list (Cloudflare: its token-verify API).
+# HTTP 200 = valid key. The key goes to curl on stdin as a header.
+declare -A VERIFY_URL=(
+  [LLM7_API_KEY]='https://api.llm7.io/v1/models'
+  [OPENCODE_ZEN_API_KEY]='https://opencode.ai/zen/v1/models'
+  [OLLAMA_API_KEY]='https://ollama.com/v1/models'
+  [CLOUDFLARE_API_TOKEN]='https://api.cloudflare.com/client/v4/user/tokens/verify'
+)
+verify_bearer_key() {
+  local url=${VERIFY_URL[$NAME]} code
+  code=$(printf 'Authorization: Bearer %s\n' "$value" | curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -H @- "$url" 2>/dev/null || true)
+  case $code in
+    200) echo "The provider accepted the key (${url#https://} → HTTP 200)." ;;
+    401|403) echo "The provider rejected the key (HTTP $code on ${url#https://}); nothing changed."; return 1 ;;
+    *) echo "Could not verify the key (HTTP ${code:-none}); storing it anyway — the next live canary checks it." ;;
+  esac
+}
+if [[ -n ${VERIFY_URL[$NAME]+x} && ${SET_SECRET_SKIP_VERIFY:-} != 1 ]]; then
+  verify_bearer_key || { unset value; exit 1; }
 fi
 
 # Rewrite .env atomically with the same owner and mode: drop old NAME lines,

@@ -1,9 +1,37 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-Last updated: 2026-09-28, about 21:30 UTC, after the final release
-readiness rehearsal. Read `AGENTS.md` first; it holds the permanent rules.
+Last updated: 2026-09-29, after Capacity Expansion V2 (see its section below). Read `AGENTS.md` first; it holds the permanent rules.
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
+
+## CAPACITY EXPANSION V2 (branch `claude/capacity-expansion-v2`, PR open, NOT merged)
+
+**Read `docs/capacity-v2.md`.** It is the full record: the baseline, the provider research, what was built (§3), the capacity model and today's production estimate (§4), the owner queue (§5), the deployment waves (§6) and what needs 24 h measurement (§7).
+
+Branched from `main` `199c1d6`. Nothing from this branch is deployed; merging deploys wave 1.
+
+State:
+* Tests: `node --test` passes 447/447.
+* Schema fingerprint updated for the one new migration, `20261003090000_capacity_snapshots`. It is additive, RLS on, service role only. **Not applied to production**: that needs the owner's approval, and the writer stays off until then.
+* New modules, all in `src/model-gateway/agentic/`:
+  * `pool-registry.js`, `provider-contract.js`;
+  * `coding-qualification.js`, `capacity-model.js`;
+  * `owner-actions.js`, `capacity-snapshots.js`.
+* Tests: `test/capacity-v2.test.js`, `test/coding-qualification.test.js`, `test/capacity-model.test.js`.
+* Behaviour changes, on purpose:
+  * Discovered OpenRouter/Gemini routes, and all new-provider routes, need a passed qualification before any job.
+  * With qualification evidence present, free routes take **coding** work only with a coding-suite grade matching the job size.
+  * Failed qualifications back off (24 h permanent / 1 h transient).
+* Production estimate (2026-09-29):
+  * ≈3.1M effective free tokens/day (≈94M/month) for general work;
+  * **free coding 0/day** (private code, and no free route has a coding grade yet);
+  * ≈47 (p50) / 13 (p90) Office projects/day, free-only.
+
+Next actions:
+1. Owner reviews and merges the PR (wave 1).
+2. Owner sets keys with `sudo bash ops/set-secret.sh NAME` (queue order in capacity-v2 §5) and restarts. There is no deploy, and never a key in chat.
+3. The owner approves applying the snapshots migration.
+4. After 24 h, compare `/api/capacity` → `capacity` with §4 and update §4/§7.
 
 ## RELEASE STATE (read this first)
 
