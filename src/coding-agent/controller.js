@@ -524,6 +524,17 @@ class SessionRun {
         return false;
       }
     }
+    // A route whose only obstacle is the size of this request (above the
+    // per-minute input quota the provider reported) can take the task again
+    // once the transcript is compacted into the continuation summary (≈7K
+    // tokens). Compact and retry, at most once per iteration, before blocking.
+    if (sizeOnlyBlocked(evaluations) && this.transcript.messages.length > 1 && this.state.sizeCompactedAt !== this.session.iteration) {
+      this.state.sizeCompactedAt = this.session.iteration;
+      this.forceCompact = true;
+      await this.event('guard', 'The next turn is larger than the per-minute quota of the only models left; compacting the transcript into a continuation summary and continuing the same task.',
+        { compaction: 'request_size', routes: evaluations.filter((entry) => entry.reasons.includes('REQUEST_ABOVE_PROVIDER_TPM')).map((entry) => entry.route.id) }, 'warning');
+      return false;
+    }
     const lastFailure = (error.attempts || []).filter((attempt) => attempt.status === 'failed').at(-1);
     const detail = lastFailure ? ` Last failure: ${lastFailure.route.id} ${lastFailure.error?.code || 'error'}.` : '';
     throw new Stop('blocked', `No model can take the next turn (${error.code}).${detail} Per route: ${truncate(summary, 1500)}`, { code: error.code });
@@ -972,6 +983,13 @@ class SessionRun {
     await this.checkpoint('compaction');
     await this.event('checkpoint', 'Transcript compacted into a durable continuation summary.', {});
   }
+}
+
+// True when some route is kept out only by the request size (and possibly a
+// cooldown that will pass): a smaller transcript would let it continue.
+export function sizeOnlyBlocked(evaluations) {
+  return (evaluations || []).some((entry) => entry.reasons.includes('REQUEST_ABOVE_PROVIDER_TPM')
+    && entry.reasons.every((reason) => reason === 'REQUEST_ABOVE_PROVIDER_TPM' || reason.startsWith('COOLDOWN_')));
 }
 
 function ownerMessageText(messages) {

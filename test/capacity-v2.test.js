@@ -298,5 +298,20 @@ test('a request above the provider-reported input TPM is not offered to that rou
   const coding = { status: 'qualified', grade: 'CODING_PRIMARY', suiteVersion: 'c2-2026-09', testedAt: new Date().toISOString() };
   const qualifications = Object.assign(new Map([[route.id, general]]), { coding: new Map([[route.id, coding]]) });
   assert.ok(routeClasses({ ...route, dataClass: 'PUBLIC' }, qualifications, {}).has('coding_public'));
-  assert.ok(!routeClasses({ ...route, dataClass: 'PUBLIC' }, qualifications, { state: { rateLimit: { inputTokensPerMinute: 15_000 } } }).has('coding_public'), '15K TPM cannot carry a 30K coding turn');
+  // Production 2026-09-29: Gemini reported Gemma's quota as 16K input tokens/min.
+  assert.ok(routeClasses({ ...route, dataClass: 'PUBLIC' }, qualifications, { state: { rateLimit: { inputTokensPerMinute: 16_000 } } }).has('coding_public'), '16K/min holds a small job turn (p90 9.1K)');
+  assert.ok(!routeClasses({ ...route, dataClass: 'PUBLIC' }, qualifications, { state: { rateLimit: { inputTokensPerMinute: 8_000 } } }).has('coding_public'), '8K/min (Groq free) does not');
+  const { capacityModel, codingTurnLimit, CODING_TURN_TOKENS_BY_SIZE } = await import('../src/model-gateway/agentic/capacity-model.js');
+  assert.equal(codingTurnLimit(route, { rateLimit: { inputTokensPerMinute: 16_000 } }), 16_000);
+  assert.equal(codingTurnLimit({ ...route, requestTokenLimit: 8_000 }), 8_000);
+  assert.equal(codingTurnLimit({ ...route, contextWindow: 32_000 }), 24_000);
+  const facts = { ...route, dataClass: 'PUBLIC', quotaPool: 'test:pool', requestsPerDay: 1_000 };
+  const model = capacityModel({ routes: [facts], pools: [{ id: 'test:pool', state: 'available' }], qualifications, states: new Map([[route.id, { rateLimit: { inputTokensPerMinute: 16_000 } }]]) });
+  assert.equal(model.pools[0].codingTurnLimit, 16_000);
+  if (model.pools[0].allowance.perDay == null) assert.equal(model.pools[0].rateCeilingPerDay, 16_000 * 1_440, 'rate ceiling, never summed');
+  assert.equal(model.perClass.general.tokensPerDay, model.pools[0].effectivePerDay ?? 0, 'the ceiling is not added to totals');
+  assert.equal(model.publicCodingJobsPerDay.small.turnTokens, CODING_TURN_TOKENS_BY_SIZE.small);
+  assert.equal(model.publicCodingJobsPerDay.small.pools, 1, 'small jobs: counted');
+  assert.equal(model.publicCodingJobsPerDay.medium.pools, 1, 'medium turns (16K) fit exactly');
+  assert.equal(model.publicCodingJobsPerDay.large.pools, 0, 'large turns (30K) do not fit a 16K/min quota');
 });
