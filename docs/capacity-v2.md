@@ -312,3 +312,27 @@ The first Gemma-pinned PUBLIC benchmark sessions (`eb5c34e3`, `d199fc5a`) blocke
    * Tool calling, context, privacy, health and demotion gates are unchanged.
    * A grade below the tier leaves every gate in place.
 3. **Body-read timeouts were recorded as `23`.** `AbortSignal.timeout` fired while reading a slow reasoning model's body (OpenRouter sends headers first). The raw DOMException code leaked into qualification records and `provider_status`. It is now a `NETWORK`/`TimeoutError` failure.
+
+### First free public coding jobs (MEASURED, production, 2026-09-29)
+
+Both runs used the small benchmark task: a new unit-test file on this public repository, `dataClass` PUBLIC, `allowPaid` false, nothing pushed.
+
+| Session | Routes | Turns | Tokens (in + out) | Cost | Wall time | Result |
+|---|---|---|---|---|---|---|
+| `7986c750` | Gemma 26B only | 7 | 85.6K + 1.1K | $0 | 20 min, of which ≈10 min provider cooldowns; survived a worker restart | tests 7/7, finish gate passed |
+| `12a9cad3` | Gemma 26B → GLM-4.7-flash (drill after 3 turns) | 15 | 94.7K + 3.2K | $0 | 7.5 min | finish gate passed |
+
+**Failover verdict for `12a9cad3` (`failoverVerdict`): all checks pass.**
+* The drill fired.
+* Both routes answered in the same session.
+* The session completed, with tests passing and files changed, at $0.
+* Beyond the drill, two **real** per-minute rate limits switched GLM → Gemma → GLM, each continuing from the checkpoint. This is the two-independent-pool behaviour the design relies on.
+
+**Measured facts used below:**
+* A small coding job is 87–98K tokens (the model's assumption was 120K).
+* One pool alone is throttled by its per-minute quota.
+* Two pools alternate and finish a small job in about 7.5 min.
+
+**Not yet measured:**
+* A medium job on free routes. GLM is graded SMALL_TASKS only; Gemma's per-minute input quota refuses turns above ≈16–25K tokens.
+* Either provider's daily cap. Gemini does not publish Gemma's quota; Z.ai publishes none.
