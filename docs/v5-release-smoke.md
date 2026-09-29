@@ -19,7 +19,7 @@ redeploys the previous commit, and V5 adds no migrations.
 | 7 | Real job state and handoff | Start one short objective: "Short check: FINANCE, a 12-month cost-only estimate — setup AED 5,000 in month 1, running AED 1,000 per month; AUDIT (after FINANCE) reviews it. One short answer." Watch the Office. | FINANCE shows working, then done. A FINANCE → AUDIT handoff animates and is listed under Handoffs. Everything comes from this real job; there are no demo objects. |
 | 8 | Finance shows verified figures only | Open the job's artifacts and the final answer. | Only VERIFIED figures (total costs AED 17,000). The monthly schedule is the "calculated by code" table/chart. There is no model-written schedule. |
 | 9 | Telegram still delivers | Check the Telegram chat, or run the SQL below. | The final answer arrives once; there is one `channel_delivered` event |
-| 10 | Capacity endpoint | `GET /api/capacity` from the logged-in Hub session. | 200 with `ok: true`, `headline`, `pools` (needs #76) |
+| 10 | Capacity endpoint | `GET /api/capacity` from the logged-in Hub session. | 200 with `ok: true`, `headline`, `pools` |
 
 ```sql
 -- Steps 7 and 9: the smoke job's states, handoff, delivery and cost.
