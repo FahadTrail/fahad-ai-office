@@ -137,3 +137,117 @@ is free "for a limited time"; inputs are not used for training.
     benefit.
   * Revisit if a model-based gate (e.g. a yes/no escalation decision) ever
     appears in the hot path.
+
+## 3. What was built (branch `claude/capacity-expansion-v2`)
+
+| Part | Module | What it does |
+|---|---|---|
+| Pool registry | `src/model-gateway/agentic/pool-registry.js` | One entry per independent quota: kind (daily / rolling / monthly / one-time / promo / rate-only / paid), reset time zone, published limits, confidence, source URL, owner action. UNKNOWN stays `null`. |
+| Data classes | `pool-registry.js`, `turn-gateway.js` | PUBLIC < NORMAL < PRIVATE < CONFIDENTIAL. A route receives data up to its class. PRIVATE needs the owner's per-provider flag; CONFIDENTIAL only the reviewed paid providers. Unknown class strings fail closed to PRIVATE. |
+| Provider contract + lifecycle | `provider-contract.js` | 15 contract fields per route (tested over every definition). Lifecycle NOT_CONFIGURED → DISCOVERED → CANARY → QUALIFIED → ACTIVE, plus BLOCKED and RETIRED. |
+| New providers | `model-pool.js` → `capacityV2Routes` | OpenCode Zen, LLM7, Ollama Cloud, Cloudflare Workers AI. Each route exists only while the provider's own catalog lists the model, so an ended promotion removes it. All start at `requiresQualification` (no job until qualified). |
+| Discovered-route gate | `qualification.js` | Discovered OpenRouter and Gemini routes also need a passed qualification. |
+| Qualification back-off | `qualification.js` | A refused model (400/403/404…) is re-tested after 24 h; a transient failure (429/5xx) after 1 h. Before this, dead Gemini 2.5 ids were probed about 74 times a day. |
+| Catalog changes | `provider-catalogs.js` → `catalogChanges` | Each refresh logs models added, removed and context-window changes. |
+| Coding qualification | `coding-qualification.js` | Suite `c1-2026-09`: 12 deterministic checks (A read, B fix, C implement, D edge cases, E test writing, F diff, G security, H async, I plan, J scope, K tool loop, L long context). Model-written code runs only in a child Node process under `--permission` (no fs, no child processes), with an empty environment, a vm context without code generation, and a timeout. Grades: CODING_PRIMARY / CODING_SECONDARY / CODING_SMALL_TASKS / NOT_CODING_APPROVED. The auto-qualifier runs it once the general backlog is empty (one route per cycle, same caps and back-off). |
+| Coding tiers | `coding-qualification.js` → `codingTierGaps`, used by `turn-gateway.js` | small → SMALL_TASKS, medium → SECONDARY, large → PRIMARY, critical → PRIMARY plus a private-data route. Paid routes are unaffected. The tier comes from the owner's `codingTier` on the task (default medium). |
+| Coding data class | `coding-agent/controller.js`, `hub-workspace.js` | The owner may set `dataClass` (PUBLIC / NORMAL / PRIVATE / CONFIDENTIAL) and `codingTier` on `POST /api/tasks`. The Chief's path cannot set them. Default stays PRIVATE. |
+| Handoff | `coding-agent/prompts.js` → `continuationMessage` | Adds repository and base, diff summary, owner decisions and unresolved items (open plan steps, failing test, recorded gate/CI failure). |
+| Capacity model | `capacity-model.js` | See §4. |
+| `/api/capacity` v2 | `hub-capacity.js` | Adds a `capacity` block (see §4) and `ownerActions`. |
+| Owner action queue | `owner-actions.js` | See §5. |
+| Snapshots | migration `20261003090000_capacity_snapshots`, `capacity-snapshots.js` | One compact summary per UTC day. The writer stays off until the migration is applied (owner approval). |
+| Secrets | `ops/set-secret.sh` | New names plus three privacy flags. Keys are verified with the provider before storing (hidden prompt; never in chat). |
+| Discovery tool | `tools/omniroute-harvest.mjs` | Policy classification of OmniRoute's registry. |
+
+A generic live canary (Part 19) needs no new code. Once a key is set, the
+auto-qualifier absorbs the provider's catalog models on its next cycle: it
+runs the general suite, then the coding suite, and records health like real
+traffic. `npm run canary:agentic` remains the owner-triggered drill.
+
+## 4. Capacity model (Parts 22–25)
+
+```
+effective tokens/day (pool, job class) =
+    daily allowance       published/reported tokens, or requests/day × MEASURED tokens/request (ESTIMATED)
+  × eligibility           qualification (+ coding grade and data class for coding)
+  × measured success rate our audited attempts this month (≥ 5 calls, else 1)
+  (today: also × health: available 1, degraded 0.5, exhausted 0)
+```
+
+* An UNKNOWN allowance is listed in `unknownAllowancePools` and never summed.
+* Job classes are general, coding, strong_reasoning, research and finance.
+* Coding jobs/day: effective coding tokens of pools whose grade meets the tier, divided by the measured job size (120K / 500K / 2.5M).
+* Projects/day:
+  * free-only: general tokens divided by 65K (p50) or 223K (p90);
+  * free-first: adds the remaining monthly budget spread over the days left, at the cheapest privacy-approved paid route's list price (50% cached input).
+
+### Production estimate today (2026-09-29, from production qualifications, states and 14-day attempts)
+
+| Pool | Effective tokens/day | Basis |
+|---|---|---|
+| Gemini Flash-Lite | 2.31M | ESTIMATED: 500 RPD (REPORTED) × measured 4.6K tokens/request |
+| Groq gpt-oss-120b | 200K | PUBLISHED TPD |
+| Groq gpt-oss-20b | 200K | PUBLISHED TPD |
+| Groq qwen3.8-27b | 100K | PUBLISHED × measured 50% success |
+| OpenRouter free (shared) | ≈280K | ESTIMATED: 50 RPD (PUBLISHED) × measured ≈6.1K × 92% |
+| Gemini Flash | 33K | ESTIMATED: 20 RPD × 4.4K × measured 38% success |
+| Gemma 26B / 31B, Z.ai Flash | UNKNOWN | no published allowance |
+| Cerebras | 0 | one-time trial, used up |
+
+**Total: ≈3.1M effective free tokens/day (≈94M/month) for general, research
+and finance work, of which about 0.33M/day is strong reasoning.** Flash-Lite's
+number rests on a REPORTED limit; the 24-hour measurement decides it.
+
+* **Free coding: 0 jobs/day.**
+  * Coding is PRIVATE by default, and no free route is approved for private data.
+  * No route has passed the coding suite yet; it starts after deploy.
+* Office projects/day, free-only: about 47 (p50) or 13 (p90).
+* Free-first with paid fallback adds nothing this month: the $2 budget is already spent ($2.38 over 14 days, mostly Anthropic).
+
+### What each owner action adds (ESTIMATED)
+
+* Mistral: ≈1B tokens/month REPORTED, about 33M/day. That would be ≈10× today's total, PUBLIC data only.
+* LLM7: 1M tokens/day PUBLISHED, PUBLIC.
+* Cloudflare: 10K neurons/day. The token equivalent depends on the model (UNKNOWN until measured); NORMAL data.
+* Ollama: small, unpublished; NORMAL data, and PRIVATE with the owner flag. This is the realistic first private free coding pool once it passes the coding suite.
+
+## 5. Owner action queue (Part 17)
+
+`GET /api/capacity` → `ownerActions` lists these in priority order. Status
+comes from the presence of a setting, never its value.
+
+1. Set `MISTRAL_API_KEY`.
+2. Set `LLM7_API_KEY`.
+3. Cloudflare: stay on the Workers Free plan, then set the token and the account id.
+4. Set `OLLAMA_API_KEY`.
+5. OpenCode Zen: disable auto-reload and keep a $0 balance, then set the key.
+6. Privacy review for private code (the three flags), or mark public repositories `dataClass: "PUBLIC"`.
+7. Optional: a one-time $10 OpenRouter credit (50 → 1,000 requests/day).
+8. Optional: Qwen activation (one-time credit only).
+
+Every key is set on the server with `sudo bash ops/set-secret.sh NAME`,
+which uses a hidden prompt. Never paste a key into a chat.
+
+## 6. Deployment waves
+
+* **Wave 1** (this PR; safe to deploy after CI):
+  * back-off;
+  * qualification gates;
+  * coding suite and tiers;
+  * capacity model and API;
+  * owner queue.
+* Wave 1 changes nothing for traffic that works today:
+  * paid routes are unaffected;
+  * established free routes keep their jobs;
+  * new providers stay inert without keys.
+* **Wave 2** (owner): keys through `set-secret.sh`, then a restart. The auto-qualifier then qualifies the new routes, with no deploy.
+* **Wave 3** (owner approval): apply migration `20261003090000_capacity_snapshots` to production; snapshots start the next day.
+
+## 7. Needs live 24-hour measurement
+
+* Gemini Flash-Lite's real daily request limit (REPORTED 500).
+* Tokens per request per pool on real traffic, which replaces the assumed 6K where no measurement exists.
+* Coding-suite grades of the configured free models (the first cycles after deploy).
+* Cloudflare tokens per neuron for the chosen models.
+* LLM7, Ollama and Zen limits once keys exist.

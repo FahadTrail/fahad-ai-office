@@ -1,37 +1,37 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-Last updated: 2026-09-28, about 21:30 UTC, after the final release
-readiness rehearsal. Read `AGENTS.md` first; it holds the permanent rules.
+Last updated: 2026-09-29, after Capacity Expansion V2 (see its section below). Read `AGENTS.md` first; it holds the permanent rules.
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
 
-## CAPACITY EXPANSION V2 (active sprint, branch `claude/capacity-expansion-v2`)
+## CAPACITY EXPANSION V2 (branch `claude/capacity-expansion-v2`, PR open, NOT merged)
 
-**Read `docs/capacity-v2.md` first.** It has the baseline, provider research, decisions and the capacity model. Branch from `main` `199c1d6`; nothing is deployed from it yet.
+**Read `docs/capacity-v2.md`.** It is the full record: the baseline, the provider research, what was built (§3), the capacity model and today's production estimate (§4), the owner queue (§5), the deployment waves (§6) and what needs 24 h measurement (§7).
 
-Done so far (commits on the branch):
-* Pool registry and data classes: `src/model-gateway/agentic/pool-registry.js`.
-  * Published/reported limits, reset kinds, UNKNOWN kept unknown.
-  * Data classes PUBLIC < NORMAL < PRIVATE < CONFIDENTIAL, enforced in `turn-gateway.js` (the legacy `requiresPrivateData` maps to PRIVATE/PUBLIC).
-* Provider contract and lifecycle: `provider-contract.js`.
-  * `contractViolations`, `routeContract`.
-  * `routeLifecycle`: NOT_CONFIGURED/RETIRED/BLOCKED/DISCOVERED/CANARY/QUALIFIED/ACTIVE.
-* New free providers, all catalog-gated: `model-pool.js` → `capacityV2Routes`. Every route has `requiresQualification`, which means `NOT_YET_QUALIFIED` for any job until qualified (fails closed).
-  * OpenCode Zen (8 free models, per-model data class; PUBLIC or NORMAL).
-  * LLM7 (1M tokens/day; PUBLIC).
-  * Ollama Cloud (NORMAL).
-  * Cloudflare Workers AI (NORMAL).
-* Secrets: `ops/set-secret.sh` knows `LLM7_API_KEY`, `OPENCODE_ZEN_API_KEY`, `OLLAMA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, plus 3 privacy-approval flags. Keys are verified with the provider before storing.
-* `tools/omniroute-harvest.mjs`: policy classification of OmniRoute's 352-provider registry (46 candidates; consumer-login, cookie and reverse-engineered providers rejected).
-* Tests: `test/capacity-v2.test.js`.
+Branched from `main` `199c1d6`. Nothing from this branch is deployed; merging deploys wave 1.
 
-Remaining (in order):
-* Coding qualification suite and coding grades.
-* Coding routing tiers.
-* Handoff additions: repository, diff summary, unresolved items.
-* Capacity model: effective tokens, coding and project estimates.
-* `/api/capacity` v2, owner action queue, daily snapshots (migration).
-* PR in waves; live canaries once keys exist.
+State:
+* Tests: `node --test` passes 447/447.
+* Schema fingerprint updated for the one new migration, `20261003090000_capacity_snapshots`. It is additive, RLS on, service role only. **Not applied to production**: that needs the owner's approval, and the writer stays off until then.
+* New modules, all in `src/model-gateway/agentic/`:
+  * `pool-registry.js`, `provider-contract.js`;
+  * `coding-qualification.js`, `capacity-model.js`;
+  * `owner-actions.js`, `capacity-snapshots.js`.
+* Tests: `test/capacity-v2.test.js`, `test/coding-qualification.test.js`, `test/capacity-model.test.js`.
+* Behaviour changes, on purpose:
+  * Discovered OpenRouter/Gemini routes, and all new-provider routes, need a passed qualification before any job.
+  * With qualification evidence present, free routes take **coding** work only with a coding-suite grade matching the job size.
+  * Failed qualifications back off (24 h permanent / 1 h transient).
+* Production estimate (2026-09-29):
+  * ≈3.1M effective free tokens/day (≈94M/month) for general work;
+  * **free coding 0/day** (private code, and no free route has a coding grade yet);
+  * ≈47 (p50) / 13 (p90) Office projects/day, free-only.
+
+Next actions:
+1. Owner reviews and merges the PR (wave 1).
+2. Owner sets keys with `sudo bash ops/set-secret.sh NAME` (queue order in capacity-v2 §5) and restarts. There is no deploy, and never a key in chat.
+3. The owner approves applying the snapshots migration.
+4. After 24 h, compare `/api/capacity` → `capacity` with §4 and update §4/§7.
 
 ## RELEASE STATE (read this first)
 
