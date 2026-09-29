@@ -38,13 +38,35 @@ export class OfficeBridge {
     return true;
   }
 
+  // The channel's one conversation. Idempotent and retry-safe: a failed
+  // lookup is retried and then fails (it never counts as "not found", which
+  // is how a network error once created a duplicate); concurrent callers
+  // share one lookup; the oldest open conversation always wins, so a race
+  // between processes converges on the same row.
   async conversation() {
+    this.opening ||= this.openConversation().finally(() => { this.opening = null; });
+    return this.opening;
+  }
+
+  async openConversation() {
     const title = CONVERSATION_TITLE[this.channel] || `${this.channel} · CHIEF`;
-    const { data: found } = await this.db.from('conversations').select('id').eq('project_id', this.workspaceId).eq('title', title).eq('archived', false).limit(1).maybeSingle();
-    if (found?.id) return found.id;
+    const find = async () => {
+      let last = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const { data, error } = await this.db.from('conversations').select('id').eq('project_id', this.workspaceId).eq('title', title).eq('archived', false)
+            .order('created_at', { ascending: true }).limit(1).maybeSingle();
+          if (!error) return data?.id || null;
+          last = error;
+        } catch (error) { last = error; }
+      }
+      throw new Error(`Could not look up the ${this.channel} conversation: ${last?.message || last}`);
+    };
+    const found = await find();
+    if (found) return found;
     const { data, error } = await this.db.from('conversations').insert({ project_id: this.workspaceId, title, title_source: 'owner' }).select('id').single();
     if (error) throw new Error(`Could not open the ${this.channel} conversation: ${error.message}`);
-    return data.id;
+    return (await find().catch(() => null)) || data.id;
   }
 
   // Fahad's message → CHIEF, exactly like a Hub chat message.
