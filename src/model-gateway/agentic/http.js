@@ -36,12 +36,15 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
     const dailyQuota = cloudflareDaily || (response.status === 429 && isDailyQuotaText(errorText));
     const reason = providerReasonHint(response.status, errorText);
     const google = googleQuotaDetails(payload);
+    // A per-minute quota (Gemini QuotaFailure ...PerMinute...) resets within
+    // a minute: the route waits for that window, never an escalating backoff.
+    const minuteQuota = !dailyQuota && response.status === 429 && (google.perMinute || /per.?minute|\bRPM\b|\bTPM\b|per 60s/i.test(errorText));
     const reported = google.inputTokensPerMinute || google.requestsPerMinute
       ? Object.freeze({ ...(rateLimit || {}), ...(google.inputTokensPerMinute ? { inputTokensPerMinute: google.inputTokensPerMinute } : {}), ...(google.requestsPerMinute ? { requestsPerMinute: google.requestsPerMinute } : {}) })
       : rateLimit;
     throw providerError(`${provider} request failed`, {
       status: cloudflareDaily ? 429 : response.status,
-      ...(dailyQuota ? { quotaScope: 'day' } : {}),
+      ...(dailyQuota ? { quotaScope: 'day' } : minuteQuota ? { quotaScope: 'minute' } : {}),
       ...(reason ? { reason } : {}),
       type: typeof type === 'string' ? type : String(type ?? ''),
       retryAfter: response.headers.get('retry-after') ?? google.retryAfterSeconds,
@@ -74,7 +77,7 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
 // and google.rpc.RetryInfo ("retryDelay": "37s"). Only numbers are kept.
 export function googleQuotaDetails(payload) {
   const details = Array.isArray(payload?.error?.details) ? payload.error.details : [];
-  const result = { retryAfterSeconds: null, inputTokensPerMinute: null, requestsPerMinute: null };
+  const result = { retryAfterSeconds: null, inputTokensPerMinute: null, requestsPerMinute: null, perMinute: false };
   for (const detail of details) {
     const kind = String(detail?.['@type'] || '');
     if (kind.endsWith('RetryInfo')) {
@@ -85,6 +88,7 @@ export function googleQuotaDetails(payload) {
       for (const violation of Array.isArray(detail.violations) ? detail.violations : []) {
         const id = String(violation?.quotaId || violation?.quotaMetric || '');
         const value = Number(violation?.quotaValue);
+        if (/PerMinute/i.test(id)) result.perMinute = true;
         if (!Number.isFinite(value) || value <= 0 || !/PerMinute/i.test(id)) continue;
         if (/InputToken|input_token/i.test(id)) result.inputTokensPerMinute = value;
         else if (/Requests?PerMinute|request_count/i.test(id)) result.requestsPerMinute = value;
