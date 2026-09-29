@@ -513,7 +513,9 @@ class SessionRun {
       if (waitMs <= this.c.limits.maxProviderWaitMs) {
         await this.event('guard', `All eligible models are cooling down; waiting ${Math.ceil(waitMs / 1000)}s for the earliest reset, then continuing the same task.`,
           { waiting: true, waitMs, routes: waitable.map((entry) => ({ id: entry.route.id, until: entry.state?.cooldownUntil || null })) }, 'warning');
-        await this.checkpoint('waiting');
+        // A between-turns checkpoint ('turn': the reasons are a database
+        // constraint); the guard event above records that it is a wait.
+        await this.checkpoint('turn');
         const until = nowMs + waitMs;
         while (this.c.now() < until) {
           this.guard();
