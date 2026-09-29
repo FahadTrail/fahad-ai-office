@@ -19,7 +19,7 @@ export class OpenAIResponsesProtocol {
     return Boolean(this.apiKey);
   }
 
-  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, clientRequestId, effort = null }) {
+  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, clientRequestId, effort = null, timeoutMs = null }) {
     // Responses reasoning effort tops out at "high"; stronger requests map to it.
     const reasoning = effort ? ({ low: 'low', medium: 'medium' }[effort] || 'high') : this.reasoningEffort;
     if (!this.apiKey) throw providerError(`${provider} credential is unavailable`, { status: 401, type: 'authentication_error' });
@@ -28,7 +28,9 @@ export class OpenAIResponsesProtocol {
       fetchFn: this.fetchFn,
       url: this.endpoint,
       provider,
-      timeoutMs: this.timeoutMs,
+      // A caller may allow one known-long call more time (the coding
+      // suite's ten-task answer); the route's own timeout is the default.
+      timeoutMs: timeoutMs || this.timeoutMs,
       headers: { authorization: `Bearer ${this.apiKey}`, ...(clientRequestId ? { 'x-client-request-id': clientRequestId } : {}) },
       body: {
         model,

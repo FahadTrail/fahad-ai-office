@@ -32,14 +32,16 @@ export class ChatCompletionsProtocol {
     return Boolean(this.apiKey) && !/\.invalid\//.test(this.endpoint);
   }
 
-  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, clientRequestId }) {
+  async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, clientRequestId, timeoutMs = null }) {
     if (!this.apiKey) throw providerError(`${provider} credential is unavailable`, { status: 401, type: 'authentication_error' });
     const startedAt = Date.now();
     const { body, requestId, rateLimit } = await postJson({
       fetchFn: this.fetchFn,
       url: this.endpoint,
       provider,
-      timeoutMs: this.timeoutMs,
+      // A caller may allow one known-long call more time (the coding
+      // suite's ten-task answer); the route's own timeout is the default.
+      timeoutMs: timeoutMs || this.timeoutMs,
       headers: {
         authorization: `Bearer ${this.apiKey}`,
         ...(clientRequestId ? { 'x-client-request-id': clientRequestId } : {}),

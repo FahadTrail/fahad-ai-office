@@ -37,6 +37,8 @@ export const CODING_GRADES = Object.freeze(['NOT_CODING_APPROVED', 'CODING_SMALL
 
 // Minimum grade a free route needs per coding job size (Part 12). Critical
 // work additionally needs a route approved for private data.
+export const CODING_SUITE_MAIN_TIMEOUT_MS = 300_000;
+
 export const CODING_TIERS = Object.freeze({
   small: 'CODING_SMALL_TASKS',
   medium: 'CODING_SECONDARY',
@@ -291,7 +293,10 @@ export async function qualifyCodingRoute(route, { now = () => Date.now(), maxOut
     // default models (e.g. GLM Flash) need room to finish the JSON, within
     // the route's per-request token limit (Groq free: 8K tokens/minute).
     const mainBudget = Math.max(2_000, Math.min(8_000, route.requestTokenLimit ? route.requestTokenLimit - 2_000 : 8_000));
-    const main = await call({ system: SYSTEM, messages: [text(MAIN_PROMPT)], tools: [], maxOutputTokens: mainBudget });
+    // The ten answers arrive in ONE call (≈ ten agent turns of output), so it
+    // gets twice a free route's per-turn timeout: a slow reasoning model is
+    // graded on its answers, not on a timeout no real turn would hit.
+    const main = await call({ system: SYSTEM, messages: [text(MAIN_PROMPT)], tools: [], maxOutputTokens: mainBudget, timeoutMs: CODING_SUITE_MAIN_TIMEOUT_MS });
     const answer = replyText(main);
     checks = { ...gradeCodingAnswer(answer), tools: false, context: null };
     // Metadata only (never the model output): tells a parse failure apart
