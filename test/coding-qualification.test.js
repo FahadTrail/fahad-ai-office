@@ -180,7 +180,8 @@ test('coding suite records parse diagnostics and gives the main answer room with
 test('a measured coding grade satisfies the coding quality floor for a free route; claims alone do not', async () => {
   const route = {
     id: 'gemini:gemma', provider: 'gemini', model: 'gemma', billingClass: 'free', qualityTier: 3, contextWindow: 128_000, unavailableReasons: [],
-    capabilities: { coding: 4, reasoning: 4, toolCalling: true, structuredOutput: true, contextWindow: 128_000 }, protocolClient: {},
+    // Registry scores as in production (Gemma 4: coding 3, reasoning 3).
+    capabilities: { coding: 3, reasoning: 3, toolCalling: true, structuredOutput: true, contextWindow: 128_000 }, protocolClient: {},
   };
   const gateway = new AgentTurnGateway({ pool: [route], stateStore: new MemoryProviderStateStore(), minQualityTier: 4 });
   const run = async (coding) => (await gateway.evaluate({
@@ -190,4 +191,30 @@ test('a measured coding grade satisfies the coding quality floor for a free rout
   assert.ok((await run(new Map())).includes('BELOW_QUALITY_FLOOR'), 'no grade: the claimed tier decides');
   assert.ok(!(await run(new Map([[route.id, codingRecord('CODING_PRIMARY')]]))).includes('BELOW_QUALITY_FLOOR'), 'measured grade satisfies the floor');
   assert.ok((await run(new Map([[route.id, codingRecord('NOT_CODING_APPROVED')]]))).includes('BELOW_QUALITY_FLOOR'));
+  // Production session d199fc5a: the capability minimums (coding 4,
+  // reasoning 4) blocked the graded route even after the floor was met.
+  assert.ok((await run(new Map())).includes('CAPABILITY_CODING_BELOW_4'), 'no grade: claimed scores decide');
+  assert.deepEqual(await run(new Map([[route.id, codingRecord('CODING_PRIMARY')]])), [], 'graded route is eligible for a small PUBLIC coding turn');
+  const small = await run(new Map([[route.id, codingRecord('CODING_SMALL_TASKS')]]));
+  assert.deepEqual(small, [], 'a SMALL_TASKS grade serves the small tier');
+  const tools = (await new AgentTurnGateway({ pool: [{ ...route, capabilities: { ...route.capabilities, toolCalling: false } }], stateStore: new MemoryProviderStateStore(), minQualityTier: 4 }).evaluate({
+    job: 'coding', dataClass: 'PUBLIC', codingTier: 'small', estimatedInputTokens: 20_000, maxOutputTokens: 4_000,
+    qualifications: Object.assign(new Map([general(route.id)]), { coding: new Map([[route.id, codingRecord('CODING_PRIMARY')]]) }),
+  }))[0].reasons;
+  assert.ok(tools.includes('TOOL_CALLING_REQUIRED'), 'the grade never waives tool calling');
+});
+
+test('a coding grade below the session tier keeps the capability minimums', async () => {
+  const route = {
+    id: 'zhipu:glm', provider: 'zhipu', model: 'glm', billingClass: 'free', qualityTier: 3, contextWindow: 200_000, unavailableReasons: [],
+    capabilities: { coding: 3, reasoning: 3, toolCalling: true, structuredOutput: true, contextWindow: 200_000 }, protocolClient: {},
+  };
+  const gateway = new AgentTurnGateway({ pool: [route], stateStore: new MemoryProviderStateStore(), minQualityTier: 4 });
+  const reasons = (await gateway.evaluate({
+    job: 'coding', dataClass: 'PUBLIC', codingTier: 'medium', estimatedInputTokens: 20_000, maxOutputTokens: 4_000,
+    qualifications: Object.assign(new Map([general(route.id)]), { coding: new Map([[route.id, codingRecord('CODING_SMALL_TASKS')]]) }),
+  }))[0].reasons;
+  assert.ok(reasons.includes('CODING_GRADE_TOO_LOW'));
+  assert.ok(reasons.includes('CAPABILITY_CODING_BELOW_4'));
+  assert.ok(reasons.includes('BELOW_QUALITY_FLOOR'));
 });

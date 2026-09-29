@@ -98,18 +98,20 @@ export class AgentTurnGateway {
       // A free route's measured coding grade (coding suite) outranks its
       // claimed quality tier: a grade that meets the job's tier satisfies the
       // floor (e.g. Gemma 26B: tier 3 claimed, CODING_PRIMARY measured).
-      if ((!job || CODING_JOBS.has(baseJobName(job) || '')) && route.qualityTier < minQualityTier) {
-        const graded = route.billingClass !== 'paid' && qualifications && baseJobName(job) === 'coding'
-          && !codingTierGaps(route, codingTier, qualifications.coding, now).length;
-        if (!graded) reasons.push('BELOW_QUALITY_FLOOR');
-      }
+      const codingGraded = route.billingClass !== 'paid' && Boolean(qualifications) && baseJobName(job) === 'coding'
+        && !codingTierGaps(route, codingTier, qualifications.coding, now).length;
+      if ((!job || CODING_JOBS.has(baseJobName(job) || '')) && route.qualityTier < minQualityTier && !codingGraded) reasons.push('BELOW_QUALITY_FLOOR');
       // Capability before price: a free model that cannot do the job is not
       // offered the job. Planning scores are corrected by the route's own
       // measured qualification (never raised for strict, high-stakes jobs).
       const capabilities = route.billingClass === 'paid' ? route.capabilities
         : evidenceCapabilities(route.capabilities, qualifications?.get(route.id), { strict, now });
       const outputTokens = routeOutputTokens(route, maxOutputTokens, estimatedInputTokens);
-      reasons.push(...capabilityGaps(capabilities, job, { needContext: requiredContext(estimatedInputTokens, maxOutputTokens) }));
+      // The same measured grade is the coding job's strict evidence for its
+      // coding and reasoning scores (the suite tests both, deterministically);
+      // tool calling, context, privacy and health gates still apply.
+      const gaps = capabilityGaps(capabilities, job, { needContext: requiredContext(estimatedInputTokens, maxOutputTokens) });
+      reasons.push(...(codingGraded ? gaps.filter((gap) => !/^CAPABILITY_(CODING|REASONING)_BELOW_/.test(gap)) : gaps));
       reasons.push(...languageGaps(capabilities, language));
       // Evidence before claims: a free model's own qualification results can
       // rule it out of a job, and critical jobs need a passed qualification.

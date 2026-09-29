@@ -301,3 +301,14 @@ models.
 | Z.ai | **No explicit statement confirmed** | privacy policy: API content "processed in real-time … not saved"; a DPA makes Z.ai a processor (Jingsheng Hengxing Technology Pte. Ltd, Singapore) | official pages via search; the DPA is not readable from the sandbox | Candidate, **evidence incomplete**. Fahad reads the DPA first. |
 | Gemini free tier | may be used to improve products | — | wave 1 | PUBLIC |
 | OpenRouter `:free` | depends on the upstream; may log | — | wave 1 | PUBLIC |
+
+### Coding path fixes found by the first public benchmark
+
+The first Gemma-pinned PUBLIC benchmark sessions (`eb5c34e3`, `d199fc5a`) blocked with `NO_ELIGIBLE_PROVIDER` and exposed three gaps:
+
+1. **The coding worker had no discovered routes** (#81). Only the Office runtime refreshed the provider catalogs. The worker now refreshes them at start and every 6 h, then rebuilds its pool.
+2. **Static capability claims outranked the measured grade.** The coding job requires `coding ≥ 4, reasoning ≥ 4`, and its strict evidence never raises registry scores. Gemma 4 and GLM-4.x-Flash are registered at 3/3, so a CODING_PRIMARY grade was not enough.
+   * A valid coding-suite grade that meets the session's tier now also satisfies those two minimums, as it already satisfied the quality floor.
+   * Tool calling, context, privacy, health and demotion gates are unchanged.
+   * A grade below the tier leaves every gate in place.
+3. **Body-read timeouts were recorded as `23`.** `AbortSignal.timeout` fired while reading a slow reasoning model's body (OpenRouter sends headers first). The raw DOMException code leaked into qualification records and `provider_status`. It is now a `NETWORK`/`TimeoutError` failure.
