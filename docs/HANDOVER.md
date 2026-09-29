@@ -4,6 +4,48 @@ Last updated: 2026-09-29, after Capacity Expansion V2 (see its section below). R
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
 
+## CAPACITY V2 WAVE 2 (in progress, 2026-09-29)
+
+**Production:** `main` `5c53d27` (PR #77 merged 18:57 UTC; deploy run 69: "DEPLOYMENT SUCCESSFUL — now running commit 5c53d27; container healthy").
+
+Verified after the restart (19:00 UTC):
+* Supabase tools self-check OK: read-only role, write blocked, scope enforced, no secret exposed.
+* Telegram channel OK: owner paired.
+
+**Migration `20261003090000_capacity_snapshots`: APPLIED** to production 18:56 UTC.
+* It is additive: one new table, RLS on, `service_role` arwd only, no policies.
+* The history row's version was aligned to `20261003090000` (metadata only).
+* Production fingerprint equals `supabase/verify/schema-fingerprint.txt`: 963 objects, aggregate md5 `0182959f56ed97e7c95e6e621fd32114`.
+* Rollback (only if needed): `drop table public.capacity_snapshots;` plus deleting its `schema_migrations` row. Nothing else depends on the table: the writer disables itself and `/api/capacity` returns empty history.
+
+**First snapshot: `capacity_snapshots` 2026-09-29, written 19:00:33** (written by production code):
+* 3.12M free tokens/day ESTIMATED over 12 independent pools;
+* strong reasoning 0.61M/day;
+* coding 0/day;
+* 48/14 Office projects/day.
+
+**PR #78** (`claude/capacity-v2-wave2`, draft, **needs Fahad's merge approval**):
+* the paid fallback skips blocked accounts (production chose not-activated Qwen);
+* `capacity.history`;
+* Z.ai and Groq privacy flags in `set-secret.sh`;
+* the auto-qualifier grades coding every cycle (≤3, one per provider; caps applied before picking — fixes a capped OpenRouter route blocking all coding grading);
+* `docs/free-provider-harvest.md`.
+
+**Coding qualification** runs inside production (auto-qualifier). Read results with:
+
+```sql
+select c.completed_at, r->>'routeId', r->>'status', r->>'grade', r->>'passed', r->'checks', r->>'errorCode'
+from provider_canary_runs c, jsonb_array_elements(c.report->'results') r
+where c.report->>'kind' = 'coding_qualification' order by c.completed_at desc;
+```
+
+Key findings so far:
+* `FahadTrail/fahad-ai-office` is a PUBLIC repository. Coding tasks on it may use `dataClass: "PUBLIC"`, so free routes with a coding grade can do public coding at $0.
+* The only legitimate free PRIVATE coding path with existing keys is Z.ai GLM Flash. Its API terms say no storage and no training; it needs Fahad's `ZHIPU_API_PRIVATE_DATA_APPROVED=true` plus a coding grade.
+* Groq has the same terms, but its 8K tokens/minute (MEASURED from headers) cannot carry a coding turn.
+* Self-hosting is not viable: the VPS is CPU-only (REPORTED).
+* No owner canary was queued: it would call 4 paid routes outside the spent $2 budget. Live free-route evidence comes from the auto-qualifier.
+
 ## CAPACITY EXPANSION V2 (branch `claude/capacity-expansion-v2`, PR open, NOT merged)
 
 **Read `docs/capacity-v2.md`.** It is the full record: the baseline, the provider research, what was built (§3), the capacity model and today's production estimate (§4), the owner queue (§5), the deployment waves (§6) and what needs 24 h measurement (§7).

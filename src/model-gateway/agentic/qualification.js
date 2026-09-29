@@ -322,7 +322,7 @@ function strength(route) {
 // untested free routes (new credentials and newly discovered models are
 // absorbed automatically) and records their health like real traffic.
 export class AutoQualifier {
-  constructor({ createPool, stateStore, store, log = () => {}, intervalMs = 6 * 3600_000, backlogIntervalMs = 20 * 60_000, firstRunDelayMs = 2 * 60_000, now = () => Date.now(), maxRoutes = 5, dailyProviderCap = { openrouter: 6 } }) {
+  constructor({ createPool, stateStore, store, log = () => {}, intervalMs = 6 * 3600_000, backlogIntervalMs = 20 * 60_000, firstRunDelayMs = 2 * 60_000, now = () => Date.now(), maxRoutes = 5, maxCodingRoutes = 3, dailyProviderCap = { openrouter: 6 } }) {
     this.backlogIntervalMs = backlogIntervalMs;
     this.dailyProviderCap = dailyProviderCap;
     this.dailyCount = { day: null, counts: {} };
@@ -333,6 +333,7 @@ export class AutoQualifier {
     this.intervalMs = intervalMs;
     this.now = now;
     this.maxRoutes = maxRoutes;
+    this.maxCodingRoutes = maxCodingRoutes;
     this.nextAt = now() + firstRunDelayMs;
     this.active = null;
   }
@@ -379,34 +380,48 @@ export class AutoQualifier {
         return true;
       });
     const results = Object.assign([], { backlog: Math.max(0, pending.length - candidates.length) });
-    if (!candidates.length) return this.codingCycle(pool, qualifications, results);
     for (const route of candidates) {
       const result = await qualifyRoute(route, { now: this.now });
       if (result.status === 'error') await this.stateStore.recordFailure(route, classifyProviderError(result.error || { code: result.errorCode })).catch(() => {});
       else await this.stateStore.recordSuccess(route, { usage: result.usage }).catch(() => {});
       results.push(result);
     }
-    await this.store.save(results);
-    this.log('Qualified free models:', JSON.stringify(results.map((result) => ({ route: result.routeId, status: result.status, passed: result.passed ?? null, error: result.errorCode || null }))));
-    return results;
+    if (results.length) {
+      await this.store.save(results);
+      this.log('Qualified free models:', JSON.stringify(results.map((result) => ({ route: result.routeId, status: result.status, passed: result.passed ?? null, error: result.errorCode || null }))));
+    }
+    // Coding grades are the top capacity need: every cycle also grades coding
+    // candidates on providers this cycle's general runs did not touch.
+    return this.codingCycle(pool, qualifications, results, { excludeProviders: new Set(candidates.map((route) => route.provider)) });
   }
 
-  // Coding suite (coding-qualification.js): once the general backlog is
-  // empty, one route per cycle that passed the general suite with coding and
-  // tools is graded for coding work. Same back-off and daily caps apply.
-  async codingCycle(pool, qualifications, results) {
-    const [route] = codingCandidates(pool, { qualifications, now: this.now(), backoffUntil: qualificationBackoffUntil, maxRoutes: 1 })
-      .filter((candidate) => this.underDailyCap(candidate));
-    if (!route) return results;
-    this.dailyCount.counts[route.provider] = (this.dailyCount.counts[route.provider] || 0) + 1;
-    const result = await qualifyCodingRoute(route, { now: this.now });
-    if (result.status === 'error') await this.stateStore.recordFailure(route, classifyProviderError(result.error || { code: result.errorCode })).catch(() => {});
-    else await this.stateStore.recordSuccess(route, { usage: result.usage }).catch(() => {});
-    await this.store.save([result], { kind: 'coding_qualification', suiteVersion: CODING_SUITE_VERSION });
-    this.log('Coding qualification:', JSON.stringify({ route: result.routeId, grade: result.grade || null, passed: result.passed ?? null, error: result.errorCode || null }));
-    results.push(result);
+  // Coding suite (coding-qualification.js): routes that passed the general
+  // suite with coding and tools are graded for coding work. Up to
+  // `maxCodingRoutes` per cycle, at most one per provider (never two runs on
+  // one provider's quota in a cycle), skipping providers already used by this
+  // cycle's general qualification. The daily caps are applied BEFORE picking,
+  // so a capped provider never blocks the others. Same back-off applies.
+  async codingCycle(pool, qualifications, results, { excludeProviders = new Set() } = {}) {
+    const all = codingCandidates(pool, { qualifications, now: this.now(), backoffUntil: qualificationBackoffUntil, maxRoutes: Infinity });
+    const picked = [];
+    const providers = new Set(excludeProviders);
+    for (const candidate of all) {
+      if (picked.length >= this.maxCodingRoutes) break;
+      if (providers.has(candidate.provider) || !this.underDailyCap(candidate)) continue;
+      providers.add(candidate.provider);
+      picked.push(candidate);
+    }
+    for (const route of picked) {
+      this.dailyCount.counts[route.provider] = (this.dailyCount.counts[route.provider] || 0) + 1;
+      const result = await qualifyCodingRoute(route, { now: this.now });
+      if (result.status === 'error') await this.stateStore.recordFailure(route, classifyProviderError(result.error || { code: result.errorCode })).catch(() => {});
+      else await this.stateStore.recordSuccess(route, { usage: result.usage }).catch(() => {});
+      await this.store.save([result], { kind: 'coding_qualification', suiteVersion: CODING_SUITE_VERSION });
+      this.log('Coding qualification:', JSON.stringify({ route: result.routeId, grade: result.grade || null, passed: result.passed ?? null, error: result.errorCode || null }));
+      results.push(result);
+    }
     // More coding candidates remain: keep the short backlog interval.
-    results.backlog = Math.max(0, codingCandidates(pool, { qualifications, now: this.now(), backoffUntil: qualificationBackoffUntil, maxRoutes: Infinity }).length - 1);
+    results.backlog = (results.backlog || 0) + Math.max(0, all.length - picked.length);
     return results;
   }
 }

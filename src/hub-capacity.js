@@ -16,12 +16,14 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
   const monthStart = new Date(now);
   monthStart.setUTCDate(1); monthStart.setUTCHours(0, 0, 0, 0);
   const dayStart = new Date(now); dayStart.setUTCHours(0, 0, 0, 0);
-  const [{ data: statusRows }, { data: attemptRows }, qualifications, { data: policyRows }] = await Promise.all([
+  const [{ data: statusRows }, { data: attemptRows }, qualifications, { data: policyRows }, { data: snapshotRows }] = await Promise.all([
     db.from('provider_status').select('provider,model,health,cooldown_until,rate_limit'),
     db.from('model_attempts').select('provider,model,status,input_tokens,output_tokens,cached_input_tokens,reasoning_tokens,cost_usd,attempt_no,task_id,started_at')
       .gte('started_at', monthStart.toISOString()).limit(20_000),
     new QualificationStore(db, { now: () => now }).snapshot().catch(() => null),
     Promise.resolve(db.from('workspace_policies').select('monthly_budget_usd,spent_usd,reserved_usd')).catch(() => ({ data: null })),
+    // Daily snapshots (capacity over time); absent table → empty history.
+    Promise.resolve(db.from('capacity_snapshots').select('snapshot_date,taken_at,summary').order('snapshot_date', { ascending: false }).limit(30)).catch(() => ({ data: null })),
   ]);
   const state = new Map((statusRows || []).map((row) => [`${row.provider}:${row.model}`, { health: row.health, cooldownUntil: row.cooldown_until, rateLimit: row.rate_limit }]));
   const routeById = new Map(pool.map((route) => [route.id, route]));
@@ -51,7 +53,10 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
   const nextMonth = new Date(monthStart); nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
   // Cheapest configured paid route approved for private data: the fallback
   // that a free-first project would use once free capacity is exhausted.
-  const fallback = pool.filter((route) => route.billingClass === 'paid' && route.privacyApproved && !route.unavailableReasons.length && route.pricing)
+  // A blocked account (auth_error: not activated, no credit, rejected key)
+  // is not a fallback, whatever its cooldown says.
+  const fallback = pool.filter((route) => route.billingClass === 'paid' && route.privacyApproved && !route.unavailableReasons.length && route.pricing
+    && state.get(route.id)?.health !== 'auth_error')
     .toSorted((left, right) => (left.pricing.inputPerMillion + left.pricing.outputPerMillion) - (right.pricing.inputPerMillion + right.pricing.outputPerMillion))[0] || null;
   const model = capacityModel({
     routes: pool, pools, qualifications, now,
@@ -108,6 +113,14 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
       pools: model.pools,
       method: model.method,
       jobSizes: model.jobSizes,
+      // Stored daily snapshots, newest first (compact per-day totals).
+      history: (snapshotRows || []).map((row) => ({
+        date: row.snapshot_date, takenAt: row.taken_at,
+        freeTokensPerDay: row.summary?.freeTokensPerDay ?? null, strongReasoningPerDay: row.summary?.strongReasoning?.tokensPerDay ?? null,
+        codingTokensPerDay: row.summary?.coding?.tokensPerDay ?? null, codingJobsPerDay: row.summary?.codingJobsPerDay || null,
+        independentFreePools: row.summary?.independentFreePools ?? null, healthyPools: row.summary?.healthyPools ?? null,
+        tokensUsed: row.summary?.tokensToday ?? null, costUsd: row.summary?.costUsd || null,
+      })),
     },
     ownerActions: ownerActions({ env, pools: model.pools, qualifications, now }),
     pools,

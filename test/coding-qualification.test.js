@@ -142,3 +142,25 @@ test('model handoff carries repository, diff summary, owner decisions and unreso
   }
   assert.ok(!message.includes('Plan step open: Write test'));
 });
+
+test('auto-qualifier grades coding every cycle: one route per provider, max 3, a capped provider never blocks the others', async () => {
+  const { AutoQualifier } = await import('../src/model-gateway/agentic/qualification.js');
+  const calls = [];
+  const mk = (id, coding = 3) => ({
+    id, provider: id.split(':')[0], model: id.split(':').slice(1).join(':'), billingClass: 'free', unavailableReasons: [], toolCalling: true, contextWindow: 32_000,
+    capabilities: { coding }, protocolClient: { turn: async () => { calls.push(id); throw Object.assign(new Error('rate'), { status: 429 }); } },
+  });
+  // openrouter routes rank first (higher coding score) but openrouter is capped for the day.
+  const pool = [mk('openrouter:a', 5), mk('openrouter:b', 5), mk('gemini:c'), mk('gemini:d'), mk('groq:e'), mk('zhipu:f'), mk('zhipu:g')];
+  const store = new MemoryQualificationStore();
+  await store.save(pool.map((route) => ({ routeId: route.id, ...general(route.id)[1] })));
+  const stateStore = new MemoryProviderStateStore();
+  const qualifier = new AutoQualifier({ createPool: () => pool, stateStore, store, dailyProviderCap: { openrouter: 0 } });
+  const results = await qualifier.runOnce();
+  const tested = results.map((result) => result.routeId);
+  assert.equal(tested.length, 3);
+  assert.ok(!tested.some((id) => id.startsWith('openrouter:')), 'capped provider skipped');
+  assert.equal(new Set(tested.map((id) => id.split(':')[0])).size, 3, 'one route per provider');
+  assert.ok(results.backlog >= 2, 'the rest stays in the backlog (short interval)');
+  assert.equal((await store.snapshot()).coding.errors.size, 3, 'errors recorded → back-off applies next cycle');
+});
