@@ -95,3 +95,11 @@ test('coding runtime rebuilds its pool from refreshed provider catalogs (discove
     setProviderCatalog('gemini', null);
   }
 });
+
+test('a job summary skips markdown headings, rules and tables (load test 668ad9a5 saved only "## Executive summary")', async () => {
+  const { summarize } = await import('../src/workflow.js');
+  assert.equal(summarize('## Executive summary\n\nOpen the kiosk: break-even is **1,325 cups/month**.\n| a | b |'), 'Open the kiosk: break-even is 1,325 cups/month.');
+  assert.equal(summarize('---\n| x | y |\n- First point'), 'First point');
+  assert.equal(summarize('# Only a heading'), '# Only a heading', 'falls back to the first line');
+  assert.equal(summarize(''), '');
+});
