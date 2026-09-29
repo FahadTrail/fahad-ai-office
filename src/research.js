@@ -1,3 +1,4 @@
+import { needsExternalFacts } from './office/routing-hints.js';
 import { RESEARCH_MAX_TURNS, RESEARCH_MODEL } from './config.js';
 import { runModel } from './model-runner.js';
 import { languageInstruction } from './office/language.js';
@@ -46,7 +47,8 @@ export async function performSpecialist({ agent, goal, brief, role = 'research',
     ...execution,
     model: RESEARCH_MODEL,
     maxTurns: RESEARCH_MAX_TURNS,
-    allowedTools: specialist.webTools ? ['WebSearch', 'WebFetch'] : [],
+    // FINANCE gets web tools only when the brief needs current external facts.
+    allowedTools: specialist.webTools && (role !== 'finance' || needsExternalFacts(`${goal}\n${brief}`)) ? ['WebSearch', 'WebFetch'] : [],
     routingHints: { requiresPrivateData: true, preferQuality: true },
     systemPrompt: agent.system_prompt,
     onActivity,

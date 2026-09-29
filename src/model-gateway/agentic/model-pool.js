@@ -5,6 +5,7 @@
 // Nothing here claims a provider works: live verification is recorded
 // separately in provider_status by real canaries and real traffic.
 
+import { capacityPool } from './capacity-pools.js';
 import { AnthropicMessagesProtocol } from './anthropic-messages.js';
 import { OpenAIResponsesProtocol } from './openai-responses.js';
 import { ChatCompletionsProtocol } from './chat-completions.js';
@@ -296,7 +297,7 @@ export function createModelPool({ env = process.env, fetchFn = fetch, protocolFa
     if (definition.catalogBlocked) reasons.push(`CATALOG_${definition.catalogBlocked}`);
     if (definition.retired) reasons.push(definition.retired);
     const protocol = reasons.length ? null : protocolFactory(definition, { apiKey, fetchFn, env });
-    return Object.freeze({ ...definition, protocolClient: protocol, unavailableReasons: Object.freeze(reasons) });
+    return Object.freeze({ ...definition, capacityPool: capacityPool(definition), protocolClient: protocol, unavailableReasons: Object.freeze(reasons) });
   });
 }
 

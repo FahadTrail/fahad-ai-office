@@ -10,13 +10,16 @@ import { randomUUID } from 'node:crypto';
 import { FAILURE_CLASS, GatewayError, classifyProviderError } from '../contracts.js';
 import { DEFAULT_BILLING_PRIORITY } from './model-pool.js';
 import { isCoolingDown } from './provider-state.js';
-import { capabilityGaps, jobFit, languageFit, languageGaps } from './capabilities.js';
+import { baseJobName, capabilityGaps, jobFit, jobProfile, languageFit, languageGaps, requiredContext } from './capabilities.js';
+import { capacityPool, poolCooldowns } from './capacity-pools.js';
 import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
-import { qualificationGaps, evidenceScore } from './qualification.js';
+import { evidenceCapabilities, qualificationGaps, evidenceScore } from './qualification.js';
 
 export { assertFreeRouteHonest, sameModelFamily, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 
 const CODING_JOBS = new Set(['coding', 'qa_security']);
+// High-value work that may use scarce free pools first (see order()).
+export const HIGH_VALUE_JOBS = new Set(['synthesis', 'finance', 'finance_critical', 'qa_security', 'coding', 'research']);
 const KEY_WIDE_BLOCKERS = /_(CREDENTIAL_INVALID|ACCOUNT_NOT_ACTIVATED|ACCOUNT_OVERDUE|PERMISSION_MISSING|REGION_NOT_SUPPORTED)$/;
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -70,33 +73,49 @@ export class AgentTurnGateway {
       const routeState = state.get(route.id);
       return routeState?.health === 'auth_error' && isCoolingDown(routeState, now) && KEY_WIDE_BLOCKERS.test(String(routeState.lastErrorCode || ''));
     }).map((route) => route.secretRef).filter(Boolean));
+    // Shared pools: one member's quota/rate signal rests every member (all
+    // OpenRouter `:free` models draw on one key-wide daily allowance).
+    const pools = poolCooldowns(this.pool, state, now);
+    const profile = jobProfile(job);
+    const strict = Boolean(profile?.strictEvidence);
     return this.pool.map((route) => {
       const reasons = [...route.unavailableReasons];
       const routeState = state.get(route.id) || null;
+      const poolInfo = route.capacityPool || capacityPool(route);
       if (authorizedRouteIds && !authorizedRouteIds.includes(route.id)) reasons.push('WORKSPACE_NOT_AUTHORIZED');
       if (requiresPrivateData && !route.privacyApproved) reasons.push('PRIVACY_NOT_APPROVED');
       // The quality floor guards autonomous coding. Other jobs are governed by
       // their own capability minimums (capabilities.js JOB_PROFILES).
-      if ((!job || CODING_JOBS.has(typeof job === 'string' ? job : '')) && route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
+      if ((!job || CODING_JOBS.has(baseJobName(job) || '')) && route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
       // Capability before price: a free model that cannot do the job is not
-      // offered the job.
-      reasons.push(...capabilityGaps(route.capabilities, job));
-      reasons.push(...languageGaps(route.capabilities, language));
+      // offered the job. Planning scores are corrected by the route's own
+      // measured qualification (never raised for strict, high-stakes jobs).
+      const capabilities = route.billingClass === 'paid' ? route.capabilities
+        : evidenceCapabilities(route.capabilities, qualifications?.get(route.id), { strict, now });
+      const outputTokens = routeOutputTokens(route, maxOutputTokens, estimatedInputTokens);
+      reasons.push(...capabilityGaps(capabilities, job, { needContext: requiredContext(estimatedInputTokens, maxOutputTokens) }));
+      reasons.push(...languageGaps(capabilities, language));
       // Evidence before claims: a free model's own qualification results can
       // rule it out of a job, and critical jobs need a passed qualification.
       reasons.push(...qualificationGaps(route, job, qualifications, now));
-      const outputTokens = routeOutputTokens(route, maxOutputTokens, estimatedInputTokens);
       if (estimatedInputTokens + outputTokens > route.contextWindow) reasons.push('CONTEXT_TOO_LARGE');
+      // A per-minute token RATE (not a window): the request must leave room
+      // for a useful answer inside one minute's allowance.
       if (route.requestTokenLimit && outputTokens < Math.min(maxOutputTokens, MIN_USEFUL_OUTPUT_TOKENS)) reasons.push('REQUEST_ABOVE_FREE_TIER_LIMIT');
+      const pooled = pools.get(poolInfo.id);
+      let cooldownUntil = routeState?.cooldownUntil || null;
       if (isCoolingDown(routeState, now)) reasons.push(`COOLDOWN_${String(routeState.health || 'unavailable').toUpperCase()}`);
-      else if (route.secretRef && blockedSecrets.has(route.secretRef)) reasons.push('PROVIDER_CREDENTIAL_BLOCKED');
+      else if (pooled && pooled.routeId !== route.id) {
+        reasons.push(`COOLDOWN_POOL_${String(pooled.health).toUpperCase()}`);
+        cooldownUntil = pooled.cooldownUntil;
+      } else if (route.secretRef && blockedSecrets.has(route.secretRef)) reasons.push('PROVIDER_CREDENTIAL_BLOCKED');
       if (excludedRouteIds.includes(route.id)) reasons.push('FAILED_THIS_TURN');
       if (policyExcludedRouteIds.includes(route.id)) reasons.push('EXCLUDED_BY_ROUTING_POLICY');
       if (budgetExhaustedRouteIds.includes(route.id)) reasons.push('ROUTE_BUDGET_EXHAUSTED');
       const estimateUsd = estimateTurnCost(route, estimatedInputTokens, outputTokens);
       if (route.billingClass === 'paid' && !allowPaid) reasons.push('PAID_ROUTE_NOT_ALLOWED');
       if (route.billingClass === 'paid' && estimateUsd > remainingBudgetUsd) reasons.push('BUDGET_INSUFFICIENT');
-      return Object.freeze({ route, state: routeState, eligible: reasons.length === 0, reasons, estimateUsd });
+      return Object.freeze({ route, state: routeState, eligible: reasons.length === 0, reasons, estimateUsd, pool: poolInfo.id, cooldownUntil, capabilities });
     });
   }
 
@@ -124,6 +143,12 @@ export class AgentTurnGateway {
     const evidence = new Map(evaluations.map((entry) => [entry.route.id, qualifications ? evidenceScore(entry, job, qualifications, now) : 0]));
     const freePreference = (left, right) => (fit(right) + evidence.get(right.id)) - (fit(left) + evidence.get(left.id))
       || right.contextWindow - left.contextWindow || left.id.localeCompare(right.id);
+    // Scarce free pools (tens of requests a day) go last for low-value work,
+    // so abundant pools serve it and the scarce ones stay for CHIEF synthesis,
+    // AUDIT, FINANCE and research. Nothing is reserved: a scarce pool still
+    // serves low-value work when it is the only eligible one.
+    const highValue = !job || HIGH_VALUE_JOBS.has(baseJobName(job) || '');
+    const scarce = (route) => (!highValue && route.billingClass !== 'paid' && (route.capacityPool || capacityPool(route)).scarce ? 1 : 0);
     return evaluations.filter((entry) => entry.eligible)
       .map((entry) => entry.route)
       .toSorted((left, right) => {
@@ -131,6 +156,8 @@ export class AgentTurnGateway {
         if (right.id === preferredRouteId) return 1;
         const byClass = rank(left) - rank(right);
         if (byClass) return byClass;
+        const byScarcity = scarce(left) - scarce(right);
+        if (byScarcity) return byScarcity;
         if (qualifications && left.billingClass !== 'paid' && right.billingClass !== 'paid') return freePreference(left, right);
         return within(left, right);
       });
@@ -180,8 +207,8 @@ export class AgentTurnGateway {
           code: lastError ? 'ALL_PROVIDERS_UNAVAILABLE' : 'NO_ELIGIBLE_PROVIDER',
           failureClass: FAILURE_CLASS.APPROVAL,
           attempts,
-          evaluations: evaluations.map(({ route: candidate, reasons, state }) => ({
-            id: candidate.id, reasons, billingClass: candidate.billingClass, cooldownUntil: state?.cooldownUntil || null,
+          evaluations: evaluations.map(({ route: candidate, reasons, state, cooldownUntil, pool }) => ({
+            id: candidate.id, reasons, billingClass: candidate.billingClass, pool, cooldownUntil: cooldownUntil || state?.cooldownUntil || null,
           })),
           cause: lastError || undefined,
         });
@@ -284,8 +311,8 @@ export class AgentTurnGateway {
     const evaluations = await this.evaluate({ ...routing, maxOutputTokens, excludedRouteIds: failed }).catch(() => null);
     throw new GatewayError('All eligible model routes are unavailable', {
       code: 'ALL_PROVIDERS_UNAVAILABLE', failureClass: FAILURE_CLASS.APPROVAL, attempts, cause: lastError || undefined,
-      ...(evaluations ? { evaluations: evaluations.map(({ route: candidate, reasons, state }) => ({
-        id: candidate.id, reasons, billingClass: candidate.billingClass, cooldownUntil: state?.cooldownUntil || null,
+      ...(evaluations ? { evaluations: evaluations.map(({ route: candidate, reasons, state, cooldownUntil, pool }) => ({
+        id: candidate.id, reasons, billingClass: candidate.billingClass, pool, cooldownUntil: cooldownUntil || state?.cooldownUntil || null,
       })) } : {}),
     });
   }

@@ -4,6 +4,7 @@ import { converseDirect, parseConsultRequest, parseRevisionRequest, performOffic
 import { parseArtifacts, parseSources } from './office/artifacts.js';
 import { FINANCE_STATES, badScheduleTable, injectFinanceError, needsCorrection, publishFinance, revisionInstruction, validateFinance } from './office/finance.js';
 import { auditOwnTables, chiefGate, cleanOutput, codeChecksBlock, enforceAudit, enforceFacts, evidenceGate, factsBlock, numericChecks, socialCalendar } from './office/quality.js';
+import { stepJob, stepWebTools } from './office/routing-hints.js';
 import { CAPACITY_LIMITS, capacityDecision } from './office/capacity.js';
 import { performSpecialist, specialistFor, SPECIALISTS } from './research.js';
 import { EscalationRequired, classifyOfficeData } from './office/pool-runner.js';
@@ -442,10 +443,12 @@ export class OfficeWorkflow {
     if (!employee || employee.executor !== 'office') throw new Error(`Unknown Office employee ${brief.agent}`);
     assertAgent(task, employee.slug);
     const agent = await this.store.getAgent(employee.slug);
-    const webTools = employee.webTools && hasWebTools(agent.allowed_tools);
     const request = this.request(task);
-    await this.startStage(task, agent, 'SPECIALIST_WORKING', `shared-pool:${employee.job}`, `${employee.label} is working on: ${brief.title}${brief.revision ? ' (revision)' : ''}.`, MODEL_PROVIDER,
-      { job: employee.job, dataClass: request.dataClass, role: employee.key });
+    const workText = `${request.goal}\n${brief.title || ''}\n${brief.brief || ''}`;
+    const webTools = stepWebTools(employee, hasWebTools(agent.allowed_tools), workText);
+    const job = stepJob(employee, workText);
+    await this.startStage(task, agent, 'SPECIALIST_WORKING', `shared-pool:${job}`, `${employee.label} is working on: ${brief.title}${brief.revision ? ' (revision)' : ''}.`, MODEL_PROVIDER,
+      { job, dataClass: request.dataClass, role: employee.key });
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     const upstream = (Array.isArray(task.upstream) ? task.upstream : []).filter((entry) => entry.content);
     const previous = brief.revision ? upstream.find((entry) => entry.task_id === brief.revisesTaskId)?.content : null;
@@ -466,7 +469,7 @@ export class OfficeWorkflow {
       codeChecks: checks ? codeChecksBlock(checks) : '',
       execution: this.modelExecution(task, stage),
       toolBroker: this.toolSession(task, STAGES.SPECIALIST),
-      ...(this.modelRunner ? { run: this.poolRun(task, stage, { job: employee.job, request, preference: MODEL_PROVIDER, fresh: stage !== STAGES.SPECIALIST }) } : {}),
+      ...(this.modelRunner ? { run: this.poolRun(task, stage, { job, request, preference: MODEL_PROVIDER, fresh: stage !== STAGES.SPECIALIST }) } : {}),
     }));
     let outcome = await work(STAGES.SPECIALIST, brief.revision || null, previous);
     outcome = await this.qualityGates(task, employee, outcome, { request, brief, checks, redo: (instruction, prior, round) => work(`${STAGES.SPECIALIST}:validation${round}`, instruction, prior) });
@@ -738,10 +741,10 @@ export class OfficeWorkflow {
     }
     let outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
       agent, role: employee.key, goal: request.goal, context: context?.text || '', knowledge, consults, allowConsult,
-      webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
+      webTools: stepWebTools(employee, hasWebTools(agent.allowed_tools), request.goal), onActivity,
       execution: this.modelExecution(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT),
       toolBroker: this.toolSession(task, STAGES.DIRECT),
-      ...(this.modelRunner ? { run: this.poolRun(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT, { job: employee.job, request, preference: MODEL_PROVIDER }) } : {}),
+      ...(this.modelRunner ? { run: this.poolRun(task, brief.followUp ? `${STAGES.DIRECT}:2` : STAGES.DIRECT, { job: stepJob(employee, request.goal), request, preference: MODEL_PROVIDER }) } : {}),
     }));
     const requests = allowConsult ? parseConsultRequest(outcome.text, employee.key) : [];
     if (requests.length) return this.requestConsults(task, outcome, employee, requests);
@@ -749,10 +752,10 @@ export class OfficeWorkflow {
       request, brief, requireModel: false,
       redo: (instruction, prior, round) => this.withHeartbeat(task, (onActivity) => this.executors.direct({
         agent, role: employee.key, goal: `${request.goal}\n\nREVISION REQUIRED BEFORE THIS ANSWER CAN BE SENT:\n${instruction}\n\nYOUR PREVIOUS ANSWER:\n${String(prior).slice(0, 12_000)}\nReturn the complete corrected answer.`,
-        context: context?.text || '', knowledge, consults, allowConsult: false, webTools: employee.webTools && hasWebTools(agent.allowed_tools), onActivity,
+        context: context?.text || '', knowledge, consults, allowConsult: false, webTools: stepWebTools(employee, hasWebTools(agent.allowed_tools), request.goal), onActivity,
         execution: this.modelExecution(task, `${STAGES.DIRECT}:validation${round}`),
         toolBroker: this.toolSession(task, STAGES.DIRECT),
-        ...(this.modelRunner ? { run: this.poolRun(task, `${STAGES.DIRECT}:validation${round}`, { job: employee.job, request, preference: MODEL_PROVIDER, fresh: true }) } : {}),
+        ...(this.modelRunner ? { run: this.poolRun(task, `${STAGES.DIRECT}:validation${round}`, { job: stepJob(employee, request.goal), request, preference: MODEL_PROVIDER, fresh: true }) } : {}),
       })),
     });
     outcome = gated;
@@ -796,13 +799,13 @@ export class OfficeWorkflow {
     const agent = await this.store.getAgent(employee.slug);
     const request = this.request(task);
     // Advice from CODING is analysis, not engineering: route it as research.
-    const job = employee.executor === 'coding' ? 'research' : employee.job;
+    const job = employee.executor === 'coding' ? 'research' : stepJob(employee, String(brief.question || ''));
     await this.startStage(task, agent, 'CONSULT_WORKING', `shared-pool:${job}`, `${employee.label} is answering ${asker.label}.`, MODEL_PROVIDER,
       { job, dataClass: request.dataClass, role: employee.key });
     const context = typeof this.store.jobContext === 'function' ? await this.store.jobContext(task.job_id).catch(() => null) : null;
     // A consult is advice only: CODING answers from its expertise and never
     // starts engineering work (no repository or tools here).
-    const webTools = employee.executor === 'office' && employee.webTools && hasWebTools(agent.allowed_tools);
+    const webTools = employee.executor === 'office' && stepWebTools(employee, hasWebTools(agent.allowed_tools), String(brief.question || ''));
     const outcome = await this.withHeartbeat(task, (onActivity) => this.executors.direct({
       agent, role: employee.key, goal: String(brief.question || '').slice(0, 2000), consultFrom: asker.label,
       context: context?.project ? projectLine(context) : '', allowConsult: false, webTools, onActivity,
