@@ -53,7 +53,9 @@ Status keys:
 7. No route with a key in `auth_error`.
 8. The capacity snapshot for the day is written.
 
-## 5. Alert watchdog (`tools/ops-watch.mjs`, PREPARED)
+## 5. Alert watchdog (`src/ops/ops-watch.js`, PREPARED)
+
+Cron (VPS, app directory, every 15 min): `docker compose exec -T runtime node src/ops/ops-watch.js`; first run with `--dry-run`.
 
 A read-only script, run from cron on the VPS every 15 minutes. It sends at most one Telegram message per new finding, through the existing bot and owner chat. It changes no routing and no state; it only reads.
 
