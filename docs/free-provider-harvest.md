@@ -79,3 +79,19 @@ never used.
 same provider quotas, and its consumer-login and cookie routes are exactly
 what the Office policy forbids. It stays a discovery source (this harvest),
 never the main router.
+
+## Discovery update (2026-09-30)
+
+All figures are REPORTED (current third-party summaries of the providers' pages; the provider domains cannot be opened from the sandbox).
+
+| Provider | Free offer (REPORTED) | Independent quota | Coding value | Verdict |
+|---|---|---|---|---|
+| Mistral (Experiment) | ≈1B tokens/month incl. Codestral; SMS verification, no card | yes | high on paper (Codestral, Medium) | **ACTIVATE LATER**: owner key, then canary + qualification (adapter ready) |
+| SambaNova | recurring free tier: 20 RPM, **20 requests/day**, 200K tokens/day; DeepSeek-V3.2, MiniMax-M2.7, Gemma 4 31B. Payment-method terms recently changed | yes | 20 requests/day ≈ one small coding job | **DEFER**: too small to matter; revisit if the daily limit rises |
+| Hugging Face Inference Providers | $0.10/month of credit (free), $2/month (PRO $9) | no (pass-through to other providers) | none at this size | **REJECT** |
+| Together AI | no recurring free tier | — | — | **REJECT** |
+| Fireworks AI | trial credit only | — | — | **DEFER** (not recurring) |
+| OVH AI Endpoints | anonymous access at 12 requests/min, older models | yes | low (CodeLlama-class) | **DEFER** |
+| Cloudflare Workers AI | 10,000 neurons/day (PUBLISHED); Llama 4 Scout, Mistral Small 3.1, Qwen3 | yes | small tasks | **PREPARE** (adapter ready; owner key) |
+
+The ranking criteria are independent quota, coding quality, privacy, tools, context, commercial terms and reliability. Provider count is not a goal.
