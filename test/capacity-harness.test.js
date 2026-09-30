@@ -145,3 +145,27 @@ test('burn-in report: labelled metrics, projections, coding capacity by size, co
   const scale = summary.bottlenecks.filter((entry) => entry.impactTokensPerDay != null).map((entry) => entry.impactTokensPerDay);
   assert.deepEqual(scale, scale.toSorted((a, b) => b - a), 'ranked by lost capacity');
 });
+
+test('burn-in report window: --since + --hours is an exact window, capped at now', async () => {
+  const { reportWindow } = await import('../src/ops/burnin-report.js');
+  const now = Date.parse('2026-10-01T10:00:00Z');
+  const exact = reportWindow(['--since=2026-09-29T21:56:00Z', '--hours=24'], now);
+  assert.equal(exact.from.toISOString(), '2026-09-29T21:56:00.000Z');
+  assert.equal(exact.to.toISOString(), '2026-09-30T21:56:00.000Z');
+  const partial = reportWindow(['--since=2026-09-29T21:56:00Z', '--hours=6'], now);
+  assert.equal(partial.to.toISOString(), '2026-09-30T03:56:00.000Z');
+  const running = reportWindow(['--since=2026-09-30T21:00:00Z', '--hours=24'], now);
+  assert.equal(running.to.getTime(), now, 'a window still open ends now');
+  assert.equal(reportWindow(['--hours=2'], now).from.toISOString(), '2026-10-01T08:00:00.000Z');
+  assert.throws(() => reportWindow(['--since=yesterday'], now), /ISO/);
+});
+
+test('burn-in report reads every page (PostgREST caps a response at 1,000 rows)', async () => {
+  const { readAll } = await import('../src/ops/burnin-report.js');
+  const table = Array.from({ length: 2_345 }, (_, index) => ({ index }));
+  const calls = [];
+  const rows = await readAll(() => ({ range: async (start, end) => { calls.push([start, end]); return { data: table.slice(start, end + 1), error: null }; } }));
+  assert.equal(rows.length, 2_345);
+  assert.deepEqual(calls, [[0, 999], [1000, 1999], [2000, 2999]]);
+  await assert.rejects(readAll(() => ({ range: async () => ({ data: null, error: { message: 'denied' } }) })), /read failed: denied/);
+});
