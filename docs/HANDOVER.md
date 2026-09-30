@@ -13,6 +13,26 @@ This file is the live state. **The release procedure is
 * Numbers per checkpoint: SQL in `docs/capacity-v2.md` §9 ("24-hour burn-in: checkpoint SQL"). On the VPS: `node tools/burnin-report.mjs --since=2026-09-29T21:56:00Z`.
 * **Do not deploy during the burn-in unless a critical fix requires it.** A deploy that lands mid-task stalls an Office task for up to 20 min: the stale-task requeue. Record any deploy here, with its time.
 
+**Burn-in checkpoints** (window starts 2026-09-29T21:56Z):
+
+| Checkpoint | Calls ok/failed | OK tokens | Paid | Failovers | Waits | Notes |
+|---|---|---|---|---|---|---|
+| +1 h (22:57) | 5 / 10 (Gemini only: the medium benchmark's last turns; 10 per-minute 429s) | 54K | **0** | 0 | 0 | Medium PUBLIC benchmark `ed64507a` **completed**: 21 turns, 209.6K tokens, $0, 40.7 min, 2 size compactions. New grade: GLM-4.5-flash CODING_SMALL_TASKS (same Z.ai pool). OpenRouter `:free` answered 429 until 00:00 UTC. No dead providers beyond the known ones: Cerebras trial ended; inkling rejects the key. |
+
+**Prepared during the burn-in (PARALLEL DEVELOPMENT; drafts, unmerged; each touches `src/` or `test/` and would deploy):**
+
+Merge after the 24 h window, one at a time, in this order. After each: CI green → merge → "DEPLOYMENT SUCCESSFUL" → `/healthz` version → smoke test (`docs/core-final-lock.md` §4).
+
+| Order | PR | What | Why after the burn-in |
+|---|---|---|---|
+| 1 | #92 | `tools/burnin-report.mjs`: labelled 24 h report and bottleneck ranking | run it first on the finished window |
+| 2 | #91 | Reset-aware backoff: an exact per-minute reset is honoured, no false escalation (replay: small job −49 % wall time) | changes provider cooldowns (router) |
+| 3 | #96 | Test-output compaction for the Coding Agent (full suite 106K → 174 chars; small jobs ≈ 5–10 % fewer tokens, ESTIMATED) | changes coding transcript size |
+| 4 | #94 | `tools/ops-watch.mjs`: Telegram alerts for paid calls, free-route incidents, auth errors, starvation, blocked sessions, `/healthz` | then add the 15-min cron (§5 of the lock doc) |
+| 5 | #95 | Provider readiness: the Mistral owner action also needs `MISTRAL_BILLING_CLASS=free`, since the key alone gives a paid `PRICING_UNKNOWN` route; adds the provider readiness audit doc | owner queue text |
+
+Docs merged during the burn-in (no deploy): #93 (`docs/private-coding-policy.md`, `docs/core-final-lock.md`, discovery update).
+
 **Merged this sprint:**
 
 | PR | What it changed |
