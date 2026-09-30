@@ -71,8 +71,8 @@ A read-only script, run from cron on the VPS every 15 minutes. It sends at most 
 At **2026-09-30T21:56Z**, in order, with no waiting between steps:
 
 1. **Report.** Run the collector for the exact window:
-   `node tools/burnin-report.mjs --since=2026-09-29T21:56:00Z --hours=24`
-   (on the VPS; or the checkpoint SQL in `docs/capacity-v2.md` §9).
+   `docker compose exec -T runtime node src/ops/burnin-report.js --since=2026-09-29T21:56:00Z --hours=24`
+   (on the VPS in the app directory; only `src/` ships in the image, so the tool lives there). Intermediate windows use `--hours=1|6|12`. Or use the checkpoint SQL in `docs/capacity-v2.md` §9.
 2. **Validate the numbers.** Tokens per provider sum to the total; 0 paid calls unless a paid fallback was intended; coding sessions match `agent_sessions`; the snapshot for 2026-09-30 exists.
 3. **Compare with the baseline.**
    * Estimated capacity (2026-09-29): 3.09M free tokens/day, strong reasoning 0.58M/day, 47 (p50) / 13 (p90) projects/day.
