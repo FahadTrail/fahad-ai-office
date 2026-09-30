@@ -1,37 +1,63 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-Last updated: 2026-09-29, after Capacity Expansion V2 (see its section below). Read `AGENTS.md` first; it holds the permanent rules.
+Last updated: 2026-09-30, after the core closure (see its section below). Read `AGENTS.md` first; it holds the permanent rules.
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
 
-## CAPACITY FINALIZATION + 24 H BURN-IN (updated 2026-09-29 ~22:00 UTC)
+## CORE CLOSURE (2026-09-30, after the 24 h burn-in)
 
-**BURN-IN RUNNING.**
-* `BURNIN_START_UTC = 2026-09-29T21:56:00Z`, ends 2026-09-30T21:56Z.
-* Production runs `343a1bf` (deploy 79). Startup checks OK: Supabase read-only tools VERIFIED, Telegram live.
-* Checkpoints are scheduled in this session at +1 h, +6 h, +12 h and +24 h (routines named "Burn-in checkpoint …").
-* Numbers per checkpoint: SQL in `docs/capacity-v2.md` §9 ("24-hour burn-in: checkpoint SQL"). On the VPS: `node tools/burnin-report.mjs --since=2026-09-29T21:56:00Z`.
-* **Do not deploy during the burn-in unless a critical fix requires it.** A deploy that lands mid-task stalls an Office task for up to 20 min: the stale-task requeue. Record any deploy here, with its time.
+**CORE COMPLETE: READY FOR REAL USE.** Core development is stopped. The next phase is V5/UI only (PR #71). Everything else is optional expansion.
 
-**Burn-in checkpoints** (window starts 2026-09-29T21:56Z):
+* **Production:** `26dd491` (deploy 84). Last known good before the closure merges: `343a1bf` (deploy 79).
+* **Burn-in window:** 2026-09-29T21:56Z → 2026-09-30T21:56Z.
+  * No deploy ran inside the window.
+  * It was a **stability** burn-in and mostly idle, **not** a continuous-load benchmark. Sustained 24 h throughput is NOT MEASURED; that is an optional future exercise.
+* **24 h numbers (MEASURED):**
 
-| Checkpoint | Calls ok/failed | OK tokens | Paid | Failovers | Waits | Notes |
-|---|---|---|---|---|---|---|
-| +1 h (22:57) | 5 / 10 (Gemini only: the medium benchmark's last turns; 10 per-minute 429s) | 54K | **0** | 0 | 0 | Medium PUBLIC benchmark `ed64507a` **completed**: 21 turns, 209.6K tokens, $0, 40.7 min, 2 size compactions. New grade: GLM-4.5-flash CODING_SMALL_TASKS (same Z.ai pool). OpenRouter `:free` answered 429 until 00:00 UTC. No dead providers beyond the known ones: Cerebras trial ended; inkling rejects the key. |
+  | Metric | Value |
+  |---|---|
+  | Calls | 70 (54 OK, 16 failed, 11 rate-limited) |
+  | Tokens | 510,902 OK (486,610 in / 24,292 out); 374,259 cached; 7,151 reasoning; 0 retry tokens |
+  | Cost | **$0**; 0 paid calls; 100 % free |
+  | Latency | p50 5.5 s, p95 89.6 s |
+  | Jobs | 2 created, 2 completed |
+  | Coding | 1 small PUBLIC session completed, with 2 real failovers |
+  | Capacity waits | 1; 631 s of backoff waits |
 
-**Prepared during the burn-in (PARALLEL DEVELOPMENT; drafts, unmerged; each touches `src/` or `test/` and would deploy):**
+  Checkpoints: 0–1 h, 0–6 h and 0–12 h were identical (15 calls). No call ran between 22:17Z and 11:09Z because no work was submitted.
+* **Report:** `docker compose exec -T runtime node src/ops/burnin-report.js --since=2026-09-29T21:56:00Z --hours=24` (use `--hours=1|6|12` for the shorter windows).
+* **Merged and deployed in order.** Each deploy said "DEPLOYMENT SUCCESSFUL … container healthy", and after each one the startup events showed the Supabase tools check verified and Telegram live.
 
-Merge after the 24 h window, one at a time, in this order. After each: CI green → merge → "DEPLOYMENT SUCCESSFUL" → `/healthz` version → smoke test (`docs/core-final-lock.md` §4).
+  | PR | Commit | Change |
+  |---|---|---|
+  | #92 | `61015d8` | burn-in report + bottleneck analyzer, shipped in the image |
+  | #91 | `526c264` | reset-aware backoff (per-minute windows, exact resets) |
+  | #96 | `1affc39` | test-output compaction for the Coding Agent |
+  | #94 | `f4de1d7` | ops watch (Telegram alerts) |
+  | #95 | `26dd491` | Mistral owner action needs `MISTRAL_BILLING_CLASS=free`; provider readiness doc |
 
-| Order | PR | What | Why after the burn-in |
-|---|---|---|---|
-| 1 | #92 | `tools/burnin-report.mjs`: labelled 24 h report and bottleneck ranking | run it first on the finished window |
-| 2 | #91 | Reset-aware backoff: an exact per-minute reset is honoured, no false escalation (replay: small job −49 % wall time) | changes provider cooldowns (router) |
-| 3 | #96 | Test-output compaction for the Coding Agent (full suite 106K → 174 chars; small jobs ≈ 5–10 % fewer tokens, ESTIMATED) | changes coding transcript size |
-| 4 | #94 | `tools/ops-watch.mjs`: Telegram alerts for paid calls, free-route incidents, auth errors, starvation, blocked sessions, `/healthz` | then add the 15-min cron (§5 of the lock doc) |
-| 5 | #95 | Provider readiness: the Mistral owner action also needs `MISTRAL_BILLING_CLASS=free`, since the key alone gives a paid `PRICING_UNKNOWN` route; adds the provider readiness audit doc | owner queue text |
+  The #94 deploy's first SSH connection timed out before anything reached the VPS (the runtime was up). The one allowed re-run succeeded.
+* **Rollback:** GitHub **Revert** on any of these PRs deploys the previous code through the same pipeline. None of them has a migration. Provider kill switches: `workspace_routing_policies.excluded_routes`, or remove a key with `ops/set-secret.sh`.
+* **Final smoke (2026-09-30 22:18Z, free-only):**
+  * **Coding `8b5f0724`:** passed in 4 min, 153K tokens, $0. Gemini Flash failed → switched to GLM from its checkpoint. #96 saved 8,670 characters (MEASURED).
+  * **Office `e445770e`:**
+    * CHIEF planned 3 workstreams.
+    * FINANCE: INCONSISTENT → returned → **VERIFIED** (AED 12 margin, 1,500 cups/month, 50/day).
+    * AUDIT flagged the planted partner figures (AED 14, 1,286 cups) as high-severity errors.
+    * The fact gate kept 9 validated figures.
+    * RESEARCH reported INSUFFICIENT evidence (search rate-limited, rent sources blocked) instead of inventing numbers.
+    * The CHIEF synthesis waits for free capacity until the OpenRouter reset at 00:00 UTC; see bottleneck 1.
+* **Owner steps still open (optional):**
+  * Add the ops-watch cron on the VPS: `docker compose exec -T runtime node src/ops/ops-watch.js --dry-run` first, then every 15 min without `--dry-run`. The first real run sends one message listing the known account blockers (Qwen not activated; Kimi, MiniMax and GLM-5.3 without credits; inkling refuses the key). It never repeats them.
+  * Set `OPS_WATCH_HEALTH_URL` for the `/healthz` probe.
+* **Top bottlenecks:**
+  1. **Strong-reasoning free capacity is thin.** CHIEF synthesis has only OpenRouter nemotron-ultra (50 requests/day, shared across the key) plus Gemini Flash (5xx all day). Owner options: a Mistral key with `MISTRAL_BILLING_CLASS=free`, a one-time $10 OpenRouter credit (50 → 1,000 requests/day), or the paid fallback when the monthly budget resets.
+  2. **Per-minute quota waits** (Gemma 16K/min): 631 s in 24 h. #91 is now live (replay estimate −15 % to −49 % coding wall time).
+  3. **GLM-4.5-flash token use** on coding: 153–375K per small job against 87–98K on Gemma.
+  4. **Privacy:** free PRIVATE coding is 0 by policy (`docs/private-coding-policy.md`).
+  5. **Large coding:** turns of 25–63K exceed free per-minute quotas; UNKNOWN until a large job completes.
 
-Docs merged during the burn-in (no deploy): #93 (`docs/private-coding-policy.md`, `docs/core-final-lock.md`, discovery update).
+## CAPACITY FINALIZATION + 24 H BURN-IN (history, 2026-09-29)
 
 **Merged this sprint:**
 

@@ -204,6 +204,13 @@ inside the built runtime image as root.
 
   Details are in `docs/v41-reliability.md`.
 
+* Core closure (2026-09-30): **CORE COMPLETE: READY FOR REAL USE**, with core development stopped.
+  * Production runs `26dd491`.
+  * After a 24 h stability burn-in (0 paid calls, no incidents), #92, #91, #96, #94 and #95 were merged and deployed one at a time.
+  * The final smoke test passed.
+  * The next phase is V5/UI only.
+  * State, numbers, rollback and bottlenecks are in `docs/HANDOVER.md` → *CORE CLOSURE*.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,
