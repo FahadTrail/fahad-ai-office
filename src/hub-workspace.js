@@ -207,6 +207,7 @@ export function taskView(session, { events = [], approvals = [], attempts = [] }
       // Context saved by the controller's budget (context-budget.js), in characters.
       contextTrimmedChars: Number(session.state?.efficiency?.elidedChars || 0),
       unchangedRereads: Number(session.state?.efficiency?.dedupedReads || 0),
+      testOutputSavedChars: Number(session.state?.efficiency?.testCompactedChars || 0),
     },
   };
 }

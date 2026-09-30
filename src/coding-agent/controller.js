@@ -18,7 +18,7 @@ import { normalizeRouting } from '../model-gateway/agentic/routing-policy.js';
 import { CODING_BROKER, MODEL_TOOL_TO_BROKER, modelToolSpecs } from './tools.js';
 import { classifyChangedPaths, findSecretMaterial, grantablePaths, redact, safeSlug } from './policy.js';
 import { PROTECTED_CHANGE_TOOL } from '../agent-state/session-store.js';
-import { ReadTracker, elideOldToolResults } from './context-budget.js';
+import { ReadTracker, compactTestOutput, elideOldToolResults } from './context-budget.js';
 import { taskSize, turnBudgetAction } from './turn-budget.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
 
@@ -680,6 +680,13 @@ class SessionRun {
         return { block: toolResult(call, `Unchanged: ${args.path} is identical to your earlier read_file result (call ${earlier}) still in this conversation. Use that content.`) };
       }
     }
+    if (mapping.tool === 'shell.run' && looksLikeTest(String(args.command || ''), this.testCommand)) {
+      const compacted = compactTestOutput(outcome.text);
+      if (compacted.omittedPassing) {
+        this.state.efficiency.testCompactedChars = (this.state.efficiency.testCompactedChars || 0) + outcome.text.length - compacted.text.length;
+        return { block: toolResult(call, truncate(compacted.text, 20_000), { isError: Boolean(toolError) }) };
+      }
+    }
     return { block: toolResult(call, truncate(outcome.text, 20_000), { isError: Boolean(toolError) }) };
   }
 
@@ -767,7 +774,7 @@ class SessionRun {
         this.state.lastTest = { command: this.testCommand, exitCode: testOutcome.structured.exitCode, at: new Date(this.c.now()).toISOString(), output: truncate(testOutcome.text, 4000) };
         await this.event('test', `Gate: ${this.testCommand} → exit ${testOutcome.structured.exitCode}`, { exitCode: testOutcome.structured.exitCode, gate: true },
           testOutcome.structured.exitCode === 0 ? 'success' : 'warning');
-        if (testOutcome.structured.exitCode !== 0) failures.push(`Test gate failed (${this.testCommand}, exit ${testOutcome.structured.exitCode}):\n${truncate(testOutcome.text, 12_000)}`);
+        if (testOutcome.structured.exitCode !== 0) failures.push(`Test gate failed (${this.testCommand}, exit ${testOutcome.structured.exitCode}):\n${truncate(compactTestOutput(testOutcome.text).text, 12_000)}`);
       }
     }
     if (failures.length) {
@@ -1049,7 +1056,7 @@ function normalizeState(state) {
     git: state.git && typeof state.git === 'object' ? state.git : {},
     gateFailures: Number(state.gateFailures || 0),
     ciRounds: Number(state.ciRounds || 0),
-    efficiency: { elidedChars: 0, elisions: 0, dedupedReads: 0, dedupedChars: 0, ...(state.efficiency || {}) },
+    efficiency: { elidedChars: 0, elisions: 0, dedupedReads: 0, dedupedChars: 0, testCompactedChars: 0, ...(state.efficiency || {}) },
   };
 }
 
