@@ -217,7 +217,7 @@ number rests on a REPORTED limit; the 24-hour measurement decides it.
 `GET /api/capacity` → `ownerActions` lists these in priority order. Status
 comes from the presence of a setting, never its value.
 
-1. Set `MISTRAL_API_KEY`.
+1. Set `MISTRAL_API_KEY`, then `MISTRAL_BILLING_CLASS=free` (Experiment plan).
 2. Set `LLM7_API_KEY`.
 3. Cloudflare: stay on the Workers Free plan, then set the token and the account id.
 4. Set `OLLAMA_API_KEY`.
@@ -380,7 +380,7 @@ Deferred, with reasons:
 | Free-mode data used for training by default; opt-out in Admin Console → Privacy | REPORTED |
 | Paid plans: no training by default; zero data retention on request | REPORTED |
 | Fahad's account | no key is set (OBSERVED: `MISTRAL_API_KEY` absent) |
-| Code | ready: route, pricing class `free`, monthly reset, 429 "per month" detection, qualification hook, owner action with exact steps |
+| Code | ready: route (class `free` only with `MISTRAL_BILLING_CLASS=free`; with the key alone it is paid and `PRICING_UNKNOWN`), monthly reset, 429 "per month" detection, qualification hook, owner action with exact steps |
 
 Mistral's ≈1B/month is **not** in any capacity number until a live canary and a qualification pass.
 

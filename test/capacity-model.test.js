@@ -129,7 +129,9 @@ test('/api/capacity v2 fields: capacity per class, coding jobs, projects, paid f
 });
 
 test('owner action queue: presence-only status, safe set-secret commands, never a key in chat, pending first', () => {
-  const actions = ownerActions({ env: { MISTRAL_API_KEY: KEY, OLLAMA_API_PRIVATE_DATA_APPROVED: 'true' }, now });
+  // A key alone leaves the Mistral route paid/PRICING_UNKNOWN, so the action is not done.
+  assert.equal(ownerActions({ env: { MISTRAL_API_KEY: KEY }, now }).find((action) => action.id === 'mistral-key').status, 'pending');
+  const actions = ownerActions({ env: { MISTRAL_API_KEY: KEY, MISTRAL_BILLING_CLASS: 'free', OLLAMA_API_PRIVATE_DATA_APPROVED: 'true' }, now });
   assert.equal(actions.at(-1).status, 'done');
   assert.ok(actions.findIndex((action) => action.status === 'done') > actions.findIndex((action) => action.status === 'pending'));
   assert.equal(actions.find((action) => action.id === 'mistral-key').status, 'done');
