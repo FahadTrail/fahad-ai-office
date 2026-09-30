@@ -79,10 +79,11 @@ At **2026-09-30T21:56Z**, in order, with no waiting between steps:
    * Measured before the burn-in: 100 % free since 2026-09-28; small job 87–98K tokens / 7.5–20 min; medium 210K / 41 min.
 4. **Bottlenecks:** the report's ranked `bottlenecks` list.
 5. **Approve or reject the prepared PRs**, in this order:
-   * reset-aware backoff;
-   * burn-in report and bottleneck analyzer;
-   * alert watchdog;
-   * any provider readiness PR.
+   * burn-in report and bottleneck analyzer (#92);
+   * reset-aware backoff (#91);
+   * test-output compaction (#96);
+   * alert watchdog (#94);
+   * provider readiness (#95).
    Each needs green CI; none changes privacy or free/paid policy.
 6. **Merge** the approved PRs one at a time (each push deploys).
 7. **Deploy verify** after each: the deploy log says "DEPLOYMENT SUCCESSFUL", `/healthz` shows the new version, and the startup events are OK.
