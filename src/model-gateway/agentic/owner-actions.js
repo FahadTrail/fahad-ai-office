@@ -19,8 +19,11 @@ const ACTIONS = [
       'Optional, recommended: Admin Console → Privacy → turn OFF "Allow Mistral to use your data for model improvement" (free-mode prompts are used for training by default, REPORTED). Routes stay PUBLIC-only either way until a reviewed privacy flag.',
       'API Keys → Create new key.',
       secret('MISTRAL_API_KEY'),
+      // Without this the route is priced as paid (PRICING_UNKNOWN) and never
+      // used: the plan, not the key, decides free vs paid.
+      `${secret('MISTRAL_BILLING_CLASS')} → type: free (only while the account is on the Experiment plan; not a secret)`,
     ],
-    done: (env) => set(env, 'MISTRAL_API_KEY'),
+    done: (env) => set(env, 'MISTRAL_API_KEY') && String(env?.MISTRAL_BILLING_CLASS || '').trim().toLowerCase() === 'free',
   },
   {
     id: 'llm7-key', facts: { signup: 'https://token.llm7.io', secretEnv: 'LLM7_API_KEY', card: 'no', phone: 'no', autoReloadRisk: 'none', adapterReady: true, independentPool: true, freeQuota: '1M tokens/day rolling, 60 RPM, 250/h (PUBLISHED)', codingValue: 'PUBLIC code only; models vary', privacyClass: 'PUBLIC', setupMinutes: 5 }, priority: 2, provider: 'llm7', unlocks: '1M tokens/day rolling, 60 req/min (PUBLISHED). PUBLIC data only; best-effort service, always behind fallback.',
