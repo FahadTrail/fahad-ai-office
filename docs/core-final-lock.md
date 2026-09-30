@@ -15,7 +15,7 @@ Status keys:
 | 2 | Provider health | EXISTS | `provider_status` (health, cooldown, consecutive failures, reported `rate_limit`). `/api/capacity` → pools with state available / degraded / exhausted. Demotion of routes that never succeed (`NEVER_SUCCEEDED`, `LOW_SUCCESS_RATE`). |
 | 3 | Quota / reset monitoring | EXISTS | Reset schedules per provider (`free-quota.js`), daily snapshots (`capacity_snapshots`), provider-reported per-minute quotas (Gemini `QuotaFailure`, Groq headers). |
 | 4 | Paid-fallback alerts | **GAP → PREPARED** | Paid calls are budget-gated (the workspace budget blocks them at $2/month) and visible in `model_attempts.cost_usd`, but no push alert exists. `tools/ops-watch.mjs` (see §5) alerts on any paid call in the window. |
-| 5 | Unexpected-cost alerts | **GAP → PREPARED** | The free-route guard blocks and charges a route that bills or reroutes (`free-guard.js`, event `guard`). `ops-watch` alerts on any `paid_on_free_route` / `free_route_model_mismatch` incident and on `costUsd.today > 0`. |
+| 5 | Unexpected-cost alerts | **GAP → PREPARED** | The free-route guard blocks and charges a route that bills or reroutes (`free-guard.js`, event `guard`). `ops-watch` alerts on any `paid_on_free_route` / `free_route_model_mismatch` incident and on any paid call. |
 | 6 | Auth-failure alerts | **GAP → PREPARED** | Account blockers set `health = auth_error` (`provider-state.js`). `ops-watch` alerts when a route with a key enters `auth_error`. |
 | 7 | Provider outage handling | EXISTS | Failover per turn (`turn-gateway.js`); cooldowns; capacity waits with auto-resume (`WAITING_FOR_CAPACITY`, `defer_task`); size compaction when only the request size blocks (#87); **reset-aware backoff PREPARED** (the "[after burn-in] reset-aware backoff" PR). |
 | 8 | Coding checkpoint recovery | EXISTS, live-proven | Durable checkpoints (`agent_checkpoints`), leases, resume after worker restart (sessions `7986c750`, `f94a2cbe`, `ed64507a`). Checkpoint reasons are contract-tested against the DB constraint (#83). |
@@ -60,11 +60,11 @@ A read-only script, run from cron on the VPS every 15 minutes. It sends at most 
 | Alert | Condition |
 |---|---|
 | Paid call | any `model_attempts.cost_usd > 0` in the window |
-| Free-route incident | `guard` events with `paid_on_free_route` / `free_route_model_mismatch` |
+| Free-route incident | Office `events` (`payload.kind = 'free_route_incident'`) or Coding `agent_events` `guard` (`FREE_ROUTE_INCIDENT`) with `paid_on_free_route` / `free_route_model_mismatch` |
 | Auth failure | `provider_status.health = 'auth_error'` for a configured route |
 | Capacity starvation | a task failed after 48 capacity waits |
 | Coding blocked | an `agent_sessions` row `blocked` in the window, with its error code |
-| Runtime stale | no `runtime` heartbeat for 10 minutes |
+| Hub down | `OPS_WATCH_HEALTH_URL` (e.g. `http://127.0.0.1:2132/healthz`) fails; re-announced hourly. The runtime heartbeat itself is a file inside the container, watched by the Docker healthcheck |
 
 ## 6. End-of-burn-in execution plan (Track K)
 
