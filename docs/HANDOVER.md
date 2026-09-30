@@ -29,7 +29,7 @@ Merge after the 24 h window, one at a time, in this order. After each: CI green 
 | 2 | #91 | Reset-aware backoff: an exact per-minute reset is honoured, no false escalation (replay: small job −49 % wall time) | changes provider cooldowns (router) |
 | 3 | #96 | Test-output compaction for the Coding Agent (full suite 106K → 174 chars; small jobs ≈ 5–10 % fewer tokens, ESTIMATED) | changes coding transcript size |
 | 4 | #94 | `tools/ops-watch.mjs`: Telegram alerts for paid calls, free-route incidents, auth errors, starvation, blocked sessions, `/healthz` | then add the 15-min cron (§5 of the lock doc) |
-| 5 | #95 | Provider readiness: the Mistral owner action also needs `MISTRAL_BILLING_CLASS=free`, since the key alone gives a paid `PRICING_UNKNOWN` route; `docs/provider-readiness.md` | owner queue text |
+| 5 | #95 | Provider readiness: the Mistral owner action also needs `MISTRAL_BILLING_CLASS=free`, since the key alone gives a paid `PRICING_UNKNOWN` route; adds the provider readiness audit doc | owner queue text |
 
 Docs merged during the burn-in (no deploy): #93 (`docs/private-coding-policy.md`, `docs/core-final-lock.md`, discovery update).
 
