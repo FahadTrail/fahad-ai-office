@@ -329,11 +329,15 @@ export class AgentTurnGateway {
           attempts.push(record);
           await onAttempt(record);
           lastError = error;
-          const retryAfterMs = Number.isFinite(Number(error.retryAfter)) ? Number(error.retryAfter) * 1000 : 1000 * attempt;
+          const hinted = error.retryAfter != null && error.retryAfter !== '' && Number.isFinite(Number(error.retryAfter));
+          const retryAfterMs = hinted ? Number(error.retryAfter) * 1000 : 1000 * attempt;
           // A used-up daily allowance will not recover in seconds: rotate now.
+          // A per-minute window without a hint is not probed again at once:
+          // the route rests for its window (provider-state) and others serve.
           // A request that already ran into its timeout is not retried on the same route.
           const timedOut = /timeout/i.test(String(caught?.networkCode || ''));
-          const retryHere = error.failureClass === FAILURE_CLASS.RETRY && error.quotaScope !== 'day' && !timedOut && attempt < this.maxAttemptsPerRoute &&
+          const minuteBlind = error.quotaScope === 'minute' && !hinted;
+          const retryHere = error.failureClass === FAILURE_CLASS.RETRY && error.quotaScope !== 'day' && !minuteBlind && !timedOut && attempt < this.maxAttemptsPerRoute &&
             retryAfterMs <= this.maxInlineRetryMs;
           if (retryHere) {
             await this.sleepFn(retryAfterMs);

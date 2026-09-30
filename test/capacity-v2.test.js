@@ -269,14 +269,14 @@ test('Gemini 429 quota details: the reported per-minute input-token quota and re
     { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_input_token_count', quotaId: 'GenerateContentInputTokensPerModelPerMinute-FreeTier', quotaValue: '15000' }] },
     { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '37s' },
   ] } };
-  assert.deepEqual(googleQuotaDetails(body), { retryAfterSeconds: 37, inputTokensPerMinute: 15_000, requestsPerMinute: null });
-  assert.deepEqual(googleQuotaDetails({ error: { message: 'x' } }), { retryAfterSeconds: null, inputTokensPerMinute: null, requestsPerMinute: null });
+  assert.deepEqual(googleQuotaDetails(body), { retryAfterSeconds: 37, inputTokensPerMinute: 15_000, requestsPerMinute: null, perMinute: true });
+  assert.deepEqual(googleQuotaDetails({ error: { message: 'x' } }), { retryAfterSeconds: null, inputTokensPerMinute: null, requestsPerMinute: null, perMinute: false });
   const fetchFn = async () => new Response(JSON.stringify(body), { status: 429, headers: { 'content-type': 'application/json' } });
   const error = await postJson({ fetchFn, url: 'https://generativelanguage.googleapis.com/x', headers: {}, body: {}, provider: 'gemini' }).catch((caught) => caught);
   assert.equal(error.status, 429);
   assert.equal(error.retryAfter, 37);
   assert.equal(error.rateLimit.inputTokensPerMinute, 15_000);
-  assert.equal(error.quotaScope, undefined, 'a per-minute quota is not a daily one');
+  assert.equal(error.quotaScope, 'minute', 'a per-minute quota waits for its window, not the daily reset');
   assert.ok(!JSON.stringify(error.rateLimit).includes('exceeded'), 'no provider text kept');
 });
 
@@ -314,4 +314,43 @@ test('a request above the provider-reported input TPM is not offered to that rou
   assert.equal(model.publicCodingJobsPerDay.small.pools, 1, 'small jobs: counted');
   assert.equal(model.publicCodingJobsPerDay.medium.pools, 1, 'medium turns (16K) fit exactly');
   assert.equal(model.publicCodingJobsPerDay.large.pools, 0, 'large turns (30K) do not fit a 16K/min quota');
+});
+
+test('reset-aware backoff: a per-minute limit waits its window (no 121 s doubling); exact resets are honoured; hammering is still prevented', async () => {
+  const { failureOutcome } = await import('../src/model-gateway/agentic/provider-state.js');
+  const now = Date.parse('2026-09-29T22:00:00Z');
+  const wait = (outcome) => Date.parse(outcome.cooldownUntil) - now;
+  const minute = (retryAfter, consecutiveFailures) => failureOutcome({ code: 'PROVIDER_RATE_LIMIT', failureClass: 'retry', quotaScope: 'minute', retryAfter }, { consecutiveFailures }, now);
+  // Production 2026-09-29 (Gemma, 16K tokens/min): waits were 6 s then 121 s.
+  assert.equal(wait(minute(37, 0)), 37_000, 'the provider retry delay');
+  assert.equal(wait(minute(null, 3)), 60_000, 'no hint: the minute window, not 2^n minutes');
+  assert.equal(wait(minute(null, 4)), 60_000, 'fourth consecutive limit: still one window');
+  assert.ok(wait(minute(null, 6)) >= 60_000 && wait(minute(null, 9)) <= 10 * 60_000, 'many windows in a row: rests longer, capped at 10 min');
+  assert.equal(wait(minute(600, 0)), 65_000, 'a per-minute limit never waits more than a window');
+  const exact = (retryAfter, consecutiveFailures, rateLimit = null) => failureOutcome({ code: 'PROVIDER_RATE_LIMIT', failureClass: 'retry', retryAfter, rateLimit }, { consecutiveFailures }, now);
+  assert.equal(wait(exact(90, 5)), 90_000, 'an exact reset is honoured without doubling');
+  assert.equal(wait(exact(2, 3)), 2 * 60_000, 'fourth seconds-long hint in a row: the anti-hammering floor stays');
+  assert.equal(wait(exact(null, 0, { tokensReset: new Date(now + 23_000).toISOString() })), 23_000, 'reset header timestamp');
+  assert.equal(wait(exact(null, 1)), 2 * 60_000, 'no information at all: exponential as before (second failure)');
+});
+
+test('a hint-less per-minute 429 is not retried at once on the same route; the next route serves', async () => {
+  const { AgentTurnGateway } = await import('../src/model-gateway/agentic/turn-gateway.js');
+  const { MemoryProviderStateStore } = await import('../src/model-gateway/agentic/provider-state.js');
+  const calls = [];
+  const mk = (id, fail) => ({
+    id, provider: id.split(':')[0], model: id.split(':')[1], billingClass: 'free', qualityTier: 4, contextWindow: 128_000, unavailableReasons: [], pricing: null,
+    capabilities: { coding: 4, reasoning: 4, toolCalling: true, structuredOutput: true, contextWindow: 128_000 },
+    protocolClient: { turn: async () => {
+      calls.push(id);
+      if (fail) throw Object.assign(new Error('gemini request failed'), { status: 429, quotaScope: 'minute', rateLimit: { inputTokensPerMinute: 16_000 } });
+      return { message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 }, stopReason: 'end' };
+    } },
+  });
+  const gateway = new AgentTurnGateway({ pool: [mk('gemini:gemma', true), mk('zhipu:glm', false)], stateStore: new MemoryProviderStateStore(), sleepFn: async () => {}, maxAttemptsPerRoute: 3 });
+  const result = await gateway.turn({ tools: [], preferredRouteId: 'gemini:gemma', routing: { dataClass: 'PUBLIC' }, prepare: async () => ({ system: 's', messages: [] }) });
+  assert.equal(result.route.id, 'zhipu:glm');
+  assert.deepEqual(calls, ['gemini:gemma', 'zhipu:glm'], 'one call to the limited route, then the other pool');
+  const state = (await gateway.stateStore.snapshot()).get('gemini:gemma');
+  assert.ok(Date.parse(state.cooldownUntil) - Date.now() <= 65_000, 'rests for one window');
 });
