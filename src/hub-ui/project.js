@@ -37,9 +37,11 @@ export async function renderProject(ctx, id, mode = 'center') {
       </div>
       <div class="cc-ring" style="--p:${center.progress}" role="img" aria-label="Overall progress ${center.progress}%"><svg viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="52"/><circle class="ring-fg" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray="${center.progress} 100"/></svg><div><strong class="num">${center.progress}%</strong><span>overall</span></div></div>
     </header>
-    <div class="cc-switch" role="tablist" aria-label="View">
-      <a role="tab" href="#/project/${esc(id)}" aria-selected="${mode === 'center'}">Command Center</a>
-      <a role="tab" href="#/project/${esc(id)}/map" aria-selected="${mode === 'map'}">Project map</a>
+    <div class="cc-switch">
+      <div class="cc-tabs" role="tablist" aria-label="View">
+        <a role="tab" href="#/project/${esc(id)}" aria-selected="${mode === 'center'}">Command Center</a>
+        <a role="tab" href="#/project/${esc(id)}/map" aria-selected="${mode === 'map'}">Project map</a>
+      </div>
       ${id !== ctx.ws() ? '<button class="btn btn-sm" type="button" id="useProject">Switch to this project</button>' : ''}
     </div>
     <div id="ccBody"></div>
