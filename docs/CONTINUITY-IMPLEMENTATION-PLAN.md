@@ -1,6 +1,6 @@
 # Coding Continuity Supervisor — implementation plan (for Codex)
 
-Status: **NOT STARTED.** The architecture is locked in `docs/CODING-CONTINUITY-SUPERVISOR.md`; this file is the build order. Rules for every phase are in `docs/DEVELOPMENT-CONTRACT.md`.
+Status: **Phase A DONE on branch `claude/continuity-foundation`, PR #102 (open, migration NOT applied). Phase B is next.** The architecture is locked in `docs/CODING-CONTINUITY-SUPERVISOR.md`; this file is the build order. Rules for every phase are in `docs/DEVELOPMENT-CONTRACT.md`.
 
 Paths written in **bold** below do not exist yet; the phase that names them creates them. Existing paths are in `backticks`.
 
@@ -23,19 +23,19 @@ Paths written in **bold** below do not exist yet; the phase that names them crea
 
 ---
 
-## Phase A — schema and domain types
+## Phase A — schema and domain types (DONE, PR #102)
 
 **Goal:** the six tables, their RPCs and the pure domain module, with no runtime behaviour.
 
 **Files:**
 * **supabase/migrations/20261004090000_coding_continuity.sql** (use the real UTC timestamp at writing time if later; keep the name `coding_continuity`):
-  * tables `coding_workers`, `coding_worker_sessions`, `coding_leases`, `continuity_checkpoints`, `continuity_handoffs`, `coding_usage_snapshots` exactly as in `docs/CODING-CONTINUITY-SUPERVISOR.md` → section 10;
+  * tables `coding_workers`, `coding_worker_sessions`, `coding_leases`, `coding_checkpoints`, `coding_handoffs`, `coding_usage_snapshots` exactly as in `docs/CODING-CONTINUITY-SUPERVISOR.md` → section 10;
   * check constraints for every enum (session states from section 4 of the architecture, lease status, handoff status, basis);
   * `coding_leases`: unique partial index on (repository, branch) where status = 'ACTIVE';
-  * `continuity_checkpoints`: unique (session_id, sequence); check that `payload->>'schema' = 'continuity.checkpoint.v1'`; `last_commit` matches `^[0-9a-f]{40}$`;
+  * `coding_checkpoints`: unique (session_id, sequence); check that `payload->>'schema' = 'continuity.checkpoint.v1'`; `last_commit` matches `^[0-9a-f]{40}$`;
   * RPCs `acquire_coding_lease`, `heartbeat_coding_lease`, `release_coding_lease` (requires a checkpoint id), `freeze_stale_coding_leases`, `save_continuity_checkpoint` (token-guarded), `propose_handoff`, `accept_handoff`. Copy the locking style of `claim_agent_session` / `renew_agent_session_lease` in `supabase/migrations/20260925160000_coding_agent_foundation.sql` (`security definer`, `set search_path = ''`, row locks, explicit errors);
   * RLS on every table; revoke all from `public`, `anon`, `authenticated`; grant only what `service_role` needs; revoke function execute from `public`/`anon`/`authenticated` and grant it to `service_role` — the same pattern as the foundation migration;
-  * seed `coding_workers` with the seven permanent workers (`office`, `claude-code`, `codex`, `antigravity`, `opencode`, `kilo`, `freebuff`), `enabled = false` except `office`, `health = 'UNKNOWN'`, and `quota_source` values: `office-pools`, `anthropic-claude-subscription`, `openai-chatgpt`, `google-ai-pro`, `opencode`, `kilo-auto-free` (Kilo's row is changed to `openai-chatgpt` when it is signed in with ChatGPT), `freebuff`.
+  * seed `coding_workers` with the seven permanent workers (`office`, `claude-code`, `codex`, `antigravity`, `opencode`, `kilo`, `freebuff`), `enabled = false` except `office`, `health = 'unknown'`, and `quota_source` values: `office-pools`, `anthropic-claude-subscription`, `openai-chatgpt`, `google-ai-pro`, `opencode`, `kilo-auto-free` (Kilo's row is changed to `openai-chatgpt` when it is signed in with ChatGPT), `freebuff`.
 * **supabase/verify/scenarios/coding_continuity.sql** — rolled-back scenario: acquire → second acquire on the same branch fails → heartbeat with a wrong token fails → save checkpoint → release without checkpoint fails → release with checkpoint → freeze of an expired lease → propose/accept handoff.
 * `supabase/verify/schema-fingerprint.txt` — regenerated with the replay (`supabase/verify/README.md` → *Changing the schema*), never by hand.
 * **src/continuity/checkpoint.js** — `validateCheckpoint(obj)` for `continuity.checkpoint.v1` (required fields, 40-hex commits, basis enum, no secret-looking strings via the existing redaction helpers), `checkpointToMarkdown(obj)`.

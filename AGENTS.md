@@ -223,7 +223,7 @@ inside the built runtime image as root.
   * Development is stopped.
   * See `docs/PRODUCTION-READY.md` and `docs/HOW-TO-USE.md`.
 
-* Coding Continuity Supervisor (2026-10-01): designed by Claude Code, **not implemented**; Codex implements it from Phase A.
+* Coding Continuity Supervisor (2026-10-01): designed by Claude Code; **Phase A implemented on PR #102 (open; migration not applied, needs Fahad)**; Codex continues with Phase B.
   * Permanent coding worker stack (keep all seven in every design): Fahad Office Coding Agent, Claude Code, OpenAI Codex, Google Antigravity, OpenCode, Kilo Code, Freebuff.
   * GitHub is the durable truth; Fahad AI Office is the policy authority.
   * Start at `docs/CODEX-CONTINUE.md`; architecture in `docs/CODING-CONTINUITY-SUPERVISOR.md`, phases in `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`, worker rules in `docs/DEVELOPMENT-CONTRACT.md`.
