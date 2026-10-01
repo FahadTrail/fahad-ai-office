@@ -20,15 +20,18 @@ export class OfficeContinuityAdapter {
 
   capabilities() {
     return {
-      headless: true, resume: true, structuredOutput: true, usageReporting: true, worktrees: true,
+      executionMode: 'EXECUTABLE', headless: true, resume: true, checkpoint: true,
+      structuredOutput: true, usageReporting: true, worktrees: true,
       worktreeManagement: 'adapter',
+      authRequirement: 'Existing Office service role and native Coding Agent configuration',
       maxContext: null, privacyClasses: ['PUBLIC', 'NORMAL', 'PRIVATE', 'CONFIDENTIAL'],
       taskSizes: ['small', 'medium', 'large', 'refactor'], taskTypes: ['coding'], quality: 4,
       taskFit: { small: 5, medium: 4, large: 3, refactor: 3 }, speed: 3, costClass: 'free-first', quotaSource: 'office-pools',
     };
   }
 
-  async available() { return { ok: true, reason: null }; }
+  async available() { return { ok: true, reason: null, authState: 'AUTHENTICATED' }; }
+  async authReadiness() { return this.available(); }
   async health() { return { status: 'healthy', basis: 'MEASURED', detail: 'in-process Coding Agent' }; }
 
   async start({ continuationPacket, branch, task = {} }) {
