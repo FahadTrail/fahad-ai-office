@@ -36,6 +36,31 @@ test('Codex adapter uses the verified non-interactive JSON invocation and report
   assert.equal((await adapter.usage({ session })).basis, 'PROVIDER_REPORTED');
   assert.equal((await adapter.stop({ session, reason: 'handoff' })).stopped, true);
 });
+test('Codex stop waits for process exit and fails closed when termination is unconfirmed', async () => {
+  let child;
+  const spawn = () => {
+    child = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    child.stdin = { end: () => {} };
+    child.kill = () => true;
+    return child;
+  };
+  const adapter = new CodexContinuityAdapter({ spawn, enabled: true, stopTimeoutMs: 15 });
+  const { session } = await adapter.start({ continuationPacket: 'continue', worktree: 'C:\\work' });
+  await assert.rejects(adapter.stop({ session, reason: 'handoff' }), /CODEX_STOP_UNCONFIRMED/);
+  const stopping = adapter.stop({ session, reason: 'handoff' });
+  let resolved = false;
+  stopping.then(() => { resolved = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(resolved, false, 'handoff cannot continue before the old process exits');
+  child.emit('exit', 0);
+  assert.equal((await stopping).stopped, true);
+});
+test('Codex handoff re-inspects Git instead of trusting an old checkpoint', async () => {
+  const adapter = new CodexContinuityAdapter({ inspectCheckpoint: async ({ context }) => ({ ...context.checkpoint, last_commit: 'c'.repeat(40) }) });
+  const result = await adapter.checkpoint({ session: { id: 'run' }, context: { checkpoint: { last_commit: 'b'.repeat(40) } } });
+  assert.equal(result.payload.last_commit, 'c'.repeat(40));
+});
 test('OpenCode Zen fails closed for every required safety condition', async () => {
   const cases = [
     [{ autoReload: true }, 'AUTO_RELOAD_MUST_BE_OFF'],

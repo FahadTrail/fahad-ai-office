@@ -28,6 +28,7 @@ export class ContinuitySupervisor {
     usage = new UsageTracker({ store }),
     gates,
     verifyBranch = async () => ({ ok: false, reason: 'BRANCH_VERIFIER_NOT_CONFIGURED' }),
+    confirmStopped = async () => false,
     prepareWorktree = null,
     releaseWorktree = null,
     mirrorPath,
@@ -46,6 +47,7 @@ export class ContinuitySupervisor {
     this.usage = usage;
     this.gates = gates;
     this.verifyBranch = verifyBranch;
+    this.confirmStopped = confirmStopped;
     this.prepareWorktree = prepareWorktree;
     this.releaseWorktree = releaseWorktree;
     this.mirrorPath = mirrorPath;
@@ -154,8 +156,13 @@ export class ContinuitySupervisor {
   async onLeaseLost(sessionId, error) {
     const runtime = this.running.get(sessionId);
     if (!runtime) return;
-    await this.store.failSession(sessionId, { status: 'ABNORMAL_EXIT', reason: error.message }).catch(() => {});
-    await this.events.emit('SESSION_FAILED', { sessionId, worker: runtime.worker.key, reason: error.message }, { level: 'error' }).catch(() => {});
+    let stopped = false;
+    try {
+      const result = await runtime.adapter.stop({ session: runtime.adapterSession, reason: 'write lease lost' });
+      stopped = result?.stopped === true && result?.draining !== true;
+    } catch { /* An unconfirmed stop must never be treated as safe to reclaim. */ }
+    await this.store.failSession(sessionId, { status: 'ABNORMAL_EXIT', reason: stopped ? 'LEASE_LOST_STOP_CONFIRMED' : 'WORKER_STOP_UNCONFIRMED' }).catch(() => {});
+    await this.events.emit('SESSION_FAILED', { sessionId, worker: runtime.worker.key, reason: error.message, stopConfirmed: stopped }, { level: 'error' }).catch(() => {});
     this.running.delete(sessionId);
   }
 
@@ -345,17 +352,35 @@ export class ContinuitySupervisor {
   }
 
   async recoverStale() {
-    const frozen = await this.leaseManager.freezeStale();
+    const newlyFrozen = await this.leaseManager.freezeStale();
+    const newIds = new Set(newlyFrozen.map((lease) => lease.id));
+    const frozen = [...new Map([
+      ...newlyFrozen,
+      ...(await this.store.listLeases({ statuses: ['FROZEN'] })),
+    ].map((lease) => [lease.id, lease])).values()];
     const recovered = [];
     for (const lease of frozen) {
-      await this.events.emit('LEASE_FROZEN', { leaseId: lease.id, sessionId: lease.session_id }, { level: 'warning' });
+      if (newIds.has(lease.id)) await this.events.emit('LEASE_FROZEN', { leaseId: lease.id, sessionId: lease.session_id }, { level: 'warning' });
+      const oldSession = await this.store.getSession(lease.session_id);
+      if (oldSession?.exit_reason === 'WORKER_STOP_UNCONFIRMED') {
+        recovered.push({ lease, recovered: false, blocker: 'WORKER_STOP_UNCONFIRMED' });
+        continue;
+      }
+      let stopConfirmed = oldSession?.exit_reason === 'LEASE_LOST_STOP_CONFIRMED';
+      if (!stopConfirmed) {
+        try { stopConfirmed = await this.confirmStopped({ session: oldSession, lease }); }
+        catch { stopConfirmed = false; }
+      }
+      if (!stopConfirmed) {
+        recovered.push({ lease, recovered: false, blocker: 'WORKER_STOP_UNCONFIRMED' });
+        continue;
+      }
       const checkpointRow = this.store.latestValidCheckpoint ? await this.store.latestValidCheckpoint(lease.session_id) : await this.store.latestCheckpoint(lease.session_id);
       if (!checkpointRow?.payload) { recovered.push({ lease, recovered: false, blocker: 'NO_CHECKPOINT' }); continue; }
       const verification = await this.verifyBranch(lease, checkpointRow.payload);
       if (!verification?.ok) { recovered.push({ lease, recovered: false, blocker: 'BRANCH_VERIFICATION_FAILED', verification }); continue; }
       await this.leaseManager.reclaim(lease, { verify: async () => verification });
       await this.events.emit('LEASE_RECLAIMED', { leaseId: lease.id, sessionId: lease.session_id, head: verification.head });
-      const oldSession = await this.store.getSession(lease.session_id);
       let task = {
         projectId: oldSession.project_id, repository: oldSession.repository, branch: oldSession.branch,
         worktree: oldSession.worktree, objective: oldSession.objective,

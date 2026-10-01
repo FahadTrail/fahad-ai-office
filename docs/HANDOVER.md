@@ -1,5 +1,13 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
+## PHASE N READINESS UPDATE (2026-10-01)
+
+The current authoritative package is [`docs/CONTINUITY-PHASE-N-READINESS.md`](CONTINUITY-PHASE-N-READINESS.md). The four-PR stack #102 → #104 → #105 → #106 remains open and unmerged; the Phase A migration is unapplied; production is unchanged and `CONTINUITY_SUPERVISOR` remains OFF. Phase N readiness fixes on #106 make Codex stop wait for confirmed process exit, re-inspect Git before handoff, reject wrong/diverged branches and refuse stale-lease reclaim without proof the old writer stopped. The mobile sidebar now hides its controls from keyboard focus while closed.
+
+The local fictional-data UI verification passed 20/20 viewport/theme/motion cases with axe-core 4.13.0 reporting 0 critical and 0 serious violations; gradient contrast nodes remain marked incomplete by axe and were conservatively checked separately. Privacy and shared-quota tests cover all four data classes and distinct subscription pools. The final #106 Linux CI and DB replay must be checked on the new head after push. Windows `node --test` reported 573 total, 543 passed, 9 failed (`spawn bash ENOENT`), 21 skipped; the two real Windows URL-to-path test bugs were repaired. No Continuity test was skipped in the focused suite.
+
+**Not ready for production activation:** the required *real* Office → Codex → third-worker drill with an actual restart and PR/CI evidence has not occurred. The local Codex CLI reports its version but cannot load its login configuration here; no third adapter in the shipped runtime is executable, and no isolated native Office session is available. The test with fake executors is not a substitute. The exact safe production sequence and rollback plan are written but **not executed**. Do not ask for activation approval or take production action until Phase N passes. The current handover checkpoint is `.continuity/checkpoint.json`.
+
 ## CURRENT CONTINUITY HANDOVER (2026-10-01)
 
 This section supersedes the earlier Phase A-only handover below. Read `AGENTS.md`, `docs/CODEX-CONTINUE.md`, and `.continuity/checkpoint.json` before continuing.

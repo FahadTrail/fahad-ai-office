@@ -63,6 +63,7 @@ test('continuity e2e: Office crash recovers through Codex and Claude on one real
       checkpointerFactory: (options) => new ContinuityCheckpointer({ ...options, writeMirror: async () => {}, env: {}, clock: { now: () => Date.now() } }),
       gates: async () => ({ ok: true, checks: [], failed: [], nextExactAction: null }),
       verifyBranch: (_lease, checkpoint) => worktrees.verifyAgainstCheckpoint({ worktree, checkpoint }),
+      confirmStopped: async () => true, // the fake Office process was explicitly killed above
     });
     const task = { projectId: 'p', repository: 'FahadTrail/fahad-ai-office', branch: 'codex/continuity-runtime', worktree, objective: 'E2E recovery.', dataClass: 'PUBLIC', size: 'medium', capability: 'coding' };
     const started = await supervisor.startTask({ task, checkpoint: validCheckpoint({ base_commit: base, last_commit: base }) });

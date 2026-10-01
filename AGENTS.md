@@ -69,9 +69,9 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## Continuity update (2026-10-01)
+## Continuity update (2026-10-01, Phase N readiness)
 
-The Coding Continuity Supervisor is implemented in an open, unmerged PR stack: #102 (Phase A, schema), #104 (B, durable runtime foundation), #105 (C-G, supervisor and workers), and #106 (H-M, nested project UI and recovery tests). The Phase A production migration is unapplied, and `CONTINUITY_SUPERVISOR` is off by default. Do not merge, deploy, apply the migration, or activate the flag without Fahad's approval. Check the top of `docs/HANDOVER.md` and `.continuity/checkpoint.json` for current CI, remaining axe/Phase N gates, and the next exact action. The older status below is historical.
+The Coding Continuity Supervisor is implemented in an open, unmerged PR stack: #102 (Phase A, schema), #104 (B, durable runtime foundation), #105 (C-G, supervisor and workers), and #106 (H-M, nested project UI and Phase N readiness fixes). The Phase A production migration is unapplied, and `CONTINUITY_SUPERVISOR` is off by default. Automated Continuity UI axe/viewport checks pass, but the documented real Office → Codex → third-worker Phase N drill has not been run; no third adapter is executable. **Production activation is not ready.** Do not merge, deploy, apply the migration, or activate the flag. Read `docs/CONTINUITY-PHASE-N-READINESS.md`, the top of `docs/HANDOVER.md`, and `.continuity/checkpoint.json` before any further action. The older status below is historical.
 
 ## Current status (2026-09-25; historical)
 
@@ -234,7 +234,7 @@ The Coding Continuity Supervisor is implemented in an open, unmerged PR stack: #
 
 ## Next actions
 
-1. Codex: CI and DB replay passed on #106 head `4acb2d2`; check the latest docs-only head, run axe in both themes for the new view, then coordinate the Phase N real drill with Fahad. Keep #102/#104/#105/#106 open and unmerged, with the migration unapplied and Supervisor off.
+1. Codex: confirm CI and DB replay on #106's final Phase N-readiness head; then resolve the executable third-worker and isolated Office/Codex environment blocker and run the documented real Phase N drill. Keep #102/#104/#105/#106 open and unmerged, with the migration unapplied and Supervisor off. The activation order and rollback plan are in `docs/CONTINUITY-PHASE-N-READINESS.md`.
 2. Use it: Hub → Coding Agent → project, repository, detailed objective,
    budget, routing → Start; approve merges in the Hub.
 3. Optional: Supabase access token for the agent, more providers (keys,

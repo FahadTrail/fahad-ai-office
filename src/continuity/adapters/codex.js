@@ -24,11 +24,12 @@ function parseLines(state, chunk) {
 export class CodexContinuityAdapter {
   key = 'codex';
 
-  constructor({ spawn = nodeSpawn, probe = async () => ({ ok: false, reason: 'NOT_CONFIGURED' }), inspectCheckpoint, enabled = false } = {}) {
+  constructor({ spawn = nodeSpawn, probe = async () => ({ ok: false, reason: 'NOT_CONFIGURED' }), inspectCheckpoint, enabled = false, stopTimeoutMs = 30_000 } = {}) {
     this.spawn = spawn;
     this.probe = probe;
     this.inspectCheckpoint = inspectCheckpoint;
     this.enabled = enabled;
+    this.stopTimeoutMs = stopTimeoutMs;
     this.sessions = new Map();
   }
 
@@ -84,8 +85,31 @@ export class CodexContinuityAdapter {
     const state = this.sessions.get(session.id);
     if (!state) return { stopped: false, reason: 'SESSION_NOT_FOUND' };
     state.stopReason = reason;
-    state.child.kill?.('SIGTERM');
-    return { stopped: true, draining: true };
+    if (state.exitCode != null || state.child.exitCode != null) return { stopped: true, draining: false };
+    await new Promise((resolve, reject) => {
+      const child = state.child;
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.removeListener('exit', onExit);
+        child.removeListener('error', onError);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onExit = () => finish();
+      const onError = (error) => finish(error);
+      const timer = setTimeout(() => finish(new Error('CODEX_STOP_UNCONFIRMED')), this.stopTimeoutMs);
+      child.once('exit', onExit);
+      child.once('error', onError);
+      try {
+        if (child.kill?.('SIGTERM') === false && state.exitCode == null && child.exitCode == null) {
+          finish(new Error('CODEX_STOP_UNCONFIRMED'));
+        }
+      } catch (error) { finish(error); }
+    });
+    return { stopped: true, draining: false };
   }
 
   async status({ session }) {
@@ -104,7 +128,11 @@ export class CodexContinuityAdapter {
 
   async checkpoint({ session, context }) {
     if (!this.inspectCheckpoint && !context?.checkpoint) throw new Error('CODEX_CHECKPOINT_INSPECTOR_REQUIRED');
-    const payload = context?.checkpoint || await this.inspectCheckpoint({ session, state: this.sessions.get(session.id), context });
+    // The caller's checkpoint is a baseline, not proof of the current Git
+    // head. Inspect the worktree before every handoff when an inspector exists.
+    const payload = this.inspectCheckpoint
+      ? await this.inspectCheckpoint({ session, state: this.sessions.get(session.id), context })
+      : context.checkpoint;
     return { payload, nativeCheckpointId: null };
   }
 

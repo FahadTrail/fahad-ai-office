@@ -1,5 +1,9 @@
 # Codex: continue the Coding Continuity Supervisor
 
+## Phase N readiness update (2026-10-01)
+
+Start with `docs/CONTINUITY-PHASE-N-READINESS.md` and the new top section of `docs/HANDOVER.md`. Automated UI checks, mobile sizes, keyboard/drawer behavior, privacy and shared-quota tests are complete; #106 also contains fail-closed Codex stop, Git-head and stale-writer verification fixes. The real Office → Codex → third-worker handoff and process-restart drill is **not** complete. No third adapter is executable, and this local Codex CLI cannot load its login configuration. The production activation package is a plan only. Check final #106 CI, then arrange supported third-worker implementation/verification and an isolated real Phase N drill; do not merge, migrate, deploy or activate meanwhile. The older sections below explain the stack history.
+
 The authoritative current state is the top section of `docs/HANDOVER.md` and `.continuity/checkpoint.json`. Read `AGENTS.md` first, then `docs/CODING-CONTINUITY-SUPERVISOR.md`, `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`, and `docs/DEVELOPMENT-CONTRACT.md`. GitHub contains the complete branch stack; no prior chat is needed.
 
 ## Current stack (2026-10-01)

@@ -62,8 +62,18 @@ export class WorktreeManager {
   async verifyAgainstCheckpoint({ worktree, checkpoint }) {
     const head = await this.head(worktree);
     const status = await this.status(worktree);
-    const extra = head === checkpoint.last_commit ? [] : (await this.git(['log', '--format=%H', `${checkpoint.last_commit}..${head}`], { cwd: this.assertTarget(worktree) })).split(/\r?\n/).filter(Boolean);
-    return { ok: status.clean, head, extraCommits: extra, dirtyFiles: status.files };
+    const target = this.assertTarget(worktree);
+    let branch = null;
+    try { branch = await this.git(['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: target }); }
+    catch { /* Detached HEAD is not the leased branch. */ }
+    let checkpointAncestor = head === checkpoint.last_commit;
+    if (!checkpointAncestor && /^[0-9a-f]{40}$/.test(checkpoint.last_commit || '')) {
+      try { await this.git(['merge-base', '--is-ancestor', checkpoint.last_commit, head], { cwd: target }); checkpointAncestor = true; }
+      catch { checkpointAncestor = false; }
+    }
+    const extra = checkpointAncestor && head !== checkpoint.last_commit
+      ? (await this.git(['log', '--format=%H', `${checkpoint.last_commit}..${head}`], { cwd: target })).split(/\r?\n/).filter(Boolean) : [];
+    return { ok: status.clean && branch === checkpoint.branch && checkpointAncestor, head, branch, checkpointAncestor, extraCommits: extra, dirtyFiles: status.files };
   }
 
   async remove(path) {

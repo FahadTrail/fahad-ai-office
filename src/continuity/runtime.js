@@ -50,6 +50,14 @@ export function createContinuityRuntime({ db, env = process.env, log = () => {} 
     adapters,
     mirrorPath: resolve(env.CONTINUITY_WORKSPACE_ROOT, '.continuity', 'checkpoint.json'),
     verifyBranch: (lease, checkpoint) => worktrees.verifyAgainstCheckpoint({ worktree: lease.worktree, checkpoint }),
+    confirmStopped: async ({ session }) => {
+      // Only the native Office worker has a durable session status that can
+      // prove termination after a Supervisor restart. An orphaned external
+      // CLI process cannot be inferred dead from a clean Git worktree.
+      if (session?.worker_key !== 'office' || !session.native_session_id) return false;
+      const { data, error } = await db.from('agent_sessions').select('status').eq('id', session.native_session_id).maybeSingle();
+      return !error && ['completed', 'failed', 'cancelled'].includes(data?.status);
+    },
     prepareWorktree: ({ session, task }) => worktrees.create({ path: resolve(env.CONTINUITY_WORKTREES_ROOT, session.id), branch: task.branch, refresh: true }),
     releaseWorktree: (path) => worktrees.remove(path),
     gates: ({ worktree, ciStatus = 'none', acceptance = [] } = {}) => runCompletionGates({
