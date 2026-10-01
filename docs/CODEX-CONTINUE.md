@@ -1,5 +1,7 @@
 # Codex: continue from here
 
+> **UPDATE 2026-10-01 — READ THIS FIRST.** Continuity **Phase A is implemented** on branch `claude/continuity-foundation`, PR https://github.com/FahadTrail/fahad-ai-office/pull/102 (**open; migration NOT applied; do not merge without Fahad**). Phase B is not started. The current handover (prompt, checkpoint, exact next action) is the version of this file and of HANDOVER.md **on that branch**, and .continuity/checkpoint.json there. Do **not** start Phase A again from main.
+
 Claude Code designed the Coding Continuity Supervisor and stopped before implementing it. Codex implements it, starting with Phase A. Everything needed is in this repository. No conversation history is required.
 
 ## State at handover (2026-10-01)

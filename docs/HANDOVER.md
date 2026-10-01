@@ -6,6 +6,8 @@ This file is the live state. **The release procedure is
 
 ## CODING CONTINUITY SUPERVISOR — HANDOVER TO CODEX (2026-10-01)
 
+> **UPDATE 2026-10-01 — READ THIS FIRST.** Continuity **Phase A is implemented** on branch `claude/continuity-foundation`, PR https://github.com/FahadTrail/fahad-ai-office/pull/102 (**open; migration NOT applied; do not merge without Fahad**). Phase B is not started. The current handover (prompt, checkpoint, exact next action) is the version of this file and of HANDOVER.md **on that branch**, and .continuity/checkpoint.json there. Do **not** start Phase A again from main.
+
 **New work, approved by Fahad:** the Coding Continuity Supervisor. Claude Code locked the architecture and wrote the spec, then stopped. **Codex implements it, starting with Phase A.** Start at `docs/CODEX-CONTINUE.md` (ready-to-paste prompt and the continuity checkpoint).
 
 * **Architecture (locked):** `docs/CODING-CONTINUITY-SUPERVISOR.md`.
