@@ -1,8 +1,22 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-Last updated: 2026-10-01, product complete (see its section below). Read `AGENTS.md` first; it holds the permanent rules.
+Last updated: 2026-10-01, Coding Continuity Supervisor handover to Codex (top section); product complete (below). Read `AGENTS.md` first; it holds the permanent rules.
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
+
+## CODING CONTINUITY SUPERVISOR — HANDOVER TO CODEX (2026-10-01)
+
+**New work, approved by Fahad:** the Coding Continuity Supervisor. Claude Code locked the architecture and wrote the spec, then stopped. **Codex implements it, starting with Phase A.** Start at `docs/CODEX-CONTINUE.md` (ready-to-paste prompt and the continuity checkpoint).
+
+* **Architecture (locked):** `docs/CODING-CONTINUITY-SUPERVISOR.md`.
+* **Build order, phases A–N:** `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`.
+* **Rules for every coding worker:** `docs/DEVELOPMENT-CONTRACT.md`.
+* **Permanent worker stack:** Fahad Office Coding Agent, Claude Code, OpenAI Codex, Google Antigravity, OpenCode, Kilo Code, Freebuff. Bridges (not workers): OpenHands/ACP, official CLIs, GitHub, worktrees, CI, Supabase, checkpoints.
+* **State at handover:** production `2bb17b0` (deploy run 86); main = the docs-only merge of PR #101 on top of `abe447a`; no other open PRs; nothing of the Supervisor is implemented and no migration is written or applied.
+* **Next exact action:** create `codex/continuity-phase-a` from `main` and implement Phase A (migration `20261004090000_coding_continuity`, scenario, checkpoint validator, state machine, tests). Do not apply the migration to production; that needs Fahad's approval, and the Phase A PR stays open until then.
+* **Supervisor flag:** `CONTINUITY_SUPERVISOR` stays off by default until the Phase N drill passes and Fahad turns it on.
+* **Do not touch:** core routing, capacity, FINANCE/AUDIT/fact gate, the V5 UI, deployment files, Hermes.
+* **Rollback of this handover:** GitHub Revert of PR #101 (docs only).
 
 ## PRODUCT COMPLETE (2026-10-01)
 
