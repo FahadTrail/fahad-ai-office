@@ -230,7 +230,7 @@ inside the built runtime image as root.
 
 ## Next actions
 
-1. Codex: implement the Coding Continuity Supervisor, Phase A first (`docs/CODEX-CONTINUE.md`).
+1. Codex: Continuity Phase A is done on PR #102 (open, migration not applied). Read `docs/CODEX-CONTINUE.md` on branch `claude/continuity-foundation`, review #102, then build Phase B stacked on it.
 2. Use it: Hub → Coding Agent → project, repository, detailed objective,
    budget, routing → Start; approve merges in the Hub.
 3. Optional: Supabase access token for the agent, more providers (keys,
