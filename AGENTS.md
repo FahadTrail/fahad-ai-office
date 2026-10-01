@@ -234,7 +234,7 @@ The Coding Continuity Supervisor is implemented in an open, unmerged PR stack: #
 
 ## Next actions
 
-1. Codex: verify latest CI and Linux DB replay on #106, and axe in both themes for the new view; then coordinate the Phase N real drill with Fahad. Keep #102/#104/#105/#106 open and unmerged, with the migration unapplied and Supervisor off.
+1. Codex: CI and DB replay passed on #106 head `4acb2d2`; check the latest docs-only head, run axe in both themes for the new view, then coordinate the Phase N real drill with Fahad. Keep #102/#104/#105/#106 open and unmerged, with the migration unapplied and Supervisor off.
 2. Use it: Hub → Coding Agent → project, repository, detailed objective,
    budget, routing → Start; approve merges in the Hub.
 3. Optional: Supabase access token for the agent, more providers (keys,
