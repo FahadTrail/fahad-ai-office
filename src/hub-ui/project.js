@@ -41,6 +41,7 @@ export async function renderProject(ctx, id, mode = 'center') {
       <div class="cc-tabs" role="tablist" aria-label="View">
         <a role="tab" href="#/project/${esc(id)}" aria-selected="${mode === 'center'}">Command Center</a>
         <a role="tab" href="#/project/${esc(id)}/map" aria-selected="${mode === 'map'}">Project map</a>
+        <a role="tab" href="#/project/${esc(id)}/continuity" aria-selected="${mode === 'continuity'}">Coding continuity</a>
       </div>
       ${id !== ctx.ws() ? '<button class="btn btn-sm" type="button" id="useProject">Switch to this project</button>' : ''}
     </div>
@@ -48,10 +49,63 @@ export async function renderProject(ctx, id, mode = 'center') {
   </div>`;
   const body = view.querySelector('#ccBody');
   if (mode === 'map') await drawMap(ctx, body, center);
+  else if (mode === 'continuity') await drawContinuity(ctx, body, id);
   else drawCenter(ctx, body, center, project, memory, id);
   const use = view.querySelector('#useProject');
   if (use) use.onclick = () => { const select = document.querySelector('#projectSelect'); select.value = id; select.onchange(); };
   ctx.onChange(async () => { if (location.hash.startsWith(`#/project/${id}`)) renderProject(ctx, id, mode).catch(() => {}); });
+}
+
+function basis(value) { return `<span class="continuity-basis">${value || 'UNKNOWN'}</span>`; }
+function number(value, empty = 'UNKNOWN') { return value == null ? empty : Number(value).toLocaleString(); }
+function pct(value) { return value == null ? 'UNKNOWN' : `${Number(value).toLocaleString()}%`; }
+function highestPct(...values) {
+  const reported = values.filter(Number.isFinite);
+  return reported.length ? Math.max(...reported) : null;
+}
+function elapsed(ms) {
+  if (ms == null) return 'UNKNOWN';
+  const minutes = Math.round(ms / 60000);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+async function drawContinuity(ctx, body, projectId) {
+  const { api, esc, q, when, toast } = ctx;
+  const data = await api(`/api/continuity${q({ projectId })}`);
+  const active = data.sessions.find((session) => ['ACQUIRING', 'ACTIVE', 'DRAINING', 'CHECKPOINTING'].includes(session.status));
+  const activeWorker = active ? data.workers.find((worker) => worker.key === active.workerKey) : null;
+  const activeUsage = active ? data.usage.find((item) => item.sessionId === active.id) : null;
+  const activeCheckpoint = active ? data.checkpoints.find((item) => item.sessionId === active.id) : null;
+  const pending = data.sessions.find((session) => session.status === 'HANDOFF_READY');
+  body.innerHTML = `<section class="cc-card continuity-head"><div class="spread"><div><h2 class="cc-h2">Coding continuity</h2><p class="muted small">One writer per branch. Checkpoints and handoffs are durable; routine worker changes stay quiet.</p></div>
+    <span class="state-chip" data-state="${data.enabled ? 'WORKING' : 'WAITING'}">${data.enabled ? 'Supervisor on' : 'Supervisor off'}</span></div></section>
+    <section class="continuity-baton" aria-label="Current coding baton" aria-live="polite">
+      <div class="continuity-baton-top"><div><span class="cc-label">Current baton</span><h2>${esc(activeWorker?.displayName || 'No active worker')}</h2></div><span class="state-chip" data-state="${active ? 'WORKING' : 'WAITING'}">${esc(active?.status || pending?.status || 'STANDBY')}</span></div>
+      <p dir="auto">${esc(active?.objective || pending?.objective || 'No continuity task is active for this project.')}</p>
+      <div class="continuity-metrics">
+        <div><span>Task tokens</span><strong>${number(activeUsage?.taskTokens ?? active?.taskTokens)}</strong>${basis(activeUsage?.basis || active?.tokensBasis)}</div>
+        <div><span>Usage</span><strong>${pct(highestPct(activeUsage?.sessionPct, activeUsage?.weeklyPct))}</strong>${basis(activeUsage?.basis)}</div>
+        <div><span>Checkpoint</span><strong>${activeCheckpoint ? `#${number(activeCheckpoint.sequence)}` : 'UNKNOWN'}</strong>${basis(activeCheckpoint ? 'MEASURED' : 'UNKNOWN')}</div>
+        <div><span>Last commit</span><strong class="mono">${esc(activeCheckpoint?.lastCommit?.slice(0, 9) || 'UNKNOWN')}</strong>${basis(activeCheckpoint ? 'MEASURED' : 'UNKNOWN')}</div>
+      </div>
+      ${activeCheckpoint?.nextExactAction ? `<div class="continuity-next"><span>Next exact action</span><p dir="auto">${esc(activeCheckpoint.nextExactAction)}</p></div>` : ''}
+      ${data.enabled && active ? `<div class="row continuity-actions"><button class="btn btn-sm" type="button" data-continuity-action="PAUSE_SESSION" data-session="${esc(active.id)}">Pause safely</button><button class="btn btn-sm" type="button" data-continuity-action="REQUEST_HANDOFF" data-session="${esc(active.id)}">Hand off</button></div>` : ''}
+      ${data.enabled && pending ? `<div class="row continuity-actions"><button class="btn btn-sm" type="button" data-continuity-action="RESUME_SESSION" data-session="${esc(pending.id)}">Resume</button></div>` : ''}
+    </section>
+    <section class="cc-card"><h2 class="cc-h2">Worker timeline</h2><ol class="continuity-timeline">${data.sessions.length ? data.sessions.map((session) => `<li><span class="continuity-node" aria-hidden="true"></span><div class="grow"><strong>${esc(data.workers.find((worker) => worker.key === session.workerKey)?.displayName || session.workerKey)}</strong><div class="small muted" dir="auto">${esc(session.objective)}</div></div><div class="continuity-time"><span class="state-chip" data-state="${session.status === 'COMPLETED' ? 'COMPLETED' : ['FAILED', 'ABNORMAL_EXIT'].includes(session.status) ? 'BLOCKED' : 'WAITING'}">${esc(session.status)}</span><span class="xs faint">${esc(when(session.startedAt))}</span><span class="xs">${number(session.taskTokens)} ${basis(session.tokensBasis)}</span></div></li>`).join('') : '<li class="muted small">No worker sessions yet.</li>'}</ol></section>
+    <section class="cc-card"><h2 class="cc-h2">Workers</h2><div class="continuity-workers">${data.workers.map((worker) => { const m = worker.metrics || {}; const u = m.latestUsage || {}; return `<article class="continuity-worker"><div class="spread"><div><strong>${esc(worker.displayName)}</strong><div class="xs faint">${esc(worker.kind)} · ${esc(worker.quotaSource)}</div></div><span class="state-chip" data-state="${worker.enabled && worker.health === 'healthy' ? 'COMPLETED' : worker.enabled ? 'WAITING' : 'BLOCKED'}">${worker.enabled ? esc(worker.health || 'unknown') : 'disabled'}</span></div>
+        <dl><div><dt>Task tokens</dt><dd>${number(u.taskTokens)} ${basis(u.basis)}</dd></div><div><dt>Lifetime tokens</dt><dd>${number(m.lifetimeTokens)} ${basis(m.tokensBasis)}</dd></div><div><dt>Completed / failed</dt><dd>${number(m.completed)} / ${number(m.failed)} ${basis(m.countsBasis)}</dd></div><div><dt>Success</dt><dd>${pct(m.successRatePct)} ${basis(m.successBasis)}</dd></div><div><dt>Average latency</dt><dd>${elapsed(m.averageLatencyMs)} ${basis(m.latencyBasis)}</dd></div><div><dt>Handoffs</dt><dd>${number(m.handoffs)} ${basis(m.countsBasis)}</dd></div><div><dt>Quota used</dt><dd>${pct(highestPct(u.sessionPct, u.weeklyPct))} ${basis(u.basis)}</dd></div><div><dt>Reset</dt><dd>${u.resetAt ? esc(when(u.resetAt)) : 'UNKNOWN'} ${basis(u.basis)}</dd></div></dl>
+        ${data.enabled ? `<button class="btn btn-ghost btn-sm" type="button" data-worker-action="${worker.enabled ? 'DISABLE_WORKER' : 'ENABLE_WORKER'}" data-worker="${esc(worker.key)}">${worker.enabled ? 'Disable' : 'Enable'}</button>` : ''}</article>`; }).join('')}</div></section>`;
+  body.querySelectorAll('[data-continuity-action]').forEach((button) => { button.onclick = async () => {
+    button.disabled = true;
+    try { await api('/api/continuity/actions', { method: 'POST', body: { action: button.dataset.continuityAction, sessionId: button.dataset.session } }); toast('Continuity action accepted'); await drawContinuity(ctx, body, projectId); }
+    catch (error) { toast(error.message); button.disabled = false; }
+  }; });
+  body.querySelectorAll('[data-worker-action]').forEach((button) => { button.onclick = async () => {
+    button.disabled = true;
+    try { await api('/api/continuity/actions', { method: 'POST', body: { action: button.dataset.workerAction, workerKey: button.dataset.worker } }); toast('Worker updated'); await drawContinuity(ctx, body, projectId); }
+    catch (error) { toast(error.message); button.disabled = false; }
+  }; });
 }
 
 function drawCenter(ctx, body, center, project, memory, id) {
