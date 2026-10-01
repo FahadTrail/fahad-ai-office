@@ -55,7 +55,7 @@ Status keys:
 
 ## 5. Alert watchdog (`src/ops/ops-watch.js`, PREPARED)
 
-Cron (VPS, app directory, every 15 min): `docker compose exec -T runtime node src/ops/ops-watch.js`; first run with `--dry-run`.
+**Active in production:** the runtime runs it every 15 minutes. There is no cron entry, so it can never be installed twice. `OPS_WATCH=false` in `.env` turns it off. A manual check (prints, sends nothing): `docker compose exec -T runtime node src/ops/ops-watch.js --dry-run`.
 
 A read-only script, run from cron on the VPS every 15 minutes. It sends at most one Telegram message per new finding, through the existing bot and owner chat. It changes no routing and no state; it only reads.
 
