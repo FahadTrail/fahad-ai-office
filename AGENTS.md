@@ -218,6 +218,11 @@ inside the built runtime image as root.
   * The next phase is V5/UI only.
   * State, numbers, rollback and bottlenecks are in `docs/HANDOVER.md` → *CORE CLOSURE*.
 
+* Product complete (2026-10-01): **FAHAD AI OFFICE — COMPLETE AND READY FOR DAILY USE**.
+  * V5 (#71) and the in-runtime watchdog (#99) are live (`2bb17b0`).
+  * Development is stopped.
+  * See `docs/PRODUCTION-READY.md` and `docs/HOW-TO-USE.md`.
+
 ## Next actions
 
 1. Use it: Hub → Coding Agent → project, repository, detailed objective,
