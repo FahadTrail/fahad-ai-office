@@ -28,6 +28,15 @@ function incidentOf(event) {
   return null;
 }
 
+// Account blockers are named for what they are: an empty balance or an
+// account that was never activated is the owner's optional decision (free
+// routes keep working); a rejected key is a real credential problem.
+function accountFinding(id, code = '') {
+  if (/NO_CREDITS/.test(code || '')) return { severity: 'medium', text: `Provider account has no credits: ${id}. Optional: top up, or ignore it (free routes keep working).` };
+  if (/NOT_ACTIVATED/.test(code || '')) return { severity: 'medium', text: `Provider account is not activated: ${id}. Optional: activate it in the provider console.` };
+  return { severity: 'high', text: `Provider rejected the key: ${id} (${code || 'auth error'}). Check the key with ops/set-secret.sh.` };
+}
+
 // Pure: every finding in the window, each with a stable key for dedupe.
 export function findings({ attempts = [], statuses = [], events = [], tasks = [], sessions = [], health = null, configured = null }) {
   const out = [];
@@ -44,7 +53,7 @@ export function findings({ attempts = [], statuses = [], events = [], tasks = []
   for (const row of statuses) {
     const id = `${row.provider}:${row.model}`;
     if (row.health === 'auth_error' && (!configured || configured.has(row.provider))) {
-      out.push({ key: `auth:${id}:${row.last_error_code || ''}`, severity: 'high', text: `Provider credential problem: ${id} (${row.last_error_code || 'auth error'}). Check the key with ops/set-secret.sh.` });
+      out.push({ key: `auth:${id}:${row.last_error_code || ''}`, ...accountFinding(id, row.last_error_code) });
     }
   }
   for (const task of tasks) {

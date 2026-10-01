@@ -26,6 +26,7 @@ import { rankFreeModels } from './model-gateway/agentic/capabilities.js';
 import { OfficeModelRunner } from './office/pool-runner.js';
 import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
 import { startTelegramChannel } from './channels/start.js';
+import { runOpsWatch } from './ops/ops-watch.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
@@ -133,6 +134,16 @@ async function main() {
       transport: safeCanaryTransport,
     }),
   });
+  // Ops watchdog (docs/core-final-lock.md §5): read-only checks every 15
+  // minutes; each NEW finding is recorded, then sent once to the owner's
+  // Telegram chat. Quiet when nothing is new. OPS_WATCH=false turns it off.
+  if (!/^(0|false|no)$/i.test(String(process.env.OPS_WATCH || ''))) {
+    const watch = () => runOpsWatch(['--minutes=16'], { db, log: () => {} })
+      .then((result) => { if (result?.sent) log(`Ops watch: ${result.sent} new finding(s) sent to Telegram.`); })
+      .catch((error) => log('WARN  ops watch:', error.message));
+    setTimeout(watch, 2 * 60_000).unref();
+    setInterval(watch, 15 * 60_000).unref();
+  }
   heartbeatTimer = setInterval(heartbeat, 5000);
   log('------------------------------------------------------------');
   log('Fahad AI Office - Runtime v3 (Chief -> specialist workstreams -> Chief synthesis)');
