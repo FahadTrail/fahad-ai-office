@@ -12,6 +12,7 @@ import {
 import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi, readDeployedVersion } from './hub-coding.js';
 import { handleWorkspaceApi } from './hub-workspace.js';
 import { handleOfficeApi } from './hub-office.js';
+import { handleContinuityApi } from './hub-continuity.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
@@ -61,7 +62,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OTP_RE = /^\d{6}$/;
 
-export function createHubServer({ db, authClient = db?.auth, store, host = process.env.HUB_BIND || '127.0.0.1', port = Number(process.env.HUB_PORT || DEFAULT_PORT), accessToken = process.env.HUB_ACCESS_TOKEN || '', authEnabled = process.env.HUB_AUTH_ENABLED === 'true', ownerEmail = process.env.HUB_OWNER_EMAIL || '' } = {}) {
+export function createHubServer({ db, authClient = db?.auth, store, continuity = null, host = process.env.HUB_BIND || '127.0.0.1', port = Number(process.env.HUB_PORT || DEFAULT_PORT), accessToken = process.env.HUB_ACCESS_TOKEN || '', authEnabled = process.env.HUB_AUTH_ENABLED === 'true', ownerEmail = process.env.HUB_OWNER_EMAIL || '' } = {}) {
   if (!db || !store) throw new TypeError('Hub server requires the existing database and store');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new TypeError('HUB_PORT must be a valid TCP port');
   if (authEnabled && !EMAIL_RE.test(ownerEmail)) throw new TypeError('HUB_OWNER_EMAIL must be configured when HUB_AUTH_ENABLED=true');
@@ -100,6 +101,7 @@ export function createHubServer({ db, authClient = db?.auth, store, host = proce
       if (authRequired && !(await authorized(request, accessToken, { authClient, authEnabled, ownerEmail }))) {
         return sendJson(response, 401, { ok: false, error: authEnabled ? 'HUB_UNAUTHORIZED' : 'HUB_AUTH_NOT_CONFIGURED' });
       }
+      if (await handleContinuityApi({ db, supervisor: continuity, request, response, url: requestUrl, sendJson, readJson })) return;
       if (await handleCodingApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
       if (await handleWorkspaceApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null, store })) return;
       if (await handleOfficeApi({ db, request, response, url: requestUrl, sendJson })) return;
