@@ -1,6 +1,6 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-01T19:16:52Z",
+  "timestamp": "2026-10-01T19:23:41Z",
   "repository": "FahadTrail/fahad-ai-office",
   "branch": "codex/continuity-readiness",
   "worktree": null,
@@ -12,7 +12,7 @@
   "phase": "N",
   "status": "HANDOFF_READY",
   "base_commit": "53d24790fddf3717cd0043a1973fed22ebb940da",
-  "last_commit": "f5ff10899ee02f5e068173a7cc02043168602e18",
+  "last_commit": "3759ff9621fc2f20f09d7bae8dc7ce28249400fa",
   "files_changed": [
     "src/continuity/adapters/codex.js",
     "src/continuity/runtime.js",
@@ -29,11 +29,11 @@
     "docs/HANDOVER.md",
     "docs/CODEX-CONTINUE.md"
   ],
-  "diff_summary": "Phase N readiness audit: 20/20 Playwright/axe viewport cases passed; Codex stop and checkpoint inspection hardened; recovery requires confirmed old-writer termination and a clean, correctly branched descendant commit; Windows URL-to-path tests fixed. The real three-worker Phase N drill remains blocked. This handover commit sits above last_commit.",
-  "tests_run": "Local UI audit 20/20; Windows node --test 573 total, 543 pass, 9 Bash/PATH failures, 21 skip; final Linux CI and DB replay pending",
-  "tests_passed": 543,
-  "tests_failed": 9,
-  "ci_status": "pending",
+  "diff_summary": "Phase N readiness audit: 20/20 Playwright/axe viewport cases passed; Codex stop and checkpoint inspection hardened; recovery requires confirmed old-writer termination and a clean, correctly branched descendant commit; Windows URL-to-path tests fixed. The real three-worker Phase N drill remains blocked. This documentation-only handover commit sits above the CI-verified code last_commit.",
+  "tests_run": "Linux node --test 573 total, 571 pass, 0 fail, 2 skip; container sandbox 15/15; 32 migrations replayed; local UI audit 20/20 and focused Continuity 62/62",
+  "tests_passed": 571,
+  "tests_failed": 0,
+  "ci_status": "success",
   "decisions": [
     "PRs are stacked: #102 Phase A, #104 Phase B, #105 C-G, #106 H-M. None is merged.",
     "Only Office and explicitly enabled Codex have executable adapter code; unverified worker interfaces remain disabled/manual and are reported honestly.",
@@ -52,13 +52,13 @@
   ],
   "quota_state": { "basis": "UNKNOWN", "used_pct": null, "reset_at": null },
   "rate_limit_state": { "limited": false, "retry_after_s": null },
-  "next_exact_action": "Check final #106 Linux CI and DB replay; then obtain a supported executable third worker and isolated Office/Codex runtime, run the real Phase N drill, and only then consider production activation approval.",
+  "next_exact_action": "Verify CI on this documentation-only follow-up head; then obtain a supported executable third worker and isolated Office/Codex runtime, run the real Phase N drill, and only then consider production activation approval.",
   "unresolved_items": [
-    "Final Linux CI and DB replay on the Phase N-readiness head are pending.",
+    "CI on this documentation-only follow-up head remains to be verified; the code head passed full Linux CI and DB replay.",
     "Phase N real Office-to-Codex-to-third-worker handoff and restart has not been run; no third adapter is executable.",
     "Fahad approval is needed for migration application, ordered merges/deployment, and later supervisor activation."
   ],
   "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
-  "summary_md": "Continuity PR stack #102 → #104 → #105 → #106 is open and unmerged, migration unapplied and Supervisor off. Automated UI/accessibility checks pass; fail-closed handoff/recovery fixes are on #106. Real three-worker Phase N remains a production blocker, and final CI is pending.",
+  "summary_md": "Continuity PR stack #102 → #104 → #105 → #106 is open and unmerged, migration unapplied and Supervisor off. Code head 3759ff9 passed full Linux CI, DB replay and local UI/accessibility checks; recheck the documentation-only follow-up head. Real three-worker Phase N remains a production blocker.",
   "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106"
 }

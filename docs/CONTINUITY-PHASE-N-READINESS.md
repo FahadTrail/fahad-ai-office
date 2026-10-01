@@ -1,6 +1,6 @@
 # Coding Continuity Supervisor — Phase N readiness and activation package
 
-Prepared 2026-10-01 from the open PR stack #102 → #104 → #105 → #106. This is a **pre-activation package**, not authorization to change production. None of the PRs is merged; the migration is unapplied; no deployment or production flag change has been made. The exact latest CI head and count should be read from PR #106 before approval.
+Prepared 2026-10-01 from the open PR stack #102 → #104 → #105 → #106. This is a **pre-activation package**, not authorization to change production. None of the PRs is merged; the migration is unapplied; no deployment or production flag change has been made. PR #106 code head `3759ff9621fc2f20f09d7bae8dc7ce28249400fa` passed its Linux validation; this documentation-only follow-up must also pass CI before its head is used as final evidence.
 
 ## A. AXE RESULT
 
@@ -68,15 +68,15 @@ Status cells use the fixed vocabulary. `Production enabled` describes the **Cont
 
 ## L. DB REPLAY
 
-The prior Linux `validate` run passed the full migration replay and `coding_continuity.sql` scenario. This Windows host has no `npm`, Bash, PostgreSQL server binaries or WSL, so `npm run db:replay` could not start locally; the final #106 CI run must reconfirm it. Production migration remains unapplied.
+The Linux `validate` run on `3759ff9` replayed **32 migrations** and passed the `coding_continuity.sql` scenario. This Windows host has no `npm`, Bash, PostgreSQL server binaries or WSL, so `npm run db:replay` could not start locally. Production migration remains unapplied.
 
 ## M. FULL TEST COUNT
 
-The final Linux CI count is authoritative and must be copied from the newest #106 run after these fixes. Windows `node --test` before the final changes reported 571 total, 541 passed, 9 failed, 21 skipped; the nine failures were `spawn bash ENOENT`. Two additional Windows-only path failures were fixed and their four focused tests pass. No Continuity test was skipped in the focused suite.
+Linux `node --test` on `3759ff9`: **573 total, 571 passed, 0 failed, 2 skipped** (container-root cases run separately). The container sandbox run: **15/15 passed**. The focused local Continuity suite: **62/62 passed**. Windows `node --test`: 573 total, 543 passed, 9 failed, 21 skipped; the nine failures were `spawn bash ENOENT`. The two real Windows-only URL-to-path bugs were fixed, and their four focused tests pass. No Continuity test was skipped in the focused suite.
 
 ## N. CI RESULT
 
-The previous #106 head passed Linux `validate` (565 total, 563 passed, 2 skipped, 0 failed), container sandbox tests and schema replay. **The current sprint's new head still requires CI.** Do not use the previous result as its verdict.
+PR #106 `validate` completed **success** on code head `3759ff9`: Node suite 573/571/0/2, 15/15 container sandbox tests, Docker image and privilege-separation check, and 32-migration database replay. [CI run](https://github.com/FahadTrail/fahad-ai-office/actions/runs/36913460692/job/110541576442). The documentation-only follow-up head requires its own successful check before final handoff. Passing CI does not satisfy the missing real Phase N drill.
 
 ## O. WINDOWS CLASSIFICATION
 
@@ -84,14 +84,14 @@ The previous #106 head passed Linux `validate` (565 total, 563 passed, 2 skipped
 
 ## P–S. PR STATUS
 
-| Item | Current intended base | State before this sprint's final push |
+| Item | Current base | Verified state on 2026-10-01 |
 |---|---|---|
-| P. #102 Phase A | `main` | Open, unmerged; migration unapplied |
-| Q. #104 Phase B | `claude/continuity-foundation` | Open, unmerged |
-| R. #105 C–G | `codex/continuity-runtime-core` | Open, unmerged |
-| S. #106 H–M + Phase N readiness fixes | `codex/continuity-workers` | Open, unmerged; final CI pending |
+| P. #102 Phase A | `main` | Open, unmerged, clean/mergeable, `validate` success; migration unapplied |
+| Q. #104 Phase B | `claude/continuity-foundation` | Open, unmerged, clean/mergeable, `validate` success |
+| R. #105 C–G | `codex/continuity-runtime-core` | Open, unmerged, clean/mergeable, `validate` success |
+| S. #106 H–M + Phase N readiness fixes | `codex/continuity-workers` | Open, unmerged, clean/mergeable, `validate` success on `3759ff9`; recheck documentation follow-up head |
 
-Reconfirm bases, ancestry, mergeability and final-head checks via GitHub before approval. Nothing should be retargeted or merged merely to prepare this report.
+Reconfirm bases, ancestry, mergeability and final-head checks via GitHub before any later approval. Nothing should be retargeted or merged merely to prepare this report.
 
 ## T. MIGRATION REVIEW
 
