@@ -817,7 +817,8 @@ async function renderProjects() {
 // Command Center (and the project map) live in their own module.
 async function renderProject(id, sub = '') {
   const module = await import('./project.js?v=__UI_VERSION__');
-  return module.renderProject({ ...officeContext(), usd, confirmDialog, ask, memoryKinds: MEMORY_KINDS, memoryLabel: (kind) => MEMORY_LABEL[kind] || kind, openEmployee }, id, sub === 'map' ? 'map' : 'center');
+  const mode = ['map', 'continuity'].includes(sub) ? sub : 'center';
+  return module.renderProject({ ...officeContext(), usd, confirmDialog, ask, memoryKinds: MEMORY_KINDS, memoryLabel: (kind) => MEMORY_LABEL[kind] || kind, openEmployee }, id, mode);
 }
 const MEMORY_LABEL = Object.fromEntries(MEMORY_KINDS);
 

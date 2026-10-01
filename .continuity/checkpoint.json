@@ -1,0 +1,68 @@
+{
+  "schema": "continuity.checkpoint.v1",
+  "timestamp": "2026-10-01T15:59:14Z",
+  "repository": "FahadTrail/fahad-ai-office",
+  "branch": "codex/continuity-readiness",
+  "worktree": null,
+  "agent_id": "codex",
+  "agent_type": "cli",
+  "session_id": "codex-continuity-2026-10-01",
+  "next_agent": "codex",
+  "objective": "Complete the Coding Continuity Supervisor runtime, worker adapters, nested project dashboard, and recovery verification while keeping production inactive.",
+  "phase": "B-M",
+  "status": "HANDOFF_READY",
+  "base_commit": "53d24790fddf3717cd0043a1973fed22ebb940da",
+  "last_commit": "4acb2d2eff15709371131c611c44b0523eaefb65",
+  "files_changed": [
+    "src/continuity/",
+    "src/hub-continuity.js",
+    "src/index.js",
+    "src/hub-server.js",
+    "src/hub-ui/index.html",
+    "src/hub-ui/app.js",
+    "src/hub-ui/app.css",
+    "test/continuity-*.test.js",
+    "test/hub-continuity.test.js",
+    ".continuity/checkpoint.json",
+    "docs/HANDOVER.md",
+    "docs/CODEX-CONTINUE.md"
+  ],
+  "diff_summary": "Phase B adds durable store, leases, checkpoints and redaction. Phases C-G add the guarded supervisor, worker selection/adapters, handoff, recovery, gates and API. Phases H-M add the project-nested dashboard and a real temporary Git/worktree recovery test. A CI guard wording fix on #105 is stacked into #106. This handover commit sits above last_commit.",
+  "tests_run": "Linux CI node --test: 565 total, 563 pass, 2 skip; container sandbox suite: 15 pass; focused continuity 54/54 locally",
+  "tests_passed": 563,
+  "tests_failed": 0,
+  "ci_status": "success",
+  "decisions": [
+    "PRs are stacked: #102 Phase A, #104 Phase B, #105 C-G, #106 H-M. None is merged.",
+    "Only Office and explicitly enabled Codex have operational adapters; unverified worker interfaces remain disabled/manual and are reported honestly.",
+    "The supervisor is off by default and requires explicit flags and workspace roots.",
+    "Managed external worktrees fetch the exact remote branch and fail closed if it is unavailable.",
+    "New schema uses coding_checkpoints and coding_handoffs; the older POC continuity_* tables are untouched."
+  ],
+  "constraints": [
+    "Do not merge any continuity PR or apply the Phase A production migration without Fahad's approval.",
+    "Do not activate the supervisor or deploy production before a verified Phase N real handoff drill and owner approval.",
+    "Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, unrelated V5 UI, POC continuity_* tables, or separate-system resources."
+  ],
+  "errors": [
+    "The #105 Linux CI first run found an unrelated-system literal in runtime.js; commit 1cdc883 changed the guard to cover all systems outside this repository, and rerun passed.",
+    "Windows full-suite validation is limited by existing Bash/PATH and Windows path issues; focused continuity tests pass."
+  ],
+  "quota_state": {
+    "basis": "UNKNOWN",
+    "used_pct": null,
+    "reset_at": null
+  },
+  "rate_limit_state": {
+    "limited": false,
+    "retry_after_s": null
+  },
+  "next_exact_action": "Coordinate the Phase N real drill with Fahad before seeking production migration, ordered merges, deploy, and activation approval.",
+  "unresolved_items": [
+    "Phase N real Office-to-Codex-to-third-worker handoff has not been run; automatic external worker availability is limited to verified interfaces.",
+    "Fahad approval is needed for migration application, ordered merges/deployment, and later supervisor activation."
+  ],
+  "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
+  "summary_md": "Continuity PR stack #102 → #104 → #105 → #106 is open and unmerged. Runtime and project dashboard are implemented with the supervisor off. Linux CI and database replay passed on #106 head 4acb2d2; axe checks passed. Phase N real drill remains before production activation.",
+  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106"
+}
