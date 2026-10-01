@@ -223,11 +223,17 @@ inside the built runtime image as root.
   * Development is stopped.
   * See `docs/PRODUCTION-READY.md` and `docs/HOW-TO-USE.md`.
 
+* Coding Continuity Supervisor (2026-10-01): designed by Claude Code, **not implemented**; Codex implements it from Phase A.
+  * Permanent coding worker stack (keep all seven in every design): Fahad Office Coding Agent, Claude Code, OpenAI Codex, Google Antigravity, OpenCode, Kilo Code, Freebuff.
+  * GitHub is the durable truth; Fahad AI Office is the policy authority.
+  * Start at `docs/CODEX-CONTINUE.md`; architecture in `docs/CODING-CONTINUITY-SUPERVISOR.md`, phases in `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`, worker rules in `docs/DEVELOPMENT-CONTRACT.md`.
+
 ## Next actions
 
-1. Use it: Hub → Coding Agent → project, repository, detailed objective,
+1. Codex: implement the Coding Continuity Supervisor, Phase A first (`docs/CODEX-CONTINUE.md`).
+2. Use it: Hub → Coding Agent → project, repository, detailed objective,
    budget, routing → Start; approve merges in the Hub.
-2. Optional: Supabase access token for the agent, more providers (keys,
+3. Optional: Supabase access token for the agent, more providers (keys,
    privacy flags, workspace authorization), each followed by a live canary.
-3. Office specialties can reuse the agentic gateway, routing policy and Tool
+4. Office specialties can reuse the agentic gateway, routing policy and Tool
    Broker when prioritized.
