@@ -27,6 +27,7 @@ import { OfficeModelRunner } from './office/pool-runner.js';
 import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
 import { startTelegramChannel } from './channels/start.js';
 import { runOpsWatch } from './ops/ops-watch.js';
+import { createContinuityRuntime } from './continuity/runtime.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
@@ -92,6 +93,7 @@ let lastPollAt = 0;
 let heartbeatTimer;
 let hubServer;
 let telegram = null;
+let continuity = null;
 let toolBrokerCanary = { status: 'pending' };
 
 function heartbeat() {
@@ -109,6 +111,7 @@ function shutdown() {
   running = false;
   hubServer?.close();
   telegram?.stop();
+  continuity?.stop();
   log('Shutdown signal received. Finishing current task, then stopping.');
 }
 
@@ -119,8 +122,13 @@ function sleep(ms) {
 async function main() {
   if (!Number.isFinite(IDLE_MS) || IDLE_MS < 1000 || IDLE_MS > 60000) throw new Error('Invalid POLL_INTERVAL_MS');
   await checkHealth();
+  continuity = createContinuityRuntime({ db, log });
+  if (continuity) {
+    await continuity.start();
+    log('Coding Continuity Supervisor started (explicitly enabled).');
+  }
   if (process.env.HUB_ENABLED !== 'false') {
-    hubServer = createHubServer({ db, authClient: hubAuth, store });
+    hubServer = createHubServer({ db, authClient: hubAuth, store, continuity });
     log('Fahad AI Hub listening on the protected loopback port 2132.');
   }
   // Telegram → CHIEF, only when Fahad has configured a bot token.
