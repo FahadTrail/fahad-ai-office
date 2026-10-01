@@ -1,67 +1,63 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-01T13:30:00Z",
+  "timestamp": "2026-10-01T14:51:29Z",
   "repository": "FahadTrail/fahad-ai-office",
-  "branch": "claude/continuity-foundation",
+  "branch": "codex/continuity-readiness",
   "worktree": null,
-  "agent_id": "claude-code",
+  "agent_id": "codex",
   "agent_type": "cli",
-  "session_id": "claude-code-session-01UQPmN6dz3EeKFLakgeP3QX",
+  "session_id": "codex-continuity-2026-10-01",
   "next_agent": "codex",
-  "objective": "Implement Phase A of the Coding Continuity Supervisor (schema, RPCs, checkpoint validator, state machine, tests) without applying the migration to production.",
-  "phase": "A",
+  "objective": "Complete the Coding Continuity Supervisor runtime, worker adapters, nested project dashboard, and recovery verification while keeping production inactive.",
+  "phase": "B-M",
   "status": "HANDOFF_READY",
-  "base_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "last_commit": "13db29ef744873b450ce805d5beb7403b3d2f13b",
+  "base_commit": "53d24790fddf3717cd0043a1973fed22ebb940da",
+  "last_commit": "9aaf6435a9a06eaca4c3a3ea189072102057492a",
   "files_changed": [
-    "supabase/migrations/20261004090000_coding_continuity.sql",
-    "supabase/verify/scenarios/coding_continuity.sql",
-    "supabase/verify/schema-fingerprint.txt",
-    "src/continuity/checkpoint.js",
-    "src/continuity/states.js",
-    "test/continuity-schema.test.js",
-    "test/continuity-checkpoint.test.js",
+    "src/continuity/",
+    "src/hub-continuity.js",
+    "src/index.js",
+    "src/hub-server.js",
+    "public/index.html",
+    "public/app.js",
+    "public/style.css",
+    "test/continuity-*.test.js",
+    "test/hub-continuity.test.js",
     ".continuity/checkpoint.json",
     "docs/HANDOVER.md",
-    "docs/CODEX-CONTINUE.md",
-    "docs/CONTINUITY-IMPLEMENTATION-PLAN.md",
-    "docs/CODING-CONTINUITY-SUPERVISOR.md",
-    "AGENTS.md"
+    "docs/CODEX-CONTINUE.md"
   ],
-  "diff_summary": "Phase A: additive migration (6 coding_* tables, 8 RPCs, RLS service-role only, 7 seeded workers), DB scenario, checkpoint validator, state machine, tests, regenerated fingerprint (+161 lines, none changed). last_commit is the Phase A code commit; the handover-docs commit that carries this file sits on top of it.",
-  "tests_run": "node --test (includes schema replay and the coding_continuity scenario)",
-  "tests_passed": 522,
+  "diff_summary": "Phase B adds durable store, leases, checkpoints and redaction. Phases C-G add the guarded supervisor, worker selection/adapters, handoff, recovery, gates and API. Phases H-M add the project-nested dashboard and a real temporary Git/worktree recovery test. A CI guard wording fix on #105 is stacked into #106. This handover commit sits above last_commit.",
+  "tests_run": "Focused continuity and Hub tests on Windows; full Linux CI and database replay on GitHub",
+  "tests_passed": 54,
   "tests_failed": 0,
   "ci_status": "pending",
   "decisions": [
-    "New tables use the coding_ prefix (coding_checkpoints, coding_handoffs) because the applied 2026-09-22 POC owns continuity_checkpoints/continuity_handoffs.",
-    "A FROZEN lease blocks its branch until reclaim_coding_lease marks it RECLAIMED (added RPC).",
-    "RPCs use security invoker + empty search_path, matching the existing coding agent RPCs.",
-    "COMPLETED is a terminal state reachable only from CHECKPOINTING after completion gates.",
-    "Phase B skipped by Claude to protect the handover."
+    "PRs are stacked: #102 Phase A, #104 Phase B, #105 C-G, #106 H-M. None is merged.",
+    "Only Office and explicitly enabled Codex have operational adapters; unverified worker interfaces remain disabled/manual and are reported honestly.",
+    "The supervisor is off by default and requires explicit flags and workspace roots.",
+    "Managed external worktrees fetch the exact remote branch and fail closed if it is unavailable.",
+    "New schema uses coding_checkpoints and coding_handoffs; the older POC continuity_* tables are untouched."
   ],
   "constraints": [
-    "Do not merge PR #102 or apply the migration without Fahad's approval.",
-    "CONTINUITY_SUPERVISOR stays off by default.",
-    "Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, V5 UI, POC continuity_* tables, Hermes."
+    "Do not merge any continuity PR or apply the Phase A production migration without Fahad's approval.",
+    "Do not activate the supervisor or deploy production before a verified Phase N real handoff drill and owner approval.",
+    "Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, unrelated V5 UI, POC continuity_* tables, or separate-system resources."
   ],
   "errors": [
-    "First replay failed: continuity_checkpoints already existed (POC); fixed by renaming the new tables."
+    "The #105 Linux CI first run found an unrelated-system literal in runtime.js; commit 1cdc883 changed the guard to cover all systems outside this repository, and rerun passed.",
+    "Windows full-suite validation is limited by existing Bash/PATH and Windows path issues; focused continuity tests pass."
   ],
-  "quota_state": {
-    "basis": "UNKNOWN",
-    "used_pct": null,
-    "reset_at": null
-  },
-  "rate_limit_state": {
-    "limited": false,
-    "retry_after_s": null
-  },
-  "next_exact_action": "Review PR #102 (node --test, CI), then create codex/continuity-phase-b from origin/claude/continuity-foundation and build Phase B (src/continuity/store.js, lease.js, checkpointer.js with tests) per docs/CONTINUITY-IMPLEMENTATION-PLAN.md; do not merge #102 or apply the migration.",
+  "quota_state": { "basis": "UNKNOWN", "used_pct": null, "reset_at": null },
+  "rate_limit_state": { "limited": false, "retry_after_s": null },
+  "next_exact_action": "Confirm #106 Linux CI and database replay are green; complete the new-view axe check in both themes, then arrange Phase N real handoff with Fahad before proposing production migration, merge, deploy, or flag activation.",
   "unresolved_items": [
-    "Fahad's approval to apply migration 20261004090000_coding_continuity to production, then merge PR #102."
+    "Linux CI and database replay for the latest #106 head are pending; #105 passed.",
+    "Browser axe verification for the new continuity view is pending.",
+    "Phase N real Office-to-Codex-to-third-worker handoff has not been run; automatic external worker availability is limited to verified interfaces.",
+    "Fahad approval is needed for migration application, ordered merges/deployment, and later supervisor activation."
   ],
-  "rollback_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "summary_md": "Phase A of the Coding Continuity Supervisor is implemented and tested on claude/continuity-foundation (PR #102, open). Migration not applied. Codex reviews #102, then builds Phase B stacked on it.",
-  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/102"
+  "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
+  "summary_md": "Continuity PR stack #102 → #104 → #105 → #106 is open and unmerged. Runtime and project dashboard are implemented with the supervisor off. Focused continuity tests pass 54/54. CI rerun, database replay, axe, and Phase N real drill remain before production activation.",
+  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106"
 }

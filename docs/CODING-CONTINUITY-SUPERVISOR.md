@@ -1,6 +1,6 @@
 # Coding Continuity Supervisor (architecture, locked 2026-10-01)
 
-Status: **Phase A implemented on PR #102 (migration NOT applied); Phases B–N not started.** Codex implements it from `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`. The rest of Fahad AI Office is complete and live; see `docs/PRODUCTION-READY.md`.
+Status (2026-10-01): **Phase A on PR #102; B on #104; C-G on #105; H-M on #106. All remain open and unmerged; migration NOT applied.** Runtime and nested UI are implemented behind a default-off flag. Unverified external workers are disabled/manual. Linux CI rerun, new-view axe validation, and the Phase N real handoff remain before any activation decision. See the current handover in `docs/HANDOVER.md`. The rest of Fahad AI Office is complete and live; see `docs/PRODUCTION-READY.md`.
 
 ## 1. Purpose
 

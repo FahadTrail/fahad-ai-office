@@ -1,5 +1,19 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
+## CURRENT CONTINUITY HANDOVER (2026-10-01)
+
+This section supersedes the earlier Phase A-only handover below. Read `AGENTS.md`, `docs/CODEX-CONTINUE.md`, and `.continuity/checkpoint.json` before continuing.
+
+* **Open, unmerged PR stack:** [#102](https://github.com/FahadTrail/fahad-ai-office/pull/102) Phase A schema → [#104](https://github.com/FahadTrail/fahad-ai-office/pull/104) Phase B store/lease/checkpoint → [#105](https://github.com/FahadTrail/fahad-ai-office/pull/105) C-G supervisor/workers/API → [#106](https://github.com/FahadTrail/fahad-ai-office/pull/106) H-M project dashboard/recovery tests. Bases follow this order; none targets `main` except #102.
+* **Base:** `main` at `dfe216161fab509e21bfde0cc1126f7662d1abf3` when work began. Phase A was refreshed onto it at `53d24790fddf3717cd0043a1973fed22ebb940da`. The last recorded production commit is `2bb17b0347b3dde0ecfa2f22b089a9460d02b458`; no deployment or live production check was performed in this sprint.
+* **Implemented:** durable DB-first checkpoints and atomic mirror, token leases and stale recovery, guarded Supervisor, Office/Codex adapters, truthful disabled/manual states for the five unverified workers, worktree handoff, completion gates, usage/MJE, owner-safe API, and a project-nested dashboard. A temporary Git/worktree recovery test covers crash and handoff behavior.
+* **Flags:** `CONTINUITY_SUPERVISOR` is off by default. Codex also needs `CONTINUITY_CODEX_ENABLED`. No external worker was run against production.
+* **Validation:** focused continuity tests passed 54/54 locally; UI/Hub syntax checks passed 9/9. #102, #104, and #105 Linux `validate` checks passed. #105 first CI run found a separation guard's literal in `src/continuity/runtime.js`; commit `1cdc883` changed the runtime restriction to cover all systems outside this repository, and the rerun passed. #106 latest-head CI is pending at this handover. Windows full-suite execution is limited by existing Bash/PATH and URL-to-path issues; Linux CI is authoritative. Database replay on the latest #106 head and browser axe in both themes still need confirmation.
+* **Migration:** `20261004090000_coding_continuity` has **not** been applied to production. Do not apply it or merge this stack without Fahad's approval. The older POC `continuity_*` tables remain untouched.
+* **Phase N:** the real Office → Codex → third-worker drill has **not** been run. Its third worker's verified headless availability is unresolved. Do not claim operational seven-worker continuity or switch the production flag on until that drill and owner review succeed.
+* **Next exact action:** confirm #106 Linux CI and DB replay; run the new-view axe check in both themes; resolve any real defects on their owning branches and restack dependents. Then coordinate the Phase N real drill with Fahad before seeking production migration, ordered merges, deploy, and activation approval.
+* **Rollback before merge:** close the continuity PRs. No production rollback is needed because this stack has not reached production.
+
 Last updated: 2026-10-01, Claude final implementation → Codex (top section): Continuity Phase A on PR #102; product complete (below). Read `AGENTS.md` first; it holds the permanent rules.
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
