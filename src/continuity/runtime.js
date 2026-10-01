@@ -58,7 +58,7 @@ export function createContinuityRuntime({ db, env = process.env, log = () => {} 
       readCi: async () => ({ status: ciStatus }),
       acceptance,
     }),
-    doNotTouch: ['src/model-gateway/', 'src/hub-capacity.js', 'src/office/finance.js', 'V4/V5 UI', 'Dockerfile', 'docker-compose.yml', 'ops/deploy.sh', 'Hermes'],
+    doNotTouch: ['src/model-gateway/', 'src/hub-capacity.js', 'src/office/finance.js', 'V4/V5 UI', 'Dockerfile', 'docker-compose.yml', 'ops/deploy.sh', 'systems outside this repository'],
     events: undefined,
   });
 }
