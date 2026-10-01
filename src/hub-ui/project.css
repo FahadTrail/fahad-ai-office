@@ -84,6 +84,32 @@ a.kpi:hover { text-decoration: none; border-color: var(--border-strong); }
 .memory-add select { width: auto; }
 .fahad-mark { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-fill); color: var(--on-accent); font-weight: 700; font-size: var(--fs-xs); }
 
+/* Coding continuity is nested inside a project; it never enters top-level navigation. */
+.continuity-head p { margin: 0; }
+.continuity-baton { padding: var(--s-5); border-radius: var(--r-xl); color: var(--text); background: linear-gradient(135deg, var(--accent-soft), transparent 72%), var(--surface); border: 1px solid var(--border-strong); }
+.continuity-baton-top { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s-4); }
+.continuity-baton h2 { margin: var(--s-1) 0 0; font-size: var(--fs-xl); }
+.continuity-baton > p { color: var(--text-muted); }
+.continuity-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-3); margin-top: var(--s-4); }
+.continuity-metrics > div { display: flex; flex-direction: column; gap: 3px; padding: var(--s-3); border-radius: var(--r-md); background: var(--surface-2); min-width: 0; }
+.continuity-metrics span, .continuity-next > span { color: var(--text-faint); font-size: var(--fs-xs); }
+.continuity-metrics strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.continuity-basis { display: inline-flex; width: fit-content; padding: 1px 6px; border: 1px solid var(--border); border-radius: var(--r-full); color: var(--text-faint) !important; font: 600 10px/1.4 var(--font); letter-spacing: .04em; }
+.continuity-next { margin-top: var(--s-3); padding: var(--s-3); border-inline-start: 3px solid var(--accent); background: var(--surface-2); }
+.continuity-next p { margin: 3px 0 0; }
+.continuity-actions { margin-top: var(--s-3); }
+.continuity-timeline { list-style: none; margin: 0; padding: 0; }
+.continuity-timeline li { position: relative; display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3) 0 var(--s-3) var(--s-5); border-bottom: 1px solid var(--border); }
+.continuity-timeline li:last-child { border-bottom: 0; }
+.continuity-node { position: absolute; inset-inline-start: 2px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+.continuity-time { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: end; }
+.continuity-workers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+.continuity-worker { padding: var(--s-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
+.continuity-worker dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); margin: var(--s-3) 0; }
+.continuity-worker dl div { min-width: 0; }
+.continuity-worker dt { color: var(--text-faint); font-size: var(--fs-xs); }
+.continuity-worker dd { margin: 2px 0 0; font-size: var(--fs-sm); display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+
 /* project map */
 .map-card { overflow: hidden; }
 .map { position: relative; display: flex; flex-direction: column; gap: var(--s-8); align-items: center; padding: var(--s-4) var(--s-2); }
@@ -114,6 +140,8 @@ a.kpi:hover { text-decoration: none; border-color: var(--border-strong); }
   .map-col { flex-direction: column; }
   .map-node { width: 100%; }
   .map-links { display: none; }
+  .continuity-workers { grid-template-columns: minmax(0, 1fr); }
 }
-@media (max-width: 480px) { .cc-team, .cc-kpis { grid-template-columns: minmax(0, 1fr); } .cc-hero { align-items: flex-start; } }
+@media (max-width: 620px) { .continuity-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .continuity-worker dl { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 480px) { .cc-team, .cc-kpis { grid-template-columns: minmax(0, 1fr); } .cc-hero { align-items: flex-start; } .cc-switch { border-radius: var(--r-lg); align-items: stretch; } .cc-tabs { flex-wrap: wrap; } }
 @media (prefers-reduced-motion: reduce) { .cc *, .cc *::before { transition: none !important; animation: none !important; } }

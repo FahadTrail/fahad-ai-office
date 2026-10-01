@@ -69,7 +69,11 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## Current status (2026-09-25)
+## Continuity update (2026-10-01)
+
+The Coding Continuity Supervisor is implemented in an open, unmerged PR stack: #102 (Phase A, schema), #104 (B, durable runtime foundation), #105 (C-G, supervisor and workers), and #106 (H-M, nested project UI and recovery tests). The Phase A production migration is unapplied, and `CONTINUITY_SUPERVISOR` is off by default. Do not merge, deploy, apply the migration, or activate the flag without Fahad's approval. Check the top of `docs/HANDOVER.md` and `.continuity/checkpoint.json` for current CI, remaining axe/Phase N gates, and the next exact action. The older status below is historical.
+
+## Current status (2026-09-25; historical)
 
 * **Coding Agent V1 is operational in production.** Production runs `main`
   (Office + Hub + the `fahad-office-coding-worker` container, enabled with
@@ -223,14 +227,14 @@ inside the built runtime image as root.
   * Development is stopped.
   * See `docs/PRODUCTION-READY.md` and `docs/HOW-TO-USE.md`.
 
-* Coding Continuity Supervisor (2026-10-01): designed by Claude Code, **not implemented**; Codex implements it from Phase A.
+* Coding Continuity Supervisor (2026-10-01): designed by Claude Code; **Phase A implemented on PR #102 (open; migration not applied, needs Fahad)**; Codex continues with Phase B.
   * Permanent coding worker stack (keep all seven in every design): Fahad Office Coding Agent, Claude Code, OpenAI Codex, Google Antigravity, OpenCode, Kilo Code, Freebuff.
   * GitHub is the durable truth; Fahad AI Office is the policy authority.
   * Start at `docs/CODEX-CONTINUE.md`; architecture in `docs/CODING-CONTINUITY-SUPERVISOR.md`, phases in `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`, worker rules in `docs/DEVELOPMENT-CONTRACT.md`.
 
 ## Next actions
 
-1. Codex: Continuity Phase A is done on PR #102 (open, migration not applied). Read `docs/CODEX-CONTINUE.md` on branch `claude/continuity-foundation`, review #102, then build Phase B stacked on it.
+1. Codex: CI and DB replay passed on #106 head `4acb2d2`; check the latest docs-only head, run axe in both themes for the new view, then coordinate the Phase N real drill with Fahad. Keep #102/#104/#105/#106 open and unmerged, with the migration unapplied and Supervisor off.
 2. Use it: Hub → Coding Agent → project, repository, detailed objective,
    budget, routing → Start; approve merges in the Hub.
 3. Optional: Supabase access token for the agent, more providers (keys,
