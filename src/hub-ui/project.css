@@ -16,6 +16,7 @@
 .cc-ring strong { font-size: var(--fs-xl); }
 .cc-ring span { font-size: var(--fs-xs); color: var(--text-faint); }
 .cc-switch { display: flex; gap: var(--s-1); align-items: center; padding: 4px; border-radius: var(--r-full); background: var(--surface); border: 1px solid var(--border); align-self: flex-start; }
+.cc-tabs { display: flex; gap: var(--s-1); align-items: center; }
 .cc-switch a { padding: 6px 14px; border-radius: var(--r-full); color: var(--text-muted); font-size: var(--fs-sm); font-weight: 600; text-decoration: none; }
 .cc-switch a[aria-selected="true"] { background: var(--surface-3); color: var(--text); }
 .cc-switch .btn { margin-inline-start: var(--s-2); }

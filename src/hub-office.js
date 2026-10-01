@@ -383,7 +383,17 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
             progress: job ? job.progress || 0 : null,
             recentArtifact: artifact ? { id: artifact.id, type: artifact.type, title: artifact.title, at: artifact.created_at } : null };
         }),
-        workflows: live.jobs.filter((job) => workflowJobs.has(job.id)).slice(0, 8).map((job) => ({ id: job.id, title: job.title, status: job.status, progress: job.progress || 0, createdAt: job.created_at })),
+        // team: the employees with a task in the objective (Office Project Mode).
+        workflows: live.jobs.filter((job) => workflowJobs.has(job.id)).slice(0, 8).map((job) => ({ id: job.id, title: job.title, status: job.status, progress: job.progress || 0, createdAt: job.created_at,
+          team: [...new Set(live.tasks.filter((task) => task.job_id === job.id).map((task) => officeAgent(agentById.get(task.agent_id)?.slug)?.key).filter(Boolean))] })),
+        // The Coding Agent's latest session, for the Office's engineering panel.
+        coding: (() => {
+          const session = live.sessions[0];
+          if (!session) return null;
+          const result = session.result && typeof session.result === 'object' ? session.result : {};
+          return { id: session.id, title: session.title, status: session.status, phase: session.phase, updatedAt: session.updated_at,
+            pr: result.pr?.number ? { number: result.pr.number, url: result.pr.url || null } : null, ci: result.ci?.state || null, deploy: result.deploy?.state || result.deploy?.status || null };
+        })(),
         handoffs: extra.handoffs.filter((handoff) => Date.parse(handoff.created_at) >= since)
           .map((handoff) => handoffView(handoff, { agentById, jobById, taskById, artifactsByTask })).filter((handoff) => handoff.fromKey && handoff.toKey && handoff.fromKey !== handoff.toKey),
         timeline: timelineView({ ...live, ...extra, limit: 30 }),

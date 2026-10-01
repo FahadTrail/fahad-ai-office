@@ -186,14 +186,14 @@ Next actions:
 
 | Item | State |
 |---|---|
-| Current production commit | `main` `13f09ea` (V4 + V4.1). Rollback point R0. Verify with `/healthz` → `version`. |
-| PR #72 router (`claude/router-efficiency-v1`, `66cf3ee`) | Draft, CI green, 392 tests. Merge **first**. |
-| PR #73 providers (`claude/provider-expansion-prep`) | Draft, stacked on #72, CI green. Merge **second**, after #72 is verified in production. |
-| PR #71 V5.1 (`claude/v5-immersive-office`, `19c13b8`) | Draft, CI green. Merge **last**, only after Fahad's visual approval; merge `main` into it first. |
-| Merge order | #72 → deploy → smoke → #73 → deploy → (Mistral) → 24 h measurement → #71. |
+| Current production commit | `main` `46ee40a` (2026-09-29): V4 + V4.1 table gate (#74), router (#72), providers (#73), Telegram retry-safe lookup (#75). Verify with `/healthz` → `version`. |
+| PR #72 router | **Merged** `2ece692`, deployed; router smoke job `36b1da92` passed at $0 (groq + OpenRouter free pools, Telegram delivered). |
+| PR #73 providers | **Merged** `fbc1b8d`, deployed. Mistral inactive (no key). |
+| PR #71 V5.1 (`claude/v5-immersive-office`) | Refreshed onto `main` `46ee40a` (merge commit). Merge **only after Fahad's visual approval**. V5 details: `docs/v5-handover.md`. |
+| Merge order | #74 → #72 → #73 → #75 done; remaining: #71 after visual approval. |
 | Rehearsal | `main`→#72→#73 fast-forward with no conflicts: **401/401**. Adding #71: one docs conflict (this file, add/add): **430/430**. |
 | Migrations | Production has all 30; none of the three PRs adds one. |
-| Rollback points | R0 `13f09ea`; R1 = #72 merge; R2 = #73 merge; R3 = #71 merge. Mechanism: GitHub **Revert** on the merged PR (see runbook §4). |
+| Rollback points | R0 `13f09ea`; R1 = #72 merge `2ece692`; R2 = #73 merge `fbc1b8d`; `46ee40a` (#75); R3 = #71 merge. Mechanism: GitHub **Revert** on the merged PR (see runbook §4). |
 | Mistral | Code ready (#73); **no key**. Fahad's Free plan shows $10/month credits, but key creation is disabled ("Upgrade to use your API keys"). Likely cause: Studio not activated in Free mode. Owner path in runbook §5; **no card**. |
 | V4 status | **V4 CLOSED** (2026-09-29). The remaining blocker, a model-written monthly table (revenue 111,489 / net 9,489) contradicting the VERIFIED FINANCE model (112,236 / 102,000 / 10,236, break-even month 12), was fixed by the financial table gate (PR #74, `docs/v41-reliability.md` → *Financial table gate*). Live acceptance job `ca6c8c0d` ($0): AUDIT blocked and removed the injected table, CHIEF replaced it with the calculator schedule, and Telegram delivered the correct answer. Release order: #72 (merged) → #73 → #71 after Fahad's visual approval. |
 | Budget / routing | $2/month; `workspace_routing_policies` empty; no Mistral permission row. |

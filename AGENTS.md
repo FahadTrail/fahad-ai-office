@@ -204,6 +204,13 @@ inside the built runtime image as root.
 
   Details are in `docs/v41-reliability.md`.
 
+* V5 immersive Office (beta, branch `claude/v5-immersive-office`, merged only
+  after V4 is closed): a lazy-loaded Three.js Office — atrium, wings and
+  studios; real states, artifacts and handoffs; Project Mode; Follow work;
+  fail-safe fallback to the light Office. AUTO keeps the light Office until
+  Fahad enables immersive in Settings. Details are in
+  `docs/v5-immersive-office.md`; rebuild the engine with
+  `node tools/build-three.mjs`.
 * Core closure (2026-09-30): **CORE COMPLETE: READY FOR REAL USE**, with core development stopped.
   * Production runs `26dd491`.
   * After a 24 h stability burn-in (0 paid calls, no incidents), #92, #91, #96, #94 and #95 were merged and deployed one at a time.

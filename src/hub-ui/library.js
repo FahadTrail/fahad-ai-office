@@ -4,6 +4,7 @@
 // AUDIT finding, send it back to the employee who owns the fix.
 import { roleMark } from './characters.js?v=__UI_VERSION__';
 import { artifactPreview } from './artifacts.js';
+import { artifactsSummary } from './summaries.js';
 import { download, fileName, moodboardPng, printArtifact, svgToPng, toCsv, toMarkdown } from './export.js?v=__UI_VERSION__';
 
 const FAMILY = {
@@ -18,7 +19,7 @@ export async function renderLibrary(ctx, initialType = '') {
   setTitle('Artifacts');
   const state = { project: ws(), agent: '', type: initialType, since: '', status: '', search: '' };
   view.innerHTML = `<div class="page page-wide library">
-    <div class="page-head"><div><h1>Artifacts</h1><p>Every deliverable the Office produced — open, search, export.</p></div></div>
+    <div class="page-head"><div><h1>Artifacts</h1><p class="page-summary" id="libSummary" aria-live="polite">Every deliverable the Office produced — open, search, export.</p></div></div>
     <div class="lib-filters" role="search">
       <label class="sr-only" for="libSearch">Search</label><input id="libSearch" class="input" type="search" dir="auto" placeholder="Search titles, objectives and content…">
       <label class="sr-only" for="libProject">Project</label><select id="libProject" class="input">${ctx.workspaces().map((workspace) => `<option value="${esc(workspace.id)}">${esc(workspace.name)}</option>`).join('')}</select>
@@ -36,6 +37,7 @@ export async function renderLibrary(ctx, initialType = '') {
     const data = await api(`/api/artifacts${q({ workspaceId: state.project, limit: 200 })}`);
     artifacts = data.artifacts;
     types = data.types;
+    view.querySelector('#libSummary').textContent = artifactsSummary(artifacts);
     const agents = [...new Map(artifacts.map((artifact) => [artifact.agent, artifact.agentLabel])).entries()];
     view.querySelector('#libAgent').innerHTML = `<option value="">All employees</option>${agents.map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join('')}`;
     view.querySelector('#libAgent').value = agents.some(([key]) => key === state.agent) ? state.agent : '';

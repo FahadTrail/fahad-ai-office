@@ -74,7 +74,9 @@ export function timelineView({ agents = [], jobs = [], tasks = [], handoffs = []
     entries.push({ ...base, at: session.created_at, kind: 'start', status: 'working', text: `CODING started ${session.title}` });
     const pr = session.result?.pr;
     if (pr?.url) entries.push({ ...base, at: session.result?.ci?.checkedAt || session.updated_at, kind: 'pr', status: 'done', text: `CODING opened pull request #${pr.number || ''}`.trim(), link: pr.url });
-    if (session.result?.ci?.state) entries.push({ ...base, at: session.result.ci.checkedAt || session.updated_at, kind: 'ci', status: session.result.ci.state === 'success' ? 'done' : 'failed', text: `CI ${session.result.ci.state === 'success' ? 'passed' : 'failed'} for ${session.title}` });
+    // CI: passed, still running (pending), or failed — never "failed" while it runs.
+    const ci = session.result?.ci?.state;
+    if (ci) entries.push({ ...base, at: session.result.ci.checkedAt || session.updated_at, kind: 'ci', status: ci === 'success' ? 'done' : ci === 'pending' ? 'working' : 'failed', text: `CI ${ci === 'success' ? 'passed' : ci === 'pending' ? 'running' : 'failed'} for ${session.title}` });
     if (session.status === 'completed' && session.completed_at) entries.push({ ...base, at: session.completed_at, kind: 'delivered', status: 'done', text: `CODING finished ${session.title}` });
     if (session.status === 'failed') entries.push({ ...base, at: session.completed_at || session.updated_at, kind: 'failed', status: 'failed', text: `CODING could not finish ${session.title}` });
     if (session.status === 'blocked' && session.error_code === 'HUMAN_INPUT_REQUIRED') entries.push({ ...base, at: session.updated_at, kind: 'attention', status: 'attention', text: `CODING has a question for you: ${session.title}` });
