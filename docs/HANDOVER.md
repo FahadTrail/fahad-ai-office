@@ -1,8 +1,46 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-Last updated: 2026-09-30, after the core closure (see its section below). Read `AGENTS.md` first; it holds the permanent rules.
+Last updated: 2026-10-01, product complete (see its section below). Read `AGENTS.md` first; it holds the permanent rules.
 This file is the live state. **The release procedure is
 `docs/FINAL-RELEASE-RUNBOOK.md`: follow it phase by phase.**
+
+## PRODUCT COMPLETE (2026-10-01)
+
+**FAHAD AI OFFICE — COMPLETE AND READY FOR DAILY USE.** Development is stopped. New work happens only when Fahad asks for it. Summary: `docs/PRODUCTION-READY.md`. Daily guide (Arabic): `docs/HOW-TO-USE.md`.
+
+* **Production:** `2bb17b0` (#99 on top of V5 `90142a9`).
+* **Rollback:**
+  * V5: GitHub Revert of #71.
+  * Watchdog: Revert #99, or set `OPS_WATCH=false`.
+  * Last known good core: `ab2f26f`.
+  * No database rollback is needed.
+* **Merged today:**
+
+  | PR | What |
+  |---|---|
+  | #71 | V5 immersive Office (refreshed onto the core closure; the project page's View tablist no longer contains a button) |
+  | #99 | Watchdog runs inside the runtime every 15 min; accurate blocker wording |
+
+  Each deploy: "DEPLOYMENT SUCCESSFUL … container healthy", Supabase tools check verified, Telegram live.
+* **QA on the refreshed V5:**
+  * All tests pass: 510 on the refreshed V5, 511 with #99.
+  * axe WCAG 2 A/AA: 0 violations (12 routes × 2 themes, plus the immersive Office).
+  * No horizontal overflow from 1920 down to 390 px.
+  * 13 3D views render with no errors; phone, tablet and Light fall back to the light Office.
+  * Size: engine 149.9 KB gzipped, scene 37.6 KB.
+* **Live smoke (free-only, $0):**
+  * **Office job `6fad4ac3`:**
+    * CHIEF planned the work and wrote the final answer.
+    * RESEARCH fell back to 2 fetched pages when search was rate-limited.
+    * FINANCE: INCONSISTENT → VERIFIED (AED 18 margin, 1,500 boxes/month, 50/day).
+    * AUDIT flagged both of the supplier's wrong figures (AED 20 and 1,350) as high severity.
+    * The fact gate kept 9 validated figures.
+  * **Coding `ec81c365`:** passed in 6.5 min; 8,265 characters of test output compacted.
+  * **Watchdog:** first run at 09:26Z recorded and sent the 6 known account blockers once; the 09:41Z run sent nothing.
+  * **Telegram:** one conversation, no duplicates.
+  * **Capacity snapshot (2026-10-01):** all fields present; 4.02M free tokens/day ESTIMATED.
+  * **Needs Fahad:** no pending approvals, only the optional provider unlocks.
+* **Not verifiable from the agent sandbox:** its proxy blocks the VPS host, so `/healthz`, `/api/office` and `/api/capacity` were not called over HTTP. Deploy logs, startup events and the database confirmed the state instead.
 
 ## CORE CLOSURE (2026-09-30, after the 24 h burn-in)
 
