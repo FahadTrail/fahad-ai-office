@@ -1,6 +1,6 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-01T13:00:00Z",
+  "timestamp": "2026-10-01T13:30:00Z",
   "repository": "FahadTrail/fahad-ai-office",
   "branch": "claude/continuity-foundation",
   "worktree": null,
@@ -12,20 +12,56 @@
   "phase": "A",
   "status": "HANDOFF_READY",
   "base_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "last_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "files_changed": [],
-  "diff_summary": "Interim checkpoint before the Phase A commit.",
-  "tests_run": "node --test",
-  "tests_passed": null,
-  "tests_failed": null,
-  "ci_status": "none",
-  "decisions": [],
-  "constraints": [],
-  "errors": [],
-  "quota_state": { "basis": "UNKNOWN", "used_pct": null, "reset_at": null },
-  "rate_limit_state": { "limited": false, "retry_after_s": null },
-  "next_exact_action": "Finish the Phase A commit and update this checkpoint.",
-  "unresolved_items": [],
+  "last_commit": "13db29ef744873b450ce805d5beb7403b3d2f13b",
+  "files_changed": [
+    "supabase/migrations/20261004090000_coding_continuity.sql",
+    "supabase/verify/scenarios/coding_continuity.sql",
+    "supabase/verify/schema-fingerprint.txt",
+    "src/continuity/checkpoint.js",
+    "src/continuity/states.js",
+    "test/continuity-schema.test.js",
+    "test/continuity-checkpoint.test.js",
+    ".continuity/checkpoint.json",
+    "docs/HANDOVER.md",
+    "docs/CODEX-CONTINUE.md",
+    "docs/CONTINUITY-IMPLEMENTATION-PLAN.md",
+    "docs/CODING-CONTINUITY-SUPERVISOR.md",
+    "AGENTS.md"
+  ],
+  "diff_summary": "Phase A: additive migration (6 coding_* tables, 8 RPCs, RLS service-role only, 7 seeded workers), DB scenario, checkpoint validator, state machine, tests, regenerated fingerprint (+161 lines, none changed). last_commit is the Phase A code commit; the handover-docs commit that carries this file sits on top of it.",
+  "tests_run": "node --test (includes schema replay and the coding_continuity scenario)",
+  "tests_passed": 522,
+  "tests_failed": 0,
+  "ci_status": "pending",
+  "decisions": [
+    "New tables use the coding_ prefix (coding_checkpoints, coding_handoffs) because the applied 2026-09-22 POC owns continuity_checkpoints/continuity_handoffs.",
+    "A FROZEN lease blocks its branch until reclaim_coding_lease marks it RECLAIMED (added RPC).",
+    "RPCs use security invoker + empty search_path, matching the existing coding agent RPCs.",
+    "COMPLETED is a terminal state reachable only from CHECKPOINTING after completion gates.",
+    "Phase B skipped by Claude to protect the handover."
+  ],
+  "constraints": [
+    "Do not merge PR #102 or apply the migration without Fahad's approval.",
+    "CONTINUITY_SUPERVISOR stays off by default.",
+    "Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, V5 UI, POC continuity_* tables, Hermes."
+  ],
+  "errors": [
+    "First replay failed: continuity_checkpoints already existed (POC); fixed by renaming the new tables."
+  ],
+  "quota_state": {
+    "basis": "UNKNOWN",
+    "used_pct": null,
+    "reset_at": null
+  },
+  "rate_limit_state": {
+    "limited": false,
+    "retry_after_s": null
+  },
+  "next_exact_action": "Review PR #102 (node --test, CI), then create codex/continuity-phase-b from origin/claude/continuity-foundation and build Phase B (src/continuity/store.js, lease.js, checkpointer.js with tests) per docs/CONTINUITY-IMPLEMENTATION-PLAN.md; do not merge #102 or apply the migration.",
+  "unresolved_items": [
+    "Fahad's approval to apply migration 20261004090000_coding_continuity to production, then merge PR #102."
+  ],
   "rollback_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "summary_md": "Interim."
+  "summary_md": "Phase A of the Coding Continuity Supervisor is implemented and tested on claude/continuity-foundation (PR #102, open). Migration not applied. Codex reviews #102, then builds Phase B stacked on it.",
+  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/102"
 }
