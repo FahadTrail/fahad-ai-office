@@ -1,6 +1,14 @@
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
-## PHASE N READINESS UPDATE (2026-10-01)
+## DEVELOPMENT-ONLY COMPLETION (2026-10-02)
+
+Fahad explicitly stopped readiness/testing work for this sprint. Code development continued on the existing #106 branch, `codex/continuity-readiness`; implementation commit `8ea3f5a512c0b45ce876939fba812dc099a328c6` is the current code baseline. **No Phase N drill, real handoff, browser/axe/mobile check, DB replay, full test suite, production smoke, migration, deployment, or activation was run in this sprint.** Only JavaScript syntax and whitespace checks were used to avoid committing malformed source. The earlier Phase N readiness report below is historical, not evidence for this new code.
+
+The code now has a shared external CLI driver, version/auth-gated Codex and official Claude Code CLI adapters, structured event/error handling, provider-issued CLI session IDs in continuity checkpoints for same-worker resume, managed external worktrees, guarded publish/cleanup, owner controls, project-nested status, shutdown drain, and fail-closed lease handling. Claude is the third executable **adapter in code**, not an authenticated or live-proven worker. Its default is OFF and its privacy eligibility is PUBLIC only until the owner validates a wider policy. Codex is separately default OFF. The other four non-native workers remain explicit MANUAL_ONLY/DISABLED; none is represented as executable. The native Office worker remains the first worker.
+
+The stack remains #102 → #104 → #105 → #106, unmerged. The additive Phase A migration is unapplied, production is unchanged, and `CONTINUITY_SUPERVISOR` remains OFF. **These two new commits are local only:** the push to #106 could not authenticate from this environment; GitHub still points to `497f901a6f11e46f20ddfcf047f4d18ac215e65e`. The existing PR is attached, not updated remotely. Preserve this checkout; once GitHub write access is restored, push `codex/continuity-readiness` without merging. Do not infer operational readiness from feature-complete source. The next phase is **testing only when Fahad asks for it**: update legacy adapter test fixtures for the new driver, then run focused/static tests, database replay, the real three-worker/restart drill, and release gates in that order. Do not merge, apply the migration, deploy, or activate without separate authorization. `.continuity/checkpoint.json` records the exact development handoff.
+
+## PHASE N READINESS UPDATE (2026-10-01; historical, pre-development)
 
 The current authoritative package is [`docs/CONTINUITY-PHASE-N-READINESS.md`](CONTINUITY-PHASE-N-READINESS.md). The four-PR stack #102 → #104 → #105 → #106 remains open and unmerged; the Phase A migration is unapplied; production is unchanged and `CONTINUITY_SUPERVISOR` remains OFF. Phase N readiness fixes on #106 make Codex stop wait for confirmed process exit, re-inspect Git before handoff, reject wrong/diverged branches and refuse stale-lease reclaim without proof the old writer stopped. The mobile sidebar now hides its controls from keyboard focus while closed.
 

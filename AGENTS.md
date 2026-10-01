@@ -69,7 +69,11 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## Continuity update (2026-10-01, Phase N readiness)
+## Continuity update (2026-10-02, development-only completion)
+
+Fahad stopped all readiness/testing work for this sprint. The local #106 checkout adds a real official Claude Code CLI adapter, a shared external driver, Codex CLI hardening, guarded worktree transfers, same-worker CLI resume metadata, owner controls and recovery safeguards. The three executable adapters in **source** are Office, Codex and Claude; the external two are default OFF and are not authenticated or live-verified by this sprint. Four other non-native workers remain manual/disabled. No full test suite, DB replay, real handoff, UI audit or production action was run after this development. These new commits are **not pushed** because GitHub write authentication is unavailable; remote #106 remains on `497f901a6f11e46f20ddfcf047f4d18ac215e65e`. #102/#104/#105/#106 remain unmerged; migration unapplied; Supervisor OFF. See the current top of `docs/HANDOVER.md`, `docs/CODEX-CONTINUE.md` and `.continuity/checkpoint.json`. Do not start testing without Fahad's next instruction.
+
+## Continuity update (2026-10-01, Phase N readiness; historical)
 
 The Coding Continuity Supervisor is implemented in an open, unmerged PR stack: #102 (Phase A, schema), #104 (B, durable runtime foundation), #105 (C-G, supervisor and workers), and #106 (H-M, nested project UI and Phase N readiness fixes). The Phase A production migration is unapplied, and `CONTINUITY_SUPERVISOR` is off by default. Automated Continuity UI axe/viewport checks pass, but the documented real Office → Codex → third-worker Phase N drill has not been run; no third adapter is executable. **Production activation is not ready.** Do not merge, deploy, apply the migration, or activate the flag. Read `docs/CONTINUITY-PHASE-N-READINESS.md`, the top of `docs/HANDOVER.md`, and `.continuity/checkpoint.json` before any further action. The older status below is historical.
 

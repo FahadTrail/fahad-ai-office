@@ -1,6 +1,12 @@
 # Codex: continue the Coding Continuity Supervisor
 
-## Phase N readiness update (2026-10-01)
+## Current handoff: development complete, testing intentionally deferred (2026-10-02)
+
+Fahad's latest instruction was development only; do not continue the Phase N/readiness work in the historical sections below. The existing #106 branch now contains implementation commit `8ea3f5a512c0b45ce876939fba812dc099a328c6`: Office, Codex and Claude Code have executable adapter code; the latter two require explicit enable flags, an installed supported CLI, a verified login, and the owner enabling their registry entries. No claim of a successful real invocation is made. The shared CLI driver, safe stop, same-worker CLI resume metadata, branch/worktree transfer, recovery guards, owner API controls, nested UI and event/error model are implemented. Read the new top of `docs/HANDOVER.md` and `.continuity/checkpoint.json` for exact state.
+
+No full tests, DB replay, browser/accessibility/mobile tests or real worker drill were run after this implementation. Existing `test/continuity-adapters.test.js` still describes the old Codex constructor and deprecated flag; update it in the **next testing phase** before executing it. Until then the only source checks this sprint are `node --check` and `git diff --check`. The implementation and docs commits are local only because GitHub write authentication was unavailable; #106's remote head is still `497f901a6f11e46f20ddfcf047f4d18ac215e65e`. Keep this checkout and push its branch once authorized. Keep #102/#104/#105/#106 open; no migration, merge, deploy or flag activation. Do not begin testing automatically: wait for Fahad's next direction.
+
+## Phase N readiness update (2026-10-01; historical, pre-development)
 
 Start with `docs/CONTINUITY-PHASE-N-READINESS.md` and the new top section of `docs/HANDOVER.md`. Automated UI checks, mobile sizes, keyboard/drawer behavior, privacy and shared-quota tests are complete; #106 also contains fail-closed Codex stop, Git-head and stale-writer verification fixes. Code head `3759ff9` passed Linux CI, including 573 Node tests, 15 container tests and 32-migration replay; check the documentation-only follow-up head too. The real Office → Codex → third-worker handoff and process-restart drill is **not** complete. No third adapter is executable, and this local Codex CLI cannot load its login configuration. The production activation package is a plan only. Arrange supported third-worker implementation/verification and an isolated real Phase N drill; do not merge, migrate, deploy or activate meanwhile. The older sections below explain the stack history.
 
