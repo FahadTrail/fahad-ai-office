@@ -30,19 +30,72 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
     // Only a boolean derived from the provider's text is kept: whether the
     // limit hit is a daily allowance (so the route waits for the reset).
     const errorText = JSON.stringify(payload?.error ?? payload ?? '').slice(0, 4000);
-    const dailyQuota = response.status === 429 && isDailyQuotaText(errorText);
+    // Cloudflare Workers AI answers error 4006 when the daily free neurons are
+    // used up (Free plan): a daily quota whatever the HTTP status says.
+    const cloudflareDaily = /"code":\s*4006\b|daily free allocation/i.test(errorText);
+    const dailyQuota = cloudflareDaily || (response.status === 429 && isDailyQuotaText(errorText));
     const reason = providerReasonHint(response.status, errorText);
+    const google = googleQuotaDetails(payload);
+    // A per-minute quota (Gemini QuotaFailure ...PerMinute...) resets within
+    // a minute: the route waits for that window, never an escalating backoff.
+    const minuteQuota = !dailyQuota && response.status === 429 && (google.perMinute || /per.?minute|\bRPM\b|\bTPM\b|per 60s/i.test(errorText));
+    const reported = google.inputTokensPerMinute || google.requestsPerMinute
+      ? Object.freeze({ ...(rateLimit || {}), ...(google.inputTokensPerMinute ? { inputTokensPerMinute: google.inputTokensPerMinute } : {}), ...(google.requestsPerMinute ? { requestsPerMinute: google.requestsPerMinute } : {}) })
+      : rateLimit;
     throw providerError(`${provider} request failed`, {
-      status: response.status,
-      ...(dailyQuota ? { quotaScope: 'day' } : {}),
+      status: cloudflareDaily ? 429 : response.status,
+      ...(dailyQuota ? { quotaScope: 'day' } : minuteQuota ? { quotaScope: 'minute' } : {}),
       ...(reason ? { reason } : {}),
       type: typeof type === 'string' ? type : String(type ?? ''),
-      retryAfter: response.headers.get('retry-after'),
+      retryAfter: response.headers.get('retry-after') ?? google.retryAfterSeconds,
       providerRequestId: requestId,
-      rateLimit,
+      rateLimit: reported,
     });
   }
-  return { body: await response.json(), requestId, rateLimit };
+  // The timeout also covers reading the body: slow reasoning models behind
+  // OpenRouter send headers first and the body minutes later. A DOMException
+  // raised here (TimeoutError, code 23) is a network failure like any other.
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    throw providerError(`${provider} ${timedOut ? 'response timed out' : 'response could not be read'}`, {
+      code: 'NETWORK',
+      networkCode: timedOut ? 'TimeoutError' : 'BAD_RESPONSE_BODY',
+      providerRequestId: requestId,
+      rateLimit,
+      cause: error,
+    });
+  }
+  return { body: payload, requestId, rateLimit };
+}
+
+// Google (Gemini API) states the quota it enforced in the 429 body:
+// google.rpc.QuotaFailure violations (quotaId such as
+// "GenerateContentInputTokensPerModelPerMinute-FreeTier", quotaValue "15000")
+// and google.rpc.RetryInfo ("retryDelay": "37s"). Only numbers are kept.
+export function googleQuotaDetails(payload) {
+  const details = Array.isArray(payload?.error?.details) ? payload.error.details : [];
+  const result = { retryAfterSeconds: null, inputTokensPerMinute: null, requestsPerMinute: null, perMinute: false };
+  for (const detail of details) {
+    const kind = String(detail?.['@type'] || '');
+    if (kind.endsWith('RetryInfo')) {
+      const seconds = Number(String(detail.retryDelay || '').match(/^(\d+(?:\.\d+)?)s$/)?.[1]);
+      if (Number.isFinite(seconds) && seconds > 0) result.retryAfterSeconds = Math.ceil(seconds);
+    }
+    if (kind.endsWith('QuotaFailure')) {
+      for (const violation of Array.isArray(detail.violations) ? detail.violations : []) {
+        const id = String(violation?.quotaId || violation?.quotaMetric || '');
+        const value = Number(violation?.quotaValue);
+        if (/PerMinute/i.test(id)) result.perMinute = true;
+        if (!Number.isFinite(value) || value <= 0 || !/PerMinute/i.test(id)) continue;
+        if (/InputToken|input_token/i.test(id)) result.inputTokensPerMinute = value;
+        else if (/Requests?PerMinute|request_count/i.test(id)) result.requestsPerMinute = value;
+      }
+    }
+  }
+  return result;
 }
 
 // Maps a provider's error wording to a short, fixed reason code so an

@@ -21,6 +21,7 @@
 import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 import { isCoolingDown } from './provider-state.js';
 import { classifyProviderError } from '../contracts.js';
+import { codingCandidates, qualifyCodingRoute, CODING_SUITE_VERSION } from './coding-qualification.js';
 
 export const QUALIFICATION_SUITE_VERSION = 'q1-2026-09';
 export const QUALIFICATION_MAX_AGE_MS = 30 * 24 * 3600_000;
@@ -147,6 +148,13 @@ export function qualificationValid(record, now = Date.now()) {
 
 // Reasons a non-paid route may not take this job, from its qualification.
 export function qualificationGaps(route, job, qualifications, now = Date.now()) {
+  // Capacity V2 lifecycle: a discovered route of a new provider (DISCOVERED →
+  // CANARY → QUALIFIED → ACTIVE) takes no job at all until it has passed
+  // qualification — even without a qualification store (fail closed).
+  if (route.requiresQualification) {
+    const record = qualifications?.get(route.id);
+    if (!qualificationValid(record, now) || record.status !== 'qualified') return ['NOT_YET_QUALIFIED'];
+  }
   if (job && typeof job === 'object' && job.baseJob) job = job.baseJob;
   if (typeof job === 'string') job = job.replace(/:relaxed$/, '');
   if (!qualifications || route.billingClass === 'paid' || !job || typeof job !== 'string') return [];
@@ -217,22 +225,37 @@ export class QualificationStore {
       .order('completed_at', { ascending: false }).limit(300);
     if (error) return this.cache?.map || new Map();
     const map = new Map();
+    const errors = new Map();
+    const coding = new Map();
+    const codingErrors = new Map();
     for (const row of data || []) {
+      if (row.report?.kind === 'coding_qualification') {
+        for (const result of row.report.results || []) {
+          if (!coding.has(result.routeId) && result.status !== 'error') coding.set(result.routeId, result);
+          if (result.status === 'error' && !coding.has(result.routeId) && !codingErrors.has(result.routeId)) codingErrors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
+        }
+        continue;
+      }
       for (const result of row.report?.results || []) {
         // Newest first: a later error never hides an earlier valid result.
         if (!map.has(result.routeId) && result.status !== 'error') map.set(result.routeId, result);
+        // The newest error of a route with no newer valid result drives the
+        // qualifier's back-off (a dead route is not re-probed every cycle).
+        if (result.status === 'error' && !map.has(result.routeId) && !errors.has(result.routeId)) errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
       }
     }
+    map.errors = errors;
+    map.coding = Object.assign(coding, { errors: codingErrors });
     this.cache = { at: this.now(), map };
     return map;
   }
 
-  async save(results) {
+  async save(results, { kind = 'qualification', suiteVersion = QUALIFICATION_SUITE_VERSION } = {}) {
     const at = new Date(this.now()).toISOString();
     const clean = results.map(({ error, ...rest }) => rest);
     const { error } = await this.db.from('provider_canary_runs').insert({
       requested_by: 'auto-qualifier', status: 'completed', started_at: at, completed_at: at,
-      report: { kind: 'qualification', suiteVersion: QUALIFICATION_SUITE_VERSION, results: clean },
+      report: { kind, suiteVersion, results: clean },
     });
     this.cache = null;
     if (error) throw Object.assign(new Error('qualification write failed'), { code: 'QUALIFICATION_WRITE_FAILED' });
@@ -240,9 +263,31 @@ export class QualificationStore {
 }
 
 export class MemoryQualificationStore {
-  constructor() { this.map = new Map(); }
-  async snapshot() { return new Map(this.map); }
-  async save(results) { for (const result of results) if (result.status !== 'error') this.map.set(result.routeId, result); }
+  constructor() { this.map = new Map(); this.errors = new Map(); this.coding = new Map(); this.codingErrors = new Map(); }
+  async snapshot() {
+    return Object.assign(new Map(this.map), { errors: new Map(this.errors), coding: Object.assign(new Map(this.coding), { errors: new Map(this.codingErrors) }) });
+  }
+  async save(results, { kind = 'qualification' } = {}) {
+    const [map, errors] = kind === 'coding_qualification' ? [this.coding, this.codingErrors] : [this.map, this.errors];
+    for (const result of results) {
+      if (result.status !== 'error') { map.set(result.routeId, result); errors.delete(result.routeId); }
+      else errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
+    }
+  }
+}
+
+// Back-off after a failed qualification (Capacity V2, Part 21): a provider
+// that refuses the model (400/403/404: not served to this key, invalid, no
+// access) is re-tested after a day; a transient failure (429, 5xx, network)
+// after an hour. Before this, dead routes were re-probed every 20 minutes
+// (production 2026-09-29: ~74 HTTP 404 calls/day each for two Gemini ids).
+export const QUALIFICATION_BACKOFF_MS = Object.freeze({ permanent: 24 * 3600_000, transient: 3600_000 });
+const PERMANENT_ERROR = /^HTTP_(400|401|403|404|405|410|422)$|NOT_FOUND|UNSUITABLE|INVALID_REQUEST|AUTH|NO_CREDITS|NOT_ACTIVATED/i;
+export function qualificationBackoffUntil(error, now = Date.now()) {
+  if (!error?.testedAt) return null;
+  const wait = PERMANENT_ERROR.test(String(error.errorCode || '')) ? QUALIFICATION_BACKOFF_MS.permanent : QUALIFICATION_BACKOFF_MS.transient;
+  const until = Date.parse(error.testedAt) + wait;
+  return until > now ? new Date(until).toISOString() : null;
 }
 
 // Picks which routes to qualify this cycle: configured non-paid routes that
@@ -254,6 +299,7 @@ export function qualificationCandidates(pool, { qualifications, state, now = Dat
     .filter((route) => route.billingClass !== 'paid' && route.protocolClient && !route.unavailableReasons?.length)
     .filter((route) => !qualificationValid(qualifications?.get(route.id), now))
     .filter((route) => !isCoolingDown(state?.get(route.id), now))
+    .filter((route) => !qualificationBackoffUntil(qualifications?.errors?.get(route.id), now))
     // Never-tested first, then the most capable (the likeliest to take
     // critical work), so the first cycles cover what matters most.
     .toSorted((left, right) => Number(Boolean(qualifications?.get(left.id))) - Number(Boolean(qualifications?.get(right.id)))
@@ -276,7 +322,7 @@ function strength(route) {
 // untested free routes (new credentials and newly discovered models are
 // absorbed automatically) and records their health like real traffic.
 export class AutoQualifier {
-  constructor({ createPool, stateStore, store, log = () => {}, intervalMs = 6 * 3600_000, backlogIntervalMs = 20 * 60_000, firstRunDelayMs = 2 * 60_000, now = () => Date.now(), maxRoutes = 5, dailyProviderCap = { openrouter: 6 } }) {
+  constructor({ createPool, stateStore, store, log = () => {}, intervalMs = 6 * 3600_000, backlogIntervalMs = 20 * 60_000, firstRunDelayMs = 2 * 60_000, now = () => Date.now(), maxRoutes = 5, maxCodingRoutes = 3, dailyProviderCap = { openrouter: 6 } }) {
     this.backlogIntervalMs = backlogIntervalMs;
     this.dailyProviderCap = dailyProviderCap;
     this.dailyCount = { day: null, counts: {} };
@@ -287,6 +333,7 @@ export class AutoQualifier {
     this.intervalMs = intervalMs;
     this.now = now;
     this.maxRoutes = maxRoutes;
+    this.maxCodingRoutes = maxCodingRoutes;
     this.nextAt = now() + firstRunDelayMs;
     this.active = null;
   }
@@ -333,15 +380,48 @@ export class AutoQualifier {
         return true;
       });
     const results = Object.assign([], { backlog: Math.max(0, pending.length - candidates.length) });
-    if (!candidates.length) return results;
     for (const route of candidates) {
       const result = await qualifyRoute(route, { now: this.now });
       if (result.status === 'error') await this.stateStore.recordFailure(route, classifyProviderError(result.error || { code: result.errorCode })).catch(() => {});
       else await this.stateStore.recordSuccess(route, { usage: result.usage }).catch(() => {});
       results.push(result);
     }
-    await this.store.save(results);
-    this.log('Qualified free models:', JSON.stringify(results.map((result) => ({ route: result.routeId, status: result.status, passed: result.passed ?? null, error: result.errorCode || null }))));
+    if (results.length) {
+      await this.store.save(results);
+      this.log('Qualified free models:', JSON.stringify(results.map((result) => ({ route: result.routeId, status: result.status, passed: result.passed ?? null, error: result.errorCode || null }))));
+    }
+    // Coding grades are the top capacity need: every cycle also grades coding
+    // candidates on providers this cycle's general runs did not touch.
+    return this.codingCycle(pool, qualifications, results, { excludeProviders: new Set(candidates.map((route) => route.provider)) });
+  }
+
+  // Coding suite (coding-qualification.js): routes that passed the general
+  // suite with coding and tools are graded for coding work. Up to
+  // `maxCodingRoutes` per cycle, at most one per provider (never two runs on
+  // one provider's quota in a cycle), skipping providers already used by this
+  // cycle's general qualification. The daily caps are applied BEFORE picking,
+  // so a capped provider never blocks the others. Same back-off applies.
+  async codingCycle(pool, qualifications, results, { excludeProviders = new Set() } = {}) {
+    const all = codingCandidates(pool, { qualifications, now: this.now(), backoffUntil: qualificationBackoffUntil, maxRoutes: Infinity });
+    const picked = [];
+    const providers = new Set(excludeProviders);
+    for (const candidate of all) {
+      if (picked.length >= this.maxCodingRoutes) break;
+      if (providers.has(candidate.provider) || !this.underDailyCap(candidate)) continue;
+      providers.add(candidate.provider);
+      picked.push(candidate);
+    }
+    for (const route of picked) {
+      this.dailyCount.counts[route.provider] = (this.dailyCount.counts[route.provider] || 0) + 1;
+      const result = await qualifyCodingRoute(route, { now: this.now });
+      if (result.status === 'error') await this.stateStore.recordFailure(route, classifyProviderError(result.error || { code: result.errorCode })).catch(() => {});
+      else await this.stateStore.recordSuccess(route, { usage: result.usage }).catch(() => {});
+      await this.store.save([result], { kind: 'coding_qualification', suiteVersion: CODING_SUITE_VERSION });
+      this.log('Coding qualification:', JSON.stringify({ route: result.routeId, grade: result.grade || null, passed: result.passed ?? null, error: result.errorCode || null }));
+      results.push(result);
+    }
+    // More coding candidates remain: keep the short backlog interval.
+    results.backlog = (results.backlog || 0) + Math.max(0, all.length - picked.length);
     return results;
   }
 }

@@ -115,3 +115,74 @@ export function simulateInputChars(profile, { systemChars = 24_000, budget = tru
   }
   return { perTurn, total: perTurn.reduce((sum, value) => sum + value, 0) };
 }
+
+// Test-runner output (node --test TAP) is mostly passing-test diagnostics:
+// every `ok` line carries a YAML block with its duration. The model needs the
+// failures and the totals, so passing tests collapse into one count line,
+// failures keep their assertion details and only stack frames outside Node's
+// own internals, and every non-TAP line (console output, stderr) stays.
+// Output that is not TAP is returned unchanged.
+const TAP_RESULT = /^(\s*)(not ok|ok) \d+ - /;
+const TAP_SUMMARY = /^# (tests|suites|pass|fail|cancelled|skipped|todo|duration_ms) /;
+const FAILURE_NOISE = /^\s*(duration_ms|type|failureType):/;
+const INTERNAL_FRAME = /\(node:|^\s*node:|^\s*(new Promise|new SafePromise|Array\.map|async Promise\.all) /;
+
+export function compactTestOutput(text, { maxStackFrames = 4 } = {}) {
+  const source = String(text || '');
+  if (!/^TAP version \d+/m.test(source) || !/^\s*(not ok|ok) \d+ - /m.test(source)) return { text: source, omittedPassing: 0 };
+  const lines = source.split('\n');
+  const out = [];
+  let omittedPassing = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^\s*# Subtest: /.test(line) || /^\s*1\.\.\d+\s*$/.test(line) || /^TAP version /.test(line)) continue;
+    const result = line.match(TAP_RESULT);
+    if (!result) { out.push(line); continue; }
+    const indent = result[1].length;
+    // The YAML block that follows a result: "---" … "..." one level deeper.
+    let end = index;
+    const block = [];
+    if (lines[index + 1]?.trim() === '---') {
+      end = index + 1;
+      while (end + 1 < lines.length && !(lines[end + 1].trim() === '...' && lines[end + 1].length - lines[end + 1].trimStart().length === indent + 2)) {
+        end += 1;
+        block.push(lines[end]);
+      }
+      end += 1;
+    }
+    index = end;
+    if (result[2] === 'ok') {
+      if (!/# SKIP|# TODO/.test(line)) { omittedPassing += 1; continue; }
+      out.push(line);
+      continue;
+    }
+    out.push(line);
+    // When the error already shows the "+ actual - expected" diff, the
+    // expected:/actual: YAML trees repeat it.
+    const diffShown = block.some((detail) => detail.includes('+ actual - expected'));
+    let frames = 0;
+    let inStack = false;
+    let skipDeeperThan = -1;
+    for (const detail of block) {
+      const depth = detail.length - detail.trimStart().length;
+      if (skipDeeperThan >= 0) {
+        if (depth > skipDeeperThan && detail.trim()) continue;
+        skipDeeperThan = -1;
+      }
+      if (diffShown && /^\s*(expected|actual):\s*$/.test(detail)) { skipDeeperThan = depth; continue; }
+      if (FAILURE_NOISE.test(detail)) continue;
+      if (/^\s*stack: \|-?\s*$/.test(detail)) { inStack = true; out.push(detail); continue; }
+      if (inStack && /^\s+\S/.test(detail) && !/^\s*[a-zA-Z]+:( |$)/.test(detail.trim() + ' ')) {
+        if (INTERNAL_FRAME.test(detail) || frames >= maxStackFrames) continue;
+        frames += 1;
+        out.push(detail);
+        continue;
+      }
+      inStack = false;
+      out.push(detail);
+    }
+  }
+  const compacted = out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const note = omittedPassing ? `[controller: ${omittedPassing} passing result(s) omitted; failures and totals kept]\n` : '';
+  return { text: `${note}${compacted}`, omittedPassing };
+}

@@ -33,6 +33,9 @@ export function createCodingRuntime({
   providerStateStore,
   policyStore,
   routingStore = null,
+  // Qualification evidence (Capacity V2): discovered free routes take coding
+  // work only after a passed qualification; without the store they never do.
+  qualificationStore = null,
   auditStore,
   modelAttemptSink = async () => {},
   pool = null,
@@ -46,7 +49,7 @@ export function createCodingRuntime({
   build = null,
 }) {
   const mode = sandboxMode || resolveSandboxMode(env);
-  const modelPool = pool || createModelPool({ env, fetchFn });
+  let modelPool = pool || createModelPool({ env, fetchFn });
   const gateway = new AgentTurnGateway({
     pool: modelPool,
     stateStore: providerStateStore,
@@ -98,7 +101,8 @@ export function createCodingRuntime({
       const policy = await policyStore.getPolicy(session.workspaceId);
       authorizedRouteIds = authorizedRoutes(modelPool, policy);
     }
-    return { ...routing, exhaustedRoutes: capped, authorizedRouteIds };
+    const qualifications = qualificationStore ? await qualificationStore.snapshot().catch(() => null) : null;
+    return { ...routing, exhaustedRoutes: capped, authorizedRouteIds, qualifications };
   };
 
   // Paid model turns reserve their worst-case cost against the workspace's
@@ -138,7 +142,17 @@ export function createCodingRuntime({
     env,
     build,
   });
-  return { controller, gateway, pool: modelPool, mode };
+  // Catalog-discovered routes (Gemini extras, OpenRouter free models, new
+  // providers) exist only after the provider catalogs are read: the worker
+  // refreshes them periodically and rebuilds the pool here. An injected pool
+  // (tests) is never replaced.
+  const refreshPool = () => {
+    if (pool) return modelPool;
+    modelPool = createModelPool({ env, fetchFn });
+    gateway.pool = modelPool;
+    return modelPool;
+  };
+  return { controller, gateway, get pool() { return modelPool; }, mode, routingFor, refreshPool };
 }
 
 export class CodingWorker {

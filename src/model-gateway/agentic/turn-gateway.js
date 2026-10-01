@@ -14,10 +14,14 @@ import { baseJobName, capabilityGaps, jobFit, jobProfile, languageFit, languageG
 import { capacityPool, poolCooldowns } from './capacity-pools.js';
 import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 import { evidenceCapabilities, qualificationGaps, evidenceScore } from './qualification.js';
+import { allowsDataClass, requiredDataClass } from './pool-registry.js';
+import { codingTierGaps } from './coding-qualification.js';
 
 export { assertFreeRouteHonest, sameModelFamily, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 
 const CODING_JOBS = new Set(['coding', 'qa_security']);
+const DEAD_ROUTE_MIN_ATTEMPTS = 20;
+const LOW_SUCCESS_RATE = 0.2;
 // High-value work that may use scarce free pools first (see order()).
 export const HIGH_VALUE_JOBS = new Set(['synthesis', 'finance', 'finance_critical', 'qa_security', 'coding', 'research']);
 const KEY_WIDE_BLOCKERS = /_(CREDENTIAL_INVALID|ACCOUNT_NOT_ACTIVATED|ACCOUNT_OVERDUE|PERMISSION_MISSING|REGION_NOT_SUPPORTED)$/;
@@ -52,6 +56,8 @@ export class AgentTurnGateway {
   // router share this so the UI shows exactly why a model is (not) used.
   async evaluate({
     requiresPrivateData = true,
+    dataClass = null,
+    codingTier = 'medium',
     estimatedInputTokens = 0,
     maxOutputTokens = 16_000,
     remainingBudgetUsd = Infinity,
@@ -83,25 +89,46 @@ export class AgentTurnGateway {
       const routeState = state.get(route.id) || null;
       const poolInfo = route.capacityPool || capacityPool(route);
       if (authorizedRouteIds && !authorizedRouteIds.includes(route.id)) reasons.push('WORKSPACE_NOT_AUTHORIZED');
-      if (requiresPrivateData && !route.privacyApproved) reasons.push('PRIVACY_NOT_APPROVED');
+      // Data class (Capacity V2): PUBLIC < NORMAL < PRIVATE < CONFIDENTIAL.
+      // The legacy boolean maps to PRIVATE (true) or PUBLIC (false).
+      const needed = requiredDataClass({ dataClass, requiresPrivateData });
+      if (!allowsDataClass(route, needed)) reasons.push(['PRIVATE', 'CONFIDENTIAL'].includes(needed) && !route.privacyApproved ? 'PRIVACY_NOT_APPROVED' : 'DATA_CLASS_NOT_ALLOWED');
       // The quality floor guards autonomous coding. Other jobs are governed by
       // their own capability minimums (capabilities.js JOB_PROFILES).
-      if ((!job || CODING_JOBS.has(baseJobName(job) || '')) && route.qualityTier < minQualityTier) reasons.push('BELOW_QUALITY_FLOOR');
+      // A free route's measured coding grade (coding suite) outranks its
+      // claimed quality tier: a grade that meets the job's tier satisfies the
+      // floor (e.g. Gemma 26B: tier 3 claimed, CODING_PRIMARY measured).
+      const codingGraded = route.billingClass !== 'paid' && Boolean(qualifications) && baseJobName(job) === 'coding'
+        && !codingTierGaps(route, codingTier, qualifications.coding, now).length;
+      if ((!job || CODING_JOBS.has(baseJobName(job) || '')) && route.qualityTier < minQualityTier && !codingGraded) reasons.push('BELOW_QUALITY_FLOOR');
       // Capability before price: a free model that cannot do the job is not
       // offered the job. Planning scores are corrected by the route's own
       // measured qualification (never raised for strict, high-stakes jobs).
       const capabilities = route.billingClass === 'paid' ? route.capabilities
         : evidenceCapabilities(route.capabilities, qualifications?.get(route.id), { strict, now });
       const outputTokens = routeOutputTokens(route, maxOutputTokens, estimatedInputTokens);
-      reasons.push(...capabilityGaps(capabilities, job, { needContext: requiredContext(estimatedInputTokens, maxOutputTokens) }));
+      // The same measured grade is the coding job's strict evidence for its
+      // coding and reasoning scores (the suite tests both, deterministically);
+      // tool calling, context, privacy and health gates still apply.
+      const gaps = capabilityGaps(capabilities, job, { needContext: requiredContext(estimatedInputTokens, maxOutputTokens) });
+      reasons.push(...(codingGraded ? gaps.filter((gap) => !/^CAPABILITY_(CODING|REASONING)_BELOW_/.test(gap)) : gaps));
       reasons.push(...languageGaps(capabilities, language));
       // Evidence before claims: a free model's own qualification results can
       // rule it out of a job, and critical jobs need a passed qualification.
       reasons.push(...qualificationGaps(route, job, qualifications, now));
+      // Coding tiers (Capacity V2, Part 12): with qualification evidence, a
+      // free route takes coding work only with a coding-suite grade that
+      // matches the job size (small / medium / large / critical).
+      if (qualifications && baseJobName(job) === 'coding') reasons.push(...codingTierGaps(route, codingTier, qualifications.coding, now));
       if (estimatedInputTokens + outputTokens > route.contextWindow) reasons.push('CONTEXT_TOO_LARGE');
       // A per-minute token RATE (not a window): the request must leave room
       // for a useful answer inside one minute's allowance.
       if (route.requestTokenLimit && outputTokens < Math.min(maxOutputTokens, MIN_USEFUL_OUTPUT_TOKENS)) reasons.push('REQUEST_ABOVE_FREE_TIER_LIMIT');
+      // The provider REPORTED its per-minute input-token quota (Gemini 429
+      // QuotaFailure): a request above it can never pass, however long the
+      // route rests, so it is not offered that request (no cooldown wait).
+      const reportedInputTpm = Number(routeState?.rateLimit?.inputTokensPerMinute || 0);
+      if (reportedInputTpm > 0 && estimatedInputTokens > reportedInputTpm) reasons.push('REQUEST_ABOVE_PROVIDER_TPM');
       const pooled = pools.get(poolInfo.id);
       let cooldownUntil = routeState?.cooldownUntil || null;
       if (isCoolingDown(routeState, now)) reasons.push(`COOLDOWN_${String(routeState.health || 'unavailable').toUpperCase()}`);
@@ -109,6 +136,16 @@ export class AgentTurnGateway {
         reasons.push(`COOLDOWN_POOL_${String(pooled.health).toUpperCase()}`);
         cooldownUntil = pooled.cooldownUntil;
       } else if (route.secretRef && blockedSecrets.has(route.secretRef)) reasons.push('PROVIDER_CREDENTIAL_BLOCKED');
+      // Evidence-based demotion of free routes (Capacity V2 wave 2): a route
+      // that never answered, or answers under 20% of the time over a real
+      // sample, costs failover hops and shared quota without output. It is
+      // left to the qualifier's back-off probes; one success reinstates it.
+      if (route.billingClass !== 'paid' && routeState) {
+        const successes = Number(routeState.requests || 0);
+        const attempts = successes + Number(routeState.failures || 0);
+        if (successes === 0 && attempts >= DEAD_ROUTE_MIN_ATTEMPTS) reasons.push('NEVER_SUCCEEDED');
+        else if (attempts >= DEAD_ROUTE_MIN_ATTEMPTS && successes / attempts < LOW_SUCCESS_RATE) reasons.push('LOW_SUCCESS_RATE');
+      }
       if (excludedRouteIds.includes(route.id)) reasons.push('FAILED_THIS_TURN');
       if (policyExcludedRouteIds.includes(route.id)) reasons.push('EXCLUDED_BY_ROUTING_POLICY');
       if (budgetExhaustedRouteIds.includes(route.id)) reasons.push('ROUTE_BUDGET_EXHAUSTED');
@@ -292,11 +329,15 @@ export class AgentTurnGateway {
           attempts.push(record);
           await onAttempt(record);
           lastError = error;
-          const retryAfterMs = Number.isFinite(Number(error.retryAfter)) ? Number(error.retryAfter) * 1000 : 1000 * attempt;
+          const hinted = error.retryAfter != null && error.retryAfter !== '' && Number.isFinite(Number(error.retryAfter));
+          const retryAfterMs = hinted ? Number(error.retryAfter) * 1000 : 1000 * attempt;
           // A used-up daily allowance will not recover in seconds: rotate now.
+          // A per-minute window without a hint is not probed again at once:
+          // the route rests for its window (provider-state) and others serve.
           // A request that already ran into its timeout is not retried on the same route.
           const timedOut = /timeout/i.test(String(caught?.networkCode || ''));
-          const retryHere = error.failureClass === FAILURE_CLASS.RETRY && error.quotaScope !== 'day' && !timedOut && attempt < this.maxAttemptsPerRoute &&
+          const minuteBlind = error.quotaScope === 'minute' && !hinted;
+          const retryHere = error.failureClass === FAILURE_CLASS.RETRY && error.quotaScope !== 'day' && !minuteBlind && !timedOut && attempt < this.maxAttemptsPerRoute &&
             retryAfterMs <= this.maxInlineRetryMs;
           if (retryHere) {
             await this.sleepFn(retryAfterMs);

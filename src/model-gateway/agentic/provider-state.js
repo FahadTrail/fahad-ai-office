@@ -46,7 +46,9 @@ function errorCode(error) {
 // it is eligible again automatically.
 export function failureOutcome(error, previous = {}, now = Date.now(), route = null) {
   const consecutive = Number(previous.consecutiveFailures || 0) + 1;
-  const retryAfterMs = Number.isFinite(Number(error.retryAfter)) ? Number(error.retryAfter) * 1000 : null;
+  // A missing retry-after is null, not "0 seconds" (Number(null) === 0 made
+  // every hint-less 429 a 5 s probe, then an escalating backoff).
+  const retryAfterMs = error.retryAfter != null && error.retryAfter !== '' && Number.isFinite(Number(error.retryAfter)) ? Number(error.retryAfter) * 1000 : null;
   const resetAt = parseReset(error.rateLimit?.requestsReset) || parseReset(error.rateLimit?.tokensReset);
   let health = previous.health && previous.health !== HEALTH.UNKNOWN ? previous.health : HEALTH.HEALTHY;
   let cooldownUntil = null;
@@ -83,12 +85,25 @@ export function failureOutcome(error, previous = {}, now = Date.now(), route = n
     cooldownUntil = resetAt || now + 60 * MINUTE;
   } else if (error.code === 'PROVIDER_RATE_LIMIT') {
     health = HEALTH.RATE_LIMITED;
-    cooldownUntil = retryAfterMs != null ? now + clamp(retryAfterMs, 5_000, 6 * 60 * MINUTE)
-      : resetAt || now + Math.min(30 * MINUTE, MINUTE * 2 ** Math.max(0, consecutive - 1));
-    // A route that keeps answering 429 with a seconds-long retry-after (an
-    // upstream that is simply saturated) is not hammered: from the third
-    // consecutive limit the cooldown doubles, up to 30 minutes.
-    if (consecutive >= 3) cooldownUntil = Math.max(cooldownUntil, now + Math.min(30 * MINUTE, MINUTE * 2 ** (consecutive - 3)));
+    // The provider's own reset time, when it gives one (retry-after, reset
+    // headers, Gemini RetryInfo), is the wait: no guessing, no doubling.
+    const exactMs = retryAfterMs ?? (resetAt ? resetAt - now : null);
+    if (error.quotaScope === 'minute') {
+      // A per-minute window resets within a minute (Gemini reported Gemma's
+      // quota as 16K input tokens/min; the old escalation waited 121 s).
+      cooldownUntil = now + clamp(exactMs ?? MINUTE, 1_000, MINUTE + 5_000);
+      // Still refused after many windows: something else is wrong; rest
+      // longer (up to 10 minutes) instead of probing every minute.
+      if (consecutive >= 6) cooldownUntil = Math.max(cooldownUntil, now + Math.min(10 * MINUTE, MINUTE * 2 ** (consecutive - 6)));
+    } else if (exactMs != null) {
+      cooldownUntil = now + clamp(exactMs, 1_000, 6 * 60 * MINUTE);
+      // A route that keeps answering 429 with a seconds-long hint (an
+      // upstream that is simply saturated) is not hammered: from the third
+      // consecutive limit the cooldown doubles, up to 30 minutes.
+      if (consecutive >= 3 && exactMs < 10_000) cooldownUntil = Math.max(cooldownUntil, now + Math.min(30 * MINUTE, MINUTE * 2 ** (consecutive - 3)));
+    } else {
+      cooldownUntil = now + Math.min(30 * MINUTE, MINUTE * 2 ** Math.max(0, consecutive - 1));
+    }
   } else if (error.failureClass === FAILURE_CLASS.RETRY) {
     // Temporary 5xx/network: a short cooldown so the next turn prefers
     // another route, growing if the route keeps failing.

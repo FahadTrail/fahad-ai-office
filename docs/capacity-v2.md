@@ -1,0 +1,448 @@
+# Capacity Expansion V2 — free-first coding and continuous execution
+
+This is the living document for branch `claude/capacity-expansion-v2`. It
+holds the baseline, provider research, decisions, the capacity model and
+owner actions. Every number has a source and a confidence label:
+
+* **MEASURED**: production telemetry.
+* **PUBLISHED**: from the provider's own terms or docs.
+* **REPORTED**: from a secondary source.
+* **ESTIMATED**: derived by us.
+* **UNKNOWN**: not available.
+
+## 1. Baseline (production, measured 2026-09-29)
+
+Sources: `provider_status`, `model_attempts` (last 14 days), `agent_sessions`,
+`tasks`, `jobs`, all read from Supabase `zkzibipinjeswhdxnfgf`.
+
+### Routes and pools
+
+| | Count | Detail |
+|---|---|---|
+| Independent free pools with a working key | 7 | Gemini: 4 per-model pools (Flash, Flash-Lite, Gemma 26B, Gemma 31B; the 2.5 ids are listed but have never passed qualification). Groq: 3 per-model pools. Plus the OpenRouter free pool (key-wide) and the Z.ai free pool (1 concurrent request). |
+| Healthy free routes | 11 | Groq ×3, Gemini Flash-Lite, Gemma 26B, OpenRouter nemotron-ultra, dots, ling ×2, laguna, glm-4.5-flash |
+| Strong free routes (quality ≥ 4 or 120B+) | 3 | groq gpt-oss-120b, OpenRouter nemotron-3-ultra-550b, Gemini Flash (daily quota ≈20 requests) |
+| Coding-eligible free routes | **0** | Coding tasks default to `privateData: true`, and **no free route is approved for private data** |
+| Privacy-approved routes | 5 | anthropic ×2, openai, deepseek (paid), plus DeepSeek's opt-out flag. All paid. |
+| Paid routes with no credit | 5 | kimi, minimax, glm-5.3, qwen (not activated), cerebras (trial ended; 66 failed probes) |
+
+### Usage over 14 days (MEASURED)
+
+| Day | Calls | OK | Failed | Successful tokens | Cached input | Retry calls | Cost |
+|---|---|---|---|---|---|---|---|
+| 09-25 | 95 | 92 | 3 | 1.18M | 1.07M | 76 | $0.42 |
+| 09-26 | 261 | 245 | 16 | 6.65M | 5.85M | 154 | $0.40 |
+| 09-27 | 129 | 108 | 21 | 0.57M | 0.23M | 28 | $0.03 |
+| 09-28 | 82 | 63 | 19 | 0.48M | 0.04M | 9 | $0.00 |
+| 09-29 | 14 | 14 | 0 | 0.13M | 0.00M | 0 | $0.00 |
+
+* Failed attempts carried 0 billed tokens: failures are rejections, not partial answers.
+* Reasoning tokens are small (≤ 17K a day).
+* Cached input is up to 88% of input on coding days (DeepSeek prefix cache).
+* `provider_status` also shows wasted probing:
+  * `gemini-2.5-flash` and `-lite`: 238 and 200 `PROVIDER_UNSUITABLE` verdicts, 0 successes;
+  * Cerebras: 66 invalid requests.
+
+### Job sizes (MEASURED, completed sessions and jobs)
+
+| Kind | Samples | Tokens (input + output) |
+|---|---|---|
+| Small coding job (docs line, one test, glossary) | 4 | 72K–153K (median ≈ 120K) |
+| Medium coding job (helper + tests, JSDoc pass) | 2 | 348K–621K (≈ 500K) |
+| Large coding job (audit, provider integration) | 2 (+1 cancelled) | 2.4M–2.7M |
+| Single Office answer | 44 | p50 2.8K, p90 18K |
+| Mixed Office project (≥4 tasks) | 9 | p50 65K, p90 223K, ~24 calls |
+
+About 97% of coding tokens are input: the transcript is re-sent every turn.
+Cached input makes this cheap on paid DeepSeek; it does not help against free
+token-per-day limits.
+
+## 2. Provider discovery (2026-09-29)
+
+### Research method and limits
+
+The sandbox egress proxy blocks most provider documentation sites
+(opencode.ai, docs.sambanova.ai, developers.cloudflare.com, docs.llm7.io,
+api.llm7.io). GitHub is reachable. So:
+
+* **PRIMARY:** the provider's own source or terms file on GitHub was read in
+  full:
+  * OpenCode Zen: `anomalyco/opencode` → `packages/web/src/content/docs/zen.mdx`;
+  * LLM7: `chigwell/llm7.io` → `TERMS.md`, `PRIVACY.md`;
+  * OmniRoute: https://github.com/diegosouzapw/OmniRoute/blob/main/docs/reference/PROVIDER_REFERENCE.md
+    and https://github.com/diegosouzapw/OmniRoute/blob/main/docs/reference/FREE_TIERS.md.
+* **OFFICIAL (search):** statements quoted from official-domain search
+  results (Cloudflare, Ollama).
+* **REPORTED:** secondary aggregators only (freellm.net, costbench, …). Never
+  used on its own for a limit that the router relies on.
+
+### Candidates and decisions
+
+| Provider | Free capacity | Source | Terms / privacy | Tools | Coding value | Decision |
+|---|---|---|---|---|---|---|
+| **Mistral** (La Plateforme, free mode) | ≈1B tokens/month in OmniRoute's catalog (**REPORTED**); limits shown only in the Mistral console | OmniRoute FREE_TIERS; Mistral docs (search) | Free-mode prompts may be used for training → **PUBLIC** | yes | high (Codestral/Devstral/Medium) | Integrated (#73). **OWNER_ACTION_REQUIRED**: key creation is blocked in Fahad's account UI ("Upgrade to use your API keys"). This is the single largest free pool. |
+| **LLM7.io** | Free token: **1,000,000 tokens/day** rolling 24 h, 60 req/min, 250 req/h; anonymous 500K/day | **PRIMARY** TERMS.md | "not for production … where guaranteed access is required"; no reselling or proxying to third parties; 5-min response cache; prompt handling for upstream models not stated → **PUBLIC** | via upstream models (UNKNOWN per model) | medium (routes to upstream open models) | **Integrate (wave 1)** as a best-effort free pool with fallback; single user, not resold. Models discovered at runtime from `/v1/models`. |
+| **OpenCode Zen** | Limited-time free models; **no published numeric limit** (UNKNOWN) | **PRIMARY** zen.mdx | Per model: `space-bunny-free` and `longcat-2.5-preview-free` are zero-retention with no training (**NORMAL**); `big-pickle`, `mimo-*-free` and `ling-*-free` may use data while free (**PUBLIC**); `nemotron-*-free` are NVIDIA trial endpoints, logged (**PUBLIC**); `muse-spark-*-contributor-free` trains on prompts (**excluded**). ToS: own internal use only. | chat/completions (OpenAI-compatible) | high (a coding-agent gateway; tested for coding) | **Integrate (wave 1)**, dynamic. Only ids that are both in the free list and in the live `/zen/v1/models` catalog. A promotion ending removes the id, which disables the route. Billing guard: keep auto-reload off and a $0 balance (owner action). |
+| **Ollama Cloud** | Free plan: "a small amount of monthly usage" on starter cloud models, 1 concurrent request; **no published numbers** (UNKNOWN) | OFFICIAL (ollama.com pricing, search) | "Prompt or response data is never logged or trained on" → **NORMAL** (PRIVATE only after the owner's review flag) | OpenAI-compatible `/v1/chat/completions` | high (gpt-oss 120B, qwen3-coder 480B, deepseek, glm, kimi cloud models) | **Integrate (wave 2)**, quota UNKNOWN, concurrency 1. |
+| **Cloudflare Workers AI** | **10,000 neurons/day**, all models share one pool, resets 00:00 UTC; Workers Free plan returns error 4006 when used up (no billing) | OFFICIAL (search: pricing page, community error text) | Cloudflare does not train on customer data and does not retain prompts → **NORMAL** | OpenAI-compatible `/ai/v1/chat/completions` with tool calls | medium (gpt-oss-120b, qwen coder 32B, llama 3.3 70B) | **Integrate (wave 2)**. Needs `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN`; the owner must stay on the Workers **Free** plan, otherwise overage bills. |
+| SambaNova | 20 req/day, 200K tokens/day (REPORTED); since 2026-08 a payment method is required | REPORTED | unknown | yes | medium | **Owner option, low priority**: small quota and a card. |
+| NVIDIA build (NIM) | Trial credits, 40 RPM | REPORTED | Trial terms: "trial use only", logged | yes | high | **Not integrated**: trial/evaluation terms, not for production. Its models are reachable free through OpenRouter and OpenCode Zen as PUBLIC data. |
+| Hugging Face Inference Providers | $0.10/month of credits | REPORTED | varies | varies | — | **Not integrated**: trivial capacity. |
+| Cohere, Together, Fireworks, DeepInfra, Scaleway, Inception, LongCat, Nebius | One-time signup credits (or trial keys) | OmniRoute FREE_TIERS | Fireworks' ToS forbids proxying; Cohere trial keys are non-production | — | — | **Not integrated**: not recurring (Part 27). |
+| GitHub Models | — | github.blog changelog | Retired 2026-07-30 | — | — | Retired (kept for the dashboard only). |
+| FreeBuff | Token "obtained via CLI login or automated harvester" | OmniRoute PROVIDER_REFERENCE | Consumer CLI login reused as an API | — | — | **Rejected** (Part 10: no consumer logins). |
+| OmniRoute OAuth, cookie and no-auth providers (Kiro, Gemini CLI, Claude Code, Codex app-server, chat.qwen web, DuckDuckGo, Chipotle bot, Cloudflare playground, …) | — | OmniRoute PROVIDER_REFERENCE | Consumer subscriptions, reverse-engineered web apps, ToS "avoid" | — | — | **Rejected** (Part 10). |
+
+### OmniRoute
+
+* OmniRoute (MIT) **does not create capacity**. Its honest headline, ~1.51B
+  documented free tokens a month across 42 deduplicated pools, is the sum of
+  the same upstream free tiers we can call directly. Its largest contributors:
+
+  | Pool | Tokens / month |
+  |---|---|
+  | Mistral | 1.00B |
+  | llm7 | 150M |
+  | Groq | 117M |
+  | Gemini | 60M |
+  | Cerebras | 30M |
+  | Cloudflare | 30M |
+  | SambaNova | 30M |
+
+  Mistral is two-thirds of the total.
+* A large part of its "free" catalog is consumer OAuth logins, web-cookie
+  wrappers and reverse-engineered chatbots. Those are forbidden here.
+* **Decision: harvesting tool, not a gateway.**
+  * `tools/omniroute-harvest.mjs` reads the published registry and outputs,
+    per provider: auth method, free-tier note, recurring or one-time,
+    ToS flag and our policy verdict.
+  * Running OmniRoute as a gateway would add no new capacity, since it uses
+    the same upstream pools. It would hide which pool a call used, break the
+    free-only cost guard and per-pool accounting, and would need a second
+    server. So it is **not deployed**. The router architecture keeps the
+    Fahad policy router as the authority over direct providers and
+    aggregators (OpenRouter, OpenCode Zen, LLM7), then paid fallback.
+
+### JEV (Part 15)
+
+JEV 1.13 is TypeSafe AI's decision model, served through OpenCode Zen at
+`/zen/v1/systemone` (question → answer from fixed criteria). `jev-1.13-free`
+is free "for a limited time"; inputs are not used for training.
+
+* **Decision: not integrated.**
+  * Our route and quality decisions are already deterministic code, costing
+    0 tokens: finance validation, table gates, capability rules,
+    qualification. So there is no measurable model spend to remove.
+  * A limited-time free decision model would add a dependency without a
+    benefit.
+  * Revisit if a model-based gate (e.g. a yes/no escalation decision) ever
+    appears in the hot path.
+
+## 3. What was built (branch `claude/capacity-expansion-v2`)
+
+| Part | Module | What it does |
+|---|---|---|
+| Pool registry | `src/model-gateway/agentic/pool-registry.js` | One entry per independent quota: kind (daily / rolling / monthly / one-time / promo / rate-only / paid), reset time zone, published limits, confidence, source URL, owner action. UNKNOWN stays `null`. |
+| Data classes | `pool-registry.js`, `turn-gateway.js` | PUBLIC < NORMAL < PRIVATE < CONFIDENTIAL. A route receives data up to its class. PRIVATE needs the owner's per-provider flag; CONFIDENTIAL only the reviewed paid providers. Unknown class strings fail closed to PRIVATE. |
+| Provider contract + lifecycle | `provider-contract.js` | 15 contract fields per route (tested over every definition). Lifecycle NOT_CONFIGURED → DISCOVERED → CANARY → QUALIFIED → ACTIVE, plus BLOCKED and RETIRED. |
+| New providers | `model-pool.js` → `capacityV2Routes` | OpenCode Zen, LLM7, Ollama Cloud, Cloudflare Workers AI. Each route exists only while the provider's own catalog lists the model, so an ended promotion removes it. All start at `requiresQualification` (no job until qualified). |
+| Discovered-route gate | `qualification.js` | Discovered OpenRouter and Gemini routes also need a passed qualification. |
+| Qualification back-off | `qualification.js` | A refused model (400/403/404…) is re-tested after 24 h; a transient failure (429/5xx) after 1 h. Before this, dead Gemini 2.5 ids were probed about 74 times a day. |
+| Catalog changes | `provider-catalogs.js` → `catalogChanges` | Each refresh logs models added, removed and context-window changes. |
+| Coding qualification | `coding-qualification.js` | Suite `c2-2026-09` (c1 → c2 on 2026-09-29: the main answer gets an 8K-token budget within the route request limit, plus parse diagnostics): 12 deterministic checks (A read, B fix, C implement, D edge cases, E test writing, F diff, G security, H async, I plan, J scope, K tool loop, L long context). Model-written code runs only in a child Node process under `--permission` (no fs, no child processes), with an empty environment, a vm context without code generation, and a timeout. Grades: CODING_PRIMARY / CODING_SECONDARY / CODING_SMALL_TASKS / NOT_CODING_APPROVED. The auto-qualifier grades up to 3 routes per cycle, one per provider, with the same caps and back-off. |
+| Coding tiers | `coding-qualification.js` → `codingTierGaps`, used by `turn-gateway.js` | small → SMALL_TASKS, medium → SECONDARY, large → PRIMARY, critical → PRIMARY plus a private-data route. Paid routes are unaffected. The tier comes from the owner's `codingTier` on the task (default medium). |
+| Coding data class | `coding-agent/controller.js`, `hub-workspace.js` | The owner may set `dataClass` (PUBLIC / NORMAL / PRIVATE / CONFIDENTIAL) and `codingTier` on `POST /api/tasks`. The Chief's path cannot set them. Default stays PRIVATE. |
+| Handoff | `coding-agent/prompts.js` → `continuationMessage` | Adds repository and base, diff summary, owner decisions and unresolved items (open plan steps, failing test, recorded gate/CI failure). |
+| Capacity model | `capacity-model.js` | See §4. |
+| `/api/capacity` v2 | `hub-capacity.js` | Adds a `capacity` block (see §4) and `ownerActions`. |
+| Owner action queue | `owner-actions.js` | See §5. |
+| Snapshots | migration `20261003090000_capacity_snapshots`, `capacity-snapshots.js` | One compact summary per UTC day. The writer stays off until the migration is applied (owner approval). |
+| Secrets | `ops/set-secret.sh` | New names plus three privacy flags. Keys are verified with the provider before storing (hidden prompt; never in chat). |
+| Discovery tool | `tools/omniroute-harvest.mjs` | Policy classification of OmniRoute's registry. |
+
+A generic live canary (Part 19) needs no new code. Once a key is set, the
+auto-qualifier absorbs the provider's catalog models on its next cycle: it
+runs the general suite, then the coding suite, and records health like real
+traffic. `npm run canary:agentic` remains the owner-triggered drill.
+
+## 4. Capacity model (Parts 22–25)
+
+```
+effective tokens/day (pool, job class) =
+    daily allowance       published/reported tokens, or requests/day × MEASURED tokens/request (ESTIMATED)
+  × eligibility           qualification (+ coding grade and data class for coding)
+  × measured success rate our audited attempts this month (≥ 5 calls, else 1)
+  (today: also × health: available 1, degraded 0.5, exhausted 0)
+```
+
+* An UNKNOWN allowance is listed in `unknownAllowancePools` and never summed.
+* Job classes are general, coding, strong_reasoning, research and finance.
+* Coding jobs/day: effective coding tokens of pools whose grade meets the tier, divided by the measured job size (120K / 500K / 2.5M).
+* Projects/day:
+  * free-only: general tokens divided by 65K (p50) or 223K (p90);
+  * free-first: adds the remaining monthly budget spread over the days left, at the cheapest privacy-approved paid route's list price (50% cached input).
+
+### Production estimate today (2026-09-29, from production qualifications, states and 14-day attempts)
+
+| Pool | Effective tokens/day | Basis |
+|---|---|---|
+| Gemini Flash-Lite | 2.31M | ESTIMATED: 500 RPD (REPORTED) × measured 4.6K tokens/request |
+| Groq gpt-oss-120b | 200K | PUBLISHED TPD |
+| Groq gpt-oss-20b | 200K | PUBLISHED TPD |
+| Groq qwen3.8-27b | 100K | PUBLISHED × measured 50% success |
+| OpenRouter free (shared) | ≈280K | ESTIMATED: 50 RPD (PUBLISHED) × measured ≈6.1K × 92% |
+| Gemini Flash | 33K | ESTIMATED: 20 RPD × 4.4K × measured 38% success |
+| Gemma 26B / 31B, Z.ai Flash | UNKNOWN | no published allowance |
+| Cerebras | 0 | one-time trial, used up |
+
+**Total: ≈3.1M effective free tokens/day (≈94M/month) for general, research
+and finance work, of which about 0.33M/day is strong reasoning.** Flash-Lite's
+number rests on a REPORTED limit; the 24-hour measurement decides it.
+
+* **Free coding: 0 jobs/day.**
+  * Coding is PRIVATE by default, and no free route is approved for private data.
+  * No route has passed the coding suite yet; it starts after deploy.
+* Office projects/day, free-only: about 47 (p50) or 13 (p90).
+* Free-first with paid fallback adds nothing this month: the $2 budget is already spent ($2.38 over 14 days, mostly Anthropic).
+
+### What each owner action adds (ESTIMATED)
+
+* Mistral: ≈1B tokens/month REPORTED, about 33M/day. That would be ≈10× today's total, PUBLIC data only.
+* LLM7: 1M tokens/day PUBLISHED, PUBLIC.
+* Cloudflare: 10K neurons/day. The token equivalent depends on the model (UNKNOWN until measured); NORMAL data.
+* Ollama: small, unpublished; NORMAL data, and PRIVATE with the owner flag. This is the realistic first private free coding pool once it passes the coding suite.
+
+## 5. Owner action queue (Part 17)
+
+`GET /api/capacity` → `ownerActions` lists these in priority order. Status
+comes from the presence of a setting, never its value.
+
+1. Set `MISTRAL_API_KEY`, then `MISTRAL_BILLING_CLASS=free` (Experiment plan).
+2. Set `LLM7_API_KEY`.
+3. Cloudflare: stay on the Workers Free plan, then set the token and the account id.
+4. Set `OLLAMA_API_KEY`.
+5. OpenCode Zen: disable auto-reload and keep a $0 balance, then set the key.
+6. Privacy review for private code (the three flags), or mark public repositories `dataClass: "PUBLIC"`.
+7. Optional: a one-time $10 OpenRouter credit (50 → 1,000 requests/day).
+8. Optional: Qwen activation (one-time credit only).
+
+Every key is set on the server with `sudo bash ops/set-secret.sh NAME`,
+which uses a hidden prompt. Never paste a key into a chat.
+
+## 6. Deployment waves
+
+* **Wave 1** (this PR; safe to deploy after CI):
+  * back-off;
+  * qualification gates;
+  * coding suite and tiers;
+  * capacity model and API;
+  * owner queue.
+* Wave 1 changes nothing for traffic that works today:
+  * paid routes are unaffected;
+  * established free routes keep their jobs;
+  * new providers stay inert without keys.
+* **Wave 2** (owner): keys through `set-secret.sh`, then a restart. The auto-qualifier then qualifies the new routes, with no deploy.
+* **Wave 3** (owner approval): apply migration `20261003090000_capacity_snapshots` to production; snapshots start the next day.
+
+## 7. Needs live 24-hour measurement
+
+* Gemini Flash-Lite's real daily request limit (REPORTED 500).
+* Tokens per request per pool on real traffic, which replaces the assumed 6K where no measurement exists.
+* Coding-suite grades of the configured free models (the first cycles after deploy).
+* Cloudflare tokens per neuron for the chosen models.
+* LLM7, Ollama and Zen limits once keys exist.
+
+## 8. Wave 2: production activation (2026-09-29)
+
+### Deploys and migration
+
+| Step | Commit | Result |
+|---|---|---|
+| Migration `20261003090000_capacity_snapshots` | — | Applied 18:56 UTC. Additive, RLS on, `service_role` only. Production fingerprint equals the repository (963 objects, aggregate md5 `0182959f…`). |
+| PR #77 (wave 1) | `5c53d27` | Deployed 19:00. Healthy; Supabase self-check and Telegram OK; first snapshot written 19:00:33. |
+| PR #78 | `984cd90` | Deployed 19:18. The paid fallback skips blocked accounts (MEASURED: snapshot fallback went from `qwen:qwen3.8-flash`, account not activated, to `deepseek:deepseek-flash`). The coding scheduler grades ≤3 routes per cycle, one per provider. |
+| PR #79 | `a5c8d11` | Demotes dead or low-success free routes; coding suite c2; coding capacity only from routes that fit a coding turn. |
+
+### Direct free pools, calibrated (MEASURED = production `model_attempts`, 14 days)
+
+| Pool | Successful / failed calls | Tokens per call | Limits | Effective contribution |
+|---|---|---|---|---|
+| Groq gpt-oss-120b | 28 / 0 | 2.3K avg, 6.6K max | 8K TPM and 1,000 RPD MEASURED from headers; 200K TPD PUBLISHED | ≤200K tokens/day, general work. Cannot carry a 30K coding turn. |
+| Groq qwen3.8-27b | 4 / 4 (rate limits) | 2.0K | same per-model limits | ≤200K/day × 50% success |
+| Groq gpt-oss-20b | 1 / 0 | 2.2K | same | ≤200K/day (little evidence) |
+| Gemini Flash-Lite | 14 / 0 | 4.6K avg, 17.4K max; 14 s | ≈500 RPD REPORTED; no exhaustion observed | ≈2.3M/day ESTIMATED (REPORTED limit × MEASURED size) |
+| Gemini Flash | 20 / 33 (quota) | 4.4K | ≈20 RPD REPORTED; quota exhausted observed daily | ≈33K/day |
+| Gemma 26B | 13 / 0 | 2.9K; **51 s** per call | UNKNOWN | UNKNOWN (slow) |
+| Gemma 31B | 1 / 4 | 3.7K; 100 s | UNKNOWN | UNKNOWN |
+| OpenRouter `:free` (one shared pool) | busy days: 45 / 53 / 50 successful requests | 6.3K avg on nemotron-3-ultra, **31K max** | 50 RPD PUBLISHED, matching MEASURED daily totals | **0.23–0.40M tokens/day MEASURED** (09-26: 236K, 09-27: 232K, 09-28: 399K) |
+| Z.ai GLM-4.5-Flash | 7 / 0 | — | 1 concurrent; no daily cap published | UNKNOWN (rate-only) |
+
+### OpenRouter cleanup
+
+OpenRouter capacity is **one pool of about 50 requests/day**, not a count of
+models.
+
+* Demoted by the evidence rule (PR #79; ≥20 attempts, 0 successes or under 20%):
+  * gemma-4-26b (0 / 41) and gemma-4-31b (0 / 34);
+  * qwen3.8-27b (0 / 21);
+  * nemotron-3.5-lightning (3 / 20);
+  * dots-3-note (3 / 27).
+* Never available to this key: inkling ×2 (HTTP 403). Unsuitable: openai/gpt-oss-120b:free (0 / 2).
+* Useful:
+  * nemotron-3-ultra carries the pool: 152 of 158 calls, calls up to 31K tokens;
+  * nemotron-super: 8 of 33 calls, mostly rate-limited;
+  * ling ×2 and laguna have too little evidence.
+
+### Privacy re-verification (Phase 4)
+
+| Provider | Training on API data | Retention | Evidence | Status |
+|---|---|---|---|---|
+| Groq | Forbidden by the Services Agreement unless the customer instructs it | None by default; up to 30 days only for abuse or debugging; zero data retention can be switched on in the console | official docs, via search excerpts | PRIVATE-ELIGIBLE CANDIDATE. Unusable for coding: 8K TPM. |
+| Z.ai | **No explicit statement confirmed** | privacy policy: API content "processed in real-time … not saved"; a DPA makes Z.ai a processor (Jingsheng Hengxing Technology Pte. Ltd, Singapore) | official pages via search; the DPA is not readable from the sandbox | Candidate, **evidence incomplete**. Fahad reads the DPA first. |
+| Gemini free tier | may be used to improve products | — | wave 1 | PUBLIC |
+| OpenRouter `:free` | depends on the upstream; may log | — | wave 1 | PUBLIC |
+
+### Coding path fixes found by the first public benchmark
+
+The first Gemma-pinned PUBLIC benchmark sessions (`eb5c34e3`, `d199fc5a`) blocked with `NO_ELIGIBLE_PROVIDER` and exposed three gaps:
+
+1. **The coding worker had no discovered routes** (#81). Only the Office runtime refreshed the provider catalogs. The worker now refreshes them at start and every 6 h, then rebuilds its pool.
+2. **Static capability claims outranked the measured grade.** The coding job requires `coding ≥ 4, reasoning ≥ 4`, and its strict evidence never raises registry scores. Gemma 4 and GLM-4.x-Flash are registered at 3/3, so a CODING_PRIMARY grade was not enough.
+   * A valid coding-suite grade that meets the session's tier now also satisfies those two minimums, as it already satisfied the quality floor.
+   * Tool calling, context, privacy, health and demotion gates are unchanged.
+   * A grade below the tier leaves every gate in place.
+3. **Body-read timeouts were recorded as `23`.** `AbortSignal.timeout` fired while reading a slow reasoning model's body (OpenRouter sends headers first). The raw DOMException code leaked into qualification records and `provider_status`. It is now a `NETWORK`/`TimeoutError` failure.
+
+### First free public coding jobs (MEASURED, production, 2026-09-29)
+
+Both runs used the small benchmark task: a new unit-test file on this public repository, `dataClass` PUBLIC, `allowPaid` false, nothing pushed.
+
+| Session | Routes | Turns | Tokens (in + out) | Cost | Wall time | Result |
+|---|---|---|---|---|---|---|
+| `7986c750` | Gemma 26B only | 7 | 85.6K + 1.1K | $0 | 20 min, of which ≈10 min provider cooldowns; survived a worker restart | tests 7/7, finish gate passed |
+| `12a9cad3` | Gemma 26B → GLM-4.7-flash (drill after 3 turns) | 15 | 94.7K + 3.2K | $0 | 7.5 min | finish gate passed |
+
+**Failover verdict for `12a9cad3` (`failoverVerdict`): all checks pass.**
+* The drill fired.
+* Both routes answered in the same session.
+* The session completed, with tests passing and files changed, at $0.
+* Beyond the drill, two **real** per-minute rate limits switched GLM → Gemma → GLM, each continuing from the checkpoint. This is the two-independent-pool behaviour the design relies on.
+
+**Measured facts used below:**
+* A small coding job is 87–98K tokens (the model's assumption was 120K).
+* One pool alone is throttled by its per-minute quota.
+* Two pools alternate and finish a small job in about 7.5 min.
+
+**Not yet measured:**
+* A medium job on free routes. GLM is graded SMALL_TASKS only; Gemma's per-minute input quota refuses turns above ≈16–25K tokens.
+* Either provider's daily cap. Gemini does not publish Gemma's quota; Z.ai publishes none.
+
+## 9. Capacity finalization (2026-09-29)
+
+### Private free coding: final review
+
+The official pages could not be opened from the sandbox (egress policy). Evidence comes from search excerpts of the official pages and is labelled accordingly. Nothing changes routing: private code still goes only to routes with an owner flag.
+
+| Provider | Training on API data | Retention | Class | What would change it |
+|---|---|---|---|---|
+| Gemini API free | Used to improve products, and human reviewers may read it; "do not submit sensitive, confidential, or personal information" (Gemini API terms, Unpaid Services) | — | **PUBLIC_ONLY** | Only a paid project; none is planned |
+| Groq | Not used (Services Agreement) | None by default; optional zero data retention | PRIVATE-eligible candidate | Fahad sets `GROQ_API_PRIVATE_DATA_APPROVED`. Of no coding value: 8K tokens/min is below a small job's turn |
+| Z.ai GLM Flash | Excerpts say API content is not used "unless you explicitly agree", but independent reviews call the terms unpublished or contradictory | "processed in real time, not saved" | **disabled** (evidence conflicts) | Fahad reads the official Terms and the DPA and decides on `ZHIPU_API_PRIVATE_DATA_APPROVED` |
+| Mistral free (Experiment) | Used by default; opt-out in Admin Console → Privacy (REPORTED) | REPORTED 30 days | PUBLIC_ONLY until opted out | The opt-out, then a reviewed flag |
+| OpenRouter `:free` | Depends on the upstream; may log | — | PUBLIC_ONLY | none |
+| OpenCode Zen | Zero retention for most providers; some free models train (e.g. Muse Spark) | per model | per model: NORMAL or PUBLIC | a key (see owner actions) |
+
+**PRIVATE free coding = 0 jobs/day.** No free route has unambiguous, verified no-training and no-retention terms *and* the capacity to code.
+
+### Owner unlocks, ranked by capacity gain ÷ effort (at most 5)
+
+| # | Action | Expected gain | Coding benefit | Privacy benefit | Card / SMS / auto-reload | Secret | Time |
+|---|---|---|---|---|---|---|---|
+| 1 | **Mistral** key (Experiment plan) | ≈1B tokens/month REPORTED, ≈30× today's measured free volume. Not counted until a canary | Codestral + Mistral Large for PUBLIC code (REPORTED); an independent medium-coding pool | none until opted out | no card / **SMS** / none | `MISTRAL_API_KEY` | 10 min |
+| 2 | **LLM7** token | 1M tokens/day PUBLISHED (≈+30%) | PUBLIC small coding; models vary | none | no / no / none | `LLM7_API_KEY` | 5 min |
+| 3 | **Cloudflare** Workers AI token + account id | 10K neurons/day PUBLISHED (token equivalent UNKNOWN) | small (qwen2.5-coder-32b) | NORMAL: the only small PRIVATE-coding candidate with published no-training terms | no / no / none on the Free plan | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | 10 min |
+| 4 | **Z.ai privacy review** | 0 tokens; changes the class of an existing pool | PRIVATE small coding via GLM-4.7-flash | the only existing PRIVATE path | — | `ZHIPU_API_PRIVATE_DATA_APPROVED` | 30 min reading |
+| 5 | **OpenCode Zen** key | limited-time free models, no published limit | untested | NORMAL on zero-retention models | card UNKNOWN / no / **auto-reload ON by default: disable it** | `OPENCODE_ZEN_API_KEY` | 10 min |
+
+Deferred, with reasons:
+* Ollama Cloud: small unpublished allowance and 1 concurrent request.
+* SambaNova, Fireworks, Together: one-time credit or no free tier.
+* HF Inference: ≈200K tokens/month.
+* Cerebras: trial ended.
+* The OpenRouter $10 credit is a purchase, so it is Fahad's decision and not an unlock.
+
+### Mistral (phase 9)
+
+| Fact | Label |
+|---|---|
+| A free Experiment plan with all API models (incl. Codestral), ≈1B tokens/month, ≈1 RPS | REPORTED (third-party summaries); the official limits page is in the console |
+| Phone (SMS) verification, no card | REPORTED |
+| Free-mode data used for training by default; opt-out in Admin Console → Privacy | REPORTED |
+| Paid plans: no training by default; zero data retention on request | REPORTED |
+| Fahad's account | no key is set (OBSERVED: `MISTRAL_API_KEY` absent) |
+| Code | ready: route (class `free` only with `MISTRAL_BILLING_CLASS=free`; with the key alone it is paid and `PRICING_UNKNOWN`), monthly reset, 429 "per month" detection, qualification hook, owner action with exact steps |
+
+Mistral's ≈1B/month is **not** in any capacity number until a live canary and a qualification pass.
+
+### OpenCode Zen (phase 10)
+
+* Free models such as Big Pickle, Space Bunny Free and LongCat are limited-time promotions with no published numeric limit.
+* Most providers are zero-retention and do not train; some free models do train and are excluded or PUBLIC.
+* **Auto-reload ($20 when below $5) must be disabled** before any balance exists.
+* The adapter, catalog gating and privacy classes are ready. The status stays OWNER_ACTION_REQUIRED.
+
+### LLM7, Cloudflare, Ollama (phase 11)
+
+All three have:
+* an adapter;
+* key-presence readiness;
+* catalog discovery (Cloudflare and Ollama);
+* a capacity pool, reset schedule (LLM7 rolling, Cloudflare 00:00 UTC, Ollama monthly) and health;
+* a privacy class (LLM7 PUBLIC, Cloudflare and Ollama NORMAL);
+* canary and qualification hooks, with tests.
+
+Ollama is deferred on value (see above), not on engineering.
+
+### OmniRoute (phase 12)
+
+**OMNIROUTE = DISCOVERY TOOL, NOT CAPACITY SOURCE.**
+
+| Bucket | Count |
+|---|---|
+| Total listed | 352 |
+| Rejected: consumer login / OAuth reuse | 35 |
+| Rejected: browser cookie / reverse-engineered | 42 |
+| Rejected: terms forbid | 10 |
+| Not an LLM pool | 46 |
+| No recurring free allowance | 173 |
+| "Candidates" by wording | 46 |
+| of which: resellers of the same upstream quotas | 25 |
+| of which: already integrated | 5 |
+| of which: adapters ready, waiting on owner keys | 5 |
+| of which: deferred | 11 |
+| **New independent pools found and integrated this sprint** | **0** |
+
+### 24-hour burn-in: checkpoint SQL
+
+Read-only; replace `:start`. The CLI equivalent is `node tools/burnin-report.mjs --since=<start>`.
+
+```sql
+with w as (select * from model_attempts where started_at >= :start),
+p as (
+  select provider, count(*) calls,
+    count(*) filter (where status = 'succeeded') ok,
+    count(*) filter (where status <> 'succeeded') failed,
+    count(*) filter (where error_code ~ 'RATE|QUOTA') rate_limited,
+    sum(input_tokens + output_tokens) filter (where status = 'succeeded') ok_tokens,
+    sum(cached_input_tokens) cached, sum(reasoning_tokens) reasoning,
+    percentile_cont(0.5) within group (order by duration_ms) filter (where status = 'succeeded') p50_ms,
+    round(sum(cost_usd)::numeric, 4) cost
+  from w group by provider)
+select (select json_agg(p order by ok_tokens desc nulls last) from p) providers,
+  (select count(*) filter (where coalesce(cost_usd, 0) > 0) from w where status = 'succeeded') paid_calls,
+  (select count(*) from w where status = 'succeeded') ok_calls,
+  (select count(*) from agent_sessions where created_at >= :start) coding_sessions,
+  (select count(*) from jobs where created_at >= :start) office_jobs,
+  (select coalesce(sum(wait_count), 0) from tasks where created_at >= :start) capacity_waits,
+  (select count(*) from agent_events where created_at >= :start and type = 'provider_switch') failovers;
+```

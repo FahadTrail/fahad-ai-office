@@ -1127,9 +1127,13 @@ function assertAuthorizedResearchTools(tools) {
   }
 }
 
-function summarize(text) {
-  const first = String(text || '').split('\n').find((line) => line.trim()) || '';
-  return first.trim().slice(0, 300);
+// The first line with content, skipping markdown headings, rules and table
+// rows (a result that opens with "## Executive summary" was summarized as
+// just that heading).
+export function summarize(text) {
+  const lines = String(text || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const content = lines.find((line) => !/^(#{1,6}\s|[-*_]{3,}$|\|)/.test(line)) || lines[0] || '';
+  return content.replace(/^[-*]\s+/, '').replace(/\*\*(.+?)\*\*/g, '$1').slice(0, 300);
 }
 
 export function safeError(error) {

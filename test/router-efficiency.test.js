@@ -137,7 +137,8 @@ test('an upstream per-model rate limit rests only that model, not the whole shar
   const store = new MemoryProviderStateStore({ now: () => NOW });
   store.rows.set(ultra.id, { health: 'rate_limited', cooldownUntil: new Date(NOW + 60_000).toISOString() });
   const gateway = new AgentTurnGateway({ pool, stateStore: store, now: () => NOW });
-  const view = await gateway.evaluate({ requiresPrivateData: false, job: 'research', estimatedInputTokens: 3000, maxOutputTokens: 2000 });
+  // Discovered OpenRouter routes take work only once qualified (Capacity V2).
+  const view = await gateway.evaluate({ requiresPrivateData: false, job: 'research', estimatedInputTokens: 3000, maxOutputTokens: 2000, qualifications: PRODUCTION_QUALIFICATIONS });
   assert.equal(view.find((entry) => entry.route.id.includes('super')).eligible, true);
 });
 

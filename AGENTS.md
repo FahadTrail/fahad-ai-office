@@ -211,6 +211,12 @@ inside the built runtime image as root.
   Fahad enables immersive in Settings. Details are in
   `docs/v5-immersive-office.md`; rebuild the engine with
   `node tools/build-three.mjs`.
+* Core closure (2026-09-30): **CORE COMPLETE: READY FOR REAL USE**, with core development stopped.
+  * Production runs `26dd491`.
+  * After a 24 h stability burn-in (0 paid calls, no incidents), #92, #91, #96, #94 and #95 were merged and deployed one at a time.
+  * The final smoke test passed.
+  * The next phase is V5/UI only.
+  * State, numbers, rollback and bottlenecks are in `docs/HANDOVER.md` → *CORE CLOSURE*.
 
 ## Next actions
 

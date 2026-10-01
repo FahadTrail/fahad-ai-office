@@ -18,7 +18,7 @@ import { normalizeRouting } from '../model-gateway/agentic/routing-policy.js';
 import { CODING_BROKER, MODEL_TOOL_TO_BROKER, modelToolSpecs } from './tools.js';
 import { classifyChangedPaths, findSecretMaterial, grantablePaths, redact, safeSlug } from './policy.js';
 import { PROTECTED_CHANGE_TOOL } from '../agent-state/session-store.js';
-import { ReadTracker, elideOldToolResults } from './context-budget.js';
+import { ReadTracker, compactTestOutput, elideOldToolResults } from './context-budget.js';
 import { taskSize, turnBudgetAction } from './turn-budget.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
 
@@ -375,6 +375,7 @@ class SessionRun {
     const policy = await this.c.routingFor(this.session, this.config.routing) || {};
     const routing = {
       requiresPrivateData: this.config.privateData,
+      dataClass: this.config.dataClass,
       estimatedInputTokens,
       remainingBudgetUsd: Math.max(0, this.session.budgetUsd - this.session.spentUsd),
       authorizedRouteIds: policy.authorizedRouteIds || this.c.authorizedRouteIds,
@@ -384,6 +385,9 @@ class SessionRun {
       effort: policy.effort,
       policyExcludedRouteIds: policy.excludedRoutes || [],
       budgetExhaustedRouteIds: policy.exhaustedRoutes || [],
+      qualifications: policy.qualifications || null,
+      // Job size for the coding tier gate: set on the task, else medium.
+      codingTier: this.config.codingTier || policy.codingTier || 'medium',
       // Autonomous coding needs a coding-capable, tool-calling model with a
       // large context; free models below that are never handed the task.
       job: 'coding',
@@ -509,7 +513,9 @@ class SessionRun {
       if (waitMs <= this.c.limits.maxProviderWaitMs) {
         await this.event('guard', `All eligible models are cooling down; waiting ${Math.ceil(waitMs / 1000)}s for the earliest reset, then continuing the same task.`,
           { waiting: true, waitMs, routes: waitable.map((entry) => ({ id: entry.route.id, until: entry.state?.cooldownUntil || null })) }, 'warning');
-        await this.checkpoint('waiting');
+        // A between-turns checkpoint ('turn': the reasons are a database
+        // constraint); the guard event above records that it is a wait.
+        await this.checkpoint('turn');
         const until = nowMs + waitMs;
         while (this.c.now() < until) {
           this.guard();
@@ -517,6 +523,17 @@ class SessionRun {
         }
         return false;
       }
+    }
+    // A route whose only obstacle is the size of this request (above the
+    // per-minute input quota the provider reported) can take the task again
+    // once the transcript is compacted into the continuation summary (≈7K
+    // tokens). Compact and retry, at most once per iteration, before blocking.
+    if (sizeOnlyBlocked(evaluations) && this.transcript.messages.length > 1 && this.state.sizeCompactedAt !== this.session.iteration) {
+      this.state.sizeCompactedAt = this.session.iteration;
+      this.forceCompact = true;
+      await this.event('guard', 'The next turn is larger than the per-minute quota of the only models left; compacting the transcript into a continuation summary and continuing the same task.',
+        { compaction: 'request_size', routes: evaluations.filter((entry) => entry.reasons.includes('REQUEST_ABOVE_PROVIDER_TPM')).map((entry) => entry.route.id) }, 'warning');
+      return false;
     }
     const lastFailure = (error.attempts || []).filter((attempt) => attempt.status === 'failed').at(-1);
     const detail = lastFailure ? ` Last failure: ${lastFailure.route.id} ${lastFailure.error?.code || 'error'}.` : '';
@@ -663,6 +680,13 @@ class SessionRun {
         return { block: toolResult(call, `Unchanged: ${args.path} is identical to your earlier read_file result (call ${earlier}) still in this conversation. Use that content.`) };
       }
     }
+    if (mapping.tool === 'shell.run' && looksLikeTest(String(args.command || ''), this.testCommand)) {
+      const compacted = compactTestOutput(outcome.text);
+      if (compacted.omittedPassing) {
+        this.state.efficiency.testCompactedChars = (this.state.efficiency.testCompactedChars || 0) + outcome.text.length - compacted.text.length;
+        return { block: toolResult(call, truncate(compacted.text, 20_000), { isError: Boolean(toolError) }) };
+      }
+    }
     return { block: toolResult(call, truncate(outcome.text, 20_000), { isError: Boolean(toolError) }) };
   }
 
@@ -750,7 +774,7 @@ class SessionRun {
         this.state.lastTest = { command: this.testCommand, exitCode: testOutcome.structured.exitCode, at: new Date(this.c.now()).toISOString(), output: truncate(testOutcome.text, 4000) };
         await this.event('test', `Gate: ${this.testCommand} → exit ${testOutcome.structured.exitCode}`, { exitCode: testOutcome.structured.exitCode, gate: true },
           testOutcome.structured.exitCode === 0 ? 'success' : 'warning');
-        if (testOutcome.structured.exitCode !== 0) failures.push(`Test gate failed (${this.testCommand}, exit ${testOutcome.structured.exitCode}):\n${truncate(testOutcome.text, 12_000)}`);
+        if (testOutcome.structured.exitCode !== 0) failures.push(`Test gate failed (${this.testCommand}, exit ${testOutcome.structured.exitCode}):\n${truncate(compactTestOutput(testOutcome.text).text, 12_000)}`);
       }
     }
     if (failures.length) {
@@ -968,6 +992,13 @@ class SessionRun {
   }
 }
 
+// True when some route is kept out only by the request size (and possibly a
+// cooldown that will pass): a smaller transcript would let it continue.
+export function sizeOnlyBlocked(evaluations) {
+  return (evaluations || []).some((entry) => entry.reasons.includes('REQUEST_ABOVE_PROVIDER_TPM')
+    && entry.reasons.every((reason) => reason === 'REQUEST_ABOVE_PROVIDER_TPM' || reason.startsWith('COOLDOWN_')));
+}
+
 function ownerMessageText(messages) {
   return ['MESSAGE FROM FAHAD (the owner), sent from the Hub. Follow it and continue the same task:', ...messages.map((message) => `> ${message}`)].join('\n');
 }
@@ -993,6 +1024,11 @@ function normalizeConfig(config) {
     publish: ['pull_request', 'branch', 'none'].includes(config.publish) ? config.publish : 'pull_request',
     waitForCi: config.waitForCi !== false,
     privateData: config.privateData !== false,
+    // Data class of the repository (Capacity V2, Part 11). Unset keeps the
+    // private default; PUBLIC / NORMAL are the owner's explicit statement
+    // that the code may go to free providers of that class.
+    dataClass: ['PUBLIC', 'NORMAL', 'PRIVATE', 'CONFIDENTIAL'].includes(config.dataClass) ? config.dataClass : null,
+    codingTier: ['small', 'medium', 'large', 'critical'].includes(config.codingTier) ? config.codingTier : null,
     allowPaid: config.allowPaid !== false && config.routing?.allowPaid !== false,
     routing: normalizeRouting(config.routing || {}),
     drill: Number.isInteger(config.drill?.failoverAfterIteration) && config.drill.failoverAfterIteration >= 1 && config.drill.failoverAfterIteration <= 100
@@ -1020,7 +1056,7 @@ function normalizeState(state) {
     git: state.git && typeof state.git === 'object' ? state.git : {},
     gateFailures: Number(state.gateFailures || 0),
     ciRounds: Number(state.ciRounds || 0),
-    efficiency: { elidedChars: 0, elisions: 0, dedupedReads: 0, dedupedChars: 0, ...(state.efficiency || {}) },
+    efficiency: { elidedChars: 0, elisions: 0, dedupedReads: 0, dedupedChars: 0, testCompactedChars: 0, ...(state.efficiency || {}) },
   };
 }
 

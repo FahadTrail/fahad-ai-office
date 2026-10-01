@@ -1,0 +1,97 @@
+# Free provider harvest (Capacity V2, wave 2)
+
+## Sources
+
+* `node tools/omniroute-harvest.mjs --json`, run 2026-09-29 19:0x UTC, over OmniRoute's `PROVIDER_REFERENCE.md` and `FREE_TIERS.md`:
+  * 352 providers.
+  * 46 CANDIDATE, 173 NO_RECURRING_FREE, 46 NOT_APPLICABLE.
+  * 42 REJECTED_WEB_SCRAPING, 35 REJECTED_CONSUMER_LOGIN, 10 REJECTED_TOS.
+* Provider terms where reachable (primary, or labelled REPORTED).
+* Production telemetry: `provider_status`, `model_attempts`, qualification rows (MEASURED).
+
+OmniRoute is a **discovery source only**. It is not a gateway and not proof
+of a quota (see `docs/capacity-v2.md` §2). The 77 rejected entries reuse
+consumer logins, browser cookies or reverse-engineered web apps; they are
+never used.
+
+## Independent pool rule
+
+* A pool counts once, at its **actual quota source**.
+* Gateways and resellers that forward to the same upstream providers add no independent quota. Their provenance, retention and terms are usually unknown, so they are rejected even when they advertise "free" models.
+* That covers:
+  * `anyapi`, `api-airforce`, `bazaarlink`, `bluesminds`, `chat-oripe`, `cloudcode-one`, `dxnt`, `electronhub`;
+  * `fastrouter`, `free-ai`, `kilo-gateway`, `literouter`, `llm-kiwi`, `llmgateway`, `mixlayer`, `mnn-ai`;
+  * `naga-ai`, `ofoxai`, `poixe-ai`, `requesty`, `speka`, `tokenreply`, `unorouter`, `void-ai`, `zylo-api`.
+* OpenRouter is the one gateway kept: it is already integrated, its `:free` allowance is its own published quota, and it is counted as **one** key-wide pool.
+
+## First-party candidates
+
+| Provider | Actual quota source | Independent pool? | API auth | Free limit | Reset | Privacy | Coding value | Owner action | Verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| Gemini (Google AI Studio) | Google, per model | Yes, 1 per model | API key | Flash ≈20 RPD, Flash-Lite ≈500 RPD (REPORTED); Flash-Lite ≈2.31M tokens/day ESTIMATED from MEASURED request size | 00:00 Pacific | PUBLIC (free tier may be used to improve products) | Qualified; coding suite running | none | **ACTIVE** |
+| Groq | Groq, per model | Yes, 1 per model | API key | 30 RPM, 1K RPD, **8K TPM (MEASURED from headers)**, 200K TPD (PUBLISHED) | rolling | NORMAL per terms (no training, no retention by default; optional zero data retention). Treated PUBLIC until the owner flag | 8K tokens/min is below one agentic coding turn (≈30K input): small checks only | optional privacy flag | **ACTIVE** (general); not a coding pool |
+| OpenRouter `:free` | OpenRouter key-wide | Yes, 1 for all `:free` models | API key | 50 RPD, 20 RPM (PUBLISHED); 1,000 RPD after a one-time $10 credit | 00:00 UTC | PUBLIC (upstreams may log) | nemotron-3-ultra qualified; coding suite running | optional $10 | **ACTIVE** |
+| Z.ai GLM Flash | Z.ai | Yes, 1 | API key | $0 models; 1 concurrent request; no daily cap published | — | PUBLIC (default). Privacy policy (re-checked 2026-09-29): API content is "processed in real-time … not saved on their servers"; a Data Processing Addendum makes Z.ai (Jingsheng Hengxing Technology Pte. Ltd, Singapore) a processor. **No explicit "not used for training" statement could be confirmed**, so the evidence is incomplete | glm-4.5/4.7-flash qualified (general); coding suite running | owner reads the DPA before any privacy flag | **ACTIVE** (PUBLIC/general) |
+| Mistral (La Plateforme, Experiment plan) | Mistral | Yes | API key; phone (SMS) verification, no card (REPORTED) | ≈1B tokens/month, ≈1 RPS (REPORTED) | monthly | PUBLIC (free-mode data may be used for training) | Codestral included (REPORTED); not measured | create key with phone verification | **OWNER_ACTION_REQUIRED** |
+| LLM7 | LLM7 | Yes | token | 1M tokens/day rolling, 60 RPM, 250/h (PUBLISHED) | rolling 24 h | PUBLIC | public-code only; best-effort service | create token | **OWNER_ACTION_REQUIRED** |
+| Cloudflare Workers AI | Cloudflare | Yes | API token + account id | 10,000 neurons/day (PUBLISHED; tokens per neuron model-specific, UNKNOWN until measured) | 00:00 UTC | NORMAL (no training or retention) | small: gpt-oss-120b, qwen2.5-coder-32b | token + account id; stay on Free plan | **OWNER_ACTION_REQUIRED** |
+| Ollama Cloud | Ollama | Yes | API key | small monthly allowance, not published; 1 concurrent | monthly from signup | NORMAL (no logging or training) | private-coding candidate, capacity UNKNOWN | create key | **OWNER_ACTION_REQUIRED** (lower priority) |
+| OpenCode Zen | OpenCode (US-hosted) | Yes | API key | "limited-time" free models, no published numeric limit | promo | per model: Space Bunny and LongCat zero-retention (NORMAL); Big Pickle, MiMo, Ling train (PUBLIC); Nemotron NVIDIA trial (logged); Muse Spark trains (excluded) | Big Pickle / Space Bunny untested | create key; **disable auto-reload ($20 at <$5)** | **OWNER_ACTION_REQUIRED** |
+| Cerebras | Cerebras | Yes | API key | trial credits only (1M tokens/day during trial) | one-time | PUBLIC | — | — | **REJECT** (used up; 67 MEASURED invalid-request failures) |
+| SambaNova | SambaNova | Yes | API key | $5 one-time credit, 30 days (REPORTED) | one-time | UNKNOWN | — | — | **DEFER** (no recurring pool) |
+| GitHub Models | GitHub | — | — | retired (wave 1 research) | — | — | — | — | **REJECT** |
+| Hugging Face Inference | HF | Yes | token | small monthly credit (REPORTED ≈200K tokens/month) | monthly | NORMAL-ish (per provider) | low | — | **LOW_VALUE_DEFER** |
+| Together AI | Together | — | API key | no recurring free tier (paid) | — | — | — | — | **DEFER** |
+| Fireworks AI | Fireworks | — | API key | trial credit only | one-time | — | — | — | **DEFER** |
+| NVIDIA API catalog | NVIDIA | Yes | API key | trial endpoints | trial | logged, "do not submit personal or confidential data" | — | — | **REJECT** for production (trial terms) |
+| Cohere | Cohere | Yes | trial key | 1,000 calls/month; trial keys are for testing only | monthly | — | — | — | **REJECT** (trial terms) |
+| InternLM | Shanghai AI Lab | Yes | API key | ≈1M input / 3M output tokens per month (REPORTED) | monthly | UNKNOWN | UNKNOWN | account | **LOW_VALUE_DEFER** |
+| Arcee AI | Arcee | Yes | API key | ≈5M tokens/month (REPORTED) | monthly | UNKNOWN | UNKNOWN | account | **DEFER** (review terms first) |
+| Baidu / Tencent / ModelScope / SiliconFlow | vendors | Yes | real-name identity verification | "uncapped" or credit (REPORTED) | — | UNKNOWN, CN jurisdiction | — | identity verification | **DEFER** |
+| Featherless, Morph | vendors | Yes | API key | small or unclear | — | UNKNOWN | Morph is a code-apply model only | — | **LOW_VALUE_DEFER** |
+
+## Conclusion
+
+* **Private free coding:** no existing-key free provider is private-eligible yet.
+  * **Groq** has unambiguous terms (Services Agreement: Groq may not train on inputs or outputs; no retention by default; zero data retention can be switched on). It is a PRIVATE-ELIGIBLE CANDIDATE, but its free 8K tokens/minute cannot carry agentic coding.
+  * **Z.ai GLM Flash** states no storage, but no explicit no-training statement could be confirmed from primary text (the DPA page cannot be read from here). It is a candidate with incomplete evidence: Fahad must read the DPA before `ZHIPU_API_PRIVATE_DATA_APPROVED` is considered.
+  * Private code is never routed to either route until Fahad sets the flag.
+* **Public coding:** the Office repository `FahadTrail/fahad-ai-office` is public, so tasks on it may be marked `dataClass: "PUBLIC"` and use any free route with a coding grade.
+* **Largest capacity unlock:** Mistral (≈1B tokens/month REPORTED, PUBLIC only), then LLM7 (1M/day PUBLISHED).
+
+## Deduplication by actual quota source (final)
+
+| Bucket | Count | Independent capacity? |
+|---|---|---|
+| OmniRoute registry entries | 352 | — |
+| Rejected: consumer login / OAuth reuse | 35 | never |
+| Rejected: browser cookie / reverse-engineered web app | 42 | never |
+| Rejected: terms forbid (incl. personal-use-only) | 10 | never |
+| Not an LLM pool (local, search, audio, proxy, system) | 46 | no |
+| API key, no recurring free allowance | 173 | no |
+| "Candidates" by recurring-free wording | 46 | see below |
+| of which: resellers / gateways over the same upstream providers | 25 | **no**: duplicates of Gemini, Groq, OpenRouter, DeepSeek, Mistral and similar quotas, with unknown provenance and retention |
+| of which: already integrated first-party pools (Gemini, Groq, OpenRouter, Z.ai via `glm-cn`, Cerebras) | 5 | already counted once |
+| of which: first-party pools with adapters ready and waiting for owner keys (Mistral, LLM7, Cloudflare, Ollama, OpenCode Zen) | 5 | yes, once each, after key + canary |
+| of which: first-party pools deferred (low value, one-time credit, identity verification, trial terms or CN real-name) | 11 | not now |
+
+**OmniRoute itself adds no independent quota.** It is a router over the
+same provider quotas, and its consumer-login and cookie routes are exactly
+what the Office policy forbids. It stays a discovery source (this harvest),
+never the main router.
+
+## Discovery update (2026-09-30)
+
+All figures are REPORTED (current third-party summaries of the providers' pages; the provider domains cannot be opened from the sandbox).
+
+| Provider | Free offer (REPORTED) | Independent quota | Coding value | Verdict |
+|---|---|---|---|---|
+| Mistral (Experiment) | ≈1B tokens/month incl. Codestral; SMS verification, no card | yes | high on paper (Codestral, Medium) | **ACTIVATE LATER**: owner key, then canary + qualification (adapter ready) |
+| SambaNova | recurring free tier: 20 RPM, **20 requests/day**, 200K tokens/day; DeepSeek-V3.2, MiniMax-M2.7, Gemma 4 31B. Payment-method terms recently changed | yes | 20 requests/day ≈ one small coding job | **DEFER**: too small to matter; revisit if the daily limit rises |
+| Hugging Face Inference Providers | $0.10/month of credit (free), $2/month (PRO $9) | no (pass-through to other providers) | none at this size | **REJECT** |
+| Together AI | no recurring free tier | — | — | **REJECT** |
+| Fireworks AI | trial credit only | — | — | **DEFER** (not recurring) |
+| OVH AI Endpoints | anonymous access at 12 requests/min, older models | yes | low (CodeLlama-class) | **DEFER** |
+| Cloudflare Workers AI | 10,000 neurons/day (PUBLISHED); Llama 4 Scout, Mistral Small 3.1, Qwen3 | yes | small tasks | **PREPARE** (adapter ready; owner key) |
+
+The ranking criteria are independent quota, coding quality, privacy, tools, context, commercial terms and reliability. Provider count is not a goal.
