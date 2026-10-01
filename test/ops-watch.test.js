@@ -97,3 +97,19 @@ test('ops watch run: a failed read or a failed record sends nothing (no alert lo
   assert.deepEqual(dry, { sent: 0, dryRun: true });
   assert.equal(calls, 0);
 });
+
+test('ops watch: account blockers are named for what they are (no credits / not activated / rejected key)', () => {
+  const statuses = [
+    { provider: 'kimi', model: 'k', health: 'auth_error', last_error_code: 'PROVIDER_RATE_LIMIT_NO_CREDITS' },
+    { provider: 'qwen', model: 'q', health: 'auth_error', last_error_code: 'PROVIDER_AUTH_ACCOUNT_NOT_ACTIVATED' },
+    { provider: 'openrouter', model: 'o', health: 'auth_error', last_error_code: 'PROVIDER_AUTH' },
+  ];
+  const [credits, activation, key] = findings({ statuses });
+  assert.equal(credits.severity, 'medium');
+  assert.match(credits.text, /no credits: kimi:k\. Optional/);
+  assert.equal(activation.severity, 'medium');
+  assert.match(activation.text, /not activated: qwen:q/);
+  assert.equal(key.severity, 'high');
+  assert.match(key.text, /rejected the key: openrouter:o \(PROVIDER_AUTH\)/);
+  assert.ok([credits, activation, key].every((item) => !/credential problem/.test(item.text)));
+});
