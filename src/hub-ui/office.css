@@ -6,10 +6,12 @@
 .office { max-width: 1520px; margin: 0 auto; padding: var(--s-8) var(--s-8) var(--s-12); }
 .office-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-6); flex-wrap: wrap; margin-bottom: var(--s-5); }
 .office-head h1 { font-size: var(--fs-3xl); margin: 0; font-weight: 700; }
+.office-summary { margin: calc(-1 * var(--s-3)) 0 var(--s-4); }
 .office-live { margin: var(--s-2) 0 0; color: var(--text-muted); font-size: var(--fs-sm); display: flex; align-items: center; gap: var(--s-2); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st-completed); box-shadow: 0 0 0 4px color-mix(in srgb, var(--st-completed) 18%, transparent); }
 .live-dot.off { background: var(--st-waiting); box-shadow: none; }
-.ask-chief { display: flex; gap: var(--s-2); min-width: min(440px, 100%); }
+.ask-chief { display: flex; gap: var(--s-2); flex: 1 1 320px; min-width: min(320px, 100%); max-width: 460px; }
+.ask-chief .input { flex: 1; min-width: 0; }
 .ask-chief .input { border-radius: var(--r-full); padding-inline: var(--s-4); background: var(--surface); border-color: var(--border-strong); }
 .ask-chief .btn { border-radius: var(--r-full); }
 
@@ -182,3 +184,75 @@
   .floor { transform: rotateX(7deg); }
 }
 @media print { .scene, .office-side, .ask-chief { display: none; } }
+
+/* ---------------------------------------------------------------- V5 immersive Office */
+.office-mode { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+.om-btn { border: 0; background: transparent; color: var(--text-muted); font: 600 var(--fs-xs, 12px)/1 var(--font); padding: 7px 12px; border-radius: 999px; cursor: pointer; }
+.om-btn[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
+.om-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.om-beta { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+.office.is-immersive .office-body { grid-template-columns: minmax(0, 1fr) 300px; }
+.immersive { position: relative; height: clamp(520px, calc(100vh - 230px), 900px); border-radius: var(--r-xl, 20px); overflow: hidden;
+  background: radial-gradient(120% 90% at 30% 0%, var(--o3d-sky, var(--surface)) 0%, var(--o3d-ground, var(--surface-2)) 100%); border: 1px solid var(--border); isolation: isolate; }
+:root { --o3d-sky: var(--surface); --o3d-ground: var(--surface-2); }
+.o3d-stage { position: absolute; inset: 0; }
+.o3d-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.o3d-canvas:active { cursor: grabbing; }
+.o3d-labels { position: absolute; inset: 0; pointer-events: none; }
+.o3d-label { position: absolute; left: 0; top: 0; pointer-events: auto; display: grid; gap: 1px; max-width: 200px; padding: 5px 9px 6px; border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 86%, transparent); backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+  border: 1px solid var(--border); color: var(--text); text-align: left; font: inherit; cursor: pointer; box-shadow: var(--shadow-1);
+  transition: opacity var(--t-fast, .15s) var(--ease-out, ease), box-shadow var(--t-fast, .15s) var(--ease-out, ease); will-change: transform; }
+.o3d-label:hover, .o3d-label.hover, .o3d-label.focused { box-shadow: var(--shadow-2); border-color: var(--accent); }
+.o3d-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.o3d-label.dimmed { opacity: .35; }
+.o3d-name { font-weight: 700; font-size: 12px; letter-spacing: .04em; }
+.o3d-state { font-size: 11px; font-weight: 600; color: var(--st-available); }
+.o3d-label[data-state="WORKING"] .o3d-state, .o3d-label[data-state="THINKING"] .o3d-state { color: var(--st-working); }
+.o3d-label[data-state="TESTING"] .o3d-state { color: var(--st-testing); }
+.o3d-label[data-state="REVIEWING"] .o3d-state { color: var(--st-reviewing); }
+.o3d-label[data-state="WAITING"] .o3d-state, .o3d-label[data-state="QUEUED"] .o3d-state { color: var(--st-waiting); }
+.o3d-label[data-state="NEEDS FAHAD"] .o3d-state { color: var(--st-needs); }
+.o3d-label[data-state="BLOCKED"] .o3d-state, .o3d-label[data-state="FAILED"] .o3d-state { color: var(--st-blocked); }
+.o3d-label[data-state="COMPLETED"] .o3d-state { color: var(--st-completed); }
+.o3d-task { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: none; }
+.o3d-labels.zoomed .o3d-label.focused .o3d-task, .o3d-label:hover .o3d-task, .o3d-label:focus-visible .o3d-task { display: block; }
+.o3d-open { display: none; font-size: 11px; font-weight: 600; color: var(--accent); margin-top: 2px; }
+.o3d-labels.zoomed .o3d-label.focused .o3d-open { display: block; }
+.o3d-labels.zoomed .o3d-label:not(.focused) { opacity: .55; }
+.o3d-needs[hidden] { display: none; }
+.o3d-needs { display: inline-block; padding: 6px 12px; font-size: 12px; font-weight: 700; color: var(--st-needs); text-decoration: none; border-color: var(--st-needs); }
+.o3d-loading { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center;
+  background: var(--surface); z-index: 3; transition: opacity var(--t-slow, .4s) var(--ease-out, ease); }
+.o3d-loading[hidden] { display: none; }
+.o3d-mark { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; font: 700 26px/1 var(--font); color: var(--on-accent, var(--bg)); background: var(--accent-fill, var(--accent)); }
+.o3d-bar { width: 200px; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.o3d-bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width var(--t-slow, .4s) var(--ease-out, ease); }
+.o3d-controls { position: absolute; left: 14px; top: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; z-index: 2; }
+.o3d-controls .input-sm { max-width: 220px; }
+.o3d-follow { display: inline-flex; gap: 6px; align-items: center; padding: 6px 10px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 86%, transparent); border: 1px solid var(--border); font-size: 12px; font-weight: 600; }
+.o3d-handoffs { position: relative; }
+.o3d-handoffs summary { list-style: none; cursor: pointer; padding: 6px 12px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 86%, transparent); border: 1px solid var(--border); font-size: 12px; font-weight: 600; }
+.o3d-handoffs summary::-webkit-details-marker { display: none; }
+.o3d-options-body { position: absolute; top: calc(100% + 6px); right: 0; width: 220px; display: grid; gap: 6px; padding: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-3); }
+.o3d-options-body .input-sm { max-width: none; }
+.o3d-handoffs ul { position: absolute; top: calc(100% + 6px); left: 0; width: 320px; max-height: 320px; overflow: auto; margin: 0; padding: 6px; list-style: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-3); }
+.o3d-handoff { width: 100%; display: grid; gap: 2px; text-align: left; padding: 8px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+.o3d-handoff:hover, .o3d-handoff:focus-visible { background: var(--surface-2); }
+.o3d-project-card { position: absolute; left: 14px; bottom: 14px; width: 300px; display: grid; gap: 8px; padding: 14px 16px; border-radius: 16px; z-index: 2;
+  background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(var(--blur)); border: 1px solid var(--border); box-shadow: var(--shadow-2); }
+.o3d-project-card[hidden] { display: none; }
+.o3d-team { display: flex; flex-wrap: wrap; gap: 4px; }
+@media (max-width: 1099px) { .office-mode .om-btn[data-mode="immersive"] { display: none; } }
+/* Laptops (V5.1): the Office fits the screen. On short viewports the status
+   pills give way to the summary sentence, and the 3D stage fills the rest. */
+@media (max-width: 1400px) { .o3d-controls .input-sm { max-width: 150px; } }
+@media (max-height: 820px) {
+  .office.is-immersive .office-stats { display: none; }
+  .office.is-immersive .immersive { height: max(420px, calc(100vh - 215px)); }
+  .o3d-project-card { max-width: 250px; padding: 10px 12px; }
+  .o3d-project-card .o3d-team { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .o3d-label, .o3d-bar span, .o3d-loading { transition: none; } }

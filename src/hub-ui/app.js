@@ -1,5 +1,6 @@
 // Fahad AI Office — Workspace V2 client. No framework: hash routes render
 // views from the Hub's JSON API; polling keeps running work live.
+import { attentionSummary, chatsSummary, employeesSummary, integrationsSummary, modelsSummary, projectsSummary, tasksSummary } from './summaries.js';
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 import { loginErrorMessage } from './auth.js';
 import { ARTIFACT_LABELS, renderArtifact, splitArtifacts } from './artifacts.js';
@@ -204,7 +205,10 @@ async function refreshSidebar() {
   } catch {}
 }
 function markNav(key) {
-  document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.nav === key));
+  document.querySelectorAll('.nav-item, .nav-sub').forEach((item) => item.classList.toggle('active', item.dataset.nav === key));
+  // Deeper pages live under "More": open it when one of them is shown.
+  const more = document.getElementById('navMore');
+  if (more && more.querySelector(`[data-nav="${key}"]`)) more.open = true;
 }
 
 // ------------------------------------------------------------------ search
@@ -471,12 +475,13 @@ const taskGroup = (status) => (['awaiting_approval', 'blocked'].includes(status)
 
 async function renderChats() {
   setTitle('Chats');
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Chats</h1><p>Every conversation with the Office, newest first.</p></div><a class="btn btn-primary" href="#/">＋ New chat</a></div>
+  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Chats</h1><p class="page-summary" id="chatSummary" aria-live="polite">Every conversation with the Office, newest first.</p></div><a class="btn btn-primary" href="#/">＋ New chat</a></div>
     <div class="row" style="margin-bottom:var(--s-4)"><input id="chatSearch" class="input grow" placeholder="Search chats…" dir="auto"><button id="showArchived" class="btn">Archived</button></div>
     <div id="chatList"></div></div>`;
   let archived = false;
   const load = async () => {
     const { conversations } = await api(`/api/conversations${q({ workspaceId: ws(), archived, q: $('#chatSearch').value.trim() })}`);
+    $('#chatSummary').textContent = chatsSummary(conversations, archived);
     $('#chatList').innerHTML = conversations.length ? conversations.map((conversation) =>
       `<a class="list-item" href="#/chat/${esc(conversation.id)}"><div class="grow"><div class="title" dir="auto">${esc(conversation.title)}</div><div class="sub">${when(conversation.lastMessageAt)}</div></div></a>`).join('')
       : `<div class="empty"><h3>${archived ? 'No archived chats' : 'No chats found'}</h3><p>Start a new chat from the button above.</p></div>`;
@@ -492,11 +497,12 @@ const TASK_TABS = [['running', 'Running'], ['attention', 'Needs attention'], ['c
 
 async function renderTasks(tab) {
   setTitle('Tasks');
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Tasks</h1><p>Development work the Office is doing or has done.</p></div><a class="btn btn-primary" href="#/code">＋ New task</a></div>
+  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Tasks</h1><p class="page-summary" id="taskSummary" aria-live="polite">Development work the Office is doing or has done.</p></div><a class="btn btn-primary" href="#/code">＋ New task</a></div>
     <div class="tabs" role="tablist">${TASK_TABS.map(([key, label]) => `<a class="tab ${key === tab ? 'active' : ''}" role="tab" href="#/tasks/${key}">${label}</a>`).join('')}</div>
     <div id="taskList"></div></div>`;
   const load = async () => {
     const { tasks } = await api(`/api/tasks${q({ workspaceId: ws(), status: tab })}`);
+    $('#taskSummary').textContent = tasksSummary(tasks, tab);
     $('#taskList').innerHTML = tasks.length ? tasks.map(taskItem).join('') : `<div class="empty"><h3>Nothing here</h3><p>${tab === 'running' ? 'No task is running. Describe one in a chat or start one from the Coding Agent.' : 'No tasks in this group.'}</p></div>`;
   };
   await load();
@@ -729,7 +735,7 @@ function onLiveChange(fn, onLive) {
 async function renderEmployees() {
   setTitle('Employees');
   const data = await api(`/api/office${q({ workspaceId: ws() })}`);
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Employees</h1><p>Nine roles, no fixed models: each employee's work is routed to the best available model for its job, free first. Say their names in Arabic or English — CHIEF understands.</p></div></div>
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Employees</h1><p class="page-summary">${esc(employeesSummary(data.agents))}</p></div></div>
     <div class="office-grid">${data.agents.map((agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}" data-employee="${esc(agent.slug)}">
       <div class="row">${avatar(agent)}<div class="grow"><div class="title">${esc(agent.label)}</div><div class="xs faint">${esc(agent.deliverable || '')}</div></div>${statePill(agent.state)}</div>
       <div class="small muted">${esc(agent.scope)}</div>
@@ -794,8 +800,8 @@ async function renderAttention() {
       return `<section class="nf-group nf-${esc(priority.toLowerCase().replace(/\s+/g, '-'))}"><h2><span class="nf-level">${esc(priority)}</span><span class="small muted">${esc(hint)}</span></h2>
         ${list.map((item) => `<a class="nf-item" href="${href(item)}"><span class="nf-cat">${esc(item.category || item.kind)}</span><span class="grow"><span class="nf-title" dir="auto">${esc(item.title)}</span>${item.detail ? `<span class="nf-detail" dir="auto">${esc(humanError(item.detail))}</span>` : ''}</span><time class="xs faint" datetime="${esc(item.at)}">${when(item.at)}</time></a>`).join('')}</section>`;
     };
-    view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Needs Fahad</h1><p>Only what genuinely needs you: approvals, answers, legal and security decisions, failures and major completions.</p></div></div>
-      ${items.some((item) => item.priority !== 'INFO') ? '' : '<div class="nf-clear"><strong>All clear.</strong> Nothing needs you right now — the Office asks here and on Telegram when it does.</div>'}
+    view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Needs Fahad</h1><p class="page-summary">${esc(attentionSummary(items))}</p></div></div>
+      ${items.some((item) => item.priority !== 'INFO') ? '' : '<div class="nf-clear"><strong>All clear.</strong> The Office asks here and on Telegram when it needs you.</div>'}
       ${group('URGENT', 'Urgent', 'high-risk approvals and critical security findings')}${group('ACTION NEEDED', 'Action needed', 'a decision or an answer unblocks the work')}${group('INFO', 'For your information', 'major work that finished in the last 3 days')}</div>`;
   };
   await draw();
@@ -804,7 +810,7 @@ async function renderAttention() {
 
 async function renderProjects() {
   setTitle('Projects');
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Projects</h1><p>Each project keeps its chats, tasks, repository and memory together.</p></div></div>
+  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Projects</h1><p class="page-summary">${esc(projectsSummary(state.workspaces, ws()))}</p></div></div>
     ${state.workspaces.map((workspace) => `<a class="list-item" href="#/project/${esc(workspace.id)}"><div class="grow"><div class="title">${esc(workspace.name)}</div></div>${workspace.id === ws() ? pill('available', 'Current') : ''}</a>`).join('')}</div>`;
 }
 
@@ -836,7 +842,7 @@ function connection(status = '') {
 const CONNECTION_TONE = { CONNECTED: 'ok', CONFIGURED: 'configured', 'NOT CONFIGURED': 'off', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
 async function renderIntegrations() {
   setTitle('Integrations');
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Integrations</h1><p>What the Office can actually use. <strong>Connected</strong> means a real successful use was recorded — configuration alone never counts.</p></div></div>
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Integrations</h1><p class="page-summary" id="intSummary" aria-live="polite">What the Office can actually use.</p><p class="small muted"><strong>Connected</strong> means a real successful use was recorded — configuration alone never counts.</p></div></div>
     <div class="conn-legend">${Object.values(CONNECTION).map((value) => `<span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span>`).join('')}</div><div id="capabilities"><div class="drawer-loading"></div></div></div>`;
   const [{ capabilities }, models] = await Promise.all([api('/api/capabilities'), api(`/api/models${q({ workspaceId: ws() })}`).catch(() => null)]);
   const groups = [['Work tools', ['github', 'repository', 'pull_requests', 'ci', 'deployment', 'supabase_tools', 'tool_broker']], ['Research', ['web_search', 'web_fetch']], ['Channels', ['telegram']], ['Office data', ['database', 'memory']]];
@@ -849,6 +855,7 @@ async function renderIntegrations() {
   }
   const providerState = (entry) => (entry.statuses.includes('AVAILABLE') || entry.statuses.includes('COOLDOWN') ? CONNECTION.CONNECTED : entry.statuses.includes('ACCOUNT ACTION REQUIRED') ? CONNECTION.ACCOUNT
     : entry.reasons.some((reason) => /No credential/i.test(reason)) ? CONNECTION.NOT_CONFIGURED : CONNECTION.UNAVAILABLE);
+  $('#intSummary').textContent = integrationsSummary(capabilities.filter((item) => groups.some(([, ids]) => ids.includes(item.id))).map((item) => connection(item.status)));
   $('#capabilities').innerHTML = groups.map(([title, ids]) => `<section class="int-group"><h2 class="int-title">${esc(title)}</h2><div class="int-grid">${capabilities.filter((item) => ids.includes(item.id)).map(card).join('')}</div></section>`).join('')
     + (providers.size ? `<section class="int-group"><h2 class="int-title">Model providers</h2><div class="int-grid">${[...providers.values()].map((entry) => { const value = providerState(entry); return `<div class="int-card"><div class="int-top"><strong>${esc(entry.provider)}</strong><span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span></div><div class="small muted">${entry.statuses.length} model${entry.statuses.length === 1 ? '' : 's'} · ${esc(humanError(entry.reasons.find((reason) => reason) || ''))}</div></div>`; }).join('')}</div><p class="xs muted">Details per model: <a href="#/models">Models</a>.</p></section>` : '');
 }
@@ -860,10 +867,10 @@ async function renderModels() {
   const kind = { AVAILABLE: 'available', COOLDOWN: 'cooldown', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
   const waiting = (office?.agents || []).filter((agent) => agent.state === 'WAITING' && /free model capacity/i.test(agent.detail || ''));
   const counts = Object.entries(data.counts).map(([status, count]) => `${pill(kind[status], `${count} ${status.toLowerCase()}`)}`).join(' ');
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Models</h1><p>Routing is <strong>AUTO</strong>: the Office picks the best available model for each job, free first where suitable, and fails over automatically. You never have to choose.</p></div></div>
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Models</h1><p class="page-summary">${esc(modelsSummary(data.counts, waiting.length))}</p><p class="small muted">Routing is <strong>AUTO</strong>: the Office picks the best available model for each job, free first where suitable, and fails over automatically. You never have to choose.</p></div></div>
     <div class="row" style="margin-bottom:var(--s-4)">${counts}</div>
     ${waiting.length ? `<div class="capacity-banner" role="status"><strong>WAITING_FOR_CAPACITY</strong> · ${waiting.map((agent) => `${esc(agent.label)}${agent.assignment?.resumesAt ? ` (~${esc(new Date(agent.assignment.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))})` : ''}`).join(', ')} — Waiting for free model capacity — will resume automatically.</div>` : ''}
-    <details class="disclosure" open><summary>Model pool (advanced)</summary><div class="disclosure-body"><div class="table-wrap"><table class="table"><thead><tr><th>Model</th><th>Status</th><th class="hide-sm">Cost</th><th class="hide-sm">Order</th><th class="hide-sm">Health</th><th class="hide-sm">Why</th></tr></thead><tbody>
+    <details class="disclosure"><summary>Model pool (advanced)</summary><div class="disclosure-body"><div class="table-wrap"><table class="table"><thead><tr><th>Model</th><th>Status</th><th class="hide-sm">Cost</th><th class="hide-sm">Order</th><th class="hide-sm">Health</th><th class="hide-sm">Why</th></tr></thead><tbody>
     ${data.models.map((model) => { const reason = esc(model.reason.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, (iso) => new Date(iso).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }))); return `<tr><td><div class="mono small" style="overflow-wrap:anywhere">${esc(model.model)}</div><div class="xs faint">${esc(model.provider)} · ${esc(model.billing)}</div><div class="xs muted show-sm">${reason}</div></td><td>${pill(kind[model.status], model.status)}</td><td class="hide-sm">${esc(model.billing)}</td><td class="hide-sm">${model.order || '—'}</td><td class="hide-sm">${esc(model.health)}</td><td class="small muted hide-sm" style="min-width:180px">${reason}</td></tr>`; }).join('')}
     </tbody></table></div><p class="xs muted" style="margin-top:var(--s-2)">An unavailable or account-blocked model never blocks the others. The full technical dashboard is under <a href="./classic">Classic view → Platform</a>.</p></div></details></div>`;
 }
@@ -876,6 +883,11 @@ async function renderSettings() {
   view.innerHTML = `<div class="page stack"><div class="page-head"><div><h1>Settings</h1></div></div>
     <div class="card"><h2 class="card-title">Account</h2><p class="small muted">Signed in as the owner. Sessions last 7 days.</p><button class="btn" id="logout">Sign out</button></div>
     <div class="card"><h2 class="card-title">Appearance</h2><div class="chips" id="themeChips">${[['auto', 'System'], ['dark', 'Dark'], ['light', 'Light']].map(([value, label]) => `<button class="chip" data-theme-choice="${value}">${label}</button>`).join('')}</div></div>
+    <div class="card"><h2 class="card-title">Office view</h2>
+      <p class="small muted">The immersive 3D Office is in beta. Auto keeps the light Office unless you allow immersive below; small screens always use the light Office.</p>
+      <label class="check"><input type="checkbox" id="autoImmersive"> <span>Use the immersive Office for Auto on capable desktops</span></label>
+      <label class="small muted" for="officeQuality" style="display:block;margin-top:var(--s-3)">Immersive quality (advanced)</label>
+      <select class="input input-sm" id="officeQuality" style="max-width:220px"><option value="">Automatic</option><option value="high">High</option><option value="balanced">Balanced</option><option value="light">Light</option></select></div>
     <div class="card"><h2 class="card-title">Tools &amp; connectors</h2><p class="small muted">See <a href="#/integrations">Integrations</a> for every connector and the employees that use it.</p></div>
     <div class="card"><h2 class="card-title">System</h2><dl class="kv"><div><dt>Hub</dt><dd>${health?.ok ? 'Healthy' : 'Unknown'}</dd></div><div><dt>Version</dt><dd class="mono small">${esc(String(health?.version || '—').slice(0, 12))}</dd></div></dl>
       <p class="small muted" style="margin-top:var(--s-3)">Technical dashboards (Platform, detailed model pool, legacy Coding Agent form) remain in the <a href="./classic">classic view</a>.</p></div></div>`;
@@ -884,6 +896,12 @@ async function renderSettings() {
   const mark = () => document.querySelectorAll('[data-theme-choice]').forEach((chip) => chip.classList.toggle('active', chip.dataset.themeChoice === current));
   mark();
   bind(view, { '[data-theme-choice]': (_, element) => { current = element.dataset.themeChoice; try { localStorage.setItem('hub-theme', current); } catch {} applyTheme(current); mark(); } });
+  const pref = (key) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
+  const setPref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch {} };
+  $('#autoImmersive').checked = pref('hub-office-auto-immersive') === 'on';
+  $('#autoImmersive').onchange = (event) => setPref('hub-office-auto-immersive', event.target.checked ? 'on' : '');
+  $('#officeQuality').value = pref('hub-office-quality');
+  $('#officeQuality').onchange = (event) => setPref('hub-office-quality', event.target.value);
   $('#logout').onclick = async () => { await fetch('./api/auth/logout', { method: 'POST' }).catch(() => {}); location.reload(); };
 }
 
