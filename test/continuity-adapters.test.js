@@ -123,7 +123,7 @@ test('Codex reports a sandbox bootstrap failure even when its turn exits success
   const adapter = new CodexContinuityAdapter();
   const state = { errorCode: null, resultSeen: false };
   adapter.consumeEvent({ type: 'item.completed', item: {
-    type: 'CommandExecution', exit_code: 1,
+    type: 'command_execution', exit_code: 1,
     aggregated_output: 'bwrap: No permissions to create a new namespace',
   } }, state);
   adapter.consumeEvent({ type: 'turn.completed' }, state);
