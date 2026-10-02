@@ -18,7 +18,8 @@ export function versionAtLeast(version, minimum) {
 
 export class ExternalCliAdapter {
   constructor({ key, binary, enabled = false, driver = new ExternalWorkerDriver(), inspectCheckpoint,
-    envKeys = [], timeoutMs = 60 * 60_000, minimumVersion, maximumMajor, versionArgs = ['--version'] } = {}) {
+    envKeys = [], timeoutMs = 60 * 60_000, minimumVersion, maximumMajor, versionArgs = ['--version'],
+    platform = process.platform } = {}) {
     this.key = key;
     this.binary = binary;
     this.enabled = enabled;
@@ -29,6 +30,7 @@ export class ExternalCliAdapter {
     this.minimumVersion = minimumVersion;
     this.maximumMajor = maximumMajor;
     this.versionArgs = versionArgs;
+    this.platform = platform;
     this.sessions = new Map();
     this.lastProbe = null;
   }
@@ -48,8 +50,14 @@ export class ExternalCliAdapter {
         const features = await this.verifyFeatures(version);
         if (!features.ok) value = { ok: false, authState: 'UNSUPPORTED_VERSION', reason: 'UNSUPPORTED_VERSION', version };
         else {
-          const auth = await this.verifyAuth();
-          value = { ok: auth.ok, authState: auth.ok ? 'AUTHENTICATED' : 'NOT_AUTHENTICATED', reason: auth.ok ? null : 'AUTH_REQUIRED', version, features };
+          // A working login is not enough: the host must also be able to run
+          // this worker's isolation layer, or every write would fail later.
+          const sandbox = await this.verifySandbox();
+          if (!sandbox.ok) value = { ok: false, authState: 'HOST_CAPABILITY_REQUIRED', reason: 'SANDBOX_UNAVAILABLE', version, features, detail: sandbox.detail || null };
+          else {
+            const auth = await this.verifyAuth();
+            value = { ok: auth.ok, authState: auth.ok ? 'AUTHENTICATED' : 'NOT_AUTHENTICATED', reason: auth.ok ? null : 'AUTH_REQUIRED', version, features };
+          }
         }
       }
     }
@@ -66,12 +74,15 @@ export class ExternalCliAdapter {
 
   async verifyFeatures() { return { ok: true }; }
   async verifyAuth() { return { ok: false }; }
+  // Host isolation capability (user namespaces, sandbox binary, policy).
+  // Workers without an OS sandbox inherit the safe default.
+  async verifySandbox() { return { ok: true }; }
   command() { throw new TypeError('ExternalCliAdapter.command is required'); }
   consumeEvent() { throw new TypeError('ExternalCliAdapter.consumeEvent is required'); }
 
   async launch({ continuationPacket, worktree, resumeId = null }) {
     const probe = await this.available();
-    if (!probe.ok) throw continuityError(probe.reason === 'UNSUPPORTED_VERSION' ? 'UNSUPPORTED_VERSION' : probe.reason === 'CLI_NOT_FOUND' ? 'CLI_NOT_FOUND' : 'AUTH_REQUIRED');
+    if (!probe.ok) throw continuityError(probe.reason === 'UNSUPPORTED_VERSION' ? 'UNSUPPORTED_VERSION' : probe.reason === 'CLI_NOT_FOUND' ? 'CLI_NOT_FOUND' : probe.reason === 'SANDBOX_UNAVAILABLE' ? 'SANDBOX_UNAVAILABLE' : 'AUTH_REQUIRED');
     if (!this.inspectCheckpoint) throw continuityError('CHECKPOINT_FAILED');
     const state = this.driver.launch({
       binary: this.binary, args: this.command({ worktree, resumeId, probe }), prompt: continuationPacket,

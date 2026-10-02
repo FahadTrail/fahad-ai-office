@@ -2,13 +2,14 @@
 // Version and required flags are checked at runtime. No deprecated approval
 // flag, cookie access, direct OAuth-token reads, or invented quota percentage.
 import { ExternalCliAdapter } from './external-cli.js';
+import { sandboxDenial } from '../errors.js';
 
 const minimumVersion = { major: 0, minor: 150, patch: 0 };
 
 export class CodexContinuityAdapter extends ExternalCliAdapter {
-  constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs } = {}) {
+  constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs, platform = process.platform } = {}) {
     super({ key: 'codex', binary: 'codex', driver, inspectCheckpoint, enabled, timeoutMs,
-      minimumVersion, maximumMajor: 1, envKeys: ['CODEX_HOME'] });
+      minimumVersion, maximumMajor: 1, envKeys: ['CODEX_HOME'], platform });
   }
 
   capabilities() {
@@ -38,6 +39,17 @@ export class CodexContinuityAdapter extends ExternalCliAdapter {
     return { ok: auth.ok };
   }
 
+  // The workspace-write sandbox is an OS capability, not an account state.
+  // Probe the host before any turn so a container that denies the sandbox is
+  // reported as unavailable instead of burning a turn that cannot write.
+  async verifySandbox() {
+    if (this.platform !== 'linux') return { ok: true };
+    const probe = await this.driver.inspect('codex', ['sandbox', 'linux', '--', 'true'],
+      { extraEnvKeys: this.envKeys, timeoutMs: 15_000 });
+    if (!probe.ok) return { ok: false, detail: 'host cannot start the Codex Linux sandbox' };
+    return { ok: true };
+  }
+
   command({ worktree, resumeId }) {
     const policy = 'approval_policy="never"';
     return resumeId
@@ -51,8 +63,8 @@ export class CodexContinuityAdapter extends ExternalCliAdapter {
     // Linux sandbox. Do not mistake that no-op turn for completed work.
     if (event.type === 'item.completed' && event.item?.type === 'command_execution'
       && event.item?.exit_code !== 0
-      && /^bwrap: No permissions to create a new namespace/i.test(String(event.item?.aggregated_output || ''))) {
-      state.errorCode = 'WORKER_CRASHED';
+      && sandboxDenial(event.item?.aggregated_output)) {
+      state.errorCode = 'SANDBOX_UNAVAILABLE';
     }
     if (event.type === 'thread.started') state.id = event.thread_id || event.thread?.id || state.id;
     if (event.thread_id) state.id ||= event.thread_id;

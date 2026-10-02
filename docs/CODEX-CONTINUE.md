@@ -1,4 +1,25 @@
-## SAFE STOP / EXACT RESUME POINT (2026-10-03; supersedes all older instructions)
+## CLOUD-ONLY CLOSURE — EXACT RESUME POINT (2026-10-02; supersedes every older instruction, including the safe stop below)
+
+Read `AGENTS.md`, the top of `docs/HANDOVER.md`, `docs/CONTINUITY-PHASE-N-READINESS.md` and `.continuity/checkpoint.json` first. The safe-stop, Graphify and development-only sections below are history, not current work orders. Their evidence and the preserved VPS assets remain valid and untouched.
+
+**What this sprint did (cloud-only, no laptop dependency):**
+
+* Re-fetched GitHub and verified `codex/continuity-readiness` at `13c3668d1842f018fcdf4615aa9ae101a1c75c1c`, the same SHA as PR #106. Fast-forwarded locally; no force push. Three stale uncommitted 2026-10-01 edits were compared with the remote, found superseded, backed up outside the repository and discarded; their unique findings were carried into `docs/HANDOVER.md`.
+* Root-caused the AppArmor blocker as **host-specific**: in this cloud container `unshare --user` works, no AppArmor module is loaded, and `codex sandbox linux -- sh -c 'echo SANDBOX_OK'` runs the real Codex sandbox successfully. The VPS denial came from that hardened test container's policy, not from this repository. No host security was relaxed.
+* Made isolation handling portable and fail-closed: `src/continuity/errors.js` gained a vendor-neutral `sandboxDenial()` detector and the `SANDBOX_UNAVAILABLE` code; `src/continuity/adapters/codex.js` uses it instead of one literal `bwrap:` regex and pre-flights the host sandbox; `src/continuity/adapters/external-cli.js` exposes `verifySandbox()` for every external worker and reports `SANDBOX_UNAVAILABLE` / `HOST_CAPABILITY_REQUIRED`.
+* Ran the real validations that this environment can honestly support: full `node --test` 582/582, focused continuity suite 68/68, docs path-reference and Hermes separation suites green, and `npm run db:replay` replaying all 32 migrations plus the `coding_continuity` scenario on a real local PostgreSQL 14.
+
+**What was NOT done, and why:** there is **no real executable coding worker** in this environment. The Office adapter has no Supabase or model-provider credential; Codex CLI 0.128.0 is below the required `>=0.150.0` and is not logged in (a flag-free `codex exec --json` reaches OpenAI and fails `401`); Claude Code 2.1.128 is below the required `>=2.1.268` and is not logged in; Gemini CLI and Cursor Agent are installed but unauthenticated and are not registry workers; Antigravity, OpenCode, Kilo and Freebuff are owner-gated or manual; Freebuff exposes no callable worker interface. The Phase 5 multi-worker handoff drill and the Phase 6 restart/resume drill therefore were **not** run, and no scripted substitute was presented as worker evidence.
+
+**Exact resume point for the next agent:**
+
+1. Read the four files named above; do not redo the sync, the AppArmor diagnosis or this documentation.
+2. Provide one genuinely executable registry worker on a sandbox-capable host — either an authenticated Codex CLI at `>=0.150.0`, or a native Office adapter pointed at a Supabase instance plus a model provider. Nothing else in the core is missing.
+3. Only then run the real disposable-branch drill: Worker A lease → real change → real commit → checkpoint → drain → Worker B from that exact commit → Worker C, plus the restart/recovery pass, capturing session IDs, lease IDs, checkpoint IDs, commit SHAs, branch names and event IDs.
+4. Keep #102 → #104 → #105 → #106 open and stacked; ask the owner to close or re-cut #107 and #108, which target `main` and duplicate the stack.
+5. Do not merge, retarget, apply the production migration, deploy, or enable `CONTINUITY_SUPERVISOR` / `CONTINUITY_CODEX_ENABLED` / `CONTINUITY_CLAUDE_ENABLED` without Fahad's explicit approval.
+
+## SAFE STOP / EXACT RESUME POINT (2026-10-03; historical — superseded by the section above)
 
 Fahad ordered STOP. No more tests, workers, CI reruns, production changes, merges, deployments, migrations, or flag activation. Preserve all isolated VPS assets and local worktrees. Read `docs/PHASE-N-CLOUD-DRILL-2026-10-02.md`, the top of `docs/HANDOVER.md`, and `.continuity/checkpoint.json` before any later action. The previous Graphify/development-only instructions below are history, not current work orders.
 

@@ -127,8 +127,41 @@ test('Codex reports a sandbox bootstrap failure even when its turn exits success
     aggregated_output: 'bwrap: No permissions to create a new namespace',
   } }, state);
   adapter.consumeEvent({ type: 'turn.completed' }, state);
-  assert.equal(state.errorCode, 'WORKER_CRASHED');
+  assert.equal(state.errorCode, 'SANDBOX_UNAVAILABLE');
   assert.equal(state.resultSeen, true);
+});
+test('sandbox denial is recognised by the shared classifier for every external worker', async () => {
+  const { classifyCliFailure, sandboxDenial } = await import('../src/continuity/errors.js');
+  assert.equal(sandboxDenial('bwrap: No permissions to create a new namespace'), true);
+  assert.equal(sandboxDenial('done\nbwrap: failed to setup loopback'), true);
+  assert.equal(sandboxDenial('all commands completed'), false);
+  assert.equal(classifyCliFailure({ stderr: 'bwrap: No permissions to create a new namespace', exitCode: 0 }), 'SANDBOX_UNAVAILABLE');
+  assert.equal(classifyCliFailure({ stderr: 'clean run', exitCode: 0 }), null);
+  assert.equal(classifyCliFailure({ stderr: 'clean run', exitCode: 1 }), 'WORKER_CRASHED');
+});
+test('a host that cannot start the Codex sandbox is unavailable before any turn starts', async () => {
+  const driver = {
+    async inspect(_binary, args) {
+      if (args[0] === '--version') return { ok: true, stdout: 'codex-cli 0.158.0' };
+      if (args[0] === 'sandbox') return { ok: false, exitCode: 1, stdout: '', stderr: 'bwrap: No permissions to create a new namespace' };
+      if (args[0] === 'login') return { ok: true, stdout: '' };
+      return { ok: true, stdout: args[1] === 'resume' ? '--json --config' : '--json --sandbox --cd --config' };
+    },
+    launch() { throw new Error('an unavailable worker must never launch'); },
+  };
+  const adapter = new CodexContinuityAdapter({ driver, enabled: true, platform: 'linux', inspectCheckpoint: async ({ context }) => context.checkpoint });
+  const readiness = await adapter.available();
+  assert.equal(readiness.ok, false);
+  assert.equal(readiness.reason, 'SANDBOX_UNAVAILABLE');
+  assert.equal(readiness.authState, 'HOST_CAPABILITY_REQUIRED');
+  await assert.rejects(adapter.start({ continuationPacket: 'continue', worktree: '/tmp/work' }), /SANDBOX_UNAVAILABLE/);
+});
+test('workers without an OS sandbox keep the safe availability default', async () => {
+  const driver = { inspect: async () => ({ ok: false, stdout: '', stderr: '' }) };
+  const adapter = new CodexContinuityAdapter({ driver, enabled: true, platform: 'darwin' });
+  assert.deepEqual(await adapter.verifySandbox(), { ok: true });
+  const plain = new ClaudeCodeContinuityAdapter({ driver, enabled: true, platform: 'linux' });
+  assert.deepEqual(await plain.verifySandbox(), { ok: true });
 });
 test('Codex typed usage limit is classified as quota exhaustion', async () => {
   const { classifyCliFailure } = await import('../src/continuity/errors.js');

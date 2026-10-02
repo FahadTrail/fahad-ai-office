@@ -1,45 +1,52 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-02T20:00:56.525Z",
+  "timestamp": "2026-10-02T21:10:00Z",
   "repository": "FahadTrail/fahad-ai-office",
   "branch": "codex/continuity-readiness",
-  "worktree": "/opt/fahad-phase-n-drill-20261002 (isolated VPS test worktree; preserve)",
-  "agent_id": "codex",
+  "worktree": "Freebuff cloud workspace; cloud-only, no dependency on the owner laptop",
+  "agent_id": "freebuff",
   "agent_type": "cli",
-  "session_id": "04aea46d-e2a1-49a0-b692-75348161623a",
+  "session_id": "freebuff-cloud-closure-2026-10-02",
   "next_agent": "codex",
-  "objective": "Safe stop of cloud-only real Phase N drill; preserve evidence and resume only after explicit owner instruction.",
-  "phase": "N_REAL_CLOUD_DRILL",
+  "objective": "Cloud-only continuity closure: re-sync from GitHub, root-cause the AppArmor sandbox blocker, make isolation handling vendor-neutral, inventory every real worker this cloud environment can actually run, validate what is genuinely validatable, and record an honest verdict without touching production.",
+  "phase": "N_CLOUD_CLOSURE",
   "status": "HANDOFF_READY",
-  "base_commit": "8c4b871c41266769f51b33941991693c177ef00e",
-  "last_commit": "8c4b871c41266769f51b33941991693c177ef00e",
+  "base_commit": "13c3668d1842f018fcdf4615aa9ae101a1c75c1c",
+  "last_commit": "13c3668d1842f018fcdf4615aa9ae101a1c75c1c",
   "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
   "files_changed": [
     "src/continuity/errors.js",
     "src/continuity/adapters/codex.js",
+    "src/continuity/adapters/external-cli.js",
     "test/continuity-adapters.test.js",
-    "docs/PHASE-N-CLOUD-DRILL-2026-10-02.md",
     ".continuity/checkpoint.json",
     "docs/HANDOVER.md",
-    "docs/CODEX-CONTINUE.md"
+    "docs/CODEX-CONTINUE.md",
+    "docs/CONTINUITY-PHASE-N-READINESS.md"
   ],
-  "tests_run": "Before stop: isolated Supabase CLI replay of 32 migrations; targeted adapter tests 9/9 locally; actual Office, Codex and separate Claude CLI probes. Full real three-worker drill incomplete. No tests after safe-stop instruction.",
-  "tests_passed": null,
-  "tests_failed": null,
+  "tests_run": "npm ci; full node --test; focused continuity suite; docs path-reference and Hermes separation suites; npm run db:replay against a real local PostgreSQL 14",
+  "tests_passed": 582,
+  "tests_failed": 0,
   "ci_status": "pending",
   "decisions": [
-    "Keep production untouched, PRs open and unmerged, production migration unapplied, CONTINUITY_SUPERVISOR=OFF.",
-    "Do not disable AppArmor user-namespace restrictions or Codex sandbox.",
-    "Do not start workers, run tests, or rerun CI after safe-stop request."
+    "The 2026-10-02 VPS AppArmor/namespace failure is HOST-SPECIFIC: in this Freebuff container unshare --user succeeds, no AppArmor module is loaded, and codex sandbox linux executes successfully. The Continuity runtime is not the cause, and no host security was relaxed or bypassed.",
+    "Sandbox failures are now classified by a shared vendor-neutral detector (SANDBOX_UNAVAILABLE) instead of one adapter's literal bwrap wording, and every external worker can declare a host isolation probe (verifySandbox) that fails closed before any turn starts.",
+    "The Codex and Claude Code adapters stay IMPLEMENTED / TESTED IN CODE / LIVE CERTIFICATION DEFERRED and remain disabled in production.",
+    "Three stale uncommitted 2026-10-01 local edits were inspected, found superseded by the remote branch history, backed up outside the repository and discarded; their still-unique findings were carried into docs/HANDOVER.md.",
+    "Production stays untouched: no merge, no retarget, no migration, no deploy, no flag change, no force push, no Hermes access."
   ],
   "constraints": [
-    "No merge, deploy, production migration, production flag or secret changes.",
-    "Preserve test repository, worktrees, DB and evidence for resume."
+    "Do not merge #102, #104, #105, #106, #107 or #108, retarget PRs, apply the production migration, deploy, or enable CONTINUITY_SUPERVISOR / CONTINUITY_CODEX_ENABLED / CONTINUITY_CLAUDE_ENABLED.",
+    "Do not disable AppArmor or any host sandbox, and do not bypass a worker's isolation layer to make a drill pass.",
+    "Do not claim worker execution that did not happen, and do not rerun CI manually; only inspect results."
   ],
   "errors": [
-    "Real Codex command_execution failed with bwrap: No permissions to create a new namespace; Ubuntu AppArmor/user namespace restriction in VPS test environment.",
-    "Codex subscription usage limit affected first drill attempt; later auth reply succeeded but sandbox blocked file changes.",
-    "Previous GitHub CI at 39508d9 failed because documentation referenced a disposable test-only path; 8c4b871 clarified it and CI was pending at stop."
+    "No real executable coding worker exists in this cloud environment: the native Office adapter needs Supabase and model-provider credentials that are absent (freebuff-env reports no environment files); Codex CLI 0.128.0 is below the required >=0.150.0 and reports Not logged in; Claude Code 2.1.128 is below the required >=2.1.268 and reports Not logged in; a flag-free codex exec reaches OpenAI and fails 401 Unauthorized; Gemini CLI 0.40.1 and Cursor Agent 2026.09.10 are installed but unauthenticated and are not registry workers; Antigravity, OpenCode, Kilo and Freebuff are owner-gated or manual by design.",
+    "Freebuff exposes no callable worker interface to the Continuity runtime (no CLI, an empty freebuff home directory, no MCP or HTTP endpoint), so its registry row correctly stays OWNER_DISABLED and manual.",
+    "Because no registry worker can execute here, the Phase 5 multi-worker handoff drill and the Phase 6 restart/resume drill were NOT run; no scripted substitute was passed off as real worker evidence.",
+    "npm run db:replay reproduced all 32 migrations and the coding_continuity scenario on a real local PostgreSQL 14; the generated fingerprint content matches supabase/verify/schema-fingerprint.txt line for line after sorting, while raw line order differs only because this sandbox's collation differs, so the committed fingerprint file was left untouched.",
+    "PRs #107 and #108 remain OPEN with base main and duplicate the whole continuity stack; the owner should close them or re-cut them docs-only.",
+    "The migration seeds antigravity.kind as cli while src/continuity/adapters/antigravity.js reports manual (display only)."
   ],
   "quota_state": {
     "basis": "UNKNOWN",
@@ -52,31 +59,34 @@
   },
   "worker_state": {
     "office": {
-      "session_id": "7361d625-fa8e-486a-8891-126abd10b13d",
-      "native_session_id": "e5058e83-a3ef-403c-972e-e61cf9b641d9",
-      "result": "completed",
-      "commit": "08eae1570dbb489465be0f86a3b60cefa65c9f88"
+      "result": "not started",
+      "reason": "no Supabase URL or service credential and no model provider key in this environment"
     },
     "codex": {
-      "session_id": "04aea46d-e2a1-49a0-b692-75348161623a",
-      "result": "turn completed with no file change or commit; every command_execution failed due bwrap namespace denial"
+      "result": "not started",
+      "reason": "codex-cli 0.128.0 is below the required >=0.150.0 and login status reports Not logged in; a flag-free exec run reached OpenAI and failed 401"
     },
     "claude": {
-      "result": "authenticated CLI independently created throwaway file in separate checkout; no Supervisor handoff or commit"
+      "result": "not started",
+      "reason": "Claude Code 2.1.128 is below the required >=2.1.268 and a print-mode probe reports Not logged in"
+    },
+    "third_worker": {
+      "result": "not started",
+      "reason": "Antigravity, OpenCode, Kilo and Freebuff are disabled or manual by design; Gemini CLI and Cursor Agent are installed but unauthenticated and are not registry workers"
     }
   },
-  "lease_state": "Office source lease released before Codex destination acquired; after failed Codex run and verified process stop, recovery froze/reclaimed Codex lease; zero ACTIVE/FROZEN test coding leases.",
-  "handoff_state": "Office to Codex recorded; Codex to Claude not reached.",
-  "restart_recovery": "New isolated Supervisor ran recoverStale, verified stopped process and matching Git/checkpoint, reclaimed stale Codex lease, returned NO_ELIGIBLE_WORKER; no completed resume.",
-  "test_environment": "/opt/fahad-phase-n-tools-20261002; /opt/fahad-phase-n-drill-20261002; local test DB phase-n-local-20261002; bare origin /opt/fahad-phase-n-tools-20261002/drill-origin.git",
+  "lease_state": "No lease was acquired, frozen or reclaimed in this sprint; the previous drill still reports zero ACTIVE or FROZEN test coding leases.",
+  "handoff_state": "No handoff was attempted in this sprint; no baton moved.",
+  "restart_recovery": "Not re-run with a real worker. The restart, freeze and verified-reclaim guards stay covered by the focused supervisor, lease and e2e suites, all green, but no real worker resume was performed here.",
+  "test_environment": "Freebuff cloud container: Ubuntu 22.04, kernel 6.1.158+, no AppArmor module, unprivileged user namespaces allowed, PostgreSQL 14 server available, codex-cli 0.128.0, Claude Code 2.1.128, Gemini CLI 0.40.1, Cursor Agent 2026.09.10.",
   "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106",
-  "pr_head_at_stop_before_checkpoint": "8c4b871c41266769f51b33941991693c177ef00e",
-  "next_exact_action": "On explicit owner resume, read docs/PHASE-N-CLOUD-DRILL-2026-10-02.md and this checkpoint; inspect current PR head/CI read-only; arrange scoped security-reviewed isolated runner that supports Codex sandbox; then rerun real Codex-to-Claude handoff and restart recovery from preserved test state. Do not weaken production host security.",
+  "pr_head_before_this_sprint": "13c3668d1842f018fcdf4615aa9ae101a1c75c1c",
+  "next_exact_action": "Re-run the Phase N drills only in an environment that has a real executable worker: authenticate a Codex CLI at >=0.150.0 on a sandbox-capable host, or give the Office adapter a Supabase instance plus a model provider, then run the real Office to Codex to third-worker handoff and the restart/resume drill on a disposable branch with commit, lease, checkpoint and CI evidence. Meanwhile ask the owner to close or re-cut PRs #107 and #108. Only after a real drill passes, seek migration application, ordered merges, deploy and flag activation from Fahad.",
   "unresolved_items": [
-    "Full real Office to Codex to Claude chain and three actual worker commits not completed.",
-    "Codex sandbox cannot create user namespace in current VPS test environment.",
-    "Latest PR CI was pending at stop; do not infer success.",
-    "Local Windows checkout diverges from web-published PR history and has mirrored uncommitted adapter/test edits; preserve, do not force-push."
+    "The real three-worker handoff drill and the real restart/resume drill are still not executed, because no registry worker is executable in this environment.",
+    "Codex and Claude Code adapters remain live-uncertified: their subscriptions are unavailable and the installed CLI versions are below the shipped minimums.",
+    "PRs #107 and #108 still target main and duplicate the continuity stack.",
+    "Fahad approval is still required for migration application, ordered merges, deployment and supervisor activation."
   ],
-  "summary_md": "Safe stop. Office completed a real isolated coding commit and handed off to Codex. Codex took ownership but sandbox namespace denial prevented code changes; Claude separately authenticated and edited a disposable file but received no handoff. Recovery reclaimed the stale lease and stopped at NO_ELIGIBLE_WORKER. Production untouched and flag OFF."
+  "summary_md": "Cloud-only closure sprint: the workspace was re-synced to remote head 13c3668 with the stale local edits reconciled, the AppArmor/namespace blocker was proven host-specific rather than a Continuity defect, and sandbox handling was made vendor-neutral and fail-closed with SANDBOX_UNAVAILABLE plus a verifySandbox host probe. The full suite runs 582/582 and a real 32-migration PostgreSQL replay is green. The Phase N real multi-worker and restart drills could not run because no registry worker is executable in this environment, so Codex and Claude stay certified only in code. Verdict: CONTINUITY CORE BLOCKED - blocker: no real executable coding worker is available in this environment."
 }

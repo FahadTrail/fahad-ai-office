@@ -139,3 +139,57 @@ The **real Phase N chain** is missing: no isolated native Office continuity exec
 ## X. FINAL READINESS VERDICT
 
 CONTINUITY NOT READY — blocker: the required real Phase N three-worker handoff and restart drill cannot be executed with the current isolated runtime and executable worker interfaces.
+
+## Y. CLOUD-ONLY CLOSURE SPRINT (2026-10-02) — SUPERSEDES X
+
+Re-run of this package from a Freebuff cloud workspace, starting from PR #106 head `13c3668d1842f018fcdf4615aa9ae101a1c75c1c`. Cloud-only: nothing was read from or written to the owner's laptop, and no production surface was touched.
+
+### Y.1 Sync
+
+GitHub was fetched and the branch head verified as `13c3668d1842f018fcdf4615aa9ae101a1c75c1c`, identical to the PR #106 head. The local branch was fast-forwarded to it; no force push. Three stale uncommitted edits (`.continuity/checkpoint.json`, `docs/CODEX-CONTINUE.md`, `docs/HANDOVER.md`, from the 2026-10-01 readiness run) were compared against the remote, found superseded by the later history, backed up outside the repository and discarded; their unique findings were carried into `docs/HANDOVER.md`.
+
+### Y.2 AppArmor root cause
+
+**Host-specific, not a Continuity defect.** In this container `unshare --user` succeeds, the AppArmor module is not loaded, and `codex sandbox linux -- sh -c 'echo SANDBOX_OK'` completes. The 2026-10-02 VPS `bwrap: No permissions to create a new namespace` failure came from that hardened test container's Ubuntu AppArmor/user-namespace policy. The Continuity core only spawns the worker CLI and never enters a sandbox itself. No host security was relaxed and no sandbox was bypassed.
+
+### Y.3 Portable isolation change (smallest safe fix)
+
+* `src/continuity/errors.js`: vendor-neutral `sandboxDenial()` plus the new `SANDBOX_UNAVAILABLE` code, used by the shared driver classifier so every external worker's isolation failure is recognised, not only Codex's wording.
+* `src/continuity/adapters/codex.js`: uses that detector instead of one literal `bwrap:` regex, and pre-flights the host sandbox (`codex sandbox linux -- true`) so a host that cannot run the workspace-write sandbox reports the worker unavailable before a turn is spent.
+* `src/continuity/adapters/external-cli.js`: `verifySandbox()` for every external worker, reported as `SANDBOX_UNAVAILABLE` with `HOST_CAPABILITY_REQUIRED`, and mapped to its own error code instead of `AUTH_REQUIRED`.
+
+All three changes are additive and fail closed. Coverage lives in `test/continuity-adapters.test.js`.
+
+### Y.4 Real workers in this environment: none
+
+| Registry worker | Why it cannot execute here |
+|---|---|
+| Fahad Office Coding Agent | No `freebuff-env` files, so no Supabase URL/service credential and no model-provider key |
+| OpenAI Codex | `codex-cli 0.128.0` < required `>=0.150.0`; `codex login status` = Not logged in; a flag-free `codex exec --json` reaches OpenAI and fails `401 Unauthorized` |
+| Claude Code | `2.1.128` < required `>=2.1.268`; print-mode probe reports Not logged in; subscription-only auth by design |
+| Google Antigravity | `OFFICIAL_HEADLESS_INTERFACE_NOT_CONFIGURED` |
+| OpenCode | `ZEN_MODEL_NOT_VERIFIED_FREE` and the other owner gates |
+| Kilo Code | `SUPPORTED_HEADLESS_MODE_NOT_CONFIGURED` |
+| Freebuff | `OWNER_DISABLED`; no Freebuff CLI, MCP server or HTTP endpoint exists in this sandbox |
+
+Gemini CLI 0.40.1 and Cursor Agent 2026.09.10 are also installed and also unauthenticated; neither is a registry worker. Freebuff therefore exposes no callable worker interface, and that is reported rather than worked around.
+
+### Y.5 Drills
+
+**Phase 5 (multi-worker handoff) and Phase 6 (restart/recovery) were not run:** zero executable registry workers. No scripted stand-in was presented as real-worker evidence, and no mock was promoted to a certification claim. Section C, section E, section F and section G of this package therefore keep their previous status.
+
+### Y.6 What was validated for real
+
+* Full `node --test`: **582 passed, 0 failed, 0 skipped** after `npm ci`.
+* Focused continuity suite (adapters, supervisor, lease, e2e, store, schema, worktree, checkpoint, checkpointer, select, gates, packet, mje, usage, UI, office adapter, code-intelligence): **68 passed, 0 failed**.
+* `test/docs-references.test.js` and `test/hermes-separation.test.js` green.
+* `npm run db:replay`: all 32 migrations replayed and the `coding_continuity` scenario green on a real local PostgreSQL 14. The generated fingerprint content equals `supabase/verify/schema-fingerprint.txt` line for line after sorting; raw line order differs only because this sandbox's collation differs, so the committed fingerprint file was deliberately not regenerated.
+* PR state read-only on 2026-10-02: #102 `53d2479`, #104 `36a5c87`, #105 `1cdc883`, #106 `13c3668` all OPEN and `MERGEABLE` on the correct stacked bases, `validate` passing; #107 and #108 still OPEN against `main` and duplicating the stack.
+
+### Y.7 Verdict
+
+**CONTINUITY CORE BLOCKED — blocker: no real executable coding worker is available in this environment.**
+
+This is narrower than a design failure: the core's schema, leases, checkpoints, supervisor, freeze/reclaim guards, one-writer rules, privacy and quota selection, completion gates and UI are green and unchanged. The missing piece is a worker that can actually execute. Codex and Claude Code remain `IMPLEMENTED / TESTED IN CODE / LIVE CERTIFICATION DEFERRED` and stay disabled in production; neither is claimed as certified.
+
+The exact next action is in `.continuity/checkpoint.json` → `next_exact_action` and at the top of `docs/CODEX-CONTINUE.md`.
