@@ -1,7 +1,131 @@
-import { createDisabledAdapter } from './disabled.js';
-export function createOpenCodeAdapter({ zenFree = false, promotionActive = false, legitimateAccess = false, dataClassAllowed = false, autoReload = true } = {}) {
-  const ready = zenFree && promotionActive && legitimateAccess && dataClassAllowed && !autoReload;
-  const reason = autoReload ? 'AUTO_RELOAD_MUST_BE_OFF' : !zenFree ? 'ZEN_MODEL_NOT_VERIFIED_FREE' : !promotionActive ? 'ZEN_PROMOTION_INACTIVE' : !legitimateAccess ? 'ZEN_ACCESS_NOT_VERIFIED' : !dataClassAllowed ? 'ZEN_PRIVACY_NOT_ALLOWED' : 'NOT_CONFIGURED';
-  return createDisabledAdapter({ key: 'opencode', kind: 'cli', quotaSource: 'opencode', reason: ready ? 'CLI_NOT_INSTALLED' : reason, privacyClasses: ['PUBLIC'], ownerAction: 'Verify CLI login, a legitimately free model, data policy, and disabled auto-reload before implementation is enabled.' });
+// Official OpenCode CLI: `run --format json`, `auth list`, `--session` resume.
+//
+// Everything this adapter relies on was taken from the official CLI reference
+// (https://opencode.ai/docs/cli/) and the published `run` command source, not
+// from guessed flags:
+//   * `opencode run [message..]` is the non-interactive entry point; the
+//     interactive TUI only starts under `--mini`, so `run` is always headless.
+//   * The prompt is read from piped stdin when no message argument is given
+//     (`Bun.stdin.text()` → `resolveRunInput`), which is how the shared driver
+//     hands over the continuation packet.
+//   * `--format json` writes newline-delimited JSON objects of the shape
+//     `{ type, timestamp, sessionID, ... }`; `sessionID` is on every line, so
+//     the resume id is provider-issued, not invented.
+//   * Without `--auto`, non-interactive runs auto-reject every permission, so
+//     `--auto` is required for a worker that must actually edit files.
+//   * `auth list` prints "N credentials" and optionally "N environment
+//     variables"; there is no JSON mode, so readiness parses those counts.
+//   * `--session <id>` exits 1 when the session does not exist: a stale
+//     resume id fails closed instead of forking the wrong conversation.
+// Every required flag is re-checked at runtime by `verifyFeatures`, so a CLI
+// that drops one fails closed as UNSUPPORTED_VERSION.
+//
+// The Zen free-model safety gates are unchanged and are still evaluated
+// before any subprocess runs: this adapter is OFF by default and only the
+// owner can satisfy them.
+import { ExternalCliAdapter } from './external-cli.js';
+
+const minimumVersion = { major: 1, minor: 18, patch: 0 };
+
+// OpenCode reads provider credentials from its own credentials file under
+// HOME or from provider environment variables. Names only — no value is ever
+// read, logged or returned here.
+const OPENCODE_ENV_KEYS = Object.freeze([
+  'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_SERVER_USERNAME',
+  'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'GEMINI_API_KEY',
+  'GOOGLE_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY',
+]);
+
+export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
+  constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs, platform = process.platform,
+    zenFree = false, promotionActive = false, legitimateAccess = false, dataClassAllowed = false, autoReload = true } = {}) {
+    super({
+      key: 'opencode', binary: 'opencode', driver, inspectCheckpoint, enabled, timeoutMs, platform,
+      minimumVersion, maximumMajor: 2, envKeys: [...OPENCODE_ENV_KEYS],
+    });
+    this.gates = { zenFree, promotionActive, legitimateAccess, dataClassAllowed, autoReload };
+  }
+
+  capabilities() {
+    return {
+      executionMode: 'EXECUTABLE', headless: true, resume: true, checkpoint: true,
+      structuredOutput: true, usageReporting: 'when-emitted', worktrees: true,
+      worktreeManagement: 'supervisor',
+      authRequirement: 'Verified OpenCode provider credentials',
+      maxContext: null, privacyClasses: ['PUBLIC'],
+      taskSizes: ['small', 'medium', 'large', 'refactor'], taskTypes: ['coding'],
+      quality: 4, taskFit: { small: 4, medium: 4, large: 4, refactor: 4 }, speed: 3,
+      // Never claim a free or included cost class before the owner verifies
+      // the model source; UNKNOWN keeps the worker out of free-capacity math.
+      costClass: 'unknown', quotaSource: 'opencode',
+      supportedVersion: '>=1.18.0 <2.0.0, required flags verified at runtime',
+      ownerAction: 'Verify a legitimately free model source, disabled auto-reload and the data-class policy, then set CONTINUITY_OPENCODE_ENABLED.',
+    };
+  }
+
+  // The owner-verification gates are evaluated before the enabled flag and
+  // before any subprocess, so their reason is reported verbatim.
+  gateReason() {
+    const { autoReload, zenFree, promotionActive, legitimateAccess, dataClassAllowed } = this.gates;
+    if (autoReload) return 'AUTO_RELOAD_MUST_BE_OFF';
+    if (!zenFree) return 'ZEN_MODEL_NOT_VERIFIED_FREE';
+    if (!promotionActive) return 'ZEN_PROMOTION_INACTIVE';
+    if (!legitimateAccess) return 'ZEN_ACCESS_NOT_VERIFIED';
+    if (!dataClassAllowed) return 'ZEN_PRIVACY_NOT_ALLOWED';
+    return null;
+  }
+
+  async probe() {
+    const gate = this.gateReason();
+    if (gate) return { ok: false, authState: 'OWNER_ACTION_REQUIRED', reason: gate };
+    return super.probe();
+  }
+
+  async verifyFeatures() {
+    const help = await this.driver.inspect('opencode', ['run', '--help'], { extraEnvKeys: this.envKeys });
+    return {
+      ok: help.ok && ['--format', '--session', '--continue', '--dir', '--auto']
+        .every((flag) => help.stdout.includes(flag)),
+    };
+  }
+
+  async verifyAuth() {
+    const list = await this.driver.inspect('opencode', ['auth', 'list'], { extraEnvKeys: this.envKeys, timeoutMs: 20_000 });
+    if (!list.ok) return { ok: false, reason: 'AUTH_REQUIRED' };
+    const text = String(list.stdout || '');
+    const credentials = Number(/(\d+)\s+credentials/.exec(text)?.[1] || 0);
+    const environment = Number(/(\d+)\s+environment variable/.exec(text)?.[1] || 0);
+    return { ok: credentials > 0 || environment > 0, reason: 'AUTH_REQUIRED' };
+  }
+
+  command({ worktree, resumeId }) {
+    // The prompt is delivered on stdin (verified in the official source); the
+    // supervisor-owned worktree is passed explicitly as well as used as cwd.
+    return ['run', '--format', 'json', '--auto', '--dir', worktree, ...(resumeId ? ['--session', resumeId] : [])];
+  }
+
+  consumeEvent(event, state) {
+    state.lastEvent = event;
+    if (event.sessionID) state.id ||= event.sessionID;
+    // OpenCode emits `error` from its failure paths only; treating it as a
+    // provider failure keeps a failed turn from being reported as success.
+    if (event.type === 'error') state.providerFailure = event;
+    // There is no terminal "result" event in the published run command, so a
+    // completed text part or step is the completion signal. A run that exits
+    // without either is still rejected by the driver as WORKER_OUTPUT_INVALID.
+    if (event.type === 'text' || event.type === 'step_finish') state.resultSeen = true;
+    const tokens = event.part?.tokens || event.tokens || event.usage;
+    if (tokens) {
+      const input = Number(tokens.input ?? tokens.input_tokens);
+      const output = Number(tokens.output ?? tokens.output_tokens);
+      const total = Number(tokens.total ?? tokens.total_tokens
+        ?? (Number.isFinite(input) && Number.isFinite(output) ? input + output : Number.NaN));
+      if (Number.isFinite(total)) state.usage = { total_tokens: total, input_tokens: input, output_tokens: output };
+    }
+  }
+}
+
+export function createOpenCodeAdapter(options = {}) {
+  return new OpenCodeContinuityAdapter(options);
 }
 export const openCodeAdapter = createOpenCodeAdapter();

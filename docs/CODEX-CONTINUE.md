@@ -1,4 +1,26 @@
-## CLOUD-ONLY CLOSURE — EXACT RESUME POINT (2026-10-02; supersedes every older instruction, including the safe stop below)
+## ALTERNATIVE WORKERS + VPS PHASE N — EXACT RESUME POINT (2026-10-02; supersedes every section below)
+
+Read `AGENTS.md`, the top of `docs/HANDOVER.md`, **`docs/CONTINUITY-VPS-WORKERS.md`** (the new runbook) and `.continuity/checkpoint.json` first. The sections below are history, not current work orders; their evidence and preserved VPS assets remain valid.
+
+**What this sprint did (development + preparation only, production untouched):**
+
+* Verified the current official interfaces and built the alternative chain **FAHAD OFFICE → OPENCODE → GEMINI CLI**: upgraded `src/continuity/adapters/opencode.js` into a real executable adapter and created `src/continuity/adapters/gemini-cli.js`, both OFF by default behind `CONTINUITY_OPENCODE_ENABLED` (+ five owner gate assertions) and `CONTINUITY_GEMINI_CLI_ENABLED`, both wired once through `externalAdaptersFromEnv` in `src/continuity/runtime.js` shared with production, both shown in the Hub's `PREPARED_ADAPTERS`.
+* Formalised the eight-category failure taxonomy (`FAILURE_TAXONOMY` / `failureCategory()` in `src/continuity/errors.js`) without renaming any runtime code; the shared external driver is reused unchanged — no duplicate worker infrastructure.
+* Grew the registry truthfully: new data-only migration `supabase/migrations/20261005090000_continuity_gemini_worker.sql` adds the disabled `gemini-cli` row (eight workers; scenario updated; fingerprint content unchanged; Phase A migration untouched).
+* Shipped `ops/setup-continuity-workers.sh` (`--check` verify-only, `--install` official npm packages, never touches credentials/flags/containers), `docs/CONTINUITY-VPS-WORKERS.md` (install, both official auth flows, flags, taxonomy, drill, rollback, truthful certification table) and `tools/continuity-phase-n-live.mjs` (`--check` / `--run` / `--selftest`): disposable branch and worktrees, isolated persisted store, real chain evidence (lease/session/checkpoint IDs, commit SHAs, stop-before-transfer ordering, one-writer replay, exact-commit resume) and the fail-closed restart sequence (real SIGKILL → OS-verified death proof → refused first recovery → sealed proof → reclaim → resume → completion).
+* Targeted tests only, all green: syntax sweep, focused continuity **75/75**, docs path-reference and Hermes separation suites, `npm run db:replay` **33 migrations** plus every scenario, drill `--selftest`; drill `--check` refuses this unauthenticated environment with 11 exact blockers (by design).
+
+**What was NOT done:** no authenticated model turn, no live worker run, no real handoff or restart drill (the `--run` path has never executed with credentials), no merge, no deploy, no migration application, no production flag change, no Hermes access, no force push. Codex and Claude Code remain `IMPLEMENTED / CERTIFICATION DEFERRED`.
+
+**Exact resume point for the next agent:**
+
+1. Read the four files named above; do not redo the interface verification, adapters, registry migration, script or runbook.
+2. On the VPS run `bash ops/setup-continuity-workers.sh --check`, then `--install`, then authenticate per `docs/CONTINUITY-VPS-WORKERS.md` (OpenCode official login or provider key by name; Gemini `GEMINI_API_KEY` or the official browser URL/code flow) and assert the drill-shell flags.
+3. Run `node tools/continuity-phase-n-live.mjs --check`, then `--run`, and review `.continuity/phase-n-drill/report.json` — a PASS verdict requires every listed evidence item; any gap fails with an exact blocker.
+4. Keep #102 → #104 → #105 → #106 open and stacked; ask the owner to close or re-cut #107 and #108.
+5. Nothing activates without Fahad: migration application, ordered merges, deploy and `CONTINUITY_SUPERVISOR` / worker-flag activation stay OFF until explicit approval after a PASS report.
+
+## CLOUD-ONLY CLOSURE — EXACT RESUME POINT (2026-10-02; historical — superseded by the section above)
 
 Read `AGENTS.md`, the top of `docs/HANDOVER.md`, `docs/CONTINUITY-PHASE-N-READINESS.md` and `.continuity/checkpoint.json` first. The safe-stop, Graphify and development-only sections below are history, not current work orders. Their evidence and the preserved VPS assets remain valid and untouched.
 

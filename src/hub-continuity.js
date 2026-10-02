@@ -2,11 +2,15 @@ import { ContinuityStore } from './continuity/store.js';
 import { sanitizeContinuityValue } from './continuity/safe.js';
 import { CodexContinuityAdapter } from './continuity/adapters/codex.js';
 import { ClaudeCodeContinuityAdapter } from './continuity/adapters/claude-code.js';
+import { OpenCodeContinuityAdapter } from './continuity/adapters/opencode.js';
+import { GeminiCliContinuityAdapter } from './continuity/adapters/gemini-cli.js';
 
 const ACTIONS = new Set(['START_SESSION', 'PAUSE_SESSION', 'RESUME_SESSION', 'FORCE_CHECKPOINT', 'REQUEST_HANDOFF', 'COMPLETE_SESSION', 'ABORT_SESSION', 'DISABLE_WORKER', 'ENABLE_WORKER']);
 const PREPARED_ADAPTERS = new Map([
   ['codex', new CodexContinuityAdapter()],
   ['claude-code', new ClaudeCodeContinuityAdapter()],
+  ['opencode', new OpenCodeContinuityAdapter()],
+  ['gemini-cli', new GeminiCliContinuityAdapter()],
 ]);
 
 function publicState(state, { readiness = new Map(), adapters = new Map() } = {}) {

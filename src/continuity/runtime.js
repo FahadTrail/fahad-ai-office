@@ -7,7 +7,8 @@ import { OfficeContinuityAdapter } from './adapters/office.js';
 import { CodexContinuityAdapter } from './adapters/codex.js';
 import { ClaudeCodeContinuityAdapter } from './adapters/claude-code.js';
 import { antigravityAdapter } from './adapters/antigravity.js';
-import { openCodeAdapter } from './adapters/opencode.js';
+import { OpenCodeContinuityAdapter } from './adapters/opencode.js';
+import { GeminiCliContinuityAdapter } from './adapters/gemini-cli.js';
 import { kiloAdapter } from './adapters/kilo.js';
 import { freebuffAdapter } from './adapters/freebuff.js';
 import { runCompletionGates } from './gates.js';
@@ -15,6 +16,26 @@ import { WorktreeManager } from './worktree.js';
 
 const runFile = promisify(execFile);
 const enabled = (value) => /^(1|true|yes)$/i.test(String(value || ''));
+
+// The two external VPS workers, wired from the environment exactly once.
+// Shared by the production runtime (createContinuityRuntime) and the live
+// Phase N drill (tools/continuity-phase-n-live.mjs) so the drill cannot drift
+// from production wiring. Every OpenCode gate is an explicit owner assertion:
+// unset means unverified, so the adapter reports the gate reason before any
+// subprocess. Both workers are OFF unless their own flag is set.
+export function externalAdaptersFromEnv({ env = process.env, inspectCheckpoint = undefined } = {}) {
+  const opencode = new OpenCodeContinuityAdapter({
+    enabled: enabled(env.CONTINUITY_OPENCODE_ENABLED), inspectCheckpoint,
+    autoReload: !enabled(env.CONTINUITY_OPENCODE_AUTO_RELOAD_OFF),
+    zenFree: enabled(env.CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED),
+    promotionActive: enabled(env.CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE),
+    legitimateAccess: enabled(env.CONTINUITY_OPENCODE_ACCESS_VERIFIED),
+    dataClassAllowed: enabled(env.CONTINUITY_OPENCODE_PRIVACY_VERIFIED),
+  });
+  const gemini = new GeminiCliContinuityAdapter({ enabled: enabled(env.CONTINUITY_GEMINI_CLI_ENABLED), inspectCheckpoint });
+  return { opencode, gemini };
+}
+
 async function runTestCommand(worktree, command) {
   if (command !== 'node --test') return { ok: false, detail: 'command not allowlisted' };
   try { await runFile(process.execPath, ['--test'], { cwd: worktree, windowsHide: true, timeout: 30 * 60_000, maxBuffer: 8 * 1024 * 1024 }); return { ok: true }; }
@@ -38,7 +59,8 @@ export function createContinuityRuntime({ db, env = process.env, log = () => {} 
   };
   const codex = new CodexContinuityAdapter({ enabled: enabled(env.CONTINUITY_CODEX_ENABLED), inspectCheckpoint });
   const claude = new ClaudeCodeContinuityAdapter({ enabled: enabled(env.CONTINUITY_CLAUDE_ENABLED), inspectCheckpoint });
-  const adapters = [new OfficeContinuityAdapter({ db }), claude, codex, antigravityAdapter, openCodeAdapter, kiloAdapter, freebuffAdapter];
+  const { opencode, gemini } = externalAdaptersFromEnv({ env, inspectCheckpoint });
+  const adapters = [new OfficeContinuityAdapter({ db }), claude, codex, antigravityAdapter, opencode, kiloAdapter, freebuffAdapter, gemini];
   return new ContinuitySupervisor({
     store,
     adapters,

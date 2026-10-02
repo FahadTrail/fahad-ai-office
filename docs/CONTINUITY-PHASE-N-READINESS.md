@@ -1,5 +1,20 @@
 # Coding Continuity Supervisor — Phase N readiness and activation package
 
+> **2026-10-02 update — alternative-worker preparation.** Sections C and D
+> below are superseded by `docs/CONTINUITY-VPS-WORKERS.md`: the target chain
+> is now **FAHAD OFFICE → OPENCODE → GEMINI CLI** instead of waiting for
+> Codex/Claude subscription resets. Both external adapters are real,
+> implemented, OFF by default, and built only against verified official CLI
+> interfaces; the registry grows to eight workers via a data-only migration
+> (fingerprint unchanged); `ops/setup-continuity-workers.sh` and
+> `tools/continuity-phase-n-live.mjs --check/--run` prepare and execute the
+> isolated live drill with fail-closed termination proof. **Still NOT run
+> anywhere: the real authenticated handoff and restart drills** — they need
+> the VPS authentication steps, and production stays untouched (no merge, no
+> deployment, no migration, all flags OFF). The drill's evidence list and the
+> truthful worker status table live in the new runbook; this document's
+> original pre-activation analysis remains below as written on 2026-10-01.
+
 Prepared 2026-10-01 from the open PR stack #102 → #104 → #105 → #106. This is a **pre-activation package**, not authorization to change production. None of the PRs is merged; the migration is unapplied; no deployment or production flag change has been made. PR #106 code head `3759ff9621fc2f20f09d7bae8dc7ce28249400fa` passed its Linux validation; this documentation-only follow-up must also pass CI before its head is used as final evidence.
 
 ## A. AXE RESULT

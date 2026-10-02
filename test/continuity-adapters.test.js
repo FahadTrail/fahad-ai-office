@@ -6,6 +6,7 @@ import { ClaudeCodeContinuityAdapter, claudeCodeAdapter } from '../src/continuit
 import { ExternalWorkerDriver } from '../src/continuity/external-driver.js';
 import { antigravityAdapter } from '../src/continuity/adapters/antigravity.js';
 import { createOpenCodeAdapter } from '../src/continuity/adapters/opencode.js';
+import { GeminiCliContinuityAdapter, createGeminiCliAdapter, geminiCliAdapter } from '../src/continuity/adapters/gemini-cli.js';
 import { createKiloAdapter } from '../src/continuity/adapters/kilo.js';
 import { createFreebuffAdapter } from '../src/continuity/adapters/freebuff.js';
 
@@ -33,11 +34,12 @@ function readyDriver() {
 
 test('adapter contract covers the permanent external worker stack without pretending readiness', async () => {
   const codex = new CodexContinuityAdapter({ enabled: false });
-  const adapters = [codex, claudeCodeAdapter, antigravityAdapter, createOpenCodeAdapter(), createKiloAdapter(), createFreebuffAdapter()];
+  const adapters = [codex, claudeCodeAdapter, antigravityAdapter, createOpenCodeAdapter(), createGeminiCliAdapter(), createKiloAdapter(), createFreebuffAdapter()];
   for (const adapter of adapters) assert.equal(assertAdapterContract(adapter), adapter);
   for (const adapter of adapters) assert.equal((await adapter.available()).ok, false);
   assert.equal(antigravityAdapter.capabilities().quotaSource, 'google-ai-pro');
   assert.equal(createKiloAdapter({ chatGptLogin: true }).capabilities().quotaSource, 'openai-chatgpt');
+  assert.equal(geminiCliAdapter.capabilities().quotaSource, 'gemini-cli');
 });
 test('Codex adapter uses the verified non-interactive JSON invocation and reports emitted usage only', async () => {
   const driver = readyDriver();
@@ -166,4 +168,90 @@ test('workers without an OS sandbox keep the safe availability default', async (
 test('Codex typed usage limit is classified as quota exhaustion', async () => {
   const { classifyCliFailure } = await import('../src/continuity/errors.js');
   assert.equal(classifyCliFailure({ event: { error: { codex_error_info: 'usage_limit_exceeded' } }, exitCode: 1 }), 'QUOTA_EXHAUSTED');
+});
+
+test('Gemini CLI adapter uses only the verified official headless flags and never a stale resume', () => {
+  const adapter = new GeminiCliContinuityAdapter();
+  const args = adapter.command({ worktree: '/tmp/work' });
+  assert.deepEqual(args, ['--output-format', 'stream-json', '--approval-mode', 'yolo', '--skip-trust']);
+  assert.ok(!args.includes('--resume'), 'a resume index could resume a different session');
+  const caps = adapter.capabilities();
+  assert.equal(caps.resume, false, 'recovery starts a fresh session from the continuation packet');
+  assert.equal(caps.executionMode, 'EXECUTABLE');
+  assert.equal(caps.quotaSource, 'gemini-cli');
+  assert.equal(caps.costClass, 'unknown', 'no free cost class before live verification');
+  assert.deepEqual(caps.privacyClasses, ['PUBLIC'], 'privacy stays conservative until verified');
+  assert.equal(caps.worktreeManagement, 'supervisor');
+});
+
+test('Gemini CLI feature verification fails closed when a required official flag disappears', async () => {
+  const probeWith = async (helpText) => {
+    const driver = { inspect: async () => ({ ok: true, stdout: helpText }) };
+    const adapter = new GeminiCliContinuityAdapter({ driver, enabled: true });
+    return adapter.verifyFeatures();
+  };
+  assert.equal((await probeWith('... -o, --output-format [choices: "text","json","stream-json"] --approval-mode [choices: "default","auto_edit","yolo","plan"] --skip-trust')).ok, true);
+  assert.equal((await probeWith('--output-format stream-json --approval-mode yolo')).ok, false, 'missing --skip-trust fails closed');
+});
+
+test('Gemini CLI auth readiness checks credential presence only and fails closed without it', async () => {
+  const adapterWith = (env) => new GeminiCliContinuityAdapter({
+    driver: { environment: () => env, inspect: async () => ({ ok: true, stdout: '' }) }, enabled: true,
+  });
+  // Presence only: the readiness answer never depends on or exposes a value.
+  assert.equal((await adapterWith({ GEMINI_API_KEY: 'presence-only' }).verifyAuth()).ok, true);
+  assert.equal((await adapterWith({ HOME: '/nonexistent-phase-n-home' }).verifyAuth()).ok, false);
+  const noDriverEnv = new GeminiCliContinuityAdapter({ driver: { inspect: async () => ({ ok: true, stdout: '' }) }, enabled: true });
+  assert.equal((await noDriverEnv.verifyAuth()).ok, false);
+});
+
+test('Gemini CLI structured output parsing: session id, terminal result, usage and severity-aware errors', () => {
+  const adapter = new GeminiCliContinuityAdapter();
+  const state = {};
+  adapter.consumeEvent({ type: 'init', session_id: 'g-123', model: 'gemini' }, state);
+  assert.equal(state.id, 'g-123');
+  adapter.consumeEvent({ type: 'error', severity: 'warning', message: 'non-fatal notice' }, state);
+  assert.equal(state.providerFailure, undefined, 'a warning severity must not fail a successful turn');
+  adapter.consumeEvent({ type: 'result', status: 'success', stats: { total_tokens: 90, input_tokens: 60, output_tokens: 30 } }, state);
+  assert.equal(state.resultSeen, true);
+  assert.deepEqual(state.usage, { total_tokens: 90, input_tokens: 60, output_tokens: 30 });
+  assert.equal(state.providerFailure, undefined);
+  const failed = {};
+  adapter.consumeEvent({ type: 'error', severity: 'error', message: 'model unavailable' }, failed);
+  assert.equal(failed.providerFailure.severity, 'error');
+  const terminal = {};
+  adapter.consumeEvent({ type: 'result', status: 'error', error: { type: 'Error', message: 'api failure' } }, terminal);
+  assert.equal(terminal.resultSeen, true, 'a terminal result is seen even when it reports failure');
+  assert.equal(terminal.providerFailure.status, 'error');
+});
+
+test('the observed unauthenticated Gemini CLI exit is classified as AUTH_REQUIRED', async () => {
+  const { classifyCliFailure } = await import('../src/continuity/errors.js');
+  // Observed on the official 0.40.1 CLI: plain stderr, no JSON event, exit 41.
+  assert.equal(classifyCliFailure({ stderr: 'Please set an Auth method in your settings or specify GEMINI_API_KEY', exitCode: 41 }), 'AUTH_REQUIRED');
+});
+
+test('the Phase-N failure taxonomy distinguishes all eight categories from what the runtime reports', async () => {
+  const { CONTINUITY_ERROR_CODES, FAILURE_TAXONOMY, failureCategory } = await import('../src/continuity/errors.js');
+  assert.deepEqual(Object.keys(FAILURE_TAXONOMY), [
+    'AUTH_REQUIRED', 'UNSUPPORTED_VERSION', 'SANDBOX_UNAVAILABLE', 'HOST_CAPABILITY_REQUIRED',
+    'RATE_LIMITED', 'PROCESS_FAILED', 'STOP_UNCONFIRMED', 'WORKTREE_UNSAFE',
+  ]);
+  assert.equal(failureCategory({ code: 'AUTH_REQUIRED' }), 'AUTH_REQUIRED');
+  assert.equal(failureCategory({ code: 'UNSUPPORTED_VERSION' }), 'UNSUPPORTED_VERSION');
+  assert.equal(failureCategory({ code: 'SANDBOX_UNAVAILABLE' }), 'SANDBOX_UNAVAILABLE', 'run-time isolation failure');
+  assert.equal(failureCategory({ code: 'SANDBOX_UNAVAILABLE', authState: 'HOST_CAPABILITY_REQUIRED' }), 'HOST_CAPABILITY_REQUIRED', 'readiness wins when both are present');
+  assert.equal(failureCategory({ authState: 'HOST_CAPABILITY_REQUIRED' }), 'HOST_CAPABILITY_REQUIRED');
+  assert.equal(failureCategory({ code: 'RATE_LIMITED' }), 'RATE_LIMITED');
+  assert.equal(failureCategory({ code: 'WORKER_CRASHED' }), 'PROCESS_FAILED');
+  assert.equal(failureCategory({ code: 'WORKER_TIMEOUT' }), 'PROCESS_FAILED');
+  assert.equal(failureCategory({ code: 'WORKER_OUTPUT_INVALID' }), 'PROCESS_FAILED');
+  assert.equal(failureCategory({ code: 'WORKER_STOP_UNCONFIRMED' }), 'STOP_UNCONFIRMED');
+  assert.equal(failureCategory({ code: 'WORKTREE_UNSAFE' }), 'WORKTREE_UNSAFE');
+  assert.equal(failureCategory({ code: 'QUOTA_EXHAUSTED' }), null, 'already-unambiguous codes stay outside the taxonomy');
+  assert.equal(failureCategory({}), null);
+  // Every taxonomy representation must be a real runtime value.
+  for (const entry of Object.values(FAILURE_TAXONOMY)) {
+    for (const code of entry.codes || []) assert.ok(CONTINUITY_ERROR_CODES.includes(code), code);
+  }
 });
