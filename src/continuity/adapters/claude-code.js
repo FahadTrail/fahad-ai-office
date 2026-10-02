@@ -8,7 +8,7 @@ export class ClaudeCodeContinuityAdapter extends ExternalCliAdapter {
   constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs } = {}) {
     super({ key: 'claude-code', binary: 'claude', driver, inspectCheckpoint, enabled, timeoutMs,
       minimumVersion: { major: 2, minor: 1, patch: 268 }, maximumMajor: 3,
-      envKeys: ['CLAUDE_CODE_OAUTH_TOKEN'] });
+      envKeys: ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN'] });
   }
 
   capabilities() {
