@@ -1,10 +1,16 @@
 # Codex: continue the Coding Continuity Supervisor
 
+## Current handoff: optional Graphify pilot (2026-10-02)
+
+Fahad authorized a final **development-only** Graphify pilot on the existing open #106 branch. Read `docs/GRAPHIFY.md` and the top of `docs/HANDOVER.md`. Official `graphifyy[sql]==0.9.73` was installed only in an ignored local virtual environment. The code-only graph and HTML/report are generated locally and ignored; no docs/media semantic model processing is enabled. The wrapper can build, update and query it, while `src/continuity/code-intelligence.js` provides bounded optional navigation hints. Coding Agent usage requires `CODING_GRAPHIFY_ENABLED=true` and a prebuilt graph in its own checkout; absence/failure falls back silently. No Supervisor control path depends on Graphify. Benchmark instrumentation is ready, but no savings are claimed.
+
+The #106 starting remote head for the pilot was `bcd572f520f0f900bd99a9c065ea4cc852d38c2c`, so the local-only/push-authentication statements in the section below are historical. Do not run the final Continuity test phase, real drill, migration, merge, deploy or activation without a new user instruction. Static syntax and targeted Graphify commands are the only verification in this sprint.
+
 ## Current handoff: development complete, testing intentionally deferred (2026-10-02)
 
 Fahad's latest instruction was development only; do not continue the Phase N/readiness work in the historical sections below. The existing #106 branch now contains implementation commit `8ea3f5a512c0b45ce876939fba812dc099a328c6`: Office, Codex and Claude Code have executable adapter code; the latter two require explicit enable flags, an installed supported CLI, a verified login, and the owner enabling their registry entries. No claim of a successful real invocation is made. The shared CLI driver, safe stop, same-worker CLI resume metadata, branch/worktree transfer, recovery guards, owner API controls, nested UI and event/error model are implemented. Read the new top of `docs/HANDOVER.md` and `.continuity/checkpoint.json` for exact state.
 
-No full tests, DB replay, browser/accessibility/mobile tests or real worker drill were run after this implementation. Existing `test/continuity-adapters.test.js` still describes the old Codex constructor and deprecated flag; update it in the **next testing phase** before executing it. Until then the only source checks this sprint are `node --check` and `git diff --check`. The implementation and docs commits are local only because GitHub write authentication was unavailable; #106's remote head is still `497f901a6f11e46f20ddfcf047f4d18ac215e65e`. Keep this checkout and push its branch once authorized. Keep #102/#104/#105/#106 open; no migration, merge, deploy or flag activation. Do not begin testing automatically: wait for Fahad's next direction.
+No full tests, DB replay, browser/accessibility/mobile tests or real worker drill were run after this implementation. Existing `test/continuity-adapters.test.js` still describes the old Codex constructor and deprecated flag; update it in the **next testing phase** before executing it. The earlier implementation and docs commits were subsequently pushed to #106; the old authentication blocker is resolved. Keep #102/#104/#105/#106 open; no migration, merge, deploy or flag activation. Do not begin testing automatically: wait for Fahad's next direction.
 
 ## Phase N readiness update (2026-10-01; historical, pre-development)
 

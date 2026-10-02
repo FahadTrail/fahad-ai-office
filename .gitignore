@@ -24,6 +24,8 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+.graphify-venv/
+graphify-out/
 
 # OS and editor noise
 .DS_Store

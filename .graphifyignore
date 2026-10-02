@@ -1,0 +1,37 @@
+# Code-only pilot: allow reviewed source, SQL migrations, and tests.
+# Graphify also honors .gitignore. Never use --no-gitignore here.
+*
+!src/
+!src/**
+!supabase/
+!supabase/migrations/
+!supabase/migrations/**
+!test/
+!test/**
+
+# Sensitive and generated paths stay excluded even below allowed roots.
+**/.env*
+**/*secret*
+**/*credential*
+**/*private*key*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/node_modules/
+**/dist/
+**/build/
+**/coverage/
+**/logs/
+**/cache/
+**/.cache/
+**/.git/
+**/graphify-out/
+**/.graphify-venv/
+**/tmp/
+**/temp/
+**/worktrees/
+**/backups/
+**/*hermes*/
+**/*hermes*
+**/*.generated.*

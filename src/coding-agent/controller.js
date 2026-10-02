@@ -21,6 +21,7 @@ import { PROTECTED_CHANGE_TOOL } from '../agent-state/session-store.js';
 import { ReadTracker, compactTestOutput, elideOldToolResults } from './context-budget.js';
 import { taskSize, turnBudgetAction } from './turn-budget.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
+import { createCodeIntelligence } from '../continuity/code-intelligence.js';
 
 export const DEFAULT_LIMITS = Object.freeze({
   maxIterations: 120,
@@ -216,6 +217,19 @@ class SessionRun {
     await this.loadGrants();
     this.testCommand = this.config.testCommand ?? await detectTestCommand(this.sandbox);
     await this.refreshGitState();
+    // Local opt-in navigation hint only. No graph, CLI or query failure may
+    // delay a coding session; the agent still verifies each suggested file.
+    if (this.c.env.CODING_GRAPHIFY_ENABLED === 'true' && this.transcript.messages.length === 1
+      && !findSecretMaterial(this.session.objective || '', this.c.env)) {
+      try {
+        const intelligence = createCodeIntelligence({ root: this.sandbox.repoDir, enabled: true,
+          binary: this.c.env.CODING_GRAPHIFY_BIN || 'graphify' });
+        const context = await intelligence.getContextForTask({ objective: this.session.objective });
+        if (context.available && context.files.length) {
+          this.transcript.messages.push(userText(`OPTIONAL LOCAL CODE MAP (navigation only; verify source before changing code):\n${context.files.map((file) => `- ${file}`).join('\n')}`));
+        }
+      } catch { /* Existing repository exploration remains the fallback. */ }
+    }
     await this.event('session', `Sandbox ready on ${workBranch} (${existed ? 'existing worktree' : 'fresh clone'}).`, { branch: workBranch, head: prepared.head, testCommand: this.testCommand });
   }
 
