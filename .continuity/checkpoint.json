@@ -1,6 +1,6 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-01T20:41:21Z",
+  "timestamp": "2026-10-02T10:50:00Z",
   "repository": "FahadTrail/fahad-ai-office",
   "branch": "codex/continuity-readiness",
   "worktree": null,
@@ -8,11 +8,11 @@
   "agent_type": "cli",
   "session_id": "codex-continuity-2026-10-01",
   "next_agent": "codex",
-  "objective": "Complete Continuity source development only; defer all testing, real drills and production activation to a later user-directed phase.",
+  "objective": "Add an optional local/read-only Graphify code-navigation pilot on PR #106; defer final Continuity testing and all production actions.",
   "phase": "DEVELOPMENT",
   "status": "HANDOFF_READY",
   "base_commit": "53d24790fddf3717cd0043a1973fed22ebb940da",
-  "last_commit": "8ea3f5a512c0b45ce876939fba812dc099a328c6",
+  "last_commit": "36f11f13dffcd41e1c227f912ef29e0a8f24908c",
   "files_changed": [
     "src/continuity/adapters/external-cli.js",
     "src/continuity/external-driver.js",
@@ -30,10 +30,18 @@
     "docs/CODING-CONTINUITY-SUPERVISOR.md",
     "AGENTS.md",
     "docs/HANDOVER.md",
-    "docs/CODEX-CONTINUE.md"
+    "docs/CODEX-CONTINUE.md",
+    ".graphifyignore",
+    ".gitignore",
+    "package.json",
+    "tools/graphify-query.mjs",
+    "tools/graphify-benchmark.mjs",
+    "src/continuity/code-intelligence.js",
+    "src/coding-agent/controller.js",
+    "docs/GRAPHIFY.md"
   ],
-  "diff_summary": "Development-only implementation: shared CLI driver, official Claude Code adapter, version/auth-gated Codex, durable CLI resume metadata, guarded worktrees/leases, owner controls and nested UI. Current code is not runtime-validated; earlier readiness evidence applies only to the older head.",
-  "tests_run": "Not run: Fahad explicitly deferred testing. JavaScript syntax and whitespace checks only.",
+  "diff_summary": "Graphify pilot: local code-only graph, ignored outputs, safe ignore policy, optional bounded code-intelligence provider, Coding Agent opt-in hints, query wrapper and measurement scaffold. Continuity runtime development remains unvalidated by final testing.",
+  "tests_run": "No final Continuity tests. Only JavaScript syntax/whitespace and targeted Graphify build, query, path and fallback checks.",
   "tests_passed": null,
   "tests_failed": null,
   "ci_status": "none",
@@ -44,28 +52,30 @@
     "The Supervisor is off by default and requires explicit workspace roots and owner authorization for control actions.",
     "Managed external worktrees fetch the exact remote branch, publish without force, and refuse handoff/recovery when the old writer or branch state is uncertain.",
     "External runtime mirrors live outside writable worktrees; database checkpoints remain authoritative. Provider-issued CLI session IDs are carried in checkpoints for same-worker resume.",
-    "New schema uses coding_checkpoints and coding_handoffs; the older POC continuity_* tables are untouched."
+    "New schema uses coding_checkpoints and coding_handoffs; the older POC continuity_* tables are untouched.",
+    "Official graphifyy[sql]==0.9.73 is development-only in an ignored virtual environment. Graphify output is ignored, source-only and never a production dependency.",
+    "Coding Agent graph hints require CODING_GRAPHIFY_ENABLED=true and a prebuilt local graph; absent or failed Graphify falls back to ordinary source exploration."
   ],
   "constraints": [
     "Do not merge any continuity PR or apply the Phase A production migration without Fahad's approval.",
-    "Do not test, drill, replay migrations, deploy, merge or activate in this development-only sprint. Await Fahad's next instruction for testing.",
+    "Do not start final Continuity tests, Phase N drill, replay migrations, deploy, merge or activate in this development-only sprint. Await Fahad's next instruction for testing.",
     "Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, unrelated V5 UI, POC continuity_* tables, or separate-system resources."
   ],
   "errors": [
-    "No post-change runtime validation exists by instruction; the old adapter test fixture expects the removed --approve-for-me flag and must be revised in the future testing phase.",
-    "The code and documentation commits remain local: GitHub write authentication is unavailable, so PR #106 still points to 497f901a6f11e46f20ddfcf047f4d18ac215e65e.",
+    "No post-change Continuity runtime validation exists by instruction; the old adapter test fixture expects the removed --approve-for-me flag and must be revised in the future testing phase.",
+    "Graphify can return broad/truncated or ambiguous results; source files remain authoritative.",
     "Claude Code and Codex authentication and real multi-worker execution have not been exercised."
   ],
   "quota_state": { "basis": "UNKNOWN", "used_pct": null, "reset_at": null },
   "rate_limit_state": { "limited": false, "retry_after_s": null },
-  "next_exact_action": "Preserve this checkout and, when GitHub write access is restored, push codex/continuity-readiness to update #106; then wait for Fahad to open the testing phase before running tests.",
+  "next_exact_action": "After the Graphify pilot is committed and pushed to #106, stop and wait for Fahad to explicitly open the final Continuity testing phase.",
   "unresolved_items": [
     "No tests, DB replay, browser audit, real CLI run or CI were run after implementation by explicit instruction.",
-    "GitHub #106 has not received these local commits; push requires an authenticated write-capable Git transport.",
+    "Graphify pilot does not claim context/token savings; use tools/graphify-benchmark.mjs in a later comparison.",
     "The official Claude CLI adapter is implemented but installed version/login and real Office-to-Codex-to-Claude handoff remain unverified.",
     "Fahad approval is needed for migration application, ordered merges/deployment, and later supervisor activation."
   ],
   "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
-  "summary_md": "Development-only Continuity source is complete locally on the #106 branch: Office, Codex and Claude CLI adapters, shared driver, guarded handoff/recovery, owner controls and nested UI. The local commits are not pushed because GitHub write authentication is unavailable. No tests or real drill were run. #102–#106 remain open, migration unapplied, Supervisor OFF and production untouched.",
+  "summary_md": "The #106 branch contains Continuity development source and an optional local Graphify pilot. Graphify is code-only, read-only, default OFF and not production-coupled. No final Continuity tests or real drill were run. #102–#106 remain open, migration unapplied, Supervisor OFF and production untouched.",
   "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106"
 }
