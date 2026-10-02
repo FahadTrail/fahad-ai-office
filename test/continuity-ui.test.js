@@ -26,7 +26,7 @@ test('continuity dashboard labels every number basis and exposes controls only w
   }
   assert.match(project, /data\.enabled && active \?/);
   assert.match(project, /data\.enabled && pending \?/);
-  assert.match(project, /data\.enabled \? `<button/);
+  assert.match(project, /data\.enabled && \(worker\.enabled \|\| worker\.executionMode === 'EXECUTABLE'\) \? `<button/);
   assert.match(project, /aria-live="polite"/);
   assert.match(project, /highestPct\(activeUsage\?\.sessionPct, activeUsage\?\.weeklyPct\)/, 'a measured zero remains 0%, not UNKNOWN');
 });

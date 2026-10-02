@@ -4,10 +4,10 @@ import { execFile as nodeExecFile } from 'node:child_process';
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { isSafeCodeHintPath } from '../coding-agent/policy.js';
 
 const execFile = promisify(nodeExecFile);
 const allowed = /^(?:src\/|test\/|supabase\/migrations\/)[A-Za-z0-9_./-]+$/;
-const sensitive = /(?:^|\/)(?:\.env[^/]*|[^/]*(?:secret|credential|hermes|private.?key)[^/]*)(?:\/|$)/i;
 const unavailable = (reason) => ({ available: false, reason, text: '', files: [] });
 
 function filesIn(output, root) {
@@ -16,7 +16,7 @@ function filesIn(output, root) {
     const match = line.match(/\[src=([^\]\s]+) loc=/);
     if (!match) continue;
     const path = match[1].replaceAll('\\', '/');
-    if (!allowed.test(path) || sensitive.test(path)) continue;
+    if (!allowed.test(path) || !isSafeCodeHintPath(path)) continue;
     const rel = relative(root, resolve(root, path));
     if (rel && !rel.startsWith('..') && !isAbsolute(rel)) files.add(path);
     if (files.size >= 12) break;

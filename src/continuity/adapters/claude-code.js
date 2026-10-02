@@ -27,9 +27,14 @@ export class ClaudeCodeContinuityAdapter extends ExternalCliAdapter {
 
   async verifyAuth() {
     const auth = await this.driver.inspect('claude', ['auth', 'status'], { extraEnvKeys: this.envKeys });
-    // The official command exits 0 when logged in and 1 otherwise. Its JSON
-    // shape may grow; never return the account identity or configuration path.
-    return { ok: auth.ok };
+    // A successful login can still use API-key billing. Only Claude.ai
+    // subscription or its setup-token OAuth path matches this worker's
+    // declared quota source. Never return identity/configuration fields.
+    if (!auth.ok) return { ok: false };
+    try {
+      const { authMethod } = JSON.parse(auth.stdout);
+      return { ok: authMethod === 'claude.ai' || authMethod === 'oauth_token' };
+    } catch { return { ok: false }; }
   }
 
   async verifyFeatures() {
@@ -45,7 +50,7 @@ export class ClaudeCodeContinuityAdapter extends ExternalCliAdapter {
       ...(resumeId ? ['--resume', resumeId] : []),
       '--allowedTools', 'Read', 'Edit', 'Write', 'Glob', 'Grep',
       'Bash(git status *)', 'Bash(git diff *)',
-      'Bash(git add *)', 'Bash(git commit *)', 'Bash(git push origin *)',
+      'Bash(git add *)', 'Bash(git commit *)',
       'Bash(node --test *)',
     ];
   }

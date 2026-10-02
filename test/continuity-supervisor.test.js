@@ -125,7 +125,7 @@ test('supervisor: unconfirmed worker stop keeps the branch leased and blocks han
   setup.value.stop();
 });
 test('supervisor: lost lease stops the old worker and refuses reclaim when stop is unconfirmed', async () => {
-  const setup = supervisor();
+  const setup = supervisor({ confirmStopped: async () => false });
   setup.office.stop = async () => { throw new Error('process still running'); };
   const started = await setup.value.startTask({ task: task(), checkpoint: validCheckpoint() });
   await setup.value.onLeaseLost(started.session.id, new Error('heartbeat rejected'));
