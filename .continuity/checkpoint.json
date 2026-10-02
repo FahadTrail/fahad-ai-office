@@ -27,13 +27,14 @@
   "tests_run": "npm ci; full node --test; focused continuity suite; docs path-reference and Hermes separation suites; npm run db:replay against a real local PostgreSQL 14",
   "tests_passed": 582,
   "tests_failed": 0,
-  "ci_status": "pending",
+  "ci_status": "success",
   "decisions": [
     "The 2026-10-02 VPS AppArmor/namespace failure is HOST-SPECIFIC: in this Freebuff container unshare --user succeeds, no AppArmor module is loaded, and codex sandbox linux executes successfully. The Continuity runtime is not the cause, and no host security was relaxed or bypassed.",
     "Sandbox failures are now classified by a shared vendor-neutral detector (SANDBOX_UNAVAILABLE) instead of one adapter's literal bwrap wording, and every external worker can declare a host isolation probe (verifySandbox) that fails closed before any turn starts.",
     "The Codex and Claude Code adapters stay IMPLEMENTED / TESTED IN CODE / LIVE CERTIFICATION DEFERRED and remain disabled in production.",
     "Three stale uncommitted 2026-10-01 local edits were inspected, found superseded by the remote branch history, backed up outside the repository and discarded; their still-unique findings were carried into docs/HANDOVER.md.",
-    "Production stays untouched: no merge, no retarget, no migration, no deploy, no flag change, no force push, no Hermes access."
+    "Production stays untouched: no merge, no retarget, no migration, no deploy, no flag change, no force push, no Hermes access.",
+    "Automatic GitHub validate passed on the closure code head 8435683 (run 37066180321); this documentation follow-up runs its own validate and is inspected, never rerun."
   ],
   "constraints": [
     "Do not merge #102, #104, #105, #106, #107 or #108, retarget PRs, apply the production migration, deploy, or enable CONTINUITY_SUPERVISOR / CONTINUITY_CODEX_ENABLED / CONTINUITY_CLAUDE_ENABLED.",
