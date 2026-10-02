@@ -49,7 +49,7 @@ export class CodexContinuityAdapter extends ExternalCliAdapter {
     state.lastEvent = event;
     // Codex can exit successfully after every command failed to enter its
     // Linux sandbox. Do not mistake that no-op turn for completed work.
-    if (event.type === 'item.completed' && event.item?.type === 'CommandExecution'
+    if (event.type === 'item.completed' && event.item?.type === 'command_execution'
       && event.item?.exit_code !== 0
       && /^bwrap: No permissions to create a new namespace/i.test(String(event.item?.aggregated_output || ''))) {
       state.errorCode = 'WORKER_CRASHED';
