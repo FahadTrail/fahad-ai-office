@@ -1,83 +1,82 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-02T10:50:00Z",
+  "timestamp": "2026-10-02T20:00:56.525Z",
   "repository": "FahadTrail/fahad-ai-office",
   "branch": "codex/continuity-readiness",
-  "worktree": null,
+  "worktree": "/opt/fahad-phase-n-drill-20261002 (isolated VPS test worktree; preserve)",
   "agent_id": "codex",
   "agent_type": "cli",
-  "session_id": "codex-continuity-2026-10-01",
+  "session_id": "04aea46d-e2a1-49a0-b692-75348161623a",
   "next_agent": "codex",
-  "objective": "Add an optional local/read-only Graphify code-navigation pilot on PR #106; defer final Continuity testing and all production actions.",
-  "phase": "DEVELOPMENT",
+  "objective": "Safe stop of cloud-only real Phase N drill; preserve evidence and resume only after explicit owner instruction.",
+  "phase": "N_REAL_CLOUD_DRILL",
   "status": "HANDOFF_READY",
-  "base_commit": "53d24790fddf3717cd0043a1973fed22ebb940da",
-  "last_commit": "36f11f13dffcd41e1c227f912ef29e0a8f24908c",
+  "base_commit": "8c4b871c41266769f51b33941991693c177ef00e",
+  "last_commit": "8c4b871c41266769f51b33941991693c177ef00e",
+  "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
   "files_changed": [
-    "src/continuity/adapters/external-cli.js",
-    "src/continuity/external-driver.js",
     "src/continuity/errors.js",
     "src/continuity/adapters/codex.js",
-    "src/continuity/adapters/claude-code.js",
-    "src/continuity/runtime.js",
-    "src/continuity/supervisor.js",
-    "src/continuity/worktree.js",
-    "src/hub-continuity.js",
-    "src/hub-server.js",
-    "src/hub-ui/project.js",
-    "src/index.js",
+    "test/continuity-adapters.test.js",
+    "docs/PHASE-N-CLOUD-DRILL-2026-10-02.md",
     ".continuity/checkpoint.json",
-    "docs/CODING-CONTINUITY-SUPERVISOR.md",
-    "AGENTS.md",
     "docs/HANDOVER.md",
-    "docs/CODEX-CONTINUE.md",
-    ".graphifyignore",
-    ".gitignore",
-    "package.json",
-    "tools/graphify-query.mjs",
-    "tools/graphify-benchmark.mjs",
-    "src/continuity/code-intelligence.js",
-    "src/coding-agent/controller.js",
-    "docs/GRAPHIFY.md"
+    "docs/CODEX-CONTINUE.md"
   ],
-  "diff_summary": "Graphify pilot: local code-only graph, ignored outputs, safe ignore policy, optional bounded code-intelligence provider, Coding Agent opt-in hints, query wrapper and measurement scaffold. Continuity runtime development remains unvalidated by final testing.",
-  "tests_run": "No final Continuity tests. Only JavaScript syntax/whitespace and targeted Graphify build, query, path and fallback checks.",
+  "tests_run": "Before stop: isolated Supabase CLI replay of 32 migrations; targeted adapter tests 9/9 locally; actual Office, Codex and separate Claude CLI probes. Full real three-worker drill incomplete. No tests after safe-stop instruction.",
   "tests_passed": null,
   "tests_failed": null,
-  "ci_status": "none",
+  "ci_status": "pending",
   "decisions": [
-    "PRs are stacked: #102 Phase A, #104 Phase B, #105 C-G, #106 H-M. None is merged.",
-    "Office, Codex and Claude Code have executable adapter code; Codex and Claude require separate explicit flags, supported official CLIs and verified login. Claude is PUBLIC-only until policy review.",
-    "Other non-native workers remain MANUAL_ONLY or DISABLED; no unverified integration is presented as executable.",
-    "The Supervisor is off by default and requires explicit workspace roots and owner authorization for control actions.",
-    "Managed external worktrees fetch the exact remote branch, publish without force, and refuse handoff/recovery when the old writer or branch state is uncertain.",
-    "External runtime mirrors live outside writable worktrees; database checkpoints remain authoritative. Provider-issued CLI session IDs are carried in checkpoints for same-worker resume.",
-    "New schema uses coding_checkpoints and coding_handoffs; the older POC continuity_* tables are untouched.",
-    "Official graphifyy[sql]==0.9.73 is development-only in an ignored virtual environment. Graphify output is ignored, source-only and never a production dependency.",
-    "Coding Agent graph hints require CODING_GRAPHIFY_ENABLED=true and a prebuilt local graph; absent or failed Graphify falls back to ordinary source exploration."
+    "Keep production untouched, PRs open and unmerged, production migration unapplied, CONTINUITY_SUPERVISOR=OFF.",
+    "Do not disable AppArmor user-namespace restrictions or Codex sandbox.",
+    "Do not start workers, run tests, or rerun CI after safe-stop request."
   ],
   "constraints": [
-    "Do not merge any continuity PR or apply the Phase A production migration without Fahad's approval.",
-    "Do not start final Continuity tests, Phase N drill, replay migrations, deploy, merge or activate in this development-only sprint. Await Fahad's next instruction for testing.",
-    "Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, unrelated V5 UI, POC continuity_* tables, or separate-system resources."
+    "No merge, deploy, production migration, production flag or secret changes.",
+    "Preserve test repository, worktrees, DB and evidence for resume."
   ],
   "errors": [
-    "No post-change Continuity runtime validation exists by instruction; the old adapter test fixture expects the removed --approve-for-me flag and must be revised in the future testing phase.",
-    "Graphify can return broad/truncated or ambiguous results; source files remain authoritative.",
-    "Normal HTTPS push is blocked by missing local GitHub write authentication; the remote branch remains at bcd572f.",
-    "Claude Code and Codex authentication and real multi-worker execution have not been exercised."
+    "Real Codex command_execution failed with bwrap: No permissions to create a new namespace; Ubuntu AppArmor/user namespace restriction in VPS test environment.",
+    "Codex subscription usage limit affected first drill attempt; later auth reply succeeded but sandbox blocked file changes.",
+    "Previous GitHub CI at 39508d9 failed because documentation referenced a disposable test-only path; 8c4b871 clarified it and CI was pending at stop."
   ],
-  "quota_state": { "basis": "UNKNOWN", "used_pct": null, "reset_at": null },
-  "rate_limit_state": { "limited": false, "retry_after_s": null },
-  "next_exact_action": "Authenticate GitHub write access in the local user session, push codex/continuity-readiness normally to update #106, confirm its new head, then wait for Fahad to explicitly open final Continuity testing.",
+  "quota_state": {
+    "basis": "UNKNOWN",
+    "used_pct": null,
+    "reset_at": null
+  },
+  "rate_limit_state": {
+    "limited": false,
+    "retry_after_s": null
+  },
+  "worker_state": {
+    "office": {
+      "session_id": "7361d625-fa8e-486a-8891-126abd10b13d",
+      "native_session_id": "e5058e83-a3ef-403c-972e-e61cf9b641d9",
+      "result": "completed",
+      "commit": "08eae1570dbb489465be0f86a3b60cefa65c9f88"
+    },
+    "codex": {
+      "session_id": "04aea46d-e2a1-49a0-b692-75348161623a",
+      "result": "turn completed with no file change or commit; every command_execution failed due bwrap namespace denial"
+    },
+    "claude": {
+      "result": "authenticated CLI independently created throwaway file in separate checkout; no Supervisor handoff or commit"
+    }
+  },
+  "lease_state": "Office source lease released before Codex destination acquired; after failed Codex run and verified process stop, recovery froze/reclaimed Codex lease; zero ACTIVE/FROZEN test coding leases.",
+  "handoff_state": "Office to Codex recorded; Codex to Claude not reached.",
+  "restart_recovery": "New isolated Supervisor ran recoverStale, verified stopped process and matching Git/checkpoint, reclaimed stale Codex lease, returned NO_ELIGIBLE_WORKER; no completed resume.",
+  "test_environment": "/opt/fahad-phase-n-tools-20261002; /opt/fahad-phase-n-drill-20261002; local test DB phase-n-local-20261002; bare origin /opt/fahad-phase-n-tools-20261002/drill-origin.git",
+  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106",
+  "pr_head_at_stop_before_checkpoint": "8c4b871c41266769f51b33941991693c177ef00e",
+  "next_exact_action": "On explicit owner resume, read docs/PHASE-N-CLOUD-DRILL-2026-10-02.md and this checkpoint; inspect current PR head/CI read-only; arrange scoped security-reviewed isolated runner that supports Codex sandbox; then rerun real Codex-to-Claude handoff and restart recovery from preserved test state. Do not weaken production host security.",
   "unresolved_items": [
-    "No tests, DB replay, browser audit, real CLI run or CI were run after implementation by explicit instruction.",
-    "Graphify pilot does not claim context/token savings; use tools/graphify-benchmark.mjs in a later comparison.",
-    "Graphify pilot commits remain local: remote #106 still points to bcd572f because this checkout has no GitHub write credential.",
-    "The official Claude CLI adapter is implemented but installed version/login and real Office-to-Codex-to-Claude handoff remain unverified.",
-    "Fahad approval is needed for migration application, ordered merges/deployment, and later supervisor activation."
+    "Full real Office to Codex to Claude chain and three actual worker commits not completed.",
+    "Codex sandbox cannot create user namespace in current VPS test environment.",
+    "Latest PR CI was pending at stop; do not infer success.",
+    "Local Windows checkout diverges from web-published PR history and has mirrored uncommitted adapter/test edits; preserve, do not force-push."
   ],
-  "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
-  "summary_md": "Continuity development is on #106; the optional local Graphify pilot is committed locally but not pushed because GitHub write authentication is unavailable. Graphify is code-only, read-only, default OFF and not production-coupled. No final Continuity tests or real drill were run. #102–#106 remain open, migration unapplied, Supervisor OFF and production untouched.",
-  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106"
+  "summary_md": "Safe stop. Office completed a real isolated coding commit and handed off to Codex. Codex took ownership but sandbox namespace denial prevented code changes; Claude separately authenticated and edited a disposable file but received no handoff. Recovery reclaimed the stale lease and stopped at NO_ELIGIBLE_WORKER. Production untouched and flag OFF."
 }
