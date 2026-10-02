@@ -35,7 +35,7 @@
   "tests_run": "targeted only per the sprint order: node --check sweep over src/testing/tools; focused continuity suite (test/continuity-*.test.js); test/docs-references.test.js; test/hermes-separation.test.js; npm run db:replay (33 migrations plus all scenarios) against local PostgreSQL 14; drill --selftest and --check; GitHub validate runs the full suite",
   "tests_passed": 75,
   "tests_failed": 0,
-  "ci_status": "pending-this-head",
+  "ci_status": "pending",
   "decisions": [
     "Both new workers are real adapters built only against verified official interfaces: OpenCode (opencode run --format json, stdin prompt, --session resume, --auto, auth list) from the official docs and published run command source; Gemini CLI (non-TTY headless, --output-format stream-json, --approval-mode yolo, --skip-trust, init.session_id/result.stats, exit codes 0/1/41/42/53) from docs/cli/headless.md and the installed official 0.40.1 package. No guessed flags.",
     "Gemini CLI declares resume:false because --resume only accepts \"latest\" or a numeric index; neither is a durable id and \"latest\" could resume another task's session, so recovery always starts a fresh session from the continuation packet at the exact checkpoint commit (supervisor falls back to start()).",
