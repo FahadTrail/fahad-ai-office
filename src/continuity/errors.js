@@ -17,10 +17,10 @@ export function continuityError(code, cause = null) {
 // not emit typed errors, and is never returned verbatim to clients or logs.
 export function classifyCliFailure({ event = null, exitCode = null, stderr = '', timedOut = false } = {}) {
   if (timedOut) return 'WORKER_TIMEOUT';
-  const kind = String(event?.error?.type || event?.error?.code || event?.error?.error || event?.code || event?.subtype || '').toLowerCase();
+  const kind = String(event?.error?.codex_error_info || event?.error?.type || event?.error?.code || event?.error?.error || event?.code || event?.subtype || '').toLowerCase();
   const fallback = kind || String(event?.message || event?.error?.message || stderr).toLowerCase();
   if (/auth|unauthori|credential|login|oauth/.test(fallback)) return 'AUTH_REQUIRED';
-  if (/quota|billing|insufficient.credit/.test(fallback)) return 'QUOTA_EXHAUSTED';
+  if (/quota|billing|insufficient.credit|usage.limit/.test(fallback)) return 'QUOTA_EXHAUSTED';
   if (/rate.limit|too.many.requests|429|overloaded/.test(fallback)) return 'RATE_LIMITED';
   if (/enoent|not.found/.test(fallback)) return 'CLI_NOT_FOUND';
   return exitCode === 0 ? null : 'WORKER_CRASHED';
