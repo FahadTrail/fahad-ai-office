@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { assertAdapterContract } from '../src/continuity/adapter-contract.js';
 import { CodexContinuityAdapter } from '../src/continuity/adapters/codex.js';
 import { ClaudeCodeContinuityAdapter, claudeCodeAdapter } from '../src/continuity/adapters/claude-code.js';
+import { ExternalWorkerDriver } from '../src/continuity/external-driver.js';
 import { antigravityAdapter } from '../src/continuity/adapters/antigravity.js';
 import { createOpenCodeAdapter } from '../src/continuity/adapters/opencode.js';
 import { createKiloAdapter } from '../src/continuity/adapters/kilo.js';
@@ -97,6 +98,14 @@ test('Claude Code readiness accepts subscription auth only and cannot push outsi
   assert.ok(args.includes('dontAsk'));
   assert.ok(args.includes('none'));
   assert.ok(!args.some((arg) => arg.includes('git push')));
+});
+test('Claude Code receives its isolated login directory without inheriting API billing keys', () => {
+  const env = { HOME: '/phase-n', CLAUDE_CONFIG_DIR: '/phase-n/claude', ANTHROPIC_API_KEY: 'not-for-subscription' };
+  const driver = new ExternalWorkerDriver({ env });
+  const adapter = new ClaudeCodeContinuityAdapter({ driver, enabled: true });
+  const childEnv = driver.environment(adapter.envKeys);
+  assert.equal(childEnv.CLAUDE_CONFIG_DIR, env.CLAUDE_CONFIG_DIR);
+  assert.equal(childEnv.ANTHROPIC_API_KEY, undefined);
 });
 test('OpenCode Zen fails closed for every required safety condition', async () => {
   const cases = [
