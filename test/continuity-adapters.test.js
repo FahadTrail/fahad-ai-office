@@ -117,3 +117,20 @@ test('OpenCode Zen fails closed for every required safety condition', async () =
   ];
   for (const [options, reason] of cases) assert.equal((await createOpenCodeAdapter(options).available()).reason, reason);
 });
+
+
+test('Codex reports a sandbox bootstrap failure even when its turn exits successfully', () => {
+  const adapter = new CodexContinuityAdapter();
+  const state = { errorCode: null, resultSeen: false };
+  adapter.consumeEvent({ type: 'item.completed', item: {
+    type: 'CommandExecution', exit_code: 1,
+    aggregated_output: 'bwrap: No permissions to create a new namespace',
+  } }, state);
+  adapter.consumeEvent({ type: 'turn.completed' }, state);
+  assert.equal(state.errorCode, 'WORKER_CRASHED');
+  assert.equal(state.resultSeen, true);
+});
+test('Codex typed usage limit is classified as quota exhaustion', async () => {
+  const { classifyCliFailure } = await import('../src/continuity/errors.js');
+  assert.equal(classifyCliFailure({ event: { error: { codex_error_info: 'usage_limit_exceeded' } }, exitCode: 1 }), 'QUOTA_EXHAUSTED');
+});
