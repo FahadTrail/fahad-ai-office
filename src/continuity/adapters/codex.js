@@ -47,6 +47,13 @@ export class CodexContinuityAdapter extends ExternalCliAdapter {
 
   consumeEvent(event, state) {
     state.lastEvent = event;
+    // Codex can exit successfully after every command failed to enter its
+    // Linux sandbox. Do not mistake that no-op turn for completed work.
+    if (event.type === 'item.completed' && event.item?.type === 'CommandExecution'
+      && event.item?.exit_code !== 0
+      && /^bwrap: No permissions to create a new namespace/i.test(String(event.item?.aggregated_output || ''))) {
+      state.errorCode = 'WORKER_CRASHED';
+    }
     if (event.type === 'thread.started') state.id = event.thread_id || event.thread?.id || state.id;
     if (event.thread_id) state.id ||= event.thread_id;
     const usage = event.usage || event.token_usage || event.info?.usage;
