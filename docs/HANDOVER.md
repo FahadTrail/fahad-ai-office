@@ -1,3 +1,15 @@
+## PHASE N SAFE STOP (2026-10-03; authoritative)
+
+Fahad ordered an immediate safe stop. Do not start workers or tests, rerun CI, merge, deploy, apply production migrations, change production secrets, or enable CONTINUITY_SUPERVISOR. PR #106 remains open on codex/continuity-readiness. Read the detailed evidence in `docs/PHASE-N-CLOUD-DRILL-2026-10-02.md` and the machine-readable state in `.continuity/checkpoint.json`. Earlier development-only sections below are historical.
+
+- Isolated VPS resources to preserve: `/opt/fahad-phase-n-tools-20261002`, `/opt/fahad-phase-n-drill-20261002`, test DB `phase-n-local-20261002`, and the local test bare Git origin under the tools directory. No production container was changed; runtime and coding worker remained healthy, and CONTINUITY_SUPERVISOR=OFF was verified.
+- Office session `7361d625-fa8e-486a-8891-126abd10b13d` completed real commit `08eae1570dbb489465be0f86a3b60cefa65c9f88` on disposable branch `phase-n/real-drill-c-20261002`. Office released its lease before Codex session `04aea46d-e2a1-49a0-b692-75348161623a` acquired ownership.
+- Codex authenticated but could not write: its actual command_execution events all failed with `bwrap: No permissions to create a new namespace`. The turn exited without a new commit. A prior attempt also hit a subscription usage limit; both failure modes are now classified fail-closed in #106 with targeted adapter tests (9/9 locally).
+- Claude Code independently authenticated and created a throwaway test file in a separate checkout, but no Codex-to-Claude Supervisor handoff or third-worker commit occurred. Do not call the three-worker drill passed.
+- After stopping the failed Codex process, a restarted isolated Supervisor verified Git/checkpoint state, froze/reclaimed the Codex lease, and returned `NO_ELIGIBLE_WORKER`; zero ACTIVE/FROZEN test coding leases remained. Full restart/resume completion was not reached.
+- PR #106 baseline head at stop was `8c4b871c41266769f51b33941991693c177ef00e`; subsequent safe-stop documentation commits move the head. CI for `39508d9` failed solely because the drill report backticked a disposable non-repository path; `8c4b871` clarified that reference, and its CI was pending when the stop arrived. Record newer automatic CI status without rerunning it.
+- Exact blocker: VPS AppArmor/user-namespace policy denies the Linux namespace required by Codex workspace-write sandbox. Do not relax host security or bypass the sandbox. On a future explicit resume, arrange a scoped security-reviewed isolated runner, inspect PR head/CI, then repeat the real Codex-to-Claude and restart drill using the preserved state.
+
 # Handover for the next coding agent (Codex / ChatGPT / Claude)
 
 ## GRAPHIFY PILOT (2026-10-02; development-only, not final testing)
