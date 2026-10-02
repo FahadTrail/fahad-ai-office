@@ -6,6 +6,8 @@ Fahad authorized a final **development-only** Graphify pilot on the existing ope
 
 The #106 starting remote head for the pilot was `bcd572f520f0f900bd99a9c065ea4cc852d38c2c`, so the local-only/push-authentication statements in the section below are historical. Do not run the final Continuity test phase, real drill, migration, merge, deploy or activation without a new user instruction. Static syntax and targeted Graphify commands are the only verification in this sprint.
 
+The **new Graphify pilot commits** (`36f11f1`, `9465be2`) are local only until GitHub write authentication is restored; remote #106 still points to `bcd572f`. Preserve this checkout and push without force, then confirm the PR head. This is a new publication blocker, distinct from the historical one for the earlier Continuity commits.
+
 ## Current handoff: development complete, testing intentionally deferred (2026-10-02)
 
 Fahad's latest instruction was development only; do not continue the Phase N/readiness work in the historical sections below. The existing #106 branch now contains implementation commit `8ea3f5a512c0b45ce876939fba812dc099a328c6`: Office, Codex and Claude Code have executable adapter code; the latter two require explicit enable flags, an installed supported CLI, a verified login, and the owner enabling their registry entries. No claim of a successful real invocation is made. The shared CLI driver, safe stop, same-worker CLI resume metadata, branch/worktree transfer, recovery guards, owner API controls, nested UI and event/error model are implemented. Read the new top of `docs/HANDOVER.md` and `.continuity/checkpoint.json` for exact state.

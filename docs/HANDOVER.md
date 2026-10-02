@@ -6,6 +6,8 @@ On branch `codex/continuity-readiness` / open PR #106, the local Graphify pilot 
 
 The formerly local-only development commits `8ea3f5a` and `bcd572f` are now on the #106 branch; `bcd572f520f0f900bd99a9c065ea4cc852d38c2c` was the verified starting HEAD for this pilot. Do not repeat the stale push instructions below. The final Continuity test phase, real Phase N drill, migration application, merges, deployment and `CONTINUITY_SUPERVISOR` activation remain **not performed** and require separate direction. Next action after this pilot is to wait for Fahad's explicit final-testing request.
 
+**Publication blocker:** Graphify pilot commits `36f11f1` and `9465be2` are currently local only. Read access confirms remote #106 remains at `bcd572f`; this checkout lacks GitHub write credentials. Authenticate Git Credential Manager interactively in the local user session, then push this branch normally and verify #106's head before treating the pilot as published. Do not recreate or force-push the changes.
+
 ## DEVELOPMENT-ONLY COMPLETION (2026-10-02)
 
 Fahad explicitly stopped readiness/testing work for this sprint. Code development continued on the existing #106 branch, `codex/continuity-readiness`; implementation commit `8ea3f5a512c0b45ce876939fba812dc099a328c6` is the current code baseline. **No Phase N drill, real handoff, browser/axe/mobile check, DB replay, full test suite, production smoke, migration, deployment, or activation was run in this sprint.** Only JavaScript syntax and whitespace checks were used to avoid committing malformed source. The earlier Phase N readiness report below is historical, not evidence for this new code.
