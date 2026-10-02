@@ -1,3 +1,13 @@
+## SAFE STOP / EXACT RESUME POINT (2026-10-03; supersedes all older instructions)
+
+Fahad ordered STOP. No more tests, workers, CI reruns, production changes, merges, deployments, migrations, or flag activation. Preserve all isolated VPS assets and local worktrees. Read `docs/PHASE-N-CLOUD-DRILL-2026-10-02.md`, the top of `docs/HANDOVER.md`, and `.continuity/checkpoint.json` before any later action. The previous Graphify/development-only instructions below are history, not current work orders.
+
+PR #106 branch: `codex/continuity-readiness`; observed head before safe-stop docs was `8c4b871c41266769f51b33941991693c177ef00e`. Safe-stop commits were then published directly to this existing branch because the Windows local checkout cannot authenticate a normal Git push; do not force-push its divergent local history. It has the same adapter/test changes uncommitted locally and must be preserved. The prior CI run at `39508d9` failed its docs path-reference check (a throwaway Claude file was not in this repository); the documentation at `8c4b871` clarified the location. CI was pending when STOP arrived. Do not start or rerun CI; merely inspect the current result if the user later resumes.
+
+Last completed real step: Office session `7361d625-fa8e-486a-8891-126abd10b13d` committed `08eae1570dbb489465be0f86a3b60cefa65c9f88` on disposable branch `phase-n/real-drill-c-20261002`, released its lease, and handed off to Codex session `04aea46d-e2a1-49a0-b692-75348161623a`. Codex authenticated and took ownership, but all shell commands failed because bubblewrap could not create a user namespace; it made no commit. Claude Code independently authenticated and wrote a disposable test file in a separate checkout; no Supervisor handoff to Claude occurred. A restarted test Supervisor verified the old Codex process stopped and Git/checkpoint matched, reclaimed its stale lease, and stopped with `NO_ELIGIBLE_WORKER`; zero ACTIVE/FROZEN test leases remained.
+
+Exact blocker: the VPS test container and Ubuntu AppArmor user-namespace policy deny the namespace required by Codex workspace-write sandbox. Do not disable AppArmor or bypass the sandbox. On a future explicit resume, first read-only inspect the preserved test assets, PR head, and CI; arrange a scoped security-reviewed isolated runner, then redo the real Codex-to-Claude handoff and completed restart/recovery drill. Production CONTINUITY_SUPERVISOR was checked OFF, and production containers remained healthy.
+
 # Codex: continue the Coding Continuity Supervisor
 
 ## Current handoff: optional Graphify pilot (2026-10-02)
