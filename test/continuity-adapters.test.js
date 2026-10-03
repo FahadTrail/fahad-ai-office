@@ -209,7 +209,7 @@ test('externalAdaptersFromEnv wires the provider-neutral and the legacy OpenCode
 test('the Phase N drill preflight never demands a Zen promotion for a non-zen provider', () => {
   const src = readFileSync(new URL('../tools/continuity-phase-n-live.mjs', import.meta.url), 'utf8');
   assert.ok(src.includes('CONTINUITY_OPENCODE_MODEL_PROVIDER'), 'the drill reads the declared model provider');
-  assert.ok(src.includes("const PHASE_N_OPENCODE_MODEL = 'openrouter/openrouter/free'"), 'the drill pins the live-proven model');
+  assert.ok(src.includes("const PHASE_N_OPENCODE_MODEL = 'groq/openai/gpt-oss-20b'"), 'the drill pins the live-proven model');
   assert.ok(src.includes('CONTINUITY_OPENCODE_MODEL'), 'the drill requires the explicit model');
   assert.ok(src.includes('CONTINUITY_OPENCODE_FREE_VERIFIED'), 'the drill accepts the provider-neutral free gate');
   const flagsArray = /const opencodeFlags = \[[^\]]*\]/.exec(src)?.[0] || '';

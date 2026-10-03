@@ -58,7 +58,10 @@ const MARKERS = { office: 'phase-n/office.md', opencode: 'phase-n/opencode.md', 
 // repository stays with PR #106 CI, which runs the full suite on every push.
 // The command still fails (non-zero) on any real checkout or task failure.
 const OFFICE_TEST_COMMAND = 'node --test test/continuity-phase-n-office-gate.test.js';
-const PHASE_N_OPENCODE_MODEL = 'openrouter/openrouter/free';
+// This exact model was proven through the VPS OpenCode CLI on 2026-10-03.
+// The former OpenRouter free router is deliberately not used for certification:
+// its account-wide daily quota can reject an otherwise healthy handoff with 429.
+const PHASE_N_OPENCODE_MODEL = 'groq/openai/gpt-oss-20b';
 const WORKERS = [
   { key: 'office', display_name: 'Fahad Office Coding Agent', kind: 'native', quota_source: 'office-pools', enabled: true },
   { key: 'opencode', display_name: 'OpenCode', kind: 'cli', quota_source: 'opencode', enabled: true },
