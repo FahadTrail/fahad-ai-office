@@ -213,6 +213,18 @@ class SessionRun {
       await this.event('session', applied ? 'Working tree restored from the durable checkpoint patch.' : 'Checkpoint patch could not be re-applied; continuing from the last pushed state.', {}, applied ? 'info' : 'warning');
     }
     if (!this.state.git.baseHead) this.state.git.baseHead = prepared.head;
+    // Continuity binds a session's work branch to an already-existing leased
+    // remote branch (workBranch === baseBranch), so the first push must lease
+    // against the exact remote head this sandbox was cloned from. Without it
+    // the empty lease would demand that the branch not exist, and git would
+    // rightly reject pushing the branch the Supervisor legitimately created.
+    // A standalone session mints a brand-new work branch, so its first push
+    // keeps the "branch must not exist" lease. Recorded once so retries and
+    // restarts keep the same idempotent push arguments.
+    if (!this.state.git.pushedHead && !this.state.git.boundRemoteHead && workBranch === this.session.baseBranch) {
+      const boundRemoteHead = await this.sandbox.trackingHead(workBranch).catch(() => null);
+      if (boundRemoteHead) this.state.git.boundRemoteHead = boundRemoteHead;
+    }
     this.broker = this.c.createBroker(this.session, this.sandbox);
     await this.loadGrants();
     this.testCommand = this.config.testCommand ?? await detectTestCommand(this.sandbox);
@@ -815,8 +827,12 @@ class SessionRun {
     const head = commit.structured.head || this.state.git.head;
     await this.event('git', commit.structured.committed ? `Committed ${head.slice(0, 7)}.` : `Nothing new to commit; head ${head.slice(0, 7)}.`, { head });
     if (this.config.publish === 'none') return;
+    // Explicit force-with-lease, always: the remote branch must still be at
+    // the head this session last pushed, or — for a bound Continuity branch's
+    // first push — at the exact head the sandbox was cloned from.
+    const leaseHead = this.state.git.pushedHead || this.state.git.boundRemoteHead || null;
     await this.required('git.push', 'publish', {
-      branch: this.session.workBranch, expected_head: head, ...(this.state.git.pushedHead ? { previous_head: this.state.git.pushedHead } : {}),
+      branch: this.session.workBranch, expected_head: head, ...(leaseHead ? { previous_head: leaseHead } : {}),
     }, 'push');
     this.state.git.pushedHead = head;
     await this.event('github', `Pushed ${this.session.workBranch} at ${head.slice(0, 7)}.`, { branch: this.session.workBranch, head });
