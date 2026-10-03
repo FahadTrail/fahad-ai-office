@@ -51,6 +51,11 @@ import { MemoryContinuityStore, validCheckpoint } from '../testing/fixtures/cont
 const execFile = promisify(nodeExecFile);
 const REPOSITORY = 'FahadTrail/fahad-ai-office';
 const MARKERS = { office: 'phase-n/office.md', opencode: 'phase-n/opencode.md', 'gemini-cli': 'phase-n/gemini.md' };
+// Focused finish gate for the DISPOSABLE Office marker task only. The drill
+// proves Continuity handoff/recovery mechanics; re-certifying the whole
+// repository stays with PR #106 CI, which runs the full suite on every push.
+// The command still fails (non-zero) on any real checkout or task failure.
+const OFFICE_TEST_COMMAND = 'node --test test/continuity-phase-n-office-gate.test.js';
 const WORKERS = [
   { key: 'office', display_name: 'Fahad Office Coding Agent', kind: 'native', quota_source: 'office-pools', enabled: true },
   { key: 'opencode', display_name: 'OpenCode', kind: 'cli', quota_source: 'opencode', enabled: true },
@@ -401,7 +406,7 @@ async function runDrill({ keep }) {
       objective: `Harmless Phase N drill: create only ${MARKERS.office} with one short line, commit and push to this branch. Touch no other file.`,
       dataClass: 'PUBLIC', size: 'medium', capability: 'coding',
       excludeWorkers: ['opencode', 'gemini-cli'],
-      config: { publish: 'branch' },
+      config: { publish: 'branch', testCommand: OFFICE_TEST_COMMAND },
     };
     let started;
     try {
@@ -417,7 +422,7 @@ async function runDrill({ keep }) {
     const officeSessionId = started.session.id;
     must(officeClaim.sessionId && officeClaim.sessionId === started.session.native_session_id, 'OFFICE_NATIVE_SESSION_MISMATCH',
       `the runner bound ${officeClaim.sessionId || 'nothing'} but the supervisor registered ${started.session.native_session_id}`);
-    evidence.add('office.started', { sessionId: officeSessionId, leaseId: started.lease.id, nativeSessionId: started.session.native_session_id || null, worker: started.worker });
+    evidence.add('office.started', { sessionId: officeSessionId, leaseId: started.lease.id, nativeSessionId: started.session.native_session_id || null, worker: started.worker, testCommand: OFFICE_TEST_COMMAND });
     evidence.add('office.claim', { nativeSessionId: officeClaim.sessionId, worker: officeWorkerId, leaseSeconds: 900, strategy: 'claimById inside createSession (exact id; the queue claim is never used)' });
     await assertSingleWriter(store, 'office.leased');
 
