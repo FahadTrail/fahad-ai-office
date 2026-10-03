@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { assertAdapterContract } from '../src/continuity/adapter-contract.js';
 import { CodexContinuityAdapter } from '../src/continuity/adapters/codex.js';
 import { ClaudeCodeContinuityAdapter, claudeCodeAdapter } from '../src/continuity/adapters/claude-code.js';
@@ -118,6 +119,43 @@ test('OpenCode Zen fails closed for every required safety condition', async () =
     [{ autoReload: false, zenFree: true, promotionActive: true, legitimateAccess: true }, 'ZEN_PRIVACY_NOT_ALLOWED'],
   ];
   for (const [options, reason] of cases) assert.equal((await createOpenCodeAdapter(options).available()).reason, reason);
+});
+
+test('OpenCode 1.18.34 run --help is read from its real stderr shape and still fails closed', async () => {
+  // Byte-for-byte capture of the official `opencode run --help` (OpenCode
+  // 1.18.34): yargs writes the whole help to STDERR, stdout stays empty and
+  // the exit code is 0 — the exact shape that produced the VPS false negative.
+  const realHelp = readFileSync(new URL('../testing/fixtures/opencode-run-help-1.18.34.txt', import.meta.url), 'utf8');
+  const probeWith = async (result) => {
+    const driver = { inspect: async () => result };
+    return createOpenCodeAdapter({ driver, enabled: true }).verifyFeatures();
+  };
+  assert.equal((await probeWith({ ok: true, stdout: '', stderr: realHelp })).ok, true,
+    'the real stderr-only help must be recognised');
+  // ANSI styling (attached terminal) must not hide a flag.
+  const ansiHelp = realHelp.replace(/--(format|session|continue|dir|auto)\b/g, '\u001b[1m$&\u001b[0m');
+  assert.equal((await probeWith({ ok: true, stdout: ansiHelp, stderr: '' })).ok, true,
+    'ANSI styling must not hide a flag');
+  // CRLF line endings must not hide a flag either.
+  assert.equal((await probeWith({ ok: true, stdout: '', stderr: realHelp.replaceAll('\n', '\r\n') })).ok, true,
+    'CRLF line endings must not hide a flag');
+  // A genuinely absent flag still fails closed as UNSUPPORTED_VERSION.
+  const withoutAuto = realHelp.replace(/^.*--auto.*\n?/m, '');
+  assert.ok(!withoutAuto.includes('--auto'));
+  assert.equal((await probeWith({ ok: true, stdout: '', stderr: withoutAuto })).ok, false,
+    'a missing --auto must fail closed');
+  assert.equal((await probeWith({ ok: false, stdout: '', stderr: realHelp })).ok, false,
+    'a failed inspection must fail closed');
+});
+
+test('the external driver keeps the whole stderr only when a verifier raises the bound', async () => {
+  const help = `HEAD-MARKER ${'x'.repeat(4000)} --auto`;
+  const execFile = (_binary, _args, _options, callback) => callback(null, '', help);
+  const driver = new ExternalWorkerDriver({ execFile, env: {} });
+  const bounded = await driver.inspect('opencode', ['run', '--help']);
+  assert.ok(!bounded.stderr.includes('HEAD-MARKER'), 'the default tail bound is unchanged for error classification');
+  const wide = await driver.inspect('opencode', ['run', '--help'], { stderrLimit: 64 * 1024 });
+  assert.equal(wide.stderr, help, 'verifyFeatures reads the complete help text');
 });
 
 

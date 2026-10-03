@@ -27,6 +27,31 @@ import { ExternalCliAdapter } from './external-cli.js';
 
 const minimumVersion = { major: 1, minor: 18, patch: 0 };
 
+// The flags `verifyFeatures` requires at runtime: every one of them must be
+// present, so a CLI that drops one still fails closed as UNSUPPORTED_VERSION.
+const REQUIRED_RUN_FLAGS = Object.freeze(['--format', '--session', '--continue', '--dir', '--auto']);
+
+// The official 1.18.34 CLI (yargs) writes `opencode run --help` entirely to
+// STDERR — stdout stays empty and the exit code is 0 — optionally wrapped in
+// ANSI styling when attached to a terminal, with column-wrapped descriptions.
+// Normalise both streams (ANSI escapes, CR) before matching so formatting can
+// never hide a flag; whitespace-insensitivity covers the column padding.
+function normalizeHelp(...streams) {
+  return streams
+    .map((stream) => String(stream || '')
+      .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+      .replace(/\u001b[@-_]/g, '')
+      .replace(/\r/g, ''))
+    .join('\n');
+}
+
+// Whole-token match: the flag may sit at the start of a line, after the
+// comma of a short option ("-c, --continue") or after indentation, and must
+// not be a prefix of a longer flag such as "--formatting".
+function helpHasFlag(text, flag) {
+  return new RegExp(`(?:^|[\\s,(])${flag}(?![\\w-])`, 'm').test(text);
+}
+
 // OpenCode reads provider credentials from its own credentials file under
 // HOME or from provider environment variables. Names only — no value is ever
 // read, logged or returned here.
@@ -82,10 +107,15 @@ export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
   }
 
   async verifyFeatures() {
-    const help = await this.driver.inspect('opencode', ['run', '--help'], { extraEnvKeys: this.envKeys });
+    // Both streams are read because the help lives on stderr; the stderr
+    // bound is raised for this one inspection so the whole help (about 3 KB)
+    // survives instead of only the last 1000 characters.
+    const help = await this.driver.inspect('opencode', ['run', '--help'], {
+      extraEnvKeys: this.envKeys, timeoutMs: 20_000, stderrLimit: 64 * 1024,
+    });
+    const text = normalizeHelp(help.stdout, help.stderr);
     return {
-      ok: help.ok && ['--format', '--session', '--continue', '--dir', '--auto']
-        .every((flag) => help.stdout.includes(flag)),
+      ok: Boolean(help.ok) && REQUIRED_RUN_FLAGS.every((flag) => helpHasFlag(text, flag)),
     };
   }
 

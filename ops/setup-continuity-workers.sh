@@ -86,13 +86,24 @@ fi
 
 echo "6/7 Non-secret capability checks (flags the Continuity adapters require)"
 if command -v opencode >/dev/null 2>&1; then
-  if opencode run --help 2>/dev/null | grep -q -- '--format' \
-    && opencode run --help 2>/dev/null | grep -q -- '--session' \
-    && opencode run --help 2>/dev/null | grep -q -- '--dir' \
-    && opencode run --help 2>/dev/null | grep -q -- '--auto'; then
-    pass "opencode run exposes --format --session --dir --auto"
+  # The official 1.18.34 CLI (yargs) writes `run --help` entirely on STDERR
+  # (exit 0, stdout empty), optionally ANSI-styled, with column-wrapped
+  # descriptions. Capture BOTH streams once, strip ANSI/CR, then require every
+  # flag as a whole token: formatting can never hide a flag, and a genuinely
+  # absent flag still fails closed as UNSUPPORTED_VERSION.
+  OC_HELP=$(opencode run --help 2>&1 || true)
+  OC_ESC=$'\033'
+  OC_HELP=${OC_HELP//$'\r'/}
+  OC_HELP=$(printf '%s' "$OC_HELP" | sed -e "s/${OC_ESC}\\[[0-9;?]*[A-Za-z]//g")
+  OC_MISSING=""
+  for OC_FLAG in --format --session --continue --dir --auto; do
+    OC_RE="(^|[[:space:],(])${OC_FLAG}([^[:alnum:]-]|$)"
+    if ! [[ "$OC_HELP" =~ $OC_RE ]]; then OC_MISSING="$OC_MISSING $OC_FLAG"; fi
+  done
+  if [ -z "$OC_MISSING" ]; then
+    pass "opencode run exposes --format --session --continue --dir --auto"
   else
-    fail "opencode run is missing a required flag (UNSUPPORTED_VERSION)"
+    fail "opencode run is missing a required flag:$OC_MISSING (UNSUPPORTED_VERSION)"
   fi
   # Credential counts only; `auth list` never prints a value.
   if timeout 20 opencode auth list 2>/dev/null | head -3 | sed 's/^/         /'; then

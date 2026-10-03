@@ -30,7 +30,7 @@ export class ExternalWorkerDriver {
 
   environment(extraKeys = []) { return limitedEnv(this.env, extraKeys); }
 
-  inspect(binary, args, { extraEnvKeys = [], timeoutMs = 10_000 } = {}) {
+  inspect(binary, args, { extraEnvKeys = [], timeoutMs = 10_000, stderrLimit = 1000 } = {}) {
     return new Promise((resolve) => {
       this.execFile(binary, args, {
         windowsHide: true, timeout: timeoutMs, maxBuffer: 64 * 1024,
@@ -38,7 +38,9 @@ export class ExternalWorkerDriver {
       }, (error, stdout, stderr) => resolve({
         ok: !error, exitCode: error?.code ?? 0,
         stdout: String(stdout || '').slice(0, 64 * 1024),
-        stderr: boundedText(stderr, this.env),
+        // Error classification wants the tail of stderr; a verifier that
+        // parses a full help text raises the bound explicitly for that call.
+        stderr: boundedText(stderr, this.env, stderrLimit),
         missing: error?.code === 'ENOENT',
       }));
     });
