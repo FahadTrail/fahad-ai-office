@@ -248,7 +248,6 @@ async function runDrill({ keep }) {
     const db = createOfficeDb();
     const office = new OfficeContinuityAdapter({ db });
     const adapters = [office, opencode, gemini];
-    adapterSets.push({ office, opencode, gemini });
     const supervisor = new ContinuitySupervisor({
       store,
       adapters,

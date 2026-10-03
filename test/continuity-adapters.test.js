@@ -181,6 +181,27 @@ test('the Phase N drill preflight never demands a Zen promotion for a non-zen pr
   assert.ok(!flagsArray.includes('ZEN_FREE_VERIFIED'), 'the Zen-named free flag must not be the only accepted free gate');
 });
 
+test('the Phase N drill declares every lifecycle state it references (no ReferenceError at --run)', () => {
+  // Regression guard for a real VPS failure: `--check` preflight passed but
+  // `--run` died immediately with `ReferenceError: adapterSets is not
+  // defined` inside buildSupervisor(). `node --check` only proves syntax, so
+  // this asserts the scope invariant directly: any drill-internal state name
+  // that appears in the source must have a declaration.
+  const src = readFileSync(new URL('../tools/continuity-phase-n-live.mjs', import.meta.url), 'utf8');
+  const declared = (name) => new RegExp(`\\b(?:const|let|var|function|class|import)\\s+${name}\\b`).test(src);
+  for (const name of ['adapterSets', 'supervisors', 'phaseAdapters', 'verdict', 'blocker', 'evidence', 'worktrees']) {
+    if (new RegExp(`\\b${name}\\b`).test(src)) {
+      assert.ok(declared(name), `${name} is referenced in the drill but never declared`);
+    }
+  }
+  // Same bug class, caught generically: every bare `name.push(` collector
+  // must resolve to a declaration in this file (property pushes like
+  // `foo.bar.push(` are excluded on purpose).
+  for (const match of src.matchAll(/(?:^|[^.\w$])([A-Za-z_$][\w$]*)\.push\(/gm)) {
+    assert.ok(declared(match[1]), `${match[1]}.push( uses an undeclared variable`);
+  }
+});
+
 test('OpenCode 1.18.34 run --help is read from its real stderr shape and still fails closed', async () => {
   // Byte-for-byte capture of the official `opencode run --help` (OpenCode
   // 1.18.34): yargs writes the whole help to STDERR, stdout stays empty and
