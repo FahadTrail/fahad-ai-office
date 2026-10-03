@@ -433,7 +433,7 @@ async function runDrill({ keep }) {
     must(officeClaim.sessionId && officeClaim.sessionId === started.session.native_session_id, 'OFFICE_NATIVE_SESSION_MISMATCH',
       `the runner bound ${officeClaim.sessionId || 'nothing'} but the supervisor registered ${started.session.native_session_id}`);
     evidence.add('office.started', { sessionId: officeSessionId, leaseId: started.lease.id, nativeSessionId: started.session.native_session_id || null, worker: started.worker, testCommand: OFFICE_TEST_COMMAND });
-    evidence.add('office.claim', { nativeSessionId: officeClaim.sessionId, worker: officeWorkerId, leaseSeconds: 900, strategy: 'claimById inside createSession (exact id; the queue claim is never used)' });
+    evidence.add('office.claim', { nativeSessionId: officeClaim.sessionId, worker: officeWorkerId, leaseSeconds: 900, strategy: 'pre-leased persistent insert (the session is never visible as queued; queue claim is never used)' });
     await assertSingleWriter(store, 'office.leased');
 
     // ONE-SHOT runner: this checkout's code executes exactly this native

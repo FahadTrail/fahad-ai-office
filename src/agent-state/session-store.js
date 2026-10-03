@@ -32,6 +32,71 @@ export class SupabaseAgentSessionStore {
     return fromSessionRow(Array.isArray(data) ? data[0] : data);
   }
 
+  // Creates a native session already leased to one exact worker. This is
+  // intentionally separate from the normal queued-session RPC: the live
+  // Phase N runner must coexist with the production queue worker without a
+  // moment where that worker can claim the disposable certification row.
+  // Supporting job/task/run rows are prepared first; the only visible
+  // agent_sessions row is inserted directly as `running` with its fence.
+  async createClaimedSession({ workspaceId, title, objective, repository, baseBranch = 'main', budgetUsd = 5, config = {}, createdBy = null }, { worker, leaseSeconds = 300 } = {}) {
+    if (!worker) throw storeError('createClaimedSession', new Error('worker is required'));
+    if (!Number.isInteger(leaseSeconds) || leaseSeconds < 30 || leaseSeconds > 3600) throw storeError('createClaimedSession', new Error('AGENT_LEASE_INVALID'));
+    const { data: policy, error: policyError } = await this.db.from('workspace_policies')
+      .select('workspace_id').eq('workspace_id', workspaceId).eq('enabled', true).maybeSingle();
+    if (policyError) throw storeError('workspace_policies', policyError);
+    if (!policy) throw storeError('createClaimedSession', new Error('WORKSPACE_DISABLED'));
+    const { data: agent, error: agentError } = await this.db.from('agents')
+      .select('id').eq('slug', 'coding-agent').eq('is_active', true).maybeSingle();
+    if (agentError) throw storeError('agents', agentError);
+    if (!agent) throw storeError('createClaimedSession', new Error('CODING_AGENT_UNAVAILABLE'));
+
+    let jobId = null;
+    try {
+      const now = new Date();
+      const { data: job, error: jobError } = await this.db.from('jobs').insert({
+        project_id: workspaceId, title: String(title || '').trim().slice(0, 120), goal: objective,
+        status: 'running', started_at: now.toISOString(),
+      }).select('id').single();
+      if (jobError) throw jobError;
+      jobId = job.id;
+      const { data: task, error: taskError } = await this.db.from('tasks').insert({
+        job_id: jobId, agent_id: agent.id, title: 'Coding Agent session',
+        brief: JSON.stringify({ workflow: 'coding-agent', workflow_version: 1 }),
+        status: 'assigned', sequence: 10, max_attempts: 1, started_at: now.toISOString(),
+      }).select('id').single();
+      if (taskError) throw taskError;
+      const { data: run, error: runError } = await this.db.from('runs').insert({
+        task_id: task.id, job_id: jobId, agent_id: agent.id, attempt_no: 1, status: 'running',
+      }).select('id').single();
+      if (runError) throw runError;
+      const { data: row, error: sessionError } = await this.db.from('agent_sessions').insert({
+        workspace_id: workspaceId, job_id: jobId, task_id: task.id, run_id: run.id, agent_id: agent.id,
+        title: String(title || '').trim().slice(0, 200), objective, repository,
+        base_branch: String(baseBranch || '').trim() || 'main', budget_usd: budgetUsd,
+        config: config || {}, created_by: createdBy,
+        status: 'running', lease_owner: String(worker).slice(0, 200), lease_token: randomUUID(),
+        lease_expires_at: new Date(now.getTime() + leaseSeconds * 1000).toISOString(), started_at: now.toISOString(),
+      }).select().single();
+      if (sessionError) throw sessionError;
+      const { error: eventError } = await this.db.from('events').insert({
+        job_id: jobId, task_id: task.id, run_id: run.id, agent_id: agent.id, type: 'job_created',
+        message: 'Coding Agent session created with an identity-scoped lease.',
+        payload: { session_id: row.id, workflow: 'coding-agent', claimed_worker: String(worker).slice(0, 200) },
+      });
+      if (eventError) console.warn('[agent-state] claimed session event not recorded:', eventError.message);
+      return fromSessionRow(row);
+    } catch (error) {
+      // Before the session insert, removing the supporting job cascades only
+      // its disposable task/run rows. Once a session exists we preserve it
+      // for the normal fail-closed cleanup path and evidence.
+      if (jobId) {
+        const { data: existing } = await this.db.from('agent_sessions').select('id').eq('job_id', jobId).maybeSingle();
+        if (!existing) await this.db.from('jobs').delete().eq('id', jobId);
+      }
+      throw storeError('createClaimedSession', error);
+    }
+  }
+
   async claim({ worker, leaseSeconds = 300 }) {
     const { data, error } = await this.db.rpc('claim_agent_session', { p_worker: worker, p_lease_seconds: leaseSeconds });
     if (error) throw storeError('claim_agent_session', error);

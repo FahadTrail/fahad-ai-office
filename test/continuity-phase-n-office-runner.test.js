@@ -380,6 +380,26 @@ test('claimOnCreate leases the exact session the instant it exists and fails clo
   );
 });
 
+test('claimOnCreate uses the atomic pre-leased path when the persistent store provides it', async () => {
+  const expected = { id: '00000000-0000-4000-8000-000000000099', status: 'running', leaseOwner: WORKER };
+  let received = null;
+  let attempted = null;
+  const store = {
+    createSession: async () => { throw new Error('queued creation must not be used'); },
+    claimById: async () => { throw new Error('post-insert claim must not be used'); },
+    createClaimedSession: async (args, options) => {
+      received = { args, options };
+      return expected;
+    },
+  };
+  const wrapped = claimOnCreate(store, { worker: WORKER, leaseSeconds: 900, onAttempt: (id) => { attempted = id; } });
+  const session = await wrapped.createSession({ workspaceId: WORKSPACE, title: 'phase n', objective: 'marker', repository: REPOSITORY });
+  assert.equal(session, expected);
+  assert.equal(attempted, expected.id);
+  assert.equal(received.options.worker, WORKER);
+  assert.equal(received.options.leaseSeconds, 900);
+});
+
 // -------------------------------------------------- drill wiring (source)
 
 test('the drill executes the Office leg from the current checkout, never the production worker', () => {
@@ -387,7 +407,8 @@ test('the drill executes the Office leg from the current checkout, never the pro
   // Wired through the in-checkout one-shot runner…
   assert.ok(src.includes("from '../src/coding-agent/one-shot-runner.js'"), 'the drill imports the checkout runner');
   assert.ok(src.includes("join(repoRoot, 'src', 'coding-agent', 'one-shot-runner.js')"), 'the runner script is resolved inside this checkout');
-  assert.ok(src.includes('claimOnCreate(new SupabaseAgentSessionStore(db)'), 'the native session is claimed by exact id on creation');
+  assert.ok(src.includes('claimOnCreate(new SupabaseAgentSessionStore(db)'), 'the native session is pre-leased to the exact runner on creation');
+  assert.ok(src.includes('pre-leased persistent insert'), 'the evidence identifies the queue-race-free persistent strategy');
   assert.ok(src.includes("args: ['--session', officeClaim.sessionId]"), 'the session id is passed on argv (cross-checked with env)');
   assert.ok(src.includes('PHASE_N_OFFICE_SESSION: officeClaim.sessionId'), 'the session id is also passed through env');
   assert.ok(src.includes('PHASE_N_OFFICE_WORKER: officeWorkerId'), 'the runner is bound to the exact worker id holding the lease');

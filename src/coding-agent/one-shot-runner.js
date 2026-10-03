@@ -63,6 +63,11 @@ export function claimOnCreate(store, { worker, leaseSeconds = 300, onAttempt = n
   if (!worker) throw new TypeError('claimOnCreate requires the exact worker id that will own the session');
   const createSession = store.createSession.bind(store);
   store.createSession = async (args) => {
+    if (typeof store.createClaimedSession === 'function') {
+      const session = await store.createClaimedSession(args, { worker, leaseSeconds });
+      if (onAttempt) onAttempt(session.id);
+      return session;
+    }
     const session = await createSession(args);
     if (onAttempt) onAttempt(session.id);
     const claim = await store.claimById(session.id, { worker, leaseSeconds });
