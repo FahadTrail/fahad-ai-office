@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { assertAdapterContract } from '../src/continuity/adapter-contract.js';
 import { CodexContinuityAdapter } from '../src/continuity/adapters/codex.js';
@@ -289,8 +290,9 @@ test('a non-zero OpenCode JSON failure remains visible in bounded failure eviden
   child.kill = () => true;
   const driver = new ExternalWorkerDriver({ spawn: () => child, env: {} });
   const adapter = createOpenCodeAdapter({ modelProvider: 'openrouter', model: 'openrouter/openrouter/free' });
+  const worktree = resolve('test-worktree');
   const state = driver.launch({
-    binary: 'opencode', args: adapter.command({ worktree: 'C:\\work' }), prompt: 'continue', cwd: 'C:\\work',
+    binary: 'opencode', args: adapter.command({ worktree }), prompt: 'continue', cwd: worktree,
     onEvent: (event, current) => adapter.consumeEvent(event, current), timeoutMs: 5_000,
   });
   child.stdout.write(`${JSON.stringify({ type: 'error', message: 'provider rejected model' })}\n`);
