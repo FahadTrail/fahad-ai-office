@@ -69,7 +69,15 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## Current status (2026-09-25)
+## Continuity update (2026-10-02, development-only completion)
+
+Fahad stopped all readiness/testing work for this sprint. The #106 checkout adds an official Claude Code CLI adapter, a shared external driver, Codex CLI hardening, guarded worktree transfers, same-worker CLI resume metadata, owner controls and recovery safeguards. The three executable adapters in **source** are Office, Codex and Claude; the external two are default OFF and are not authenticated or live-verified by this sprint. Four other non-native workers remain manual/disabled. The two development commits are now on GitHub (#106 baseline `bcd572f`); the former push-authentication issue is historical. A separate local Graphify pilot (`docs/GRAPHIFY.md`) is code-only, read-only, optional and default OFF for Coding; it must not affect Supervisor decisions. No full Continuity test suite, DB replay, real handoff, UI audit or production action was run after this development. #102/#104/#105/#106 remain unmerged; migration unapplied; Supervisor OFF. See the current top of `docs/HANDOVER.md`, `docs/CODEX-CONTINUE.md` and `.continuity/checkpoint.json`. Do not start final testing without Fahad's next instruction.
+
+## Continuity update (2026-10-01, Phase N readiness; historical)
+
+The Coding Continuity Supervisor is implemented in an open, unmerged PR stack: #102 (Phase A, schema), #104 (B, durable runtime foundation), #105 (C-G, supervisor and workers), and #106 (H-M, nested project UI and Phase N readiness fixes). The Phase A production migration is unapplied, and `CONTINUITY_SUPERVISOR` is off by default. Automated Continuity UI axe/viewport checks pass, but the documented real Office → Codex → third-worker Phase N drill has not been run; no third adapter is executable. **Production activation is not ready.** Do not merge, deploy, apply the migration, or activate the flag. Read `docs/CONTINUITY-PHASE-N-READINESS.md`, the top of `docs/HANDOVER.md`, and `.continuity/checkpoint.json` before any further action. The older status below is historical.
+
+## Current status (2026-09-25; historical)
 
 * **Coding Agent V1 is operational in production.** Production runs `main`
   (Office + Hub + the `fahad-office-coding-worker` container, enabled with
@@ -230,7 +238,7 @@ inside the built runtime image as root.
 
 ## Next actions
 
-1. Codex: Continuity Phase A is done on PR #102 (open, migration not applied). Read `docs/CODEX-CONTINUE.md` on branch `claude/continuity-foundation`, review #102, then build Phase B stacked on it.
+1. Codex: confirm CI and DB replay on #106's final Phase N-readiness head; then resolve the executable third-worker and isolated Office/Codex environment blocker and run the documented real Phase N drill. Keep #102/#104/#105/#106 open and unmerged, with the migration unapplied and Supervisor off. The activation order and rollback plan are in `docs/CONTINUITY-PHASE-N-READINESS.md`.
 2. Use it: Hub → Coding Agent → project, repository, detailed objective,
    budget, routing → Start; approve merges in the Hub.
 3. Optional: Supabase access token for the agent, more providers (keys,

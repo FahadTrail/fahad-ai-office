@@ -1,52 +1,62 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-01T13:30:00Z",
+  "timestamp": "2026-10-02T23:05:54Z",
   "repository": "FahadTrail/fahad-ai-office",
-  "branch": "claude/continuity-foundation",
-  "worktree": null,
-  "agent_id": "claude-code",
+  "branch": "codex/continuity-readiness",
+  "worktree": "Freebuff cloud workspace; cloud-only, no dependency on the owner laptop",
+  "agent_id": "freebuff",
   "agent_type": "cli",
-  "session_id": "claude-code-session-01UQPmN6dz3EeKFLakgeP3QX",
+  "session_id": "freebuff-cloud-closure-2026-10-02",
   "next_agent": "codex",
-  "objective": "Implement Phase A of the Coding Continuity Supervisor (schema, RPCs, checkpoint validator, state machine, tests) without applying the migration to production.",
-  "phase": "A",
+  "objective": "Prepare the alternative real worker chain FAHAD OFFICE -> OPENCODE -> GEMINI CLI for Phase N on the VPS: verify official CLI interfaces, upgrade the OpenCode adapter, build a Gemini CLI adapter, keep the shared driver and a vendor-neutral failure taxonomy, register the workers truthfully, ship a VPS setup script and auth runbook, build the real Phase N drill command with restart/recovery and fail-closed termination proof, run targeted tests, and document without touching production.",
+  "phase": "N_ALT_WORKERS_VPS_PREP",
   "status": "HANDOFF_READY",
-  "base_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "last_commit": "13db29ef744873b450ce805d5beb7403b3d2f13b",
+  "base_commit": "228ca3548f4706b56e0ff563034192a19ce31c45",
+  "last_commit": "228ca3548f4706b56e0ff563034192a19ce31c45",
+  "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
   "files_changed": [
-    "supabase/migrations/20261004090000_coding_continuity.sql",
+    "src/continuity/adapters/opencode.js",
+    "src/continuity/adapters/gemini-cli.js",
+    "src/continuity/runtime.js",
+    "src/continuity/errors.js",
+    "src/hub-continuity.js",
+    "ops/setup-continuity-workers.sh",
+    "tools/continuity-phase-n-live.mjs",
+    "supabase/migrations/20261005090000_continuity_gemini_worker.sql",
     "supabase/verify/scenarios/coding_continuity.sql",
-    "supabase/verify/schema-fingerprint.txt",
-    "src/continuity/checkpoint.js",
-    "src/continuity/states.js",
+    "test/continuity-adapters.test.js",
     "test/continuity-schema.test.js",
-    "test/continuity-checkpoint.test.js",
-    ".continuity/checkpoint.json",
+    "docs/CONTINUITY-VPS-WORKERS.md",
     "docs/HANDOVER.md",
     "docs/CODEX-CONTINUE.md",
-    "docs/CONTINUITY-IMPLEMENTATION-PLAN.md",
-    "docs/CODING-CONTINUITY-SUPERVISOR.md",
-    "AGENTS.md"
+    "docs/CONTINUITY-PHASE-N-READINESS.md",
+    ".continuity/checkpoint.json"
   ],
-  "diff_summary": "Phase A: additive migration (6 coding_* tables, 8 RPCs, RLS service-role only, 7 seeded workers), DB scenario, checkpoint validator, state machine, tests, regenerated fingerprint (+161 lines, none changed). last_commit is the Phase A code commit; the handover-docs commit that carries this file sits on top of it.",
-  "tests_run": "node --test (includes schema replay and the coding_continuity scenario)",
-  "tests_passed": 522,
+  "tests_run": "targeted only per the sprint order: node --check sweep over src/testing/tools; focused continuity suite (test/continuity-*.test.js); test/docs-references.test.js; test/hermes-separation.test.js; npm run db:replay (33 migrations plus all scenarios) against local PostgreSQL 14; drill --selftest and --check; GitHub validate runs the full suite",
+  "tests_passed": 75,
   "tests_failed": 0,
   "ci_status": "pending",
   "decisions": [
-    "New tables use the coding_ prefix (coding_checkpoints, coding_handoffs) because the applied 2026-09-22 POC owns continuity_checkpoints/continuity_handoffs.",
-    "A FROZEN lease blocks its branch until reclaim_coding_lease marks it RECLAIMED (added RPC).",
-    "RPCs use security invoker + empty search_path, matching the existing coding agent RPCs.",
-    "COMPLETED is a terminal state reachable only from CHECKPOINTING after completion gates.",
-    "Phase B skipped by Claude to protect the handover."
+    "Both new workers are real adapters built only against verified official interfaces: OpenCode (opencode run --format json, stdin prompt, --session resume, --auto, auth list) from the official docs and published run command source; Gemini CLI (non-TTY headless, --output-format stream-json, --approval-mode yolo, --skip-trust, init.session_id/result.stats, exit codes 0/1/41/42/53) from docs/cli/headless.md and the installed official 0.40.1 package. No guessed flags.",
+    "Gemini CLI declares resume:false because --resume only accepts \"latest\" or a numeric index; neither is a durable id and \"latest\" could resume another task's session, so recovery always starts a fresh session from the continuation packet at the exact checkpoint commit (supervisor falls back to start()).",
+    "Both adapters are OFF by default and share one env wiring point (externalAdaptersFromEnv in src/continuity/runtime.js) used by the production runtime and the drill, so drill wiring cannot drift from production.",
+    "The failure taxonomy is formalized as FAILURE_TAXONOMY/failureCategory() in src/continuity/errors.js: eight distinguishable categories (AUTH_REQUIRED, UNSUPPORTED_VERSION, SANDBOX_UNAVAILABLE, HOST_CAPABILITY_REQUIRED, RATE_LIMITED, PROCESS_FAILED, STOP_UNCONFIRMED, WORKTREE_UNSAFE) mapped onto the unchanged runtime codes; readiness states win over run-time codes when both are present.",
+    "The worker registry grows from seven to eight with a NEW data-only migration (20261005090000, insert disabled gemini-cli row, on conflict do nothing): the Phase A migration is never edited, no schema object changes, and the replayed fingerprint content matches supabase/verify/schema-fingerprint.txt exactly, so that file is untouched.",
+    "The live drill keeps production fully out of scope: disposable branch, disposable worktrees and an isolated file-persisted Continuity store; production Supabase continuity tables remain unapplied and only the Office worker's own documented agent_sessions interface is used.",
+    "Restart/recovery in the drill is fail-closed by construction: the first recovery attempt after a real SIGKILL is deliberately refused (no sealed termination proof), then the OS-verified proof is sealed and only the second attempt may reclaim the lease and resume from the exact commit.",
+    "OpenCode's four Zen gates plus auto-reload-off became explicit owner assertions via environment flags, all default closed; production flags remain untouched."
   ],
   "constraints": [
-    "Do not merge PR #102 or apply the migration without Fahad's approval.",
-    "CONTINUITY_SUPERVISOR stays off by default.",
-    "Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, V5 UI, POC continuity_* tables, Hermes."
+    "Do not merge #102, #104, #105, #106, #107 or #108, retarget PRs, apply either migration (20261004090000 or 20261005090000), deploy, or enable CONTINUITY_SUPERVISOR / CONTINUITY_CODEX_ENABLED / CONTINUITY_CLAUDE_ENABLED / CONTINUITY_OPENCODE_ENABLED / CONTINUITY_GEMINI_CLI_ENABLED in production.",
+    "Do not touch Hermes, weaken production security, or present the drill's --selftest or --check as worker evidence.",
+    "Do not force push; only normal pushes to codex/continuity-readiness, and inspect (never rerun) CI."
   ],
   "errors": [
-    "First replay failed: continuity_checkpoints already existed (POC); fixed by renaming the new tables."
+    "No live certification was attempted or claimed: this Freebuff environment has no opencode binary, no authenticated Gemini CLI, no Supabase/model credentials and no provider keys (freebuff-env reports no environment files), so the real chain cannot execute here. The drill --check refuses this environment with 11 exact blockers; that refusal is the intended fail-closed behavior, not a defect.",
+    "The Phase N real three-worker handoff and restart drills remain NOT EXECUTED anywhere; tools/continuity-phase-n-live.mjs --run is prepared but has never run with authenticated workers.",
+    "Codex and Claude Code remain IMPLEMENTED / CERTIFICATION DEFERRED (installed CLIs below minimums and not logged in).",
+    "PRs #107 and #108 remain OPEN with base main and duplicate the continuity stack; the owner should close them or re-cut them docs-only.",
+    "The permanent worker stack grows from the documented seven rows to eight with the gemini-cli registry entry requested by this sprint; docs/CONTINUITY-VPS-WORKERS.md records the new table. AGENTS.md still says 'keep all seven in every design' and should be refreshed by the owner when the stack change is accepted."
   ],
   "quota_state": {
     "basis": "UNKNOWN",
@@ -57,11 +67,41 @@
     "limited": false,
     "retry_after_s": null
   },
-  "next_exact_action": "Review PR #102 (node --test, CI), then create codex/continuity-phase-b from origin/claude/continuity-foundation and build Phase B (src/continuity/store.js, lease.js, checkpointer.js with tests) per docs/CONTINUITY-IMPLEMENTATION-PLAN.md; do not merge #102 or apply the migration.",
+  "worker_state": {
+    "office": {
+      "result": "EXECUTABLE (unchanged)",
+      "reason": "production-validated Coding Agent V1; the drill consumes its documented agent_sessions interface on the VPS where Supabase and model keys exist"
+    },
+    "opencode": {
+      "result": "PREPARED / OFF",
+      "reason": "real adapter with verified interface, runtime feature verification, auth readiness and five owner gates; not authenticated here, never live-run"
+    },
+    "gemini-cli": {
+      "result": "PREPARED / OFF",
+      "reason": "new real adapter with verified flags, presence-only auth readiness, conservative PUBLIC-only privacy and costClass unknown; not authenticated here, never live-run"
+    },
+    "codex": {
+      "result": "IMPLEMENTED / CERTIFICATION DEFERRED",
+      "reason": "unchanged this sprint: needs CLI >=0.150.0 and a verified login"
+    },
+    "claude": {
+      "result": "IMPLEMENTED / CERTIFICATION DEFERRED",
+      "reason": "unchanged this sprint: needs CLI >=2.1.268 and a verified login"
+    }
+  },
+  "lease_state": "No lease was acquired in this sprint; the drill collects one-active-writer samples and an event-log replay when it runs on the VPS.",
+  "handoff_state": "No handoff was attempted in this sprint; the drill asserts stop-before-transfer event ordering (WORKER_STOPPED before HANDOFF_PROPOSED) and destination-starts-from-exact-commit when it runs.",
+  "restart_recovery": "Exercised only by the drill's --selftest (persisted store round-trip + termination-proof gate, fail-closed both ways). The real restart/recovery sequence (checkpoint, crash, reload, refused unproven recovery, sealed proof, reclaim, resume from exact commit, completion) is implemented in tools/continuity-phase-n-live.mjs and awaits the VPS run.",
+  "test_environment": "Freebuff cloud container: Ubuntu 22.04, kernel 6.1.158+, no AppArmor module, unprivileged user namespaces allowed, PostgreSQL 14 server, Gemini CLI 0.40.1 (unauthenticated), no opencode binary, no credentials.",
+  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106",
+  "pr_head_before_this_sprint": "228ca3548f4706b56e0ff563034192a19ce31c45",
+  "next_exact_action": "On the VPS: bash ops/setup-continuity-workers.sh --check then --install; authenticate OpenCode (official login or an existing provider key by name) and Gemini CLI (GEMINI_API_KEY or the official OAuth URL/code flow) and assert the five OpenCode gates plus CONTINUITY_OPENCODE_ENABLED and CONTINUITY_GEMINI_CLI_ENABLED in the drill shell; run node tools/continuity-phase-n-live.mjs --check and then --run; review .continuity/phase-n-drill/report.json evidence (lease/session/checkpoint IDs, commit SHAs, stop-before-transfer, one-writer replay, refused-unproven recovery, exact-commit resume, final history). Only after a PASS verdict and Fahad's review: migration application, ordered merges, deploy and flag activation.",
   "unresolved_items": [
-    "Fahad's approval to apply migration 20261004090000_coding_continuity to production, then merge PR #102."
+    "The real Office -> OpenCode -> Gemini CLI handoff drill and the real restart/recovery drill are prepared but not executed; they need an authenticated VPS environment.",
+    "OpenCode and Gemini CLI adapters are PREPARED, not live-certified: no authenticated model turn has ever run through either adapter.",
+    "Codex and Claude Code adapters remain live-uncertified.",
+    "PRs #107 and #108 still target main and duplicate the continuity stack.",
+    "Fahad approval is still required for migration application, ordered merges, deployment and supervisor activation."
   ],
-  "rollback_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "summary_md": "Phase A of the Coding Continuity Supervisor is implemented and tested on claude/continuity-foundation (PR #102, open). Migration not applied. Codex reviews #102, then builds Phase B stacked on it.",
-  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/102"
+  "summary_md": "Alternative-workers VPS preparation sprint: the OpenCode adapter is now a real executable adapter and a new Gemini CLI adapter was built, both only against verified official interfaces, both OFF by default and wired through one shared env factory. The failure taxonomy is formalized into eight distinguishable categories, the registry gains a data-only disabled gemini-cli row (fingerprint unchanged), and this branch ships ops/setup-continuity-workers.sh (--check/--install), docs/CONTINUITY-VPS-WORKERS.md (install, auth, flags, taxonomy, drill, rollback, status) and tools/continuity-phase-n-live.mjs (real chain evidence plus fail-closed restart/recovery). Targeted tests: focused continuity 75/75, docs and Hermes suites green, db:replay 33 migrations with all scenarios, fingerprint content identical, drill selftest green, drill --check refuses this unauthenticated environment with exact blockers. Verdict: ALTERNATIVE WORKERS PREPARED - READY FOR VPS LIVE PHASE N. Production untouched."
 }

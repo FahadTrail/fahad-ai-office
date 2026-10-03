@@ -161,8 +161,19 @@ async function boot() {
     location.hash = '#/';
   };
   $('#menuButton').onclick = () => toggleSidebar(true);
-  $('#sidebarClose').onclick = () => toggleSidebar(false);
-  $('#scrim').onclick = () => toggleSidebar(false);
+  $('#sidebarClose').onclick = () => toggleSidebar(false, { restoreFocus: true });
+  $('#scrim').onclick = () => toggleSidebar(false, { restoreFocus: true });
+  window.matchMedia('(max-width: 900px)').addEventListener('change', () => toggleSidebar(false));
+  document.addEventListener('keydown', (event) => {
+    if (!$('#sidebar').classList.contains('open') || !window.matchMedia('(max-width: 900px)').matches) return;
+    if (event.key === 'Escape') { event.preventDefault(); toggleSidebar(false, { restoreFocus: true }); return; }
+    if (event.key !== 'Tab') return;
+    const focusable = [...$('#sidebar').querySelectorAll('a, button, select, input, summary')]
+      .filter((element) => !element.disabled && element.getClientRects().length);
+    if (!focusable.length) return;
+    if (event.shiftKey && document.activeElement === focusable[0]) { event.preventDefault(); focusable.at(-1).focus(); }
+    else if (!event.shiftKey && document.activeElement === focusable.at(-1)) { event.preventDefault(); focusable[0].focus(); }
+  });
   window.addEventListener('hashchange', route);
   $('#searchOpen').onclick = openSearch;
   document.addEventListener('keydown', (event) => {
@@ -174,9 +185,19 @@ async function boot() {
   state.sidebarTimer = setInterval(refreshSidebar, 60_000);
   route();
 }
-function toggleSidebar(open) {
-  $('#sidebar').classList.toggle('open', open);
-  $('#scrim').classList.toggle('hidden', !open);
+function toggleSidebar(open, { restoreFocus = false } = {}) {
+  const mobile = window.matchMedia('(max-width: 900px)').matches;
+  const shown = mobile && open;
+  const sidebar = $('#sidebar');
+  sidebar.classList.toggle('open', shown);
+  sidebar.inert = mobile && !shown;
+  if (mobile && !shown) sidebar.setAttribute('aria-hidden', 'true');
+  else sidebar.removeAttribute('aria-hidden');
+  $('#scrim').classList.toggle('hidden', !shown);
+  $('#menuButton').setAttribute('aria-expanded', String(shown));
+  $('#menuButton').setAttribute('aria-label', shown ? 'Close menu' : 'Open menu');
+  if (shown) $('#sidebarClose').focus();
+  else if (restoreFocus) $('#menuButton').focus();
 }
 async function refreshSidebar() {
   if (!ws()) return;
@@ -817,7 +838,8 @@ async function renderProjects() {
 // Command Center (and the project map) live in their own module.
 async function renderProject(id, sub = '') {
   const module = await import('./project.js?v=__UI_VERSION__');
-  return module.renderProject({ ...officeContext(), usd, confirmDialog, ask, memoryKinds: MEMORY_KINDS, memoryLabel: (kind) => MEMORY_LABEL[kind] || kind, openEmployee }, id, sub === 'map' ? 'map' : 'center');
+  const mode = ['map', 'continuity'].includes(sub) ? sub : 'center';
+  return module.renderProject({ ...officeContext(), usd, confirmDialog, ask, memoryKinds: MEMORY_KINDS, memoryLabel: (kind) => MEMORY_LABEL[kind] || kind, openEmployee }, id, mode);
 }
 const MEMORY_LABEL = Object.fromEntries(MEMORY_KINDS);
 

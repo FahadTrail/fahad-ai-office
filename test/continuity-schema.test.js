@@ -8,6 +8,7 @@ import { canTransition, FAILURES, LIFECYCLE, nextStates, STATES } from '../src/c
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const sql = read('supabase/migrations/20261004090000_coding_continuity.sql');
+const geminiSql = read('supabase/migrations/20261005090000_continuity_gemini_worker.sql');
 const scenario = read('supabase/verify/scenarios/coding_continuity.sql');
 const TABLES = ['coding_workers', 'coding_worker_sessions', 'coding_checkpoints', 'coding_leases', 'coding_handoffs', 'coding_usage_snapshots'];
 const RPCS = ['acquire_coding_lease', 'heartbeat_coding_lease', 'save_continuity_checkpoint', 'release_coding_lease',
@@ -53,12 +54,31 @@ test('continuity migration: one writer per branch, checkpoint guards, seven perm
   const source = Object.fromEntries(rows.map((row) => [row.key, row.source]));
   assert.equal(source.codex, 'openai-chatgpt');
   assert.equal(source.antigravity, 'google-ai-pro', 'Google AI Pro is not Gemini API capacity');
+  // The Phase A seed deliberately holds no Gemini quota source: Antigravity's
+  // Google AI Pro subscription must never be conflated with Gemini capacity.
   assert.ok(!Object.values(source).some((value) => /gemini/.test(value)));
   assert.equal(rows.find((row) => row.key === 'freebuff').kind, 'manual');
 });
 
+test('continuity migration: the Gemini CLI worker is data-only, disabled and has its own quota source', () => {
+  // Data only: no schema objects change, so the schema fingerprint is untouched.
+  assert.doesNotMatch(geminiSql, /\b(create|alter|drop)\s+(table|function|index|schema|type)\b/i);
+  assert.doesNotMatch(geminiSql, /\btruncate\b/i);
+  assert.match(geminiSql, /insert into public\.coding_workers/);
+  const row = /\('([a-z-]+)', '[^']+', '(native|cli|manual)', '([a-z-]+)', (true|false)\)/.exec(geminiSql);
+  assert.deepEqual(row && { key: row[1], kind: row[2], source: row[3], enabled: row[4] === 'true' },
+    { key: 'gemini-cli', kind: 'cli', source: 'gemini-cli', enabled: false },
+    'gemini-cli is a CLI worker, disabled at insert, with a quota source of its own');
+  // The Gemini CLI's quota is not Google AI Pro (Antigravity) and not any
+  // other worker's source: it must never be deduplicated against them.
+  assert.notEqual(row[3], 'google-ai-pro');
+  // The Phase A migration itself stays untouched.
+  assert.ok(sql.includes("('freebuff', 'Freebuff', 'manual', 'freebuff', false);"));
+});
+
 test('continuity scenario covers the lease, checkpoint and handoff contract', () => {
-  for (const check of ['second acquire on the same branch fails', 'wrong token heartbeat fails', 'valid heartbeat works',
+  for (const check of ['eight permanent workers', 'only office starts enabled', 'gemini-cli has its own quota source',
+    'gemini-cli starts disabled', 'second acquire on the same branch fails', 'wrong token heartbeat fails', 'valid heartbeat works',
     'release without checkpoint fails', 'checkpoints are sequenced', 'release with checkpoint works', 'one stale lease frozen',
     'frozen lease still blocks the branch', 'frozen lease reclaimed', 'handoff proposed', 'handoff accepted', 'secret material refused',
     'short commit refused', 'empty next action refused', 'accept waits for the release']) {

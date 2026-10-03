@@ -94,6 +94,7 @@ let heartbeatTimer;
 let hubServer;
 let telegram = null;
 let continuity = null;
+let continuityShutdown = Promise.resolve();
 let toolBrokerCanary = { status: 'pending' };
 
 function heartbeat() {
@@ -111,7 +112,9 @@ function shutdown() {
   running = false;
   hubServer?.close();
   telegram?.stop();
-  continuity?.stop();
+  if (continuity) continuityShutdown = continuity.drainForShutdown()
+    .catch((error) => log('WARN  continuity shutdown drain failed:', error.message))
+    .finally(() => continuity.stop());
   log('Shutdown signal received. Finishing current task, then stopping.');
 }
 
@@ -183,6 +186,7 @@ async function main() {
 
   // Tasks already running finish (or are recovered later if interrupted).
   await workflow.drainInFlight?.().catch(() => {});
+  await continuityShutdown;
   clearInterval(heartbeatTimer);
   log('Runtime stopped cleanly.');
 }

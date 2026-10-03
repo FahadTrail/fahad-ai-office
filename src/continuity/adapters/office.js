@@ -5,6 +5,19 @@ function unwrap(label, response) {
   if (response?.error) throw new Error(`${label}: ${response.error.message}`);
   return response?.data ?? null;
 }
+
+// create_coding_session writes agent_sessions.budget_usd, which is checked
+// `budget_usd > 0 and budget_usd <= 500` (column default and Hub default are
+// both 5). A missing or invalid task budget must never be sent as 0 — the
+// old `task.budgetUsd ?? 0` failed the live Phase N Office leg with
+// agent_sessions_budget_usd_check.
+const DEFAULT_BUDGET_USD = 5;
+const MAX_BUDGET_USD = 500;
+function boundedBudget(requested) {
+  const value = Number(requested);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_BUDGET_USD;
+  return Math.min(value, MAX_BUDGET_USD);
+}
 export class OfficeContinuityAdapter {
   key = 'office';
 
@@ -20,15 +33,18 @@ export class OfficeContinuityAdapter {
 
   capabilities() {
     return {
-      headless: true, resume: true, structuredOutput: true, usageReporting: true, worktrees: true,
+      executionMode: 'EXECUTABLE', headless: true, resume: true, checkpoint: true,
+      structuredOutput: true, usageReporting: true, worktrees: true,
       worktreeManagement: 'adapter',
+      authRequirement: 'Existing Office service role and native Coding Agent configuration',
       maxContext: null, privacyClasses: ['PUBLIC', 'NORMAL', 'PRIVATE', 'CONFIDENTIAL'],
       taskSizes: ['small', 'medium', 'large', 'refactor'], taskTypes: ['coding'], quality: 4,
       taskFit: { small: 5, medium: 4, large: 3, refactor: 3 }, speed: 3, costClass: 'free-first', quotaSource: 'office-pools',
     };
   }
 
-  async available() { return { ok: true, reason: null }; }
+  async available() { return { ok: true, reason: null, authState: 'AUTHENTICATED' }; }
+  async authReadiness() { return this.available(); }
   async health() { return { status: 'healthy', basis: 'MEASURED', detail: 'in-process Coding Agent' }; }
 
   async start({ continuationPacket, branch, task = {} }) {
@@ -38,7 +54,7 @@ export class OfficeContinuityAdapter {
       objective: `${task.objective}\n\n${continuationPacket}`,
       repository: task.repository,
       baseBranch: task.baseBranch || branch,
-      budgetUsd: task.budgetUsd ?? 0,
+      budgetUsd: boundedBudget(task.budgetUsd),
       config: { ...(task.config || {}), continuity: true, dataClass: task.dataClass || 'NORMAL' },
       createdBy: 'continuity-supervisor',
     });

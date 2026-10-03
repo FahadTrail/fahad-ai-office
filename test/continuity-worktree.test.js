@@ -66,3 +66,30 @@ test('worktree refresh fails closed when the configured remote branch is unavail
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('recovery verification rejects a different branch or a divergent checkpoint commit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'fahad-continuity-verify-'));
+  const repository = join(root, 'repository');
+  const worktreesRoot = join(root, 'worktrees');
+  const worktree = join(worktreesRoot, 'worker');
+  try {
+    await mkdir(repository); await mkdir(worktreesRoot);
+    await git(repository, 'init', '-b', 'main');
+    await git(repository, 'config', 'user.name', 'Continuity Test');
+    await git(repository, 'config', 'user.email', 'continuity@example.invalid');
+    await writeFile(join(repository, 'base.txt'), 'base\n');
+    await git(repository, 'add', '.'); await git(repository, 'commit', '-m', 'base');
+    const base = await git(repository, 'rev-parse', 'HEAD');
+    await git(repository, 'branch', 'codex/task');
+    const manager = new WorktreeManager({ repositoryRoot: repository, worktreesRoot });
+    await manager.create({ path: worktree, branch: 'codex/task' });
+    assert.equal((await manager.verifyAgainstCheckpoint({ worktree, checkpoint: { branch: 'codex/task', last_commit: base } })).ok, true);
+    assert.equal((await manager.verifyAgainstCheckpoint({ worktree, checkpoint: { branch: 'codex/other', last_commit: base } })).ok, false);
+    await writeFile(join(repository, 'sibling.txt'), 'sibling\n');
+    await git(repository, 'add', '.'); await git(repository, 'commit', '-m', 'sibling');
+    const sibling = await git(repository, 'rev-parse', 'HEAD');
+    assert.equal((await manager.verifyAgainstCheckpoint({ worktree, checkpoint: { branch: 'codex/task', last_commit: sibling } })).ok, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

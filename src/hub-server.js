@@ -101,7 +101,7 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
       if (authRequired && !(await authorized(request, accessToken, { authClient, authEnabled, ownerEmail }))) {
         return sendJson(response, 401, { ok: false, error: authEnabled ? 'HUB_UNAUTHORIZED' : 'HUB_AUTH_NOT_CONFIGURED' });
       }
-      if (await handleContinuityApi({ db, supervisor: continuity, request, response, url: requestUrl, sendJson, readJson })) return;
+      if (await handleContinuityApi({ db, supervisor: continuity, ownerAuthorized: authEnabled || Boolean(accessToken), request, response, url: requestUrl, sendJson, readJson })) return;
       if (await handleCodingApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
       if (await handleWorkspaceApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null, store })) return;
       if (await handleOfficeApi({ db, request, response, url: requestUrl, sendJson })) return;

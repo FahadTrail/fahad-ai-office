@@ -101,6 +101,19 @@ export class Sandbox {
     return { head: head.stdout.trim() };
   }
 
+  // Head of the remote-tracking ref recorded when this branch was cloned, if
+  // the clone carried it. A Continuity-bound branch (cloned from itself)
+  // leases its first push against this exact remote head; a locally minted
+  // work branch has no such ref, so its first push keeps the "branch must not
+  // exist" lease. Never fetched again: a stale expectation only ever fails
+  // the push closed.
+  async trackingHead(branch) {
+    const result = await this.git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]);
+    if (result.code !== 0) return null;
+    const head = result.stdout.trim();
+    return /^[0-9a-f]{40}$/.test(head) ? head : null;
+  }
+
   // Re-applies a stored working-tree patch when a session resumes on a
   // machine that no longer has its worktree.
   async applyPatch(patch) {
