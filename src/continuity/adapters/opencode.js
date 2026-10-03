@@ -20,9 +20,11 @@
 // Every required flag is re-checked at runtime by `verifyFeatures`, so a CLI
 // that drops one fails closed as UNSUPPORTED_VERSION.
 //
-// The Zen free-model safety gates are unchanged and are still evaluated
+// The owner-verification gates are provider-neutral and are still evaluated
 // before any subprocess runs: this adapter is OFF by default and only the
-// owner can satisfy them.
+// owner can satisfy them. The Zen promotion gate applies only when the
+// declared model provider is Zen; any other verified free provider (e.g.
+// OpenRouter Free) never needs it.
 import { ExternalCliAdapter } from './external-cli.js';
 
 const minimumVersion = { major: 1, minor: 18, patch: 0 };
@@ -63,12 +65,25 @@ const OPENCODE_ENV_KEYS = Object.freeze([
 
 export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
   constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs, platform = process.platform,
-    zenFree = false, promotionActive = false, legitimateAccess = false, dataClassAllowed = false, autoReload = true } = {}) {
+    freeVerified, zenFree = false, promotionActive = false, legitimateAccess = false, dataClassAllowed = false,
+    autoReload = true, modelProvider = 'zen' } = {}) {
     super({
       key: 'opencode', binary: 'opencode', driver, inspectCheckpoint, enabled, timeoutMs, platform,
       minimumVersion, maximumMajor: 2, envKeys: [...OPENCODE_ENV_KEYS],
     });
-    this.gates = { zenFree, promotionActive, legitimateAccess, dataClassAllowed, autoReload };
+    // Provider-neutral owner gates, all default closed. `zenFree` stays an
+    // accepted legacy option name, and `modelProvider` defaults to 'zen' so
+    // existing setups keep exactly their previous behaviour, including the
+    // Zen promotion gate.
+    const provider = String(modelProvider ?? 'zen').trim().toLowerCase() || 'zen';
+    this.gates = {
+      freeVerified: Boolean(freeVerified ?? zenFree),
+      promotionActive: Boolean(promotionActive),
+      legitimateAccess: Boolean(legitimateAccess),
+      dataClassAllowed: Boolean(dataClassAllowed),
+      autoReload: Boolean(autoReload),
+      modelProvider: provider,
+    };
   }
 
   capabilities() {
@@ -89,14 +104,18 @@ export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
   }
 
   // The owner-verification gates are evaluated before the enabled flag and
-  // before any subprocess, so their reason is reported verbatim.
+  // before any subprocess, so their reason is reported verbatim. Required for
+  // every provider: auto-reload off, a verified free model source, legitimate
+  // access and data-class/privacy approval. The Zen promotion is a Zen-only
+  // concept and is required only when the model provider is Zen — never for
+  // another verified free provider such as OpenRouter Free.
   gateReason() {
-    const { autoReload, zenFree, promotionActive, legitimateAccess, dataClassAllowed } = this.gates;
+    const { autoReload, freeVerified, promotionActive, legitimateAccess, dataClassAllowed, modelProvider } = this.gates;
     if (autoReload) return 'AUTO_RELOAD_MUST_BE_OFF';
-    if (!zenFree) return 'ZEN_MODEL_NOT_VERIFIED_FREE';
-    if (!promotionActive) return 'ZEN_PROMOTION_INACTIVE';
-    if (!legitimateAccess) return 'ZEN_ACCESS_NOT_VERIFIED';
-    if (!dataClassAllowed) return 'ZEN_PRIVACY_NOT_ALLOWED';
+    if (!freeVerified) return 'FREE_ACCESS_NOT_VERIFIED';
+    if (modelProvider === 'zen' && !promotionActive) return 'ZEN_PROMOTION_INACTIVE';
+    if (!legitimateAccess) return 'ACCESS_NOT_VERIFIED';
+    if (!dataClassAllowed) return 'PRIVACY_NOT_ALLOWED';
     return null;
   }
 

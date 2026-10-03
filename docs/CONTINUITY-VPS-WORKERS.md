@@ -26,7 +26,7 @@ so `supabase/verify/schema-fingerprint.txt` is untouched. The scenario
 | Worker | Status after this sprint | Notes |
 |---|---|---|
 | `office` | **EXECUTABLE** (production-validated Coding Agent V1) | Needs the existing Supabase + model-pool configuration |
-| `opencode` | **PREPARED / OFF** until live VPS authentication | Real adapter; `CONTINUITY_OPENCODE_ENABLED` plus five owner gates, all default OFF |
+| `opencode` | **PREPARED / OFF** until live VPS authentication | Real adapter; `CONTINUITY_OPENCODE_ENABLED` plus the provider-neutral owner gates (free source, auto-reload off, access, privacy — Zen promotion only for provider `zen`), all default OFF |
 | `gemini-cli` | **PREPARED / OFF** until live VPS authentication | New real adapter; `CONTINUITY_GEMINI_CLI_ENABLED`, default OFF |
 | `codex` | **IMPLEMENTED / CERTIFICATION DEFERRED** | Unchanged; needs CLI `>=0.150.0` + login |
 | `claude-code` | **IMPLEMENTED / CERTIFICATION DEFERRED** | Unchanged; needs CLI `>=2.1.268` + login |
@@ -68,11 +68,17 @@ and file **existence** only.
    server's own key material; do not copy it into code, docs or chat.
 2. Verify without printing values: `opencode auth list` (prints counts only)
    or `bash ops/setup-continuity-workers.sh --check`.
-3. The adapter refuses to run until all five owner gates are asserted in the
-   drill/runtime shell (they are pure assertions, default closed):
-   `CONTINUITY_OPENCODE_AUTO_RELOAD_OFF`, `CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED`,
-   `CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE`, `CONTINUITY_OPENCODE_ACCESS_VERIFIED`,
-   `CONTINUITY_OPENCODE_PRIVACY_VERIFIED`.
+3. The adapter refuses to run until the provider-neutral owner gates are
+   asserted in the drill/runtime shell (they are pure assertions, default
+   closed): `CONTINUITY_OPENCODE_AUTO_RELOAD_OFF`,
+   `CONTINUITY_OPENCODE_FREE_VERIFIED` (the legacy
+   `CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED` name still works),
+   `CONTINUITY_OPENCODE_ACCESS_VERIFIED`, `CONTINUITY_OPENCODE_PRIVACY_VERIFIED`,
+   and `CONTINUITY_OPENCODE_MODEL_PROVIDER` naming the model source (default
+   `zen`; use `openrouter` for verified OpenRouter Free). The Zen promotion
+   assertion `CONTINUITY_OPENCODE_PROMOTION_ACTIVE` (legacy
+   `CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE`) is required **only** when the
+   provider is `zen` — never for another verified free provider.
 
 ### Gemini CLI
 
@@ -97,7 +103,9 @@ Readiness proof: `bash ops/setup-continuity-workers.sh --check` reports
 |---|---|
 | `CONTINUITY_OPENCODE_ENABLED` | Enables the OpenCode adapter (gates must also be asserted) |
 | `CONTINUITY_OPENCODE_AUTO_RELOAD_OFF` | Owner asserts OpenCode auto-reload is off (gate) |
-| `CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED` … `_PRIVACY_VERIFIED` | The four remaining OpenCode owner gates |
+| `CONTINUITY_OPENCODE_MODEL_PROVIDER` | Model source for the gates; default `zen` keeps the Zen promotion requirement, e.g. `openrouter` needs none |
+| `CONTINUITY_OPENCODE_FREE_VERIFIED` / `_ACCESS_VERIFIED` / `_PRIVACY_VERIFIED` | The three provider-neutral OpenCode owner gates (legacy `CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED` name accepted for the free gate) |
+| `CONTINUITY_OPENCODE_PROMOTION_ACTIVE` | Zen promotion assertion; required **only** when the provider is `zen` (legacy `CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE`) |
 | `CONTINUITY_GEMINI_CLI_ENABLED` | Enables the Gemini CLI adapter |
 | `CONTINUITY_CODEX_ENABLED`, `CONTINUITY_CLAUDE_ENABLED`, `CONTINUITY_SUPERVISOR` | Unchanged; stay OFF in production |
 
@@ -136,6 +144,53 @@ adapters reuse it; no duplicate worker infrastructure was created.
 node tools/continuity-phase-n-live.mjs --check   # verify-only preflight
 node tools/continuity-phase-n-live.mjs --run     # the real drill
 node tools/continuity-phase-n-live.mjs --selftest # plumbing only, not worker evidence
+```
+
+One-block VPS sequence: pull the latest PR #106 code, load the Office
+credentials from the production env file without printing anything, export
+**only** the drill flags in this shell, run `--check`, run `--run` only if
+the check passes, and print the final verdict:
+
+```sh
+set -eo pipefail
+trap 'echo "PHASE N FINAL: FAIL (setup)"' ERR
+REPO="${PHASE_N_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
+if [ -z "$REPO" ] || [ "$(git -C "$REPO" branch --show-current 2>/dev/null)" != codex/continuity-readiness ] \
+  || ! git -C "$REPO" remote get-url origin 2>/dev/null | grep -qi 'FahadTrail/fahad-ai-office'; then
+  REPO="$(find /root /home /opt -maxdepth 4 -type d -name .git 2>/dev/null | while read -r g; do
+    d="${g%/.git}"
+    [ "$(git -C "$d" branch --show-current 2>/dev/null)" = codex/continuity-readiness ] || continue
+    git -C "$d" remote get-url origin 2>/dev/null | grep -qi 'FahadTrail/fahad-ai-office' && printf '%s\n' "$d"
+  done | head -1 || true)"
+fi
+[ -n "$REPO" ] || { echo "PHASE N FINAL: FAIL (no codex/continuity-readiness checkout found)"; exit 1; }
+cd "$REPO"
+echo "checkout: $REPO ($(git rev-parse --short HEAD))"
+git pull --ff-only
+ENVFILE="${PHASE_N_OFFICE_ENV:-/opt/fahad-ai-office/.env}"
+[ -r "$ENVFILE" ] || { echo "PHASE N FINAL: FAIL (Office env file not found)"; exit 1; }
+set -a; . "$ENVFILE"; set +a   # Supabase + model credentials; never printed
+unset CONTINUITY_SUPERVISOR CONTINUITY_CODEX_ENABLED CONTINUITY_CLAUDE_ENABLED \
+      CONTINUITY_OPENCODE_ENABLED CONTINUITY_OPENCODE_AUTO_RELOAD_OFF CONTINUITY_OPENCODE_MODEL_PROVIDER \
+      CONTINUITY_OPENCODE_FREE_VERIFIED CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED \
+      CONTINUITY_OPENCODE_PROMOTION_ACTIVE CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE \
+      CONTINUITY_OPENCODE_ACCESS_VERIFIED CONTINUITY_OPENCODE_PRIVACY_VERIFIED CONTINUITY_GEMINI_CLI_ENABLED
+export CONTINUITY_OPENCODE_ENABLED=1 CONTINUITY_OPENCODE_AUTO_RELOAD_OFF=1 \
+       CONTINUITY_OPENCODE_MODEL_PROVIDER=openrouter CONTINUITY_OPENCODE_FREE_VERIFIED=1 \
+       CONTINUITY_OPENCODE_ACCESS_VERIFIED=1 CONTINUITY_OPENCODE_PRIVACY_VERIFIED=1 \
+       CONTINUITY_GEMINI_CLI_ENABLED=1
+if node tools/continuity-phase-n-live.mjs --check; then
+  if node tools/continuity-phase-n-live.mjs --run; then
+    trap - ERR
+    echo "PHASE N FINAL: PASS"
+  else
+    echo "PHASE N FINAL: FAIL (drill)"
+    exit 1
+  fi
+else
+  echo "PHASE N FINAL: FAIL (preflight)"
+  exit 1
+fi
 ```
 
 The `--run` mode prepares a disposable branch, disposable worktrees and an
@@ -200,5 +255,11 @@ falls back to a simulated pass.
 * **Not verified:** any live model turn, any real handoff, any authenticated
   run. Certification requires the VPS steps above and a passing `--run`
   verdict, followed by Fahad's review.
+* **Owner-reported live on the VPS (2026-10-03):** OpenCode 1.18.34
+  authenticated with verified OpenRouter Free and Gemini CLI authenticated;
+  the owner's probes reported both workers ready. The one-block command in
+  section 6 runs `--check` and, only on a pass, the real `--run` drill — the
+  resulting `report.json` verdict, not this note, is the certification
+  evidence.
 * **Production:** untouched — no merge, no deploy, no migration, no flag
   change, no Hermes access.

@@ -110,15 +110,75 @@ test('Claude Code receives its isolated login directory without inheriting API b
   assert.equal(childEnv.CLAUDE_CONFIG_DIR, env.CLAUDE_CONFIG_DIR);
   assert.equal(childEnv.ANTHROPIC_API_KEY, undefined);
 });
-test('OpenCode Zen fails closed for every required safety condition', async () => {
+test('OpenCode owner gates are provider-neutral, fail closed and keep legacy Zen behaviour', async () => {
+  const gate = (options) => createOpenCodeAdapter(options).gateReason();
+  // Required for every provider: auto-reload off, verified free source,
+  // legitimate access and privacy/data-class approval.
+  assert.equal(gate({ autoReload: true }), 'AUTO_RELOAD_MUST_BE_OFF');
+  assert.equal(gate({ autoReload: false }), 'FREE_ACCESS_NOT_VERIFIED');
+  assert.equal(gate({ autoReload: false, freeVerified: true, modelProvider: 'openrouter' }), 'ACCESS_NOT_VERIFIED');
+  assert.equal(gate({ autoReload: false, freeVerified: true, legitimateAccess: true, modelProvider: 'openrouter' }), 'PRIVACY_NOT_ALLOWED');
+  // Verified OpenRouter Free (any non-zen provider) never needs a Zen
+  // promotion …
+  assert.equal(gate({ autoReload: false, freeVerified: true, legitimateAccess: true, dataClassAllowed: true, modelProvider: 'openrouter' }), null);
+  assert.equal(gate({ autoReload: false, freeVerified: true, legitimateAccess: true, dataClassAllowed: true, modelProvider: '  OPENROUTER-Free ' }), null, 'provider matching is trimmed and case-insensitive');
+  // … while Zen (the default provider) stays fail-closed without it.
+  assert.equal(gate({ autoReload: false, freeVerified: true, legitimateAccess: true, dataClassAllowed: true }), 'ZEN_PROMOTION_INACTIVE');
+  assert.equal(gate({ autoReload: false, freeVerified: true, promotionActive: true, legitimateAccess: true, dataClassAllowed: true }), null);
+  // Legacy option name stays accepted (backward compatibility).
+  assert.equal(gate({ autoReload: false, zenFree: false, modelProvider: 'openrouter' }), 'FREE_ACCESS_NOT_VERIFIED');
+  assert.equal(gate({ autoReload: false, zenFree: true, legitimateAccess: true, dataClassAllowed: true, modelProvider: 'openrouter' }), null);
+  // A closed gate blocks availability before any subprocess runs.
   const cases = [
     [{ autoReload: true }, 'AUTO_RELOAD_MUST_BE_OFF'],
-    [{ autoReload: false }, 'ZEN_MODEL_NOT_VERIFIED_FREE'],
-    [{ autoReload: false, zenFree: true }, 'ZEN_PROMOTION_INACTIVE'],
-    [{ autoReload: false, zenFree: true, promotionActive: true }, 'ZEN_ACCESS_NOT_VERIFIED'],
-    [{ autoReload: false, zenFree: true, promotionActive: true, legitimateAccess: true }, 'ZEN_PRIVACY_NOT_ALLOWED'],
+    [{ autoReload: false }, 'FREE_ACCESS_NOT_VERIFIED'],
+    [{ autoReload: false, freeVerified: true, modelProvider: 'openrouter' }, 'ACCESS_NOT_VERIFIED'],
+    [{ autoReload: false, freeVerified: true, legitimateAccess: true, dataClassAllowed: true }, 'ZEN_PROMOTION_INACTIVE'],
   ];
   for (const [options, reason] of cases) assert.equal((await createOpenCodeAdapter(options).available()).reason, reason);
+});
+
+test('externalAdaptersFromEnv wires the provider-neutral and the legacy OpenCode flags', async () => {
+  const { externalAdaptersFromEnv } = await import('../src/continuity/runtime.js');
+  const neutral = externalAdaptersFromEnv({ env: {
+    CONTINUITY_OPENCODE_ENABLED: '1', CONTINUITY_OPENCODE_AUTO_RELOAD_OFF: '1',
+    CONTINUITY_OPENCODE_MODEL_PROVIDER: 'openrouter', CONTINUITY_OPENCODE_FREE_VERIFIED: '1',
+    CONTINUITY_OPENCODE_ACCESS_VERIFIED: '1', CONTINUITY_OPENCODE_PRIVACY_VERIFIED: '1',
+    CONTINUITY_GEMINI_CLI_ENABLED: '1',
+  } });
+  assert.equal(neutral.opencode.enabled, true);
+  assert.equal(neutral.opencode.gateReason(), null, 'OpenRouter Free must not require a Zen promotion');
+  assert.equal(neutral.gemini.enabled, true);
+  // Missing neutral gate still fails closed for the OpenRouter provider.
+  const neutralMissing = externalAdaptersFromEnv({ env: {
+    CONTINUITY_OPENCODE_ENABLED: '1', CONTINUITY_OPENCODE_AUTO_RELOAD_OFF: '1',
+    CONTINUITY_OPENCODE_MODEL_PROVIDER: 'openrouter', CONTINUITY_OPENCODE_ACCESS_VERIFIED: '1',
+    CONTINUITY_OPENCODE_PRIVACY_VERIFIED: '1',
+  } });
+  assert.equal(neutralMissing.opencode.gateReason(), 'FREE_ACCESS_NOT_VERIFIED');
+  // Legacy ZEN_* names still wire exactly as before; provider defaults to zen.
+  const legacy = externalAdaptersFromEnv({ env: {
+    CONTINUITY_OPENCODE_ENABLED: '1', CONTINUITY_OPENCODE_AUTO_RELOAD_OFF: '1',
+    CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED: '1', CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE: '1',
+    CONTINUITY_OPENCODE_ACCESS_VERIFIED: '1', CONTINUITY_OPENCODE_PRIVACY_VERIFIED: '1',
+  } });
+  assert.equal(legacy.opencode.gateReason(), null, 'the legacy Zen setup keeps working unchanged');
+  // …and the legacy promotion assertion is still required for Zen.
+  const legacyNoPromo = externalAdaptersFromEnv({ env: {
+    CONTINUITY_OPENCODE_ENABLED: '1', CONTINUITY_OPENCODE_AUTO_RELOAD_OFF: '1',
+    CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED: '1',
+    CONTINUITY_OPENCODE_ACCESS_VERIFIED: '1', CONTINUITY_OPENCODE_PRIVACY_VERIFIED: '1',
+  } });
+  assert.equal(legacyNoPromo.opencode.gateReason(), 'ZEN_PROMOTION_INACTIVE');
+});
+
+test('the Phase N drill preflight never demands a Zen promotion for a non-zen provider', () => {
+  const src = readFileSync(new URL('../tools/continuity-phase-n-live.mjs', import.meta.url), 'utf8');
+  assert.ok(src.includes('CONTINUITY_OPENCODE_MODEL_PROVIDER'), 'the drill reads the declared model provider');
+  assert.ok(src.includes('CONTINUITY_OPENCODE_FREE_VERIFIED'), 'the drill accepts the provider-neutral free gate');
+  const flagsArray = /const opencodeFlags = \[[^\]]*\]/.exec(src)?.[0] || '';
+  assert.ok(!flagsArray.includes('ZEN_PROMOTION_ACTIVE'), 'the promotion must not be an unconditional preflight requirement');
+  assert.ok(!flagsArray.includes('ZEN_FREE_VERIFIED'), 'the Zen-named free flag must not be the only accepted free gate');
 });
 
 test('OpenCode 1.18.34 run --help is read from its real stderr shape and still fails closed', async () => {

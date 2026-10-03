@@ -22,15 +22,21 @@ const enabled = (value) => /^(1|true|yes)$/i.test(String(value || ''));
 // Phase N drill (tools/continuity-phase-n-live.mjs) so the drill cannot drift
 // from production wiring. Every OpenCode gate is an explicit owner assertion:
 // unset means unverified, so the adapter reports the gate reason before any
-// subprocess. Both workers are OFF unless their own flag is set.
+// subprocess. The gates are provider-neutral (free source, auto-reload off,
+// access, privacy); CONTINUITY_OPENCODE_MODEL_PROVIDER names the model source
+// and defaults to 'zen', so the Zen promotion assertion is required only for
+// Zen — a verified OpenRouter Free setup never needs it. The legacy ZEN_*
+// flag names stay accepted for backward compatibility. Both workers are OFF
+// unless their own flag is set.
 export function externalAdaptersFromEnv({ env = process.env, inspectCheckpoint = undefined } = {}) {
   const opencode = new OpenCodeContinuityAdapter({
     enabled: enabled(env.CONTINUITY_OPENCODE_ENABLED), inspectCheckpoint,
     autoReload: !enabled(env.CONTINUITY_OPENCODE_AUTO_RELOAD_OFF),
-    zenFree: enabled(env.CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED),
-    promotionActive: enabled(env.CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE),
+    freeVerified: enabled(env.CONTINUITY_OPENCODE_FREE_VERIFIED) || enabled(env.CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED),
+    promotionActive: enabled(env.CONTINUITY_OPENCODE_PROMOTION_ACTIVE) || enabled(env.CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE),
     legitimateAccess: enabled(env.CONTINUITY_OPENCODE_ACCESS_VERIFIED),
     dataClassAllowed: enabled(env.CONTINUITY_OPENCODE_PRIVACY_VERIFIED),
+    modelProvider: env.CONTINUITY_OPENCODE_MODEL_PROVIDER || 'zen',
   });
   const gemini = new GeminiCliContinuityAdapter({ enabled: enabled(env.CONTINUITY_GEMINI_CLI_ENABLED), inspectCheckpoint });
   return { opencode, gemini };

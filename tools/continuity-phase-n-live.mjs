@@ -140,10 +140,26 @@ async function preflight({ checkOnly }) {
   for (const name of ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
     envSet(name) ? ok(`${name}: set (value not shown)`) : bad(`${name} missing — the Office leg needs it (Settings → Environment on the VPS .env)`);
   }
-  const opencodeFlags = ['CONTINUITY_OPENCODE_ENABLED', 'CONTINUITY_OPENCODE_AUTO_RELOAD_OFF', 'CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED',
-    'CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE', 'CONTINUITY_OPENCODE_ACCESS_VERIFIED', 'CONTINUITY_OPENCODE_PRIVACY_VERIFIED'];
+  // Provider-neutral OpenCode gates: free source, auto-reload off, access
+  // and privacy are required for every provider; the Zen promotion is
+  // required only when the declared model provider is Zen. Legacy ZEN_*
+  // flag names are still accepted (wired the same way in runtime.js).
+  const modelProvider = String(process.env.CONTINUITY_OPENCODE_MODEL_PROVIDER || 'zen').trim().toLowerCase() || 'zen';
+  const onEither = (...names) => names.some((name) => envOn(name));
+  const opencodeFlags = ['CONTINUITY_OPENCODE_ENABLED', 'CONTINUITY_OPENCODE_AUTO_RELOAD_OFF',
+    'CONTINUITY_OPENCODE_ACCESS_VERIFIED', 'CONTINUITY_OPENCODE_PRIVACY_VERIFIED'];
   for (const name of opencodeFlags) {
     envOn(name) ? ok(`${name}: on`) : bad(`${name} not set — OpenCode stays fail-closed until the owner asserts it`);
+  }
+  onEither('CONTINUITY_OPENCODE_FREE_VERIFIED', 'CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED')
+    ? ok('free model source verified (owner assertion)')
+    : bad('free model source not verified — set CONTINUITY_OPENCODE_FREE_VERIFIED');
+  if (modelProvider === 'zen') {
+    onEither('CONTINUITY_OPENCODE_PROMOTION_ACTIVE', 'CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE')
+      ? ok('Zen promotion active (owner assertion; provider=zen)')
+      : bad('Zen promotion not asserted — required only for CONTINUITY_OPENCODE_MODEL_PROVIDER=zen');
+  } else {
+    ok(`OpenCode model provider "${modelProvider}" is not zen: no Zen promotion required`);
   }
   envOn('CONTINUITY_GEMINI_CLI_ENABLED') ? ok('CONTINUITY_GEMINI_CLI_ENABLED: on') : bad('CONTINUITY_GEMINI_CLI_ENABLED not set');
   if (envOn('CONTINUITY_SUPERVISOR')) warn('CONTINUITY_SUPERVISOR is on in this shell: the drill never touches the production runtime; unset it for a clean shell');
