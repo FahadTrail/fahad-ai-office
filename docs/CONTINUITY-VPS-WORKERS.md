@@ -169,7 +169,9 @@ echo "checkout: $REPO ($(git rev-parse --short HEAD))"
 git pull --ff-only
 ENVFILE="${PHASE_N_OFFICE_ENV:-/opt/fahad-ai-office/.env}"
 [ -r "$ENVFILE" ] || { echo "PHASE N FINAL: FAIL (Office env file not found)"; exit 1; }
-set -a; . "$ENVFILE"; set +a   # Supabase + model credentials; never printed
+set -a
+if ! . "$ENVFILE"; then set +a; echo "PHASE N FINAL: FAIL (Office env could not be sourced)"; exit 1; fi
+set +a   # Supabase + model credentials are now exported; nothing was printed
 unset CONTINUITY_SUPERVISOR CONTINUITY_CODEX_ENABLED CONTINUITY_CLAUDE_ENABLED \
       CONTINUITY_OPENCODE_ENABLED CONTINUITY_OPENCODE_AUTO_RELOAD_OFF CONTINUITY_OPENCODE_MODEL_PROVIDER \
       CONTINUITY_OPENCODE_FREE_VERIFIED CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED \
