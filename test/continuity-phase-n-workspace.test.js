@@ -117,3 +117,24 @@ test('the Phase N drill never starts the Office leg with a null or unvalidated w
   assert.ok(gate < workspaceGate && workspaceGate < branchCreated, 'a failed preflight aborts before the disposable branch exists');
   assert.ok(workspaceGate < workerStarted, 'the Office worker can only start with a validated workspace');
 });
+
+test('the Phase N drill wires the runtime-only paths the live chain depends on', () => {
+  // Audit regressions: each of these failed (or would fail) only at runtime,
+  // after preflight passed, on the real VPS chain.
+  const src = readFileSync(new URL('../tools/continuity-phase-n-live.mjs', import.meta.url), 'utf8');
+  // 1. External adapters without an inspectCheckpoint throw CHECKPOINT_FAILED
+  //    at launch, blocking the office -> opencode handoff and the recovery.
+  assert.ok(src.includes('externalAdaptersFromEnv({ env: process.env, inspectCheckpoint })'),
+    'the drill must wire an inspectCheckpoint into the OpenCode/Gemini adapters');
+  // 2. The forced phase-3 checkpoint needs a whitelisted event name or
+  //    maybeSave skips it and the drill aborts OPENCODE_CHECKPOINT_NOT_PERSISTED.
+  assert.ok(!src.includes("event: 'phase-n drill'"), 'the checkpoint event must be one the checkpointer forces');
+  assert.ok(src.includes("{ event: 'manual' }"), 'the phase-3 checkpoint is forced with a whitelisted event');
+  // 3. The crashed supervisor's lease reloads as exactly one ACTIVE stale
+  //    lease — asserting zero always aborted the drill at phase 4.
+  assert.ok(src.includes('reloadedActive.length === 1'), 'exactly one ACTIVE lease must reload from the crashed state');
+  assert.ok(src.includes('reloadedActive.every((entry) => entry.stale === true)'), 'the reloaded lease must still be flagged stale');
+  assert.ok(src.includes('STALE_STATE_NOT_RELOADED'), 'the reload is still gated by its exact blocker');
+  // 4. A previous attempt's state is rotated aside so a rerun starts clean.
+  assert.ok(src.includes('phase-n-drill-prev-'), 'a rerun must not inherit the previous attempt state');
+});

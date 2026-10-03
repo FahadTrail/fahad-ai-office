@@ -233,9 +233,17 @@ async function runDrill({ keep }) {
   const worktreesRoot = join(stateDir, 'worktrees');
   const statePath = join(stateDir, 'state.json');
   const ledgerPath = join(stateDir, 'termination.json');
+  const startedAt = new Date().toISOString();
+  // A previous attempt's isolated state must never leak into this run: stale
+  // ACTIVE leases would trip the single-writer evidence and skew the recovery
+  // attempt counts. Rotate it aside (report and state preserved) and start
+  // from a clean slate.
+  try { await rename(stateDir, join(repoRoot, '.continuity', `phase-n-drill-prev-${startedAt.replace(/[-:TZ.]/g, '').slice(0, 14)}`)); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  // Keep the checkout's worktree registrations in sync with the moved tree.
+  await git(repoRoot, 'worktree', 'prune').catch(() => {});
   await mkdir(worktreesRoot, { recursive: true });
   const evidence = makeEvidence(stateDir);
-  const startedAt = new Date().toISOString();
   const branch = `continuity/phase-n-drill-${startedAt.replace(/[-:TZ.]/g, '').slice(0, 14)}`;
   const worktrees = new WorktreeManager({ repositoryRoot: repoRoot, worktreesRoot });
   const supervisors = [];
@@ -259,7 +267,21 @@ async function runDrill({ keep }) {
   };
 
   const buildSupervisor = ({ store, confirmStopped }) => {
-    const { opencode, gemini } = externalAdaptersFromEnv({ env: process.env });
+    // The production runtime wires an inspectCheckpoint into the external
+    // adapters; without it every OpenCode/Gemini launch fails
+    // CHECKPOINT_FAILED before its first turn.
+    const inspectCheckpoint = async ({ session, context }) => {
+      const lastCommit = await worktrees.head(session.worktree);
+      const files = await worktrees.changedSince(session.worktree, context?.checkpoint?.base_commit);
+      return {
+        ...context.checkpoint,
+        timestamp: new Date().toISOString(),
+        last_commit: lastCommit,
+        files_changed: files,
+        diff_summary: files.length ? `${files.length} file(s) differ from the checkpoint base.` : 'No file differences from the checkpoint base.',
+      };
+    };
+    const { opencode, gemini } = externalAdaptersFromEnv({ env: process.env, inspectCheckpoint });
     const db = createOfficeDb();
     const office = new OfficeContinuityAdapter({ db });
     const adapters = [office, opencode, gemini];
@@ -382,7 +404,7 @@ async function runDrill({ keep }) {
     must(opencodeHead !== officePush, 'OPENCODE_MADE_NO_COMMIT');
     const opencodeStatus = await worktrees.status(runtimeO.task.worktree);
     must(opencodeStatus.clean, 'OPENCODE_WORKTREE_DIRTY', opencodeStatus.detail);
-    const savedO = await supervisorA.saveCheckpoint(opencodeSessionId, validCheckpoint({ branch, base_commit: officePush, last_commit: opencodeHead, agent_id: 'opencode', agent_type: 'cli', status: 'ACTIVE', next_exact_action: `Create only ${MARKERS['gemini-cli']} with one short line, then commit. Do not touch any other file.` }), { event: 'phase-n drill' });
+    const savedO = await supervisorA.saveCheckpoint(opencodeSessionId, validCheckpoint({ branch, base_commit: officePush, last_commit: opencodeHead, agent_id: 'opencode', agent_type: 'cli', status: 'ACTIVE', next_exact_action: `Create only ${MARKERS['gemini-cli']} with one short line, then commit. Do not touch any other file.` }), { event: 'manual' });
     const opencodeCheckpoint = await store.latestCheckpoint(opencodeSessionId);
     must(opencodeCheckpoint?.payload?.last_commit === opencodeHead, 'OPENCODE_CHECKPOINT_NOT_PERSISTED', savedO?.reason || '');
     await store.persist();
@@ -408,7 +430,10 @@ async function runDrill({ keep }) {
     evidence.add('supervisor_a_crashed', { persistedState: statePath, proofSealed: false });
 
     const storeB = await PersistentStore.load({ workers: WORKERS, statePath });
-    must((await storeB.listLeases({ statuses: ['ACTIVE'] })).length === 0, 'STALE_STATE_NOT_RELOADED');
+    // The crash left exactly one ACTIVE lease, flagged stale; it must reload
+    // exactly like that or the recovery below has nothing to reclaim.
+    const reloadedActive = await storeB.listLeases({ statuses: ['ACTIVE'] });
+    must(reloadedActive.length === 1 && reloadedActive.every((entry) => entry.stale === true), 'STALE_STATE_NOT_RELOADED', JSON.stringify(reloadedActive.map((entry) => ({ id: entry.id, stale: entry.stale }))));
     const supervisorBBuilt = buildSupervisor({ store: storeB, confirmStopped: proveTermination });
     const supervisorB = supervisorBBuilt.supervisor;
     phaseAdapters = supervisorBBuilt.adapters;
