@@ -222,7 +222,27 @@ isolated file-persisted Continuity store under
 `.continuity/phase-n-drill/`, then drives the real chain
 **Office → OpenCode → Gemini CLI** through the real `ContinuitySupervisor`:
 
-1. Office (real Coding Agent) creates `phase-n/office.md`, commits and pushes.
+The Office leg is **self-contained** — it does not depend on the deployed
+production coding worker image. The drill claims the exact native
+`agent_sessions` row it just created **by id, in the instant it exists**
+(the queue claim is never used, so the drill can never bind an unrelated
+production job and no queue-order claim can take the drill's session), then
+spawns `src/coding-agent/one-shot-runner.js` **from this checkout** — proved
+by exact path and `codeFingerprint()` match against the checkout under
+test — with a disposable workspace root under
+`.continuity/phase-n-drill/office-sandbox`. The one-shot runner executes
+only that one session through the normal controller (sandboxing, Tool
+Broker, routing, checkpointing and GitHub publish unchanged), reusing the
+shell's Supabase/model/GitHub credentials by environment only, and exits
+after the single session. On PASS **and** on FAIL the drill proves the
+runner process dead (`ESRCH` or pid-reuse cmdline check), removes the
+disposable workspace root, and on failure closes its own native session —
+an unproven cleanup flips the verdict to FAIL. Runner evidence in the
+report: `office.claim`, `office.runner_started` (pid, checkout head, code
+fingerprint), `office.runner_cleanup` and `office.workspace_cleanup`.
+
+1. Office (real Coding Agent, executed by this checkout's one-shot runner)
+   creates `phase-n/office.md`, commits and pushes.
 2. Confirmed stop **before** transfer (event order `WORKER_STOPPED` before
    `HANDOFF_PROPOSED`), checkpoint, handoff to OpenCode; the destination
    worktree head must equal the exact prior commit.
@@ -262,7 +282,9 @@ falls back to a simulated pass.
   CLI OAuth file).
 * Drill artifacts: on a passing run the tool removes its disposable branch
   (local and origin) and worktrees, keeping `report.json`; on failure it
-  prints the exact manual commands. State lives only under
+  prints the exact manual commands. The one-shot Office runner process and
+  its disposable workspace root are cleaned by the drill itself on both
+  PASS and FAIL (proved in the report). State lives only under
   `.continuity/phase-n-drill/`.
 * Migrations: **nothing is applied by this runbook.** Applying
   `20261005090000_continuity_gemini_worker.sql` (a single disabled-row insert)

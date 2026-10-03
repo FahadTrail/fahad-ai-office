@@ -39,6 +39,49 @@ export class SupabaseAgentSessionStore {
     return row?.id ? fromSessionRow(row) : null;
   }
 
+  // Identity-scoped claim: binds EXACTLY this session id and refuses
+  // anything else, unlike claim() which may return any queued session by
+  // queue order. The Phase N one-shot Office runner relies on this so a
+  // drill session can never absorb an unrelated production job and a
+  // production worker can never be handed the drill's session. It performs
+  // the same state transition as the claim_agent_session function, guarded
+  // to one id, and needs no new database object: the row is only reachable
+  // this way with the service role, and the `status = 'queued'` predicate
+  // makes the update atomic against a concurrent claim.
+  async claimById(id, { worker, leaseSeconds = 300 } = {}) {
+    if (!/^[0-9a-f-]{36}$/i.test(String(id || ''))) throw storeError('claimById', new Error('session id must be a uuid'));
+    if (!worker) throw storeError('claimById', new Error('worker is required'));
+    if (!Number.isInteger(leaseSeconds) || leaseSeconds < 30 || leaseSeconds > 3600) throw storeError('claimById', new Error('AGENT_LEASE_INVALID'));
+    const current = await this.getSession(id);
+    if (!current) return { ok: false, reason: 'SESSION_NOT_FOUND' };
+    if (current.cancelRequested) return { ok: false, reason: 'CANCEL_REQUESTED', session: current };
+    if (current.status !== 'queued') {
+      return current.status === 'running' && current.leaseOwner === worker
+        ? { ok: true, alreadyOwned: true, session: current }
+        : { ok: false, reason: 'NOT_QUEUED', session: current };
+    }
+    const now = new Date();
+    const { data, error } = await this.db.from('agent_sessions').update({
+      status: 'running',
+      lease_owner: String(worker).slice(0, 200),
+      lease_token: randomUUID(),
+      lease_expires_at: new Date(now.getTime() + leaseSeconds * 1000).toISOString(),
+      started_at: current.startedAt || now.toISOString(),
+      blocker: null,
+      updated_at: now.toISOString(),
+    }).eq('id', id).eq('status', 'queued').eq('cancel_requested', false).select();
+    if (error) throw storeError('agent_sessions', error);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
+      // The row changed between read and update: never retry into a
+      // different session — report the exact current state instead.
+      return { ok: false, reason: 'CLAIM_RACE_LOST', session: await this.getSession(id) };
+    }
+    const { error: jobError } = await this.db.from('jobs').update({ status: 'running' }).eq('id', row.job_id).neq('status', 'running');
+    if (jobError) console.warn('[agent-state] job status not advanced by claimById:', jobError.message);
+    return { ok: true, session: fromSessionRow(row) };
+  }
+
   async getSession(id) {
     const { data, error } = await this.db.from('agent_sessions').select('*').eq('id', id).maybeSingle();
     if (error) throw storeError('agent_sessions', error);
@@ -190,6 +233,31 @@ export class MemoryAgentSessionStore {
     });
     this.persist();
     return fromSessionRow(candidate);
+  }
+
+  // Memory twin of SupabaseAgentSessionStore.claimById: binds exactly this
+  // id when (and only when) it is queued, refusing every other session —
+  // proven against the queue-order claim() by the Phase N runner tests.
+  async claimById(id, { worker, leaseSeconds = 300 } = {}) {
+    if (!worker) throw storeError('claimById', new Error('worker is required'));
+    if (!Number.isInteger(leaseSeconds) || leaseSeconds < 30 || leaseSeconds > 3600) throw storeError('claimById', new Error('AGENT_LEASE_INVALID'));
+    this.reload();
+    const row = this.data.sessions[id];
+    if (!row) return { ok: false, reason: 'SESSION_NOT_FOUND' };
+    if (row.cancel_requested) return { ok: false, reason: 'CANCEL_REQUESTED', session: fromSessionRow(row) };
+    if (row.status !== 'queued') {
+      return row.status === 'running' && row.lease_owner === worker
+        ? { ok: true, alreadyOwned: true, session: fromSessionRow(row) }
+        : { ok: false, reason: 'NOT_QUEUED', session: fromSessionRow(row) };
+    }
+    const now = this.now();
+    Object.assign(row, {
+      status: 'running', lease_owner: String(worker).slice(0, 200), lease_token: randomUUID(), blocker: null,
+      lease_expires_at: new Date(now + leaseSeconds * 1000).toISOString(),
+      started_at: row.started_at || new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+    });
+    this.persist();
+    return { ok: true, session: fromSessionRow(row) };
   }
 
   async getSession(id) {

@@ -19,9 +19,17 @@
 //     documented agent_sessions usage.
 //   * Fail closed: any unproven worker death, dirty worktree, head mismatch
 //     or missing evidence ends the drill with an exact blocker, never a pass.
+//   * Self-contained Office leg: the native session is executed by an
+//     isolated ONE-SHOT runner spawned from THIS checkout, in a disposable
+//     workspace root, bound by id to the exact session this run created.
+//     The deployed production worker container is never invoked, never
+//     claims and never produces Phase N evidence; it keeps running
+//     untouched. The runner and its workspace are cleaned up on PASS and
+//     on FAIL.
 //   * No credentials are ever printed; only environment variable NAMES.
 //   * Production flags are never modified; the owner exports the drill flags
 //     in the drill shell only.
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { execFile as nodeExecFile } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -33,6 +41,10 @@ import { WorktreeManager } from '../src/continuity/worktree.js';
 import { OfficeContinuityAdapter } from '../src/continuity/adapters/office.js';
 import { externalAdaptersFromEnv } from '../src/continuity/runtime.js';
 import { resolvePhaseNWorkspace } from '../src/continuity/phase-n-workspace.js';
+import { SupabaseAgentSessionStore } from '../src/agent-state/session-store.js';
+import { claimOnCreate, removeRunnerWorkspace, startRunnerProcess } from '../src/coding-agent/one-shot-runner.js';
+import { resolveSandboxMode } from '../src/coding-agent/sandbox.js';
+import { codeFingerprint } from '../src/build-info.js';
 import { createClient } from '@supabase/supabase-js';
 import { MemoryContinuityStore, validCheckpoint } from '../testing/fixtures/continuity-harness.js';
 
@@ -61,6 +73,12 @@ function envOn(name) { return /^(1|true|yes)$/i.test(String(process.env[name] ||
 
 class DrillAbort extends Error { constructor(blocker, detail = null) { super(blocker); this.blocker = blocker; this.detail = detail; } }
 function must(condition, blocker, detail = null) { if (!condition) throw new DrillAbort(blocker, detail); }
+
+// The one-shot Office runner's result file (written by the runner itself,
+// never containing credentials) — read for failure detail and evidence.
+async function readRunnerResult(path) {
+  try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
+}
 
 // Termination proof: a pid is dead only when the OS says so (ESRCH), or the
 // surviving pid is provably a different process (cmdline no longer the binary).
@@ -142,6 +160,16 @@ async function preflight({ checkOnly }) {
   for (const name of ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
     envSet(name) ? ok(`${name}: set (value not shown)`) : bad(`${name} missing — the Office leg needs it (Settings → Environment on the VPS .env)`);
   }
+  // The Office leg executes from THIS checkout through an isolated one-shot
+  // runner in a disposable workspace root. Refuse here — before any branch,
+  // supervisor or session exists — if its entry file is missing (stale
+  // checkout) or its sandbox mode cannot resolve on this host.
+  const runnerScript = join(repoRoot, 'src', 'coding-agent', 'one-shot-runner.js');
+  existsSync(runnerScript)
+    ? ok(`one-shot Office runner present in this checkout: ${runnerScript}`)
+    : bad(`one-shot Office runner missing at ${runnerScript} — git pull the PR #106 branch first`);
+  try { ok(`Office one-shot runner sandbox mode: ${resolveSandboxMode(process.env)}`); }
+  catch (error) { bad(`Office one-shot runner sandbox: ${error.message}`); }
   // Provider-neutral OpenCode gates: free source, auto-reload off, access
   // and privacy are required for every provider; the Zen promotion is
   // required only when the declared model provider is Zen. Legacy ZEN_*
@@ -250,6 +278,14 @@ async function runDrill({ keep }) {
   let phaseAdapters = null;
   let verdict = 'FAIL';
   let blocker = null;
+  let runner = null;
+  const officeSandboxRoot = join(stateDir, 'office-sandbox');
+  const runnerResultPath = join(stateDir, 'office-runner.json');
+  // Worker id of the ONE-SHOT Office runner. The native session is claimed
+  // by this id the instant it exists, so a queue-order claim anywhere else
+  // can never bind the drill's session — and this runner never binds theirs.
+  const officeWorkerId = `phase-n-office-runner:${branch}:${process.pid}`;
+  const officeClaim = { sessionId: null }; // set by the claim decorator below
 
   const drillGates = async ({ worktree }) => {
     const checks = [];
@@ -283,7 +319,16 @@ async function runDrill({ keep }) {
     };
     const { opencode, gemini } = externalAdaptersFromEnv({ env: process.env, inspectCheckpoint });
     const db = createOfficeDb();
-    const office = new OfficeContinuityAdapter({ db });
+    // The Office adapter's native store claims the exact session it just
+    // created — by id, in the same instant — so this run owns the lease
+    // before any queue-order claim elsewhere can see a claimable row. The
+    // deployed production worker is never involved in the Office leg.
+    const nativeStore = claimOnCreate(new SupabaseAgentSessionStore(db), {
+      worker: officeWorkerId,
+      leaseSeconds: 900,
+      onAttempt: (id) => { officeClaim.sessionId = id; },
+    });
+    const office = new OfficeContinuityAdapter({ db, nativeStore });
     const adapters = [office, opencode, gemini];
     const supervisor = new ContinuitySupervisor({
       store,
@@ -324,9 +369,12 @@ async function runDrill({ keep }) {
   try {
     // ---------------------------------------------------------- setup
     const base = await git(repoRoot, 'rev-parse', 'HEAD');
+    // Proof of "code under test": the fingerprint the runner must report
+    // back matches THIS checkout's src/ at this exact moment.
+    const fingerprint = codeFingerprint(repoRoot);
     await git(repoRoot, 'branch', branch);
     await git(repoRoot, 'push', '--porcelain', 'origin', `refs/heads/${branch}:refs/heads/${branch}`);
-    evidence.add('setup', { branch, baseCommit: base, stateDir });
+    evidence.add('setup', { branch, baseCommit: base, stateDir, codeFingerprint: fingerprint });
 
     const store = await PersistentStore.load({ workers: WORKERS, statePath });
     const proveTermination = async ({ session }) => {
@@ -355,20 +403,78 @@ async function runDrill({ keep }) {
       excludeWorkers: ['opencode', 'gemini-cli'],
       config: { publish: 'branch' },
     };
-    const started = await supervisorA.startTask({ task, checkpoint: checkpoint0 });
+    let started;
+    try {
+      started = await supervisorA.startTask({ task, checkpoint: checkpoint0 });
+    } catch (error) {
+      if (officeClaim.sessionId && /PHASE_N_OFFICE_CLAIM_REFUSED/.test(String(error?.message || ''))) {
+        throw new DrillAbort('PHASE_N_OFFICE_CLAIM_REFUSED',
+          `the exact session ${officeClaim.sessionId} could not be bound by ${officeWorkerId} — fail-closed: nothing stale ran the Office leg; rerun the drill`);
+      }
+      throw error;
+    }
     must(started.started && started.worker === 'office', 'OFFICE_START_FAILED', started.blocker || 'office was not selected');
     const officeSessionId = started.session.id;
+    must(officeClaim.sessionId && officeClaim.sessionId === started.session.native_session_id, 'OFFICE_NATIVE_SESSION_MISMATCH',
+      `the runner bound ${officeClaim.sessionId || 'nothing'} but the supervisor registered ${started.session.native_session_id}`);
     evidence.add('office.started', { sessionId: officeSessionId, leaseId: started.lease.id, nativeSessionId: started.session.native_session_id || null, worker: started.worker });
+    evidence.add('office.claim', { nativeSessionId: officeClaim.sessionId, worker: officeWorkerId, leaseSeconds: 900, strategy: 'claimById inside createSession (exact id; the queue claim is never used)' });
     await assertSingleWriter(store, 'office.leased');
+
+    // ONE-SHOT runner: this checkout's code executes exactly this native
+    // session, in a disposable workspace root, with credentials inherited
+    // from this shell's environment only. The session is already leased to
+    // officeWorkerId, so no other worker can take it, and the runner is
+    // bound to it twice (argv + env) before it verifies and runs.
+    const runnerScript = join(repoRoot, 'src', 'coding-agent', 'one-shot-runner.js');
+    runner = startRunnerProcess({
+      script: runnerScript,
+      args: ['--session', officeClaim.sessionId],
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PHASE_N_OFFICE_SESSION: officeClaim.sessionId,
+        PHASE_N_OFFICE_WORKER: officeWorkerId,
+        PHASE_N_CHECKOUT_ROOT: repoRoot,
+        PHASE_N_EXPECT_FINGERPRINT: fingerprint,
+        PHASE_N_EXPECT_BRANCH: branch,
+        PHASE_N_EXPECT_REPOSITORY: REPOSITORY,
+        PHASE_N_EXPECT_WORKSPACE: String(pre.workspaceId),
+        PHASE_N_RUNNER_RESULT: runnerResultPath,
+        // Disposal boundary: the runner's sandbox lives under the drill
+        // state dir, never under the production workspace root.
+        CODING_AGENT_WORKSPACE_ROOT: officeSandboxRoot,
+      },
+      log: (line) => console.log(line),
+    });
+    evidence.add('office.runner_started', {
+      pid: runner.pid, runner: runnerScript, codeFingerprint: fingerprint, checkoutHead: base,
+      worker: officeWorkerId, nativeSession: officeClaim.sessionId, workspaceRoot: officeSandboxRoot,
+    });
 
     const deadline = Date.now() + 20 * 60_000;
     let officePush = base;
-    while (Date.now() < deadline) {
+    let runnerExit = null;
+    while (Date.now() < deadline && officePush === base && !runnerExit) {
       const remote = String((await git(repoRoot, 'ls-remote', 'origin', `refs/heads/${branch}`).catch(() => '')) || '').split(/\s/)[0];
       if (remote && remote !== base) { officePush = remote; break; }
-      await sleep(5_000);
+      // Fail fast: if the one-shot runner exits before its push, no evidence
+      // is coming — surface its exact result instead of waiting the deadline.
+      runnerExit = await Promise.race([runner.exited, sleep(5_000).then(() => null)]);
     }
-    must(officePush !== base, 'OFFICE_NEVER_PUSHED', 'the Office worker did not push its commit within 20 minutes (check the coding worker and publish config)');
+    if (officePush === base && runnerExit) {
+      // The runner may have pushed in the window between the last poll and
+      // its exit — re-check the remote once before declaring failure.
+      const remote = String((await git(repoRoot, 'ls-remote', 'origin', `refs/heads/${branch}`).catch(() => '')) || '').split(/\s/)[0];
+      if (remote && remote !== base) officePush = remote;
+    }
+    if (officePush === base && runnerExit) {
+      const runnerResult = await readRunnerResult(runnerResultPath);
+      throw new DrillAbort('OFFICE_RUNNER_EXITED',
+        `the one-shot Office runner exited before pushing (exit=${runnerExit.code ?? 'n/a'} signal=${runnerExit.signal || 'none'}${runnerExit.error ? ` error=${runnerExit.error}` : ''})`
+        + `${runnerResult ? ` result=${JSON.stringify(runnerResult)}` : ''}\n${runner.tail()}`);
+    }
+    must(officePush !== base, 'OFFICE_NEVER_PUSHED', 'the one-shot Office runner did not push its commit within 20 minutes (see the [phase-n-office] log above)');
     evidence.add('office.pushed', { commit: officePush });
 
     // ---------------------------------------- phase 2: office -> opencode
@@ -501,6 +607,38 @@ async function runDrill({ keep }) {
     for (const supervisor of supervisors) {
       try { await supervisor.drainForShutdown(); } catch { /* best-effort: never leave a live worker behind */ }
       supervisor.stop();
+    }
+    // One-shot runner cleanup — UNCONDITIONAL, on PASS and on FAIL alike:
+    // the process must be proven dead, the disposable workspace root must be
+    // removed, and this run's own native session is closed on failure so
+    // nothing created by the drill outlives it. An unproven cleanup flips a
+    // PASS to FAIL — cleanup is part of the verdict, never an afterthought.
+    if (runner) {
+      const stopProof = await runner.stop({ graceMs: 10_000 }).catch((error) => ({ dead: false, method: 'STOP_FAILED', error: error.message }));
+      const runnerResult = await readRunnerResult(runnerResultPath);
+      evidence.add('office.runner_cleanup', {
+        pid: runner.pid, ...stopProof,
+        ...(runnerResult ? { result: runnerResult } : {}),
+        tail: runner.tail() ? runner.tail().slice(-1500) : null,
+      });
+      if (!stopProof.dead) { verdict = 'FAIL'; blocker = blocker || 'OFFICE_RUNNER_NOT_PROVEN_DEAD'; }
+    }
+    try {
+      await removeRunnerWorkspace(officeSandboxRoot);
+      evidence.add('office.workspace_cleanup', { path: officeSandboxRoot, removed: true });
+    } catch (error) {
+      evidence.add('office.workspace_cleanup', { path: officeSandboxRoot, removed: false, error: error.message });
+      verdict = 'FAIL'; blocker = blocker || 'OFFICE_WORKSPACE_CLEANUP_FAILED';
+    }
+    if (officeClaim.sessionId && verdict !== 'PASS') {
+      // Best-effort close of THIS run's own native session (a no-op on
+      // terminal sessions; the cancel RPC never touches any other row).
+      try {
+        const { error } = await createOfficeDb().rpc('request_agent_session_cancel', { p_session: officeClaim.sessionId });
+        evidence.add('office.session_cleanup', { session: officeClaim.sessionId, requested: true, applied: !error, ...(error ? { reason: error.message } : {}) });
+      } catch (error) {
+        evidence.add('office.session_cleanup', { session: officeClaim.sessionId, requested: false, reason: error.message });
+      }
     }
     const report = { tool: 'continuity-phase-n-live', repository: REPOSITORY, branch, verdict, blocker, startedAt, finishedAt: new Date().toISOString(), keep };
     const payload = await evidence.write(report);
