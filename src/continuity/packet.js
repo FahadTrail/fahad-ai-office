@@ -13,6 +13,10 @@ export function buildContinuationPacket(checkpoint, { doNotTouch = [] } = {}) {
     'then the checkpoint below.',
     '',
     `Branch: ${checkpoint.branch}   (you hold the write lease; do not push elsewhere)`,
+    ...(checkpoint.worktree ? [
+      `Working directory: ${checkpoint.worktree}`,
+      'Resolve every relative path from that directory. Never write to its parent checkout or any path outside it.',
+    ] : []),
     `Base commit: ${checkpoint.base_commit}   Last commit: ${checkpoint.last_commit}`,
     `Objective: ${checkpoint.objective}`,
     `Phase: ${checkpoint.phase}`,

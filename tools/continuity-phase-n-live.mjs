@@ -35,6 +35,7 @@ import { execFile as nodeExecFile } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { tmpdir } from 'node:os';
 import { ContinuitySupervisor } from '../src/continuity/supervisor.js';
 import { ContinuityCheckpointer } from '../src/continuity/checkpointer.js';
 import { WorktreeManager } from '../src/continuity/worktree.js';
@@ -273,7 +274,10 @@ async function runDrill({ keep }) {
   must(pre.workspaceId, 'PHASE_N_WORKSPACE_UNRESOLVED', 'preflight did not resolve an enabled workspace for the Office leg');
   const repoRoot = pre.repoRoot;
   const stateDir = join(repoRoot, '.continuity', 'phase-n-drill');
-  const worktreesRoot = join(stateDir, 'worktrees');
+  // External CLI worktrees live outside the checkout under test. OpenCode's
+  // mount namespace makes the checkout source read-only while leaving only
+  // the leased worktree and shared Git metadata writable.
+  const worktreesRoot = join(tmpdir(), `fahad-ai-office-phase-n-${process.pid}`, 'worktrees');
   const statePath = join(stateDir, 'state.json');
   const ledgerPath = join(stateDir, 'termination.json');
   const startedAt = new Date().toISOString();
@@ -332,7 +336,10 @@ async function runDrill({ keep }) {
         diff_summary: files.length ? `${files.length} file(s) differ from the checkpoint base.` : 'No file differences from the checkpoint base.',
       };
     };
-    const { opencode, gemini } = externalAdaptersFromEnv({ env: process.env, inspectCheckpoint });
+    const { opencode, gemini } = externalAdaptersFromEnv({
+      env: { ...process.env, CONTINUITY_OPENCODE_ISOLATION_REPO_ROOT: repoRoot },
+      inspectCheckpoint,
+    });
     const db = createOfficeDb();
     // The Office adapter's native store claims the exact session it just
     // created — by id, in the same instant — so this run owns the lease

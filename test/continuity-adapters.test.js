@@ -168,6 +168,24 @@ test('OpenCode requires and passes an explicit provider-matched model before spa
   assert.deepEqual(adapter.command({ worktree: '/tmp/work', resumeId: 'session-1' }).slice(-2), ['--session', 'session-1']);
 });
 
+test('OpenCode Phase N mount isolation keeps the checkout read-only and the leased worktree outside it', () => {
+  const protectedRoot = resolve('phase-n-protected-checkout');
+  const externalWorktree = resolve('..', 'phase-n-external-worktree', 'session-2');
+  const adapter = createOpenCodeAdapter({
+    modelProvider: 'zen', model: 'opencode/nemotron-3.5-lightning-free',
+    isolationRepoRoot: protectedRoot, platform: 'linux',
+  });
+  const command = adapter.command({ worktree: externalWorktree, resumeId: null });
+  assert.equal(command.binary, 'unshare');
+  assert.ok(command.args.includes(protectedRoot));
+  assert.ok(command.args.includes(externalWorktree));
+  assert.ok(command.args.some((arg) => arg.includes('mount --bind "$repo" "$repo"; mount -o remount,ro,bind "$repo"')));
+  assert.throws(
+    () => adapter.command({ worktree: resolve(protectedRoot, '.continuity', 'worktrees', 'session-2'), resumeId: null }),
+    /WORKTREE_UNSAFE/,
+  );
+});
+
 test('externalAdaptersFromEnv wires the provider-neutral and the legacy OpenCode flags', async () => {
   const { externalAdaptersFromEnv } = await import('../src/continuity/runtime.js');
   const neutral = externalAdaptersFromEnv({ env: {
@@ -211,6 +229,8 @@ test('the Phase N drill preflight never demands a Zen promotion for a non-zen pr
   assert.ok(src.includes('CONTINUITY_OPENCODE_MODEL_PROVIDER'), 'the drill reads the declared model provider');
   assert.ok(src.includes("const PHASE_N_OPENCODE_MODEL = 'opencode/nemotron-3.5-lightning-free'"), 'the drill pins the live-proven model');
   assert.ok(src.includes('CONTINUITY_OPENCODE_MODEL'), 'the drill requires the explicit model');
+  assert.ok(src.includes('CONTINUITY_OPENCODE_ISOLATION_REPO_ROOT'), 'the drill protects the checkout with OpenCode mount isolation');
+  assert.ok(src.includes("join(tmpdir(), `fahad-ai-office-phase-n-${process.pid}`, 'worktrees')"), 'external worktrees stay outside the protected checkout');
   assert.ok(src.includes('CONTINUITY_OPENCODE_FREE_VERIFIED'), 'the drill accepts the provider-neutral free gate');
   const flagsArray = /const opencodeFlags = \[[^\]]*\]/.exec(src)?.[0] || '';
   assert.ok(!flagsArray.includes('ZEN_PROMOTION_ACTIVE'), 'the promotion must not be an unconditional preflight requirement');

@@ -26,6 +26,7 @@
 // declared model provider is Zen; any other verified free provider (e.g.
 // OpenRouter Free) never needs it.
 import { ExternalCliAdapter } from './external-cli.js';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 const minimumVersion = { major: 1, minor: 18, patch: 0 };
 
@@ -63,10 +64,22 @@ const OPENCODE_ENV_KEYS = Object.freeze([
   'GOOGLE_API_KEY', 'OPENROUTER_API_KEY', 'GROQ_API_KEY',
 ]);
 
+const MOUNT_ISOLATION_SCRIPT = [
+  'repo="$1"; worktree="$2"; shift 2',
+  'mount --bind "$repo" "$repo"',
+  'mount -o remount,ro,bind "$repo"',
+  // Git worktrees keep their object database and refs under the protected
+  // checkout's .git directory. Re-expose only that metadata as writable so
+  // the worker can commit its leased branch while source files stay read-only.
+  'mount --bind "$repo/.git" "$repo/.git"',
+  'mount -o remount,rw,bind "$repo/.git"',
+  'exec "$@"',
+].join('; ');
+
 export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
   constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs, platform = process.platform,
     freeVerified, zenFree = false, promotionActive = false, legitimateAccess = false, dataClassAllowed = false,
-    autoReload = true, modelProvider = 'zen', model = null } = {}) {
+    autoReload = true, modelProvider = 'zen', model = null, isolationRepoRoot = null } = {}) {
     super({
       key: 'opencode', binary: 'opencode', driver, inspectCheckpoint, enabled, timeoutMs, platform,
       minimumVersion, maximumMajor: 2, envKeys: [...OPENCODE_ENV_KEYS],
@@ -77,6 +90,7 @@ export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
     // Zen promotion gate.
     const provider = String(modelProvider ?? 'zen').trim().toLowerCase() || 'zen';
     this.model = String(model || '').trim();
+    this.isolationRepoRoot = isolationRepoRoot ? resolve(String(isolationRepoRoot)) : null;
     this.gates = {
       freeVerified: Boolean(freeVerified ?? zenFree),
       promotionActive: Boolean(promotionActive),
@@ -147,6 +161,15 @@ export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
     };
   }
 
+  async verifySandbox() {
+    if (!this.isolationRepoRoot) return { ok: true };
+    if (this.platform !== 'linux' || !isAbsolute(this.isolationRepoRoot)) {
+      return { ok: false, detail: 'OpenCode mount isolation requires an absolute Linux checkout path' };
+    }
+    const probe = await this.driver.inspect('unshare', ['-m', 'true'], { timeoutMs: 10_000 });
+    return { ok: probe.ok, detail: probe.ok ? null : (probe.stderr || 'unshare -m is unavailable') };
+  }
+
   async verifyAuth() {
     const list = await this.driver.inspect('opencode', ['auth', 'list'], { extraEnvKeys: this.envKeys, timeoutMs: 20_000 });
     if (!list.ok) return { ok: false, reason: 'AUTH_REQUIRED' };
@@ -159,7 +182,19 @@ export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
   command({ worktree, resumeId }) {
     // The prompt is delivered on stdin (verified in the official source); the
     // supervisor-owned worktree is passed explicitly as well as used as cwd.
-    return ['run', '--model', this.model, '--format', 'json', '--auto', '--dir', worktree, ...(resumeId ? ['--session', resumeId] : [])];
+    const args = ['run', '--model', this.model, '--format', 'json', '--auto', '--dir', worktree, ...(resumeId ? ['--session', resumeId] : [])];
+    if (!this.isolationRepoRoot) return args;
+    const root = resolve(this.isolationRepoRoot);
+    const target = resolve(worktree);
+    const rel = relative(root, target);
+    if (!isAbsolute(target) || (!rel.startsWith('..') && !isAbsolute(rel))) {
+      throw new Error('WORKTREE_UNSAFE: isolated OpenCode worktree must be outside the protected checkout');
+    }
+    return {
+      binary: 'unshare',
+      args: ['-m', '--propagation', 'private', 'bash', '-ceu', MOUNT_ISOLATION_SCRIPT,
+        'continuity-opencode-isolation', root, target, this.binary, ...args],
+    };
   }
 
   consumeEvent(event, state) {

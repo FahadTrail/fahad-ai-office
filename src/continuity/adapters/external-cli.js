@@ -84,8 +84,12 @@ export class ExternalCliAdapter {
     const probe = await this.available();
     if (!probe.ok) throw continuityError(probe.reason === 'UNSUPPORTED_VERSION' ? 'UNSUPPORTED_VERSION' : probe.reason === 'CLI_NOT_FOUND' ? 'CLI_NOT_FOUND' : probe.reason === 'SANDBOX_UNAVAILABLE' ? 'SANDBOX_UNAVAILABLE' : 'AUTH_REQUIRED');
     if (!this.inspectCheckpoint) throw continuityError('CHECKPOINT_FAILED');
+    const command = this.command({ worktree, resumeId, probe });
+    const binary = Array.isArray(command) ? this.binary : command?.binary;
+    const args = Array.isArray(command) ? command : command?.args;
+    if (!binary || !Array.isArray(args)) throw new TypeError('External CLI command must be an argument list or { binary, args }');
     const state = this.driver.launch({
-      binary: this.binary, args: this.command({ worktree, resumeId, probe }), prompt: continuationPacket,
+      binary, args, prompt: continuationPacket,
       cwd: worktree, extraEnvKeys: this.envKeys, timeoutMs: this.timeoutMs,
       onEvent: (event, current) => this.consumeEvent(event, current),
     });

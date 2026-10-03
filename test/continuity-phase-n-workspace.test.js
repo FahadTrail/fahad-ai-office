@@ -124,8 +124,10 @@ test('the Phase N drill wires the runtime-only paths the live chain depends on',
   const src = readFileSync(new URL('../tools/continuity-phase-n-live.mjs', import.meta.url), 'utf8');
   // 1. External adapters without an inspectCheckpoint throw CHECKPOINT_FAILED
   //    at launch, blocking the office -> opencode handoff and the recovery.
-  assert.ok(src.includes('externalAdaptersFromEnv({ env: process.env, inspectCheckpoint })'),
+  assert.match(src, /externalAdaptersFromEnv\(\{[\s\S]*?inspectCheckpoint[\s\S]*?\}\)/,
     'the drill must wire an inspectCheckpoint into the OpenCode/Gemini adapters');
+  assert.ok(src.includes('CONTINUITY_OPENCODE_ISOLATION_REPO_ROOT: repoRoot'),
+    'the drill must protect its checkout from OpenCode writes');
   // 2. The forced phase-3 checkpoint needs a whitelisted event name or
   //    maybeSave skips it and the drill aborts OPENCODE_CHECKPOINT_NOT_PERSISTED.
   assert.ok(!src.includes("event: 'phase-n drill'"), 'the checkpoint event must be one the checkpointer forces');

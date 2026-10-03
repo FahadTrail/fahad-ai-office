@@ -220,10 +220,18 @@ before the drill starts; `--run` re-validates it in its own preflight, and a
 missing workspace aborts before the disposable branch or any supervisor or
 worker exists.
 
-The `--run` mode prepares a disposable branch, disposable worktrees and an
-isolated file-persisted Continuity store under
-`.continuity/phase-n-drill/`, then drives the real chain
+The `--run` mode prepares a disposable branch, disposable worktrees outside
+the checkout under the host temporary directory, and an isolated
+file-persisted Continuity store under `.continuity/phase-n-drill/`, then
+drives the real chain
 **Office → OpenCode → Gemini CLI** through the real `ContinuitySupervisor`:
+
+For the OpenCode leg, the drill starts a private Linux mount namespace. The
+checkout under test is bind-mounted read-only while only its shared `.git`
+metadata is re-exposed writable for the leased external worktree. This keeps
+the model able to commit its branch but prevents it from writing into the
+parent checkout. Preflight fails closed when mount namespaces are unavailable
+or a leased worktree resolves inside the protected checkout.
 
 The Office leg is **self-contained** — it does not depend on the deployed
 production coding worker image. The drill claims the exact native
@@ -284,8 +292,8 @@ falls back to a simulated pass.
   `~/.local/share/opencode/auth.json` (OpenCode) and `~/.gemini/` (Gemini
   CLI OAuth file).
 * Drill artifacts: on a passing run the tool removes its disposable branch
-  (local and origin) and worktrees, keeping `report.json`; on failure it
-  prints the exact manual commands. The one-shot Office runner process and
+  (local and origin) and external temporary worktrees, keeping `report.json`;
+  on failure it prints the exact manual commands. The one-shot Office runner process and
   its disposable workspace root are cleaned by the drill itself on both
   PASS and FAIL (proved in the report). State lives only under
   `.continuity/phase-n-drill/`.
