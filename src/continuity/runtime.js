@@ -27,7 +27,8 @@ const enabled = (value) => /^(1|true|yes)$/i.test(String(value || ''));
 // and defaults to 'zen', so the Zen promotion assertion is required only for
 // Zen — a verified OpenRouter Free setup never needs it. The legacy ZEN_*
 // flag names stay accepted for backward compatibility. Both workers are OFF
-// unless their own flag is set.
+// unless their own flag is set. Enabled OpenCode also requires an explicit
+// CONTINUITY_OPENCODE_MODEL; the CLI default is never trusted implicitly.
 export function externalAdaptersFromEnv({ env = process.env, inspectCheckpoint = undefined } = {}) {
   const opencode = new OpenCodeContinuityAdapter({
     enabled: enabled(env.CONTINUITY_OPENCODE_ENABLED), inspectCheckpoint,
@@ -37,6 +38,7 @@ export function externalAdaptersFromEnv({ env = process.env, inspectCheckpoint =
     legitimateAccess: enabled(env.CONTINUITY_OPENCODE_ACCESS_VERIFIED),
     dataClassAllowed: enabled(env.CONTINUITY_OPENCODE_PRIVACY_VERIFIED),
     modelProvider: env.CONTINUITY_OPENCODE_MODEL_PROVIDER || 'zen',
+    model: env.CONTINUITY_OPENCODE_MODEL || null,
   });
   const gemini = new GeminiCliContinuityAdapter({ enabled: enabled(env.CONTINUITY_GEMINI_CLI_ENABLED), inspectCheckpoint });
   return { opencode, gemini };

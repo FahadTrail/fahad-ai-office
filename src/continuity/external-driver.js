@@ -20,6 +20,15 @@ function boundedText(value, env, length = 1000) {
   return redact(String(value || '').slice(-length), env, length);
 }
 
+export function externalFailureEvidence(state, limit = 4000) {
+  const source = state || {};
+  return [
+    `${source.errorCode || ''} exit=${source.exitCode}`,
+    `stderr=${JSON.stringify(String(source.stderr || '').slice(-limit))}`,
+    `stdout=${JSON.stringify(String(source.stdoutTail || '').slice(-limit))}`,
+  ].join(' ');
+}
+
 export class ExternalWorkerDriver {
   constructor({ spawn = nodeSpawn, execFile = nodeExecFile, env = process.env, maxLineBytes = 1024 * 1024 } = {}) {
     this.spawn = spawn;
@@ -54,7 +63,7 @@ export class ExternalWorkerDriver {
     });
     const state = {
       child, cwd, id: null, usage: null, lastEvent: null, eventCount: 0, exitCode: null,
-      signal: null, errorCode: null, stderr: '', buffer: '', timedOut: false, finished: false,
+      signal: null, errorCode: null, stderr: '', stdoutTail: '', buffer: '', timedOut: false, finished: false,
     };
     let resolveDone;
     state.done = new Promise((resolve) => { resolveDone = resolve; });
@@ -80,7 +89,9 @@ export class ExternalWorkerDriver {
       } catch { state.errorCode = 'WORKER_OUTPUT_INVALID'; }
     };
     child.stdout?.on('data', (chunk) => {
-      state.buffer += chunk.toString('utf8');
+      const text = chunk.toString('utf8');
+      state.stdoutTail = boundedText(state.stdoutTail + text, this.env, 4000);
+      state.buffer += text;
       if (Buffer.byteLength(state.buffer) > this.maxLineBytes * 2) { state.errorCode = 'WORKER_OUTPUT_INVALID'; child.kill('SIGTERM'); return; }
       const lines = state.buffer.split(/\r?\n/);
       state.buffer = lines.pop() || '';

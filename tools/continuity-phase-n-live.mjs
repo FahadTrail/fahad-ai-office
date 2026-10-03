@@ -40,6 +40,8 @@ import { ContinuityCheckpointer } from '../src/continuity/checkpointer.js';
 import { WorktreeManager } from '../src/continuity/worktree.js';
 import { OfficeContinuityAdapter } from '../src/continuity/adapters/office.js';
 import { externalAdaptersFromEnv } from '../src/continuity/runtime.js';
+import { externalFailureEvidence } from '../src/continuity/external-driver.js';
+import { buildContinuationPacket } from '../src/continuity/packet.js';
 import { resolvePhaseNWorkspace } from '../src/continuity/phase-n-workspace.js';
 import { SupabaseAgentSessionStore } from '../src/agent-state/session-store.js';
 import { claimOnCreate, removeRunnerWorkspace, startRunnerProcess } from '../src/coding-agent/one-shot-runner.js';
@@ -56,6 +58,7 @@ const MARKERS = { office: 'phase-n/office.md', opencode: 'phase-n/opencode.md', 
 // repository stays with PR #106 CI, which runs the full suite on every push.
 // The command still fails (non-zero) on any real checkout or task failure.
 const OFFICE_TEST_COMMAND = 'node --test test/continuity-phase-n-office-gate.test.js';
+const PHASE_N_OPENCODE_MODEL = 'openrouter/openrouter/free';
 const WORKERS = [
   { key: 'office', display_name: 'Fahad Office Coding Agent', kind: 'native', quota_source: 'office-pools', enabled: true },
   { key: 'opencode', display_name: 'OpenCode', kind: 'cli', quota_source: 'opencode', enabled: true },
@@ -180,6 +183,7 @@ async function preflight({ checkOnly }) {
   // required only when the declared model provider is Zen. Legacy ZEN_*
   // flag names are still accepted (wired the same way in runtime.js).
   const modelProvider = String(process.env.CONTINUITY_OPENCODE_MODEL_PROVIDER || 'zen').trim().toLowerCase() || 'zen';
+  const opencodeModel = String(process.env.CONTINUITY_OPENCODE_MODEL || '').trim();
   const onEither = (...names) => names.some((name) => envOn(name));
   const opencodeFlags = ['CONTINUITY_OPENCODE_ENABLED', 'CONTINUITY_OPENCODE_AUTO_RELOAD_OFF',
     'CONTINUITY_OPENCODE_ACCESS_VERIFIED', 'CONTINUITY_OPENCODE_PRIVACY_VERIFIED'];
@@ -189,6 +193,9 @@ async function preflight({ checkOnly }) {
   onEither('CONTINUITY_OPENCODE_FREE_VERIFIED', 'CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED')
     ? ok('free model source verified (owner assertion)')
     : bad('free model source not verified — set CONTINUITY_OPENCODE_FREE_VERIFIED');
+  opencodeModel === PHASE_N_OPENCODE_MODEL
+    ? ok(`OpenCode Phase N model: ${PHASE_N_OPENCODE_MODEL}`)
+    : bad(`CONTINUITY_OPENCODE_MODEL must be ${PHASE_N_OPENCODE_MODEL} for the live drill`);
   if (modelProvider === 'zen') {
     onEither('CONTINUITY_OPENCODE_PROMOTION_ACTIVE', 'CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE')
       ? ok('Zen promotion active (owner assertion; provider=zen)')
@@ -510,7 +517,7 @@ async function runDrill({ keep }) {
     const stateO = phaseAdapters.opencode.sessions.get(runtimeO.adapterSession.id);
     must(stateO, 'OPENCODE_SESSION_STATE_MISSING');
     await Promise.race([stateO.done, sleep(30 * 60_000).then(() => { throw new DrillAbort('OPENCODE_TURN_TIMEOUT'); })]);
-    must(!stateO.errorCode && stateO.exitCode === 0, 'OPENCODE_TURN_FAILED', `${stateO.errorCode || ''} exit=${stateO.exitCode} stderr=${String(stateO.stderr || '').slice(-400)}`);
+    must(!stateO.errorCode && stateO.exitCode === 0, 'OPENCODE_TURN_FAILED', externalFailureEvidence(stateO));
     const opencodeHead = await worktrees.head(runtimeO.task.worktree);
     must(opencodeHead !== officePush, 'OPENCODE_MADE_NO_COMMIT');
     const opencodeStatus = await worktrees.status(runtimeO.task.worktree);
@@ -522,16 +529,33 @@ async function runDrill({ keep }) {
     evidence.add('opencode.checkpoint', { checkpointId: opencodeCheckpoint.id, commit: opencodeHead, turnExit: stateO.exitCode });
 
     // --------------------------------- phase 4: real death, fail-closed, restart
-    const victimPid = stateO.child.pid;
+    // `opencode run` is a one-shot process: after the successful marker turn
+    // above it has already exited. Start one real resumed turn from the
+    // provider-issued session id, then kill that live process. This proves an
+    // actual mid-session death instead of trying to signal an already-dead
+    // child and keeps the persisted checkpoint on the exact committed head.
+    const crashPacket = buildContinuationPacket(validCheckpoint({
+      branch, base_commit: officePush, last_commit: opencodeHead,
+      agent_id: 'opencode', agent_type: 'cli', status: 'ACTIVE',
+      next_exact_action: 'Make no file changes. Wait for the Continuity termination drill.',
+    }), { doNotTouch: ['all repository files during the termination step'] });
+    const crashExecution = await phaseAdapters.opencode.resume({
+      session: runtimeO.adapterSession,
+      continuationPacket: crashPacket,
+    });
+    runtimeO.adapterSession = crashExecution.session;
+    const crashState = phaseAdapters.opencode.sessions.get(crashExecution.session.id);
+    must(crashState, 'OPENCODE_CRASH_SESSION_STATE_MISSING');
+    const victimPid = crashState.child.pid;
     const aliveBefore = await pidStatus(victimPid, 'opencode');
     must(!aliveBefore.dead, 'OPENCODE_ALREADY_DEAD', aliveBefore.method);
-    evidence.add('termination.pre_kill', { pid: victimPid, status: aliveBefore.method });
-    stateO.child.kill('SIGKILL');
-    await Promise.race([stateO.done, sleep(15_000)]);
-    must(stateO.finished, 'OPENCODE_DEATH_NOT_OBSERVED');
+    evidence.add('termination.pre_kill', { pid: victimPid, status: aliveBefore.method, resumedFromCliSession: stateO.id });
+    crashState.child.kill('SIGKILL');
+    await Promise.race([crashState.done, sleep(15_000)]);
+    must(crashState.finished, 'OPENCODE_DEATH_NOT_OBSERVED');
     const afterKill = await pidStatus(victimPid, 'opencode');
     must(afterKill.dead, 'OPENCODE_PID_NOT_PROVEN_DEAD', afterKill.method);
-    evidence.add('termination.killed', { pid: victimPid, observedSignal: stateO.signal, observedExit: stateO.exitCode, proof: afterKill.method });
+    evidence.add('termination.killed', { pid: victimPid, observedSignal: crashState.signal, observedExit: crashState.exitCode, proof: afterKill.method });
     // Simulated Supervisor crash: heartbeats stop, the lease goes stale, and
     // everything the restart needs is already on disk. No termination proof
     // is sealed yet — the ledger does not exist.
@@ -557,7 +581,7 @@ async function runDrill({ keep }) {
 
     // Seal the termination proof only now, after the refusal was observed.
     await mkdir(dirname(ledgerPath), { recursive: true });
-    await writeFile(ledgerPath, `${JSON.stringify({ [opencodeSessionId]: { pid: victimPid, binary: 'opencode', observedSignal: stateO.signal || 'SIGKILL', verifiedAt: new Date().toISOString(), verifiedBy: afterKill.method } }, null, 2)}\n`);
+    await writeFile(ledgerPath, `${JSON.stringify({ [opencodeSessionId]: { pid: victimPid, binary: 'opencode', observedSignal: crashState.signal || 'SIGKILL', verifiedAt: new Date().toISOString(), verifiedBy: afterKill.method } }, null, 2)}\n`);
     const secondAttempt = await supervisorB.recoverStale();
     must(secondAttempt.length === 1 && secondAttempt[0].recovered === true, 'RECOVERY_FAILED', JSON.stringify(secondAttempt.map((entry) => entry.blocker)));
     must(secondAttempt[0].worker === 'gemini-cli', 'RECOVERY_WRONG_WORKER', secondAttempt[0].worker);
@@ -577,7 +601,7 @@ async function runDrill({ keep }) {
     must(stateG, 'GEMINI_SESSION_STATE_MISSING');
     evidence.add('gemini.started', { sessionId: geminiSessionId, leaseId: runtimeG.lease.id, cliSessionId: runtimeG.adapterSession.id, worktreeHead: geminiHeadAtStart });
     await Promise.race([stateG.done, sleep(30 * 60_000).then(() => { throw new DrillAbort('GEMINI_TURN_TIMEOUT'); })]);
-    must(!stateG.errorCode && stateG.exitCode === 0, 'GEMINI_TURN_FAILED', `${stateG.errorCode || ''} exit=${stateG.exitCode} stderr=${String(stateG.stderr || '').slice(-400)}`);
+    must(!stateG.errorCode && stateG.exitCode === 0, 'GEMINI_TURN_FAILED', externalFailureEvidence(stateG));
     const geminiHead = await worktrees.head(runtimeG.task.worktree);
     must(geminiHead !== opencodeHead, 'GEMINI_MADE_NO_COMMIT');
     const finished = await supervisorB.finish(geminiSessionId, {

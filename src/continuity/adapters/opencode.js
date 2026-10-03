@@ -31,7 +31,7 @@ const minimumVersion = { major: 1, minor: 18, patch: 0 };
 
 // The flags `verifyFeatures` requires at runtime: every one of them must be
 // present, so a CLI that drops one still fails closed as UNSUPPORTED_VERSION.
-const REQUIRED_RUN_FLAGS = Object.freeze(['--format', '--session', '--continue', '--dir', '--auto']);
+const REQUIRED_RUN_FLAGS = Object.freeze(['--format', '--session', '--continue', '--dir', '--auto', '--model']);
 
 // The official 1.18.34 CLI (yargs) writes `opencode run --help` entirely to
 // STDERR — stdout stays empty and the exit code is 0 — optionally wrapped in
@@ -66,7 +66,7 @@ const OPENCODE_ENV_KEYS = Object.freeze([
 export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
   constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs, platform = process.platform,
     freeVerified, zenFree = false, promotionActive = false, legitimateAccess = false, dataClassAllowed = false,
-    autoReload = true, modelProvider = 'zen' } = {}) {
+    autoReload = true, modelProvider = 'zen', model = null } = {}) {
     super({
       key: 'opencode', binary: 'opencode', driver, inspectCheckpoint, enabled, timeoutMs, platform,
       minimumVersion, maximumMajor: 2, envKeys: [...OPENCODE_ENV_KEYS],
@@ -76,6 +76,7 @@ export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
     // existing setups keep exactly their previous behaviour, including the
     // Zen promotion gate.
     const provider = String(modelProvider ?? 'zen').trim().toLowerCase() || 'zen';
+    this.model = String(model || '').trim();
     this.gates = {
       freeVerified: Boolean(freeVerified ?? zenFree),
       promotionActive: Boolean(promotionActive),
@@ -111,6 +112,14 @@ export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
   // another verified free provider such as OpenRouter Free.
   gateReason() {
     const { autoReload, freeVerified, promotionActive, legitimateAccess, dataClassAllowed, modelProvider } = this.gates;
+    if (!this.model) return 'MODEL_NOT_CONFIGURED';
+    const separator = this.model.indexOf('/');
+    const configuredProvider = separator > 0 && separator < this.model.length - 1 && !/\s/.test(this.model)
+      ? this.model.slice(0, separator).toLowerCase() : null;
+    // Zen models are published under OpenCode's `opencode/*` namespace. All
+    // other providers must match the first segment of provider/model exactly.
+    if (!configuredProvider || (configuredProvider !== modelProvider
+      && !(modelProvider === 'zen' && configuredProvider === 'opencode'))) return 'MODEL_PROVIDER_MISMATCH';
     if (autoReload) return 'AUTO_RELOAD_MUST_BE_OFF';
     if (!freeVerified) return 'FREE_ACCESS_NOT_VERIFIED';
     if (modelProvider === 'zen' && !promotionActive) return 'ZEN_PROMOTION_INACTIVE';
@@ -150,7 +159,7 @@ export class OpenCodeContinuityAdapter extends ExternalCliAdapter {
   command({ worktree, resumeId }) {
     // The prompt is delivered on stdin (verified in the official source); the
     // supervisor-owned worktree is passed explicitly as well as used as cwd.
-    return ['run', '--format', 'json', '--auto', '--dir', worktree, ...(resumeId ? ['--session', resumeId] : [])];
+    return ['run', '--model', this.model, '--format', 'json', '--auto', '--dir', worktree, ...(resumeId ? ['--session', resumeId] : [])];
   }
 
   consumeEvent(event, state) {
