@@ -32,6 +32,7 @@ import { ContinuityCheckpointer } from '../src/continuity/checkpointer.js';
 import { WorktreeManager } from '../src/continuity/worktree.js';
 import { OfficeContinuityAdapter } from '../src/continuity/adapters/office.js';
 import { externalAdaptersFromEnv } from '../src/continuity/runtime.js';
+import { resolvePhaseNWorkspace } from '../src/continuity/phase-n-workspace.js';
 import { createClient } from '@supabase/supabase-js';
 import { MemoryContinuityStore, validCheckpoint } from '../testing/fixtures/continuity-harness.js';
 
@@ -125,6 +126,7 @@ class PersistentStore extends MemoryContinuityStore {
 // ---------------------------------------------------------------- preflight
 async function preflight({ checkOnly }) {
   const findings = [];
+  let workspaceId = null;
   const ok = (msg) => findings.push({ level: 'PASS', msg });
   const warn = (msg) => findings.push({ level: 'WARN', msg });
   const bad = (msg) => findings.push({ level: 'FAIL', msg });
@@ -179,7 +181,19 @@ async function preflight({ checkOnly }) {
       const { error } = await db.from('agent_sessions').select('id').limit(1);
       error ? bad(`Office database reachable but agent_sessions rejected the query: ${error.message}`)
         : ok('Office agent_sessions reachable (read-only probe)');
+      // Office leg workspace: explicit PHASE_N_WORKSPACE_ID preferred and
+      // validated (project exists, enabled, Coding-Agent-intended); without
+      // one, only the single enabled Coding Agent workspace is auto-resolved.
+      // A disabled or ambiguous workspace fails HERE, before any branch,
+      // supervisor or worker is ever created.
+      try {
+        const workspace = await resolvePhaseNWorkspace({ db, requestedId: process.env.PHASE_N_WORKSPACE_ID || null });
+        workspaceId = workspace.workspaceId;
+        ok(`workspace ${workspace.workspaceId} (${workspace.projectName}) is enabled for Coding Agent runs [${workspace.source}]`);
+      } catch (error) { bad(`Phase N workspace: ${error.message}`); }
     } catch (error) { bad(`Office database probe failed: ${error.message}`); }
+  } else {
+    bad('Phase N workspace not validated — SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are missing');
   }
 
   const failed = findings.filter((entry) => entry.level === 'FAIL');
@@ -187,7 +201,7 @@ async function preflight({ checkOnly }) {
   if (checkOnly) {
     console.log(failed.length ? `\nCHECK FAILED: ${failed.length} blocker(s). Nothing was written.` : '\nCHECK PASSED: environment ready for --run.');
   }
-  return { ok: failed.length === 0, repoRoot, findings };
+  return { ok: failed.length === 0, repoRoot, workspaceId, findings };
 }
 
 // ---------------------------------------------------------------- evidence
@@ -213,6 +227,7 @@ function makeEvidence(stateDir) {
 async function runDrill({ keep }) {
   const pre = await preflight({ checkOnly: false });
   must(pre.ok, 'PREFLIGHT_FAILED', pre.findings.filter((entry) => entry.level === 'FAIL').map((entry) => entry.msg));
+  must(pre.workspaceId, 'PHASE_N_WORKSPACE_UNRESOLVED', 'preflight did not resolve an enabled workspace for the Office leg');
   const repoRoot = pre.repoRoot;
   const stateDir = join(repoRoot, '.continuity', 'phase-n-drill');
   const worktreesRoot = join(stateDir, 'worktrees');
@@ -311,7 +326,7 @@ async function runDrill({ keep }) {
     // ------------------------------------------------- phase 1: Office leg
     const checkpoint0 = validCheckpoint({ branch, base_commit: base, last_commit: base, agent_id: 'office', agent_type: 'native', status: 'ACTIVE', next_exact_action: `Create only ${MARKERS.office} with one short line, then commit and push this branch. Do not touch any other file.` });
     const task = {
-      projectId: null, title: 'Continuity Phase N live drill (Office leg)',
+      projectId: pre.workspaceId, title: 'Continuity Phase N live drill (Office leg)',
       repository: REPOSITORY, branch, worktree: null,
       objective: `Harmless Phase N drill: create only ${MARKERS.office} with one short line, commit and push to this branch. Touch no other file.`,
       dataClass: 'PUBLIC', size: 'medium', capability: 'coding',

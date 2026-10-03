@@ -148,8 +148,12 @@ node tools/continuity-phase-n-live.mjs --selftest # plumbing only, not worker ev
 
 One-block VPS sequence: pull the latest PR #106 code, load the Office
 credentials from the production env file without printing anything, export
-**only** the drill flags in this shell, run `--check`, run `--run` only if
-the check passes, and print the final verdict:
+**only** the drill flags in this shell, select and validate the Phase N
+workspace for the Office leg (an explicit `PHASE_N_WORKSPACE_ID` when set is
+validated — project exists, `workspace_policies.enabled = true`, Coding
+Agent tool grants enabled; otherwise the single enabled Coding Agent
+workspace is auto-resolved by `src/continuity/phase-n-workspace.js` — never
+an arbitrary one), run `--run` only, and print the final verdict:
 
 ```sh
 set -eo pipefail
@@ -181,19 +185,37 @@ export CONTINUITY_OPENCODE_ENABLED=1 CONTINUITY_OPENCODE_AUTO_RELOAD_OFF=1 \
        CONTINUITY_OPENCODE_MODEL_PROVIDER=openrouter CONTINUITY_OPENCODE_FREE_VERIFIED=1 \
        CONTINUITY_OPENCODE_ACCESS_VERIFIED=1 CONTINUITY_OPENCODE_PRIVACY_VERIFIED=1 \
        CONTINUITY_GEMINI_CLI_ENABLED=1
-if node tools/continuity-phase-n-live.mjs --check; then
-  if node tools/continuity-phase-n-live.mjs --run; then
-    trap - ERR
-    echo "PHASE N FINAL: PASS"
-  else
-    echo "PHASE N FINAL: FAIL (drill)"
-    exit 1
-  fi
+# Workspace: validate an explicit PHASE_N_WORKSPACE_ID, else resolve the
+# single enabled Coding Agent workspace. Read-only; never an arbitrary pick.
+export PHASE_N_WORKSPACE_ID="${PHASE_N_WORKSPACE_ID:-}"
+PHASE_N_WORKSPACE_ID="$(node --input-type=module -e '
+import { createClient } from "@supabase/supabase-js";
+import { resolvePhaseNWorkspace } from "./src/continuity/phase-n-workspace.js";
+const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+try {
+  const workspace = await resolvePhaseNWorkspace({ db, requestedId: process.env.PHASE_N_WORKSPACE_ID || null });
+  console.log(workspace.workspaceId);
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+')" || { echo "PHASE N FINAL: FAIL (workspace)"; exit 1; }
+export PHASE_N_WORKSPACE_ID
+echo "workspace: $PHASE_N_WORKSPACE_ID"
+if node tools/continuity-phase-n-live.mjs --run; then
+  trap - ERR
+  echo "PHASE N FINAL: PASS"
 else
-  echo "PHASE N FINAL: FAIL (preflight)"
+  echo "PHASE N FINAL: FAIL (drill)"
   exit 1
 fi
 ```
+
+The workspace step fails closed with an exact blocker (missing project,
+`WORKSPACE_DISABLED`, no Coding Agent grants, zero or several candidates)
+before the drill starts; `--run` re-validates it in its own preflight, and a
+missing workspace aborts before the disposable branch or any supervisor or
+worker exists.
 
 The `--run` mode prepares a disposable branch, disposable worktrees and an
 isolated file-persisted Continuity store under
