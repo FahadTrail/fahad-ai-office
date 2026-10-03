@@ -104,7 +104,7 @@ Readiness proof: `bash ops/setup-continuity-workers.sh --check` reports
 |---|---|
 | `CONTINUITY_OPENCODE_ENABLED` | Enables the OpenCode adapter (gates must also be asserted) |
 | `CONTINUITY_OPENCODE_AUTO_RELOAD_OFF` | Owner asserts OpenCode auto-reload is off (gate) |
-| `CONTINUITY_OPENCODE_MODEL` | Required exact OpenCode `provider/model`; no CLI default is used. Phase N uses the VPS-canary-proven `groq/openai/gpt-oss-20b` |
+| `CONTINUITY_OPENCODE_MODEL` | Required exact OpenCode `provider/model`; no CLI default is used. Phase N uses the full-repository-canary-proven `opencode/nemotron-3.5-lightning-free` |
 | `CONTINUITY_OPENCODE_MODEL_PROVIDER` | Model source for the gates; default `zen` keeps the Zen promotion requirement, e.g. `openrouter` needs none |
 | `CONTINUITY_OPENCODE_FREE_VERIFIED` / `_ACCESS_VERIFIED` / `_PRIVACY_VERIFIED` | The three provider-neutral OpenCode owner gates (legacy `CONTINUITY_OPENCODE_ZEN_FREE_VERIFIED` name accepted for the free gate) |
 | `CONTINUITY_OPENCODE_PROMOTION_ACTIVE` | Zen promotion assertion; required **only** when the provider is `zen` (legacy `CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE`) |
@@ -184,7 +184,8 @@ unset CONTINUITY_SUPERVISOR CONTINUITY_CODEX_ENABLED CONTINUITY_CLAUDE_ENABLED \
       CONTINUITY_OPENCODE_PROMOTION_ACTIVE CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE \
       CONTINUITY_OPENCODE_ACCESS_VERIFIED CONTINUITY_OPENCODE_PRIVACY_VERIFIED CONTINUITY_GEMINI_CLI_ENABLED
 export CONTINUITY_OPENCODE_ENABLED=1 CONTINUITY_OPENCODE_AUTO_RELOAD_OFF=1 \
-       CONTINUITY_OPENCODE_MODEL=groq/openai/gpt-oss-20b CONTINUITY_OPENCODE_MODEL_PROVIDER=groq CONTINUITY_OPENCODE_FREE_VERIFIED=1 \
+       CONTINUITY_OPENCODE_MODEL=opencode/nemotron-3.5-lightning-free CONTINUITY_OPENCODE_MODEL_PROVIDER=zen CONTINUITY_OPENCODE_FREE_VERIFIED=1 \
+       CONTINUITY_OPENCODE_PROMOTION_ACTIVE=1 \
        CONTINUITY_OPENCODE_ACCESS_VERIFIED=1 CONTINUITY_OPENCODE_PRIVACY_VERIFIED=1 \
        CONTINUITY_GEMINI_CLI_ENABLED=1
 # Workspace: validate an explicit PHASE_N_WORKSPACE_ID, else resolve the
