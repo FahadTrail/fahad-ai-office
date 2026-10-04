@@ -1,6 +1,6 @@
 # Coding Continuity Supervisor (architecture, locked 2026-10-01)
 
-Status: **DESIGNED, NOT IMPLEMENTED.** Codex implements it from `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`. The rest of Fahad AI Office is complete and live; see `docs/PRODUCTION-READY.md`.
+Status: **Phase A implemented on PR #102 (migration NOT applied); Phases B–N not started.** Codex implements it from `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`. The rest of Fahad AI Office is complete and live; see `docs/PRODUCTION-READY.md`.
 
 ## 1. Purpose
 
@@ -143,7 +143,7 @@ If a worker disappears, the latest checkpoint is at most one interval old.
 ```
 
 * **Storage:**
-  * The authoritative copy lives in the `continuity_checkpoints` row (section 10).
+  * The authoritative copy lives in the `coding_checkpoints` row (section 10).
   * A mirror is committed to the branch as **.continuity/checkpoint.json** whenever the agent commits, so GitHub alone is enough to resume.
 * **The native agent:** its `agent_checkpoints` rows stay as they are. The Supervisor writes a continuity checkpoint that *references* the native one (`native_checkpoint_id`).
 
@@ -230,8 +230,8 @@ All tables are service-role only with RLS on, following the pattern in `supabase
 | `coding_workers` | registry, one row per worker | `key` text PK, `display_name`, `kind` (native/cli/manual), `quota_source` (dedupe key, e.g. `openai-chatgpt`), `enabled`, `capabilities` jsonb, `health`, `health_basis`, `last_seen_at`, `last_error` |
 | `coding_worker_sessions` | one row per worker run | `id` uuid PK, `worker_key` FK, `project_id`, `repository`, `branch`, `worktree`, `objective`, `status` (state machine), `native_session_id` FK→`agent_sessions` (nullable), `started_at`, `heartbeat_at`, `ended_at`, `task_tokens`, `tokens_basis`, `exit_reason` |
 | `coding_leases` | the write lease | `id` uuid PK, `repository`, `branch`, `worktree`, `worker_key`, `session_id` FK, `token` uuid, `status`, `started_at`, `heartbeat_at`, `expires_at`, `checkpoint_id`. Unique partial index on (repository, branch) where status = 'ACTIVE'. |
-| `continuity_checkpoints` | schema v1 rows | `id` uuid PK, `session_id` FK, `sequence`, `payload` jsonb (validated by `schema` = v1), `last_commit`, `status`, `native_checkpoint_id` FK→`agent_checkpoints` nullable, `created_at`. Unique (session_id, sequence). |
-| `continuity_handoffs` | baton passes | `id` uuid PK, `from_session_id`, `to_session_id` (nullable until accepted), `from_worker`, `to_worker`, `checkpoint_id`, `reason`, `packet` text, `status` (PROPOSED/ACCEPTED/STARTED/FAILED), `created_at`, `accepted_at` |
+| `coding_checkpoints` | schema v1 rows | `id` uuid PK, `session_id` FK, `sequence`, `payload` jsonb (validated by `schema` = v1), `last_commit`, `status`, `native_checkpoint_id` FK→`agent_checkpoints` nullable, `created_at`. Unique (session_id, sequence). |
+| `coding_handoffs` | baton passes | `id` uuid PK, `from_session_id`, `to_session_id` (nullable until accepted), `from_worker`, `to_worker`, `checkpoint_id`, `reason`, `packet` text, `status` (PROPOSED/ACCEPTED/STARTED/FAILED), `created_at`, `accepted_at` |
 | `coding_usage_snapshots` | quota and usage samples | `id` bigserial, `worker_key`, `quota_source`, `session_id` nullable, `taken_at`, `session_pct`, `weekly_pct`, `task_tokens`, `reset_at`, `basis`, `raw` jsonb (no secrets) |
 
 **Indexes:**
@@ -245,7 +245,9 @@ All tables are service-role only with RLS on, following the pattern in `supabase
 * checkpoints: kept, though `payload` may be compacted after 30 days to the last 3 per session plus the final one;
 * handoffs and leases: kept (small).
 
-**RPCs:** `acquire_coding_lease`, `heartbeat_coding_lease`, `release_coding_lease`, `freeze_stale_coding_leases`, `save_continuity_checkpoint` (token-guarded), `propose_handoff`, `accept_handoff`.
+**Naming (decided in Phase A):** the applied 2026-09-22 POC migration already owns `continuity_checkpoints` and `continuity_handoffs` (unused by code, never modified), so the Supervisor tables are `coding_checkpoints` and `coding_handoffs`. A `FROZEN` lease also blocks its branch until `reclaim_coding_lease` marks it `RECLAIMED`.
+
+**RPCs:** `reclaim_coding_lease`, `acquire_coding_lease`, `heartbeat_coding_lease`, `release_coding_lease`, `freeze_stale_coding_leases`, `save_continuity_checkpoint` (token-guarded), `propose_handoff`, `accept_handoff`.
 
 ## 11. Supervisor service
 
