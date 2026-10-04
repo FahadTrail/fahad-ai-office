@@ -41,7 +41,8 @@ export function externalAdaptersFromEnv({ env = process.env, inspectCheckpoint =
     model: env.CONTINUITY_OPENCODE_MODEL || null,
     isolationRepoRoot: env.CONTINUITY_OPENCODE_ISOLATION_REPO_ROOT || null,
   });
-  const gemini = new GeminiCliContinuityAdapter({ enabled: enabled(env.CONTINUITY_GEMINI_CLI_ENABLED), inspectCheckpoint });
+  const gemini = new GeminiCliContinuityAdapter({ enabled: enabled(env.CONTINUITY_GEMINI_CLI_ENABLED), inspectCheckpoint,
+    model: env.CONTINUITY_GEMINI_CLI_MODEL || null });
   return { opencode, gemini };
 }
 

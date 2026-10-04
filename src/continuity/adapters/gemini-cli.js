@@ -35,12 +35,13 @@ import { ExternalCliAdapter } from './external-cli.js';
 const GEMINI_ENV_KEYS = Object.freeze(['GEMINI_API_KEY']);
 
 export class GeminiCliContinuityAdapter extends ExternalCliAdapter {
-  constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs, platform = process.platform } = {}) {
+  constructor({ driver, inspectCheckpoint, enabled = false, timeoutMs, platform = process.platform, model = null } = {}) {
     super({
       key: 'gemini-cli', binary: 'gemini', driver, inspectCheckpoint, enabled, timeoutMs, platform,
       minimumVersion: { major: 0, minor: 40, patch: 0 }, maximumMajor: 1,
       envKeys: [...GEMINI_ENV_KEYS],
     });
+    this.model = String(model || '').trim();
   }
 
   capabilities() {
@@ -72,7 +73,7 @@ export class GeminiCliContinuityAdapter extends ExternalCliAdapter {
     const help = await this.driver.inspect('gemini', ['--help'], { extraEnvKeys: this.envKeys });
     return {
       ok: help.ok && ['--output-format', 'stream-json', '--approval-mode', 'yolo', '--skip-trust']
-        .every((flag) => help.stdout.includes(flag)),
+        .every((flag) => help.stdout.includes(flag)) && (!this.model || help.stdout.includes('--model')),
     };
   }
 
@@ -91,7 +92,7 @@ export class GeminiCliContinuityAdapter extends ExternalCliAdapter {
   command() {
     // cwd (the supervisor-owned worktree) is set by the driver; the prompt is
     // piped on stdin, which is the official non-TTY headless entry point.
-    return ['--output-format', 'stream-json', '--approval-mode', 'yolo', '--skip-trust'];
+    return [...(this.model ? ['--model', this.model] : []), '--output-format', 'stream-json', '--approval-mode', 'yolo', '--skip-trust'];
   }
 
   consumeEvent(event, state) {

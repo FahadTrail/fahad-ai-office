@@ -208,6 +208,9 @@ async function preflight({ checkOnly }) {
     ok(`OpenCode model provider "${modelProvider}" is not zen: no Zen promotion required`);
   }
   envOn('CONTINUITY_GEMINI_CLI_ENABLED') ? ok('CONTINUITY_GEMINI_CLI_ENABLED: on') : bad('CONTINUITY_GEMINI_CLI_ENABLED not set');
+  String(process.env.CONTINUITY_GEMINI_CLI_MODEL || '').trim() === 'gemini-flash-lite-latest'
+    ? ok('Gemini CLI Phase N model: gemini-flash-lite-latest')
+    : bad('CONTINUITY_GEMINI_CLI_MODEL must be gemini-flash-lite-latest for the live drill');
   if (envOn('CONTINUITY_SUPERVISOR')) warn('CONTINUITY_SUPERVISOR is on in this shell: the drill never touches the production runtime; unset it for a clean shell');
 
   // Real capability probes through the real adapters (runs the CLIs).

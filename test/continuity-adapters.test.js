@@ -374,6 +374,11 @@ test('Codex typed usage limit is classified as quota exhaustion', async () => {
   assert.equal(classifyCliFailure({ event: { error: { codex_error_info: 'usage_limit_exceeded' } }, exitCode: 1 }), 'QUOTA_EXHAUSTED');
 });
 
+test('Gemini CLI explicit model is passed without changing the headless safety flags', () => {
+  const adapter = createGeminiCliAdapter({ model: 'gemini-flash-lite-latest' });
+  assert.deepEqual(adapter.command(), ['--model', 'gemini-flash-lite-latest', '--output-format', 'stream-json', '--approval-mode', 'yolo', '--skip-trust']);
+});
+
 test('Gemini CLI adapter uses only the verified official headless flags and never a stale resume', () => {
   const adapter = new GeminiCliContinuityAdapter();
   const args = adapter.command({ worktree: '/tmp/work' });

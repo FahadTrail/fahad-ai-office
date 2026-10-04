@@ -102,6 +102,7 @@ Readiness proof: `bash ops/setup-continuity-workers.sh --check` reports
 
 | Flag | Effect |
 |---|---|
+| `CONTINUITY_GEMINI_CLI_MODEL` | Explicit Gemini CLI model; Phase N requires `gemini-flash-lite-latest` (live canary resolved to `gemini-3.5-flash-lite`). Avoids the quota-exhausted automatic model |
 | `CONTINUITY_OPENCODE_ENABLED` | Enables the OpenCode adapter (gates must also be asserted) |
 | `CONTINUITY_OPENCODE_AUTO_RELOAD_OFF` | Owner asserts OpenCode auto-reload is off (gate) |
 | `CONTINUITY_OPENCODE_MODEL` | Required exact OpenCode `provider/model`; no CLI default is used. Phase N uses the full-repository-canary-proven `opencode/nemotron-3.5-lightning-free` |
@@ -184,6 +185,7 @@ unset CONTINUITY_SUPERVISOR CONTINUITY_CODEX_ENABLED CONTINUITY_CLAUDE_ENABLED \
       CONTINUITY_OPENCODE_PROMOTION_ACTIVE CONTINUITY_OPENCODE_ZEN_PROMOTION_ACTIVE \
       CONTINUITY_OPENCODE_ACCESS_VERIFIED CONTINUITY_OPENCODE_PRIVACY_VERIFIED CONTINUITY_GEMINI_CLI_ENABLED
 export CONTINUITY_OPENCODE_ENABLED=1 CONTINUITY_OPENCODE_AUTO_RELOAD_OFF=1 \
+       CONTINUITY_GEMINI_CLI_MODEL=gemini-flash-lite-latest \
        CONTINUITY_OPENCODE_MODEL=opencode/nemotron-3.5-lightning-free CONTINUITY_OPENCODE_MODEL_PROVIDER=zen CONTINUITY_OPENCODE_FREE_VERIFIED=1 \
        CONTINUITY_OPENCODE_PROMOTION_ACTIVE=1 \
        CONTINUITY_OPENCODE_ACCESS_VERIFIED=1 CONTINUITY_OPENCODE_PRIVACY_VERIFIED=1 \
