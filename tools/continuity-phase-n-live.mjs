@@ -38,6 +38,7 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { ContinuitySupervisor } from '../src/continuity/supervisor.js';
 import { ContinuityCheckpointer } from '../src/continuity/checkpointer.js';
+import { checkDrillLeg, DRILL_OBJECTIVE } from './continuity-phase-n-scope.mjs';
 import { WorktreeManager } from '../src/continuity/worktree.js';
 import { OfficeContinuityAdapter } from '../src/continuity/adapters/office.js';
 import { externalAdaptersFromEnv } from '../src/continuity/runtime.js';
@@ -392,6 +393,20 @@ async function runDrill({ keep }) {
     return count;
   };
 
+  const assertLegScope = async (worktree, baseCommit, marker, earlierMarkers = []) => {
+    const changedFiles = (await git(worktree, 'diff', '--name-only', `${baseCommit}..HEAD`)).split(/\r?\n/).filter(Boolean);
+    const markerContent = await git(worktree, 'show', `HEAD:${marker}`).catch(() => null);
+    const priorMarkers = await Promise.all(earlierMarkers.map(async (path) => ({ path,
+      before: await git(worktree, 'show', `${baseCommit}:${path}`),
+      after: await git(worktree, 'show', `HEAD:${path}`).catch(() => null),
+    })));
+    let checkpoint = null;
+    try { checkpoint = JSON.parse(await git(worktree, 'show', 'HEAD:.continuity/checkpoint.json')); } catch { /* fails closed below */ }
+    const result = checkDrillLeg({ marker, markerContent, changedFiles, priorMarkers, checkpoint });
+    must(result.ok, 'DRILL_LEG_SCOPE_FAILED', JSON.stringify(result.failures));
+    evidence.add('leg.scope_verified', { marker, changedFiles, preservedMarkers: earlierMarkers });
+  };
+
   try {
     // ---------------------------------------------------------- setup
     const base = await git(repoRoot, 'rev-parse', 'HEAD');
@@ -424,7 +439,7 @@ async function runDrill({ keep }) {
     const task = {
       projectId: pre.workspaceId, title: 'Continuity Phase N live drill (Office leg)',
       repository: REPOSITORY, branch, worktree: null,
-      objective: `Harmless Phase N drill: create only ${MARKERS.office} with one short line, commit and push to this branch. Touch no other file.`,
+      objective: DRILL_OBJECTIVE,
       dataClass: 'PUBLIC', size: 'medium', capability: 'coding',
       excludeWorkers: ['opencode', 'gemini-cli'],
       config: { publish: 'branch', testCommand: OFFICE_TEST_COMMAND },
@@ -536,6 +551,7 @@ async function runDrill({ keep }) {
     must(opencodeHead !== officePush, 'OPENCODE_MADE_NO_COMMIT');
     const opencodeStatus = await worktrees.status(runtimeO.task.worktree);
     must(opencodeStatus.clean, 'OPENCODE_WORKTREE_DIRTY', opencodeStatus.detail);
+    await assertLegScope(runtimeO.task.worktree, officePush, MARKERS.opencode, [MARKERS.office]);
     const savedO = await supervisorA.saveCheckpoint(opencodeSessionId, validCheckpoint({ branch, base_commit: officePush, last_commit: opencodeHead, agent_id: 'opencode', agent_type: 'cli', status: 'ACTIVE', next_exact_action: `Create only ${MARKERS['gemini-cli']} with one short line, then commit. Do not touch any other file.` }), { event: 'manual' });
     const opencodeCheckpoint = await store.latestCheckpoint(opencodeSessionId);
     must(opencodeCheckpoint?.payload?.last_commit === opencodeHead, 'OPENCODE_CHECKPOINT_NOT_PERSISTED', savedO?.reason || '');
@@ -625,6 +641,7 @@ async function runDrill({ keep }) {
     must(!stateG.errorCode && stateG.exitCode === 0, 'GEMINI_TURN_FAILED', externalFailureEvidence(stateG));
     const geminiHead = await worktrees.head(runtimeG.task.worktree);
     must(geminiHead !== opencodeHead, 'GEMINI_MADE_NO_COMMIT');
+    await assertLegScope(runtimeG.task.worktree, opencodeHead, MARKERS['gemini-cli'], [MARKERS.office, MARKERS.opencode]);
     const finished = await supervisorB.finish(geminiSessionId, {
       checkpoint: validCheckpoint({ branch, base_commit: opencodeHead, last_commit: geminiHead, agent_id: 'gemini-cli', agent_type: 'cli', status: 'COMPLETED', next_exact_action: 'Drill complete.' }),
     });

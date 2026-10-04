@@ -1,6 +1,6 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-04T09:28:00Z",
+  "timestamp": "2026-10-04T09:43:00Z",
   "repository": "FahadTrail/fahad-ai-office",
   "branch": "codex/continuity-readiness",
   "worktree": "Freebuff cloud workspace; cloud-only, no dependency on the owner laptop",
@@ -12,7 +12,7 @@
   "phase": "N_ALT_WORKERS_VPS_PREP",
   "status": "HANDOFF_READY",
   "base_commit": "228ca3548f4706b56e0ff563034192a19ce31c45",
-  "last_commit": "669c6fa0e282b4b1940a5ac0e8962913c8af8308",
+  "last_commit": "a614194aa232d313bbeebc5ee253218095e4eb3a",
   "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
   "files_changed": [
     "src/continuity/adapters/opencode.js",
