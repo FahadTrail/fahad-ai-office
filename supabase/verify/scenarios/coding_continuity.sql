@@ -12,10 +12,12 @@ declare
   v_payload jsonb;
   v_failed boolean;
 begin
-  assert (select count(*) from public.coding_workers) = 7, 'seven permanent workers';
+  assert (select count(*) from public.coding_workers) = 8, 'eight permanent workers';
   assert (select array_agg(key order by key) from public.coding_workers where enabled) = array['office'], 'only office starts enabled';
   assert (select quota_source from public.coding_workers where key = 'codex') = 'openai-chatgpt', 'codex quota source';
   assert (select quota_source from public.coding_workers where key = 'antigravity') = 'google-ai-pro', 'antigravity is not Gemini API';
+  assert (select quota_source from public.coding_workers where key = 'gemini-cli') = 'gemini-cli', 'gemini-cli has its own quota source';
+  assert (select enabled from public.coding_workers where key = 'gemini-cli') = false, 'gemini-cli starts disabled';
 
   insert into public.coding_worker_sessions (worker_key, repository, branch, objective)
     values ('office', 'FahadTrail/fahad-ai-office', 'codex/continuity-phase-a', 'Phase A') returning id into v_a;

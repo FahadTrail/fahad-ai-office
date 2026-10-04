@@ -52,6 +52,14 @@ export function findSecretMaterial(text, env = process.env) {
   return match ? 'credential-shaped token' : null;
 }
 
+// A code-map hint is navigation data, never permission to inspect an
+// isolated system, credential material or an environment file.
+export function isSafeCodeHintPath(value) {
+  const path = String(value || '').replaceAll('\\', '/');
+  return !HERMES_PATTERN.test(path)
+    && !/(?:^|\/)(?:\.env[^/]*|[^/]*(?:secret|credential|private.?key)[^/]*)(?:\/|$)/i.test(path);
+}
+
 export function redact(value, env = process.env, maxLength = 20_000) {
   let safe = String(value ?? '');
   for (const secret of secretValues(env)) safe = safe.split(secret).join('[REDACTED]');

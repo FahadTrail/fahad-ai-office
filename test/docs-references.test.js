@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Documentation must not drift from the code: every repository path quoted
 // in `backticks` in the agent handoff docs has to exist.
-const root = new URL('..', import.meta.url).pathname;
+const root = fileURLToPath(new URL('..', import.meta.url));
 const PATH_RE = /`((?:src|test|testing|docs|ops|supabase|\.github)\/[^`\s]+)`/g;
 
 function docs() {

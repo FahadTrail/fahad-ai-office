@@ -13,6 +13,10 @@ export function buildContinuationPacket(checkpoint, { doNotTouch = [] } = {}) {
     'then the checkpoint below.',
     '',
     `Branch: ${checkpoint.branch}   (you hold the write lease; do not push elsewhere)`,
+    ...(checkpoint.worktree ? [
+      `Working directory: ${checkpoint.worktree}`,
+      'Resolve every relative path from that directory. Never write to its parent checkout or any path outside it.',
+    ] : []),
     `Base commit: ${checkpoint.base_commit}   Last commit: ${checkpoint.last_commit}`,
     `Objective: ${checkpoint.objective}`,
     `Phase: ${checkpoint.phase}`,
@@ -27,7 +31,10 @@ export function buildContinuationPacket(checkpoint, { doNotTouch = [] } = {}) {
     `Next exact action: ${checkpoint.next_exact_action}`,
     '',
     'Rules: commit small steps; run `node --test` before each push; update',
-    '.continuity/checkpoint.json with every commit; when asked to stop, finish the',
+    '.continuity/checkpoint.json BEFORE every commit and include it in that same commit.',
+    'Preserve every required checkpoint field and its type; use full 40-character lowercase commit SHAs, not short SHAs.',
+    'Validate the checkpoint with src/continuity/checkpoint.js before committing. Leave no uncommitted checkpoint edit.',
+    'When asked to stop, finish the',
     'current step, write a checkpoint and exit. Never claim success; the',
     'Supervisor runs the completion gates.',
   ].join('\n');

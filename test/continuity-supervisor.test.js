@@ -9,7 +9,7 @@ const workers = () => [
   { key: 'codex', kind: 'cli', enabled: true, quota_source: 'openai-chatgpt', health: 'healthy', health_basis: 'MEASURED' },
 ];
 
-function supervisor({ store = new MemoryContinuityStore({ workers: workers() }), officeUsage, verifyBranch } = {}) {
+function supervisor({ store = new MemoryContinuityStore({ workers: workers() }), officeUsage, verifyBranch, confirmStopped } = {}) {
   const office = fakeAdapter('office', { quality: 5, usage: officeUsage });
   const codex = fakeAdapter('codex', { quality: 4 });
   const value = new ContinuitySupervisor({
@@ -18,6 +18,7 @@ function supervisor({ store = new MemoryContinuityStore({ workers: workers() }),
     checkpointerFactory: (options) => new ContinuityCheckpointer({ ...options, writeMirror: async () => {}, env: {}, clock: { now: () => Date.now() } }),
     gates: async () => ({ ok: true, checks: [{ name: 'tests', ok: true }], failed: [], nextExactAction: null }),
     verifyBranch: verifyBranch || (async (_lease, checkpoint) => ({ ok: true, head: checkpoint.last_commit, extraCommits: [] })),
+    confirmStopped: confirmStopped || (async () => true),
   });
   return { value, store, office, codex };
 }
@@ -113,4 +114,44 @@ test('supervisor: a worker that fails to start cannot strand an active lease', a
   });
   await assert.rejects(value.startTask({ task: task(), checkpoint: validCheckpoint() }), /worker crashed/);
   assert.equal([...store.leases.values()].filter((lease) => lease.status === 'ACTIVE').length, 0);
+});
+test('supervisor: unconfirmed worker stop keeps the branch leased and blocks handoff', async () => {
+  const setup = supervisor();
+  setup.office.stop = async () => { throw new Error('CODEX_STOP_UNCONFIRMED'); };
+  const started = await setup.value.startTask({ task: task(), checkpoint: validCheckpoint() });
+  await assert.rejects(setup.value.handoff(started.session.id, { reason: 'forced', checkpoint: validCheckpoint() }), /CODEX_STOP_UNCONFIRMED/);
+  assert.equal([...setup.store.leases.values()].filter((lease) => lease.status === 'ACTIVE').length, 1);
+  assert.equal(setup.store.handoffs.size, 0);
+  setup.value.stop();
+});
+test('supervisor: lost lease stops the old worker and refuses reclaim when stop is unconfirmed', async () => {
+  const setup = supervisor({ confirmStopped: async () => false });
+  setup.office.stop = async () => { throw new Error('process still running'); };
+  const started = await setup.value.startTask({ task: task(), checkpoint: validCheckpoint() });
+  await setup.value.onLeaseLost(started.session.id, new Error('heartbeat rejected'));
+  assert.equal(setup.store.sessions.get(started.session.id).exit_reason, 'WORKER_STOP_UNCONFIRMED');
+  setup.store.leases.get(started.lease.id).stale = true;
+  const recovered = await setup.value.recoverStale();
+  assert.equal(recovered[0].blocker, 'WORKER_STOP_UNCONFIRMED');
+  assert.equal(setup.store.leases.get(started.lease.id).status, 'FROZEN');
+  assert.equal([...setup.store.leases.values()].filter((lease) => lease.status === 'ACTIVE').length, 0);
+  setup.value.stop();
+});
+test('supervisor: restart does not reclaim a frozen branch without proof the old writer ended', async () => {
+  const store = new MemoryContinuityStore({ workers: workers() });
+  let old = await store.createSession({ workerKey: 'codex', projectId: 'p', repository: task().repository, branch: task().branch, worktree: task().worktree, objective: task().objective });
+  old = await store.transitionSession(old.id, 'ACQUIRING');
+  const lease = await store.acquireLease(old.id);
+  await store.saveCheckpoint(lease.id, lease.token, validCheckpoint({ session_id: old.id, agent_id: 'codex', agent_type: 'cli' }));
+  store.leases.get(lease.id).stale = true;
+  let stopped = false;
+  const setup = supervisor({ store, confirmStopped: async () => stopped });
+  const recovered = await setup.value.recoverStale();
+  assert.equal(recovered[0].blocker, 'WORKER_STOP_UNCONFIRMED');
+  assert.equal(store.leases.get(lease.id).status, 'FROZEN');
+  stopped = true;
+  const retried = await setup.value.recoverStale();
+  assert.equal(retried[0].recovered, true);
+  assert.equal(store.leases.get(lease.id).status, 'RECLAIMED');
+  setup.value.stop();
 });

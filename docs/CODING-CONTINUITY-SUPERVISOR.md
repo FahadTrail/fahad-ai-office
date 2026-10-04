@@ -1,6 +1,8 @@
 # Coding Continuity Supervisor (architecture, locked 2026-10-01)
 
-Status: **Phase A implemented on PR #102 (migration NOT applied); Phases B–N not started.** Codex implements it from `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`. The rest of Fahad AI Office is complete and live; see `docs/PRODUCTION-READY.md`.
+Development implementation update (2026-10-02): the local, unpushed #106 checkout adds a reusable external CLI driver and official Claude Code executable adapter beside Codex and native Office. Both CLI adapters are disabled by default and require supported versions, installed binaries and authenticated subscription CLIs. Claude is PUBLIC-only in the present policy; the other four non-native registry entries are manual/disabled. The Supervisor now records provider CLI session IDs in DB checkpoints for same-worker resume, refuses uncertain old-writer stop or unsafe worktree transfer, and leaves a lease to freeze rather than passing a dirty branch. Runtime checkpoint mirrors for external workers are stored outside their worktrees under `CONTINUITY_WORKTREES_ROOT/.continuity/`; the database checkpoint remains authoritative. This source has **not** had a new test/drill cycle. GitHub #106 still points to the previous head because write authentication is unavailable. #102–#106 remain open; migration unapplied; production flag OFF.
+
+Status (2026-10-01): **Phase A on PR #102; B on #104; C-G on #105; H-M on #106. All remain open and unmerged; migration NOT applied.** Runtime and nested UI are implemented behind a default-off flag. Unverified external workers are disabled/manual. Linux CI rerun, new-view axe validation, and the Phase N real handoff remain before any activation decision. See the current handover in `docs/HANDOVER.md`. The rest of Fahad AI Office is complete and live; see `docs/PRODUCTION-READY.md`.
 
 ## 1. Purpose
 
@@ -144,7 +146,7 @@ If a worker disappears, the latest checkpoint is at most one interval old.
 
 * **Storage:**
   * The authoritative copy lives in the `coding_checkpoints` row (section 10).
-  * A mirror is committed to the branch as **.continuity/checkpoint.json** whenever the agent commits, so GitHub alone is enough to resume.
+  * The Supervisor atomically mirrors external-worker checkpoints outside the managed worktree, under `CONTINUITY_WORKTREES_ROOT/.continuity/`, so a mirror write cannot make a clean branch dirty during handoff. The project handover file `.continuity/checkpoint.json` is maintained separately for human/agent handovers; no automatic commit of the runtime mirror is claimed. The DB row is the durable authority.
 * **The native agent:** its `agent_checkpoints` rows stay as they are. The Supervisor writes a continuity checkpoint that *references* the native one (`native_checkpoint_id`).
 
 ## 6. Write lease

@@ -1,12 +1,12 @@
 # Coding Continuity Supervisor — implementation plan (for Codex)
 
-Status: **Phase A DONE on branch `claude/continuity-foundation`, PR #102 (open, migration NOT applied). Phase B is next.** The architecture is locked in `docs/CODING-CONTINUITY-SUPERVISOR.md`; this file is the build order. Rules for every phase are in `docs/DEVELOPMENT-CONTRACT.md`.
+Status (2026-10-01): **Phase A is on open PR #102; B on #104; C-G on #105; H-M on #106. All are unmerged, and the Phase A migration is NOT applied.** The Office and gated Codex adapters are implemented; other adapters stay disabled/manual pending official interface verification. The new-view axe check and Phase N real drill are outstanding. The architecture is locked in `docs/CODING-CONTINUITY-SUPERVISOR.md`; this file records the original build order. Rules for every phase are in `docs/DEVELOPMENT-CONTRACT.md`.
 
-Paths written in **bold** below do not exist yet; the phase that names them creates them. Existing paths are in `backticks`.
+Paths written in **bold** below were deliverables in the original plan; many now exist on the stacked branches. Use the current status above and `docs/HANDOVER.md` for completion evidence.
 
 ## Ground rules for all phases
 
-* One branch per phase, cut from the latest `main`: `codex/continuity-phase-<letter>` (lowercase letter). One PR per phase. Never push to `main`.
+* Historical branch plan: one branch and PR per phase from `main`. Fahad requested larger coherent increments, so implementation uses the four stacked PRs above, each based on its predecessor. Never push to `main` before owner approval.
 * `node --test` must be green before every push, and CI must be green before merge. Merging to `main` deploys production; **merges need Fahad's approval**.
 * The Supervisor ships **off**: `CONTINUITY_SUPERVISOR` is unset/false by default and stays off in production until Phase N passes and Fahad turns it on.
 * No change to core routing, capacity, FINANCE/AUDIT/fact gate, the V5 UI, or anything Hermes-related (see `docs/HANDOVER.md` → *DO NOT TOUCH*).

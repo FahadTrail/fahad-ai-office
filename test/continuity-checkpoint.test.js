@@ -76,5 +76,5 @@ test('checkpoint: markdown carries the next action, commits and basis', () => {
 test('checkpoint: the committed handover checkpoint is valid', () => {
   const file = JSON.parse(readFileSync(new URL('../.continuity/checkpoint.json', import.meta.url), 'utf8'));
   assert.deepEqual(validateCheckpoint(file, { env: ENV }).errors, []);
-  assert.equal(file.agent_id, 'claude-code');
+  assert.equal(file.repository, 'FahadTrail/fahad-ai-office');
 });

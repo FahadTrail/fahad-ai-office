@@ -11,6 +11,10 @@ test('continuation packet carries branch, diff, tests, privacy and exact action'
   assert.match(packet, /PRIVATE stays private/);
   assert.match(packet, /Next exact action: Continue the same branch/);
   assert.match(packet, /src\/model-gateway\//);
+  assert.match(packet, /BEFORE every commit and include it in that same commit/);
+  assert.match(packet, /Preserve every required checkpoint field and its type/);
+  assert.match(packet, /full 40-character lowercase commit SHAs/);
+  assert.match(packet, /Leave no uncommitted checkpoint edit/);
   assert.deepEqual(verifyResume(checkpoint, { ...checkpoint }), { ok: true, mismatches: [] });
   assert.deepEqual(verifyResume(checkpoint, { ...checkpoint, branch: 'wrong' }).mismatches, ['branch']);
 });

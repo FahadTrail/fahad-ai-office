@@ -1,52 +1,52 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-01T13:30:00Z",
+  "timestamp": "2026-10-04T09:49:10.389Z",
   "repository": "FahadTrail/fahad-ai-office",
-  "branch": "claude/continuity-foundation",
-  "worktree": null,
-  "agent_id": "claude-code",
+  "branch": "codex/continuity-readiness",
+  "worktree": "Codex desktop development checkout; live evidence on Hostinger isolated Phase N checkout",
+  "agent_id": "codex",
   "agent_type": "cli",
-  "session_id": "claude-code-session-01UQPmN6dz3EeKFLakgeP3QX",
-  "next_agent": "codex",
-  "objective": "Implement Phase A of the Coding Continuity Supervisor (schema, RPCs, checkpoint validator, state machine, tests) without applying the migration to production.",
-  "phase": "A",
+  "session_id": "codex-phase-n-closure-2026-10-04",
+  "next_agent": "owner",
+  "objective": "Close Continuity Phase N using real Office -> OpenCode -> Gemini CLI evidence, then activate production only after all prerequisites are satisfied. Stop at any production blocker.",
+  "phase": "N_LIVE_PASS_PRODUCTION_BLOCKED",
   "status": "HANDOFF_READY",
-  "base_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "last_commit": "13db29ef744873b450ce805d5beb7403b3d2f13b",
+  "base_commit": "228ca3548f4706b56e0ff563034192a19ce31c45",
+  "last_commit": "7816ee6defb44315b95b1470097ffa45748e49ae",
+  "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
   "files_changed": [
-    "supabase/migrations/20261004090000_coding_continuity.sql",
-    "supabase/verify/scenarios/coding_continuity.sql",
-    "supabase/verify/schema-fingerprint.txt",
-    "src/continuity/checkpoint.js",
-    "src/continuity/states.js",
-    "test/continuity-schema.test.js",
-    "test/continuity-checkpoint.test.js",
-    ".continuity/checkpoint.json",
+    "src/continuity/external-driver.js",
+    "src/continuity/packet.js",
+    "tools/continuity-phase-n-live.mjs",
+    "tools/continuity-phase-n-scope.mjs",
+    "test/continuity-adapters.test.js",
+    "test/continuity-gates-packet.test.js",
+    "test/continuity-phase-n-scope.test.js",
+    "docs/CONTINUITY-LIVE-CLOSURE-2026-10-04.md",
     "docs/HANDOVER.md",
-    "docs/CODEX-CONTINUE.md",
-    "docs/CONTINUITY-IMPLEMENTATION-PLAN.md",
-    "docs/CODING-CONTINUITY-SUPERVISOR.md",
-    "AGENTS.md"
+    "docs/CONTINUITY-PHASE-N-READINESS.md",
+    ".continuity/checkpoint.json"
   ],
-  "diff_summary": "Phase A: additive migration (6 coding_* tables, 8 RPCs, RLS service-role only, 7 seeded workers), DB scenario, checkpoint validator, state machine, tests, regenerated fingerprint (+161 lines, none changed). last_commit is the Phase A code commit; the handover-docs commit that carries this file sits on top of it.",
-  "tests_run": "node --test (includes schema replay and the coding_continuity scenario)",
-  "tests_passed": 522,
+  "tests_run": "GitHub Linux validation #227 succeeded on 7816ee6; focused adapter/checkpoint/packet/scope 38 passed; independent supervisor/failure-matrix/checkpointer/Office/docs/Hermes separation 28 passed; real live drill PASS. Documentation-only head CI pending.",
+  "tests_passed": 66,
   "tests_failed": 0,
   "ci_status": "pending",
   "decisions": [
-    "New tables use the coding_ prefix (coding_checkpoints, coding_handoffs) because the applied 2026-09-22 POC owns continuity_checkpoints/continuity_handoffs.",
-    "A FROZEN lease blocks its branch until reclaim_coding_lease marks it RECLAIMED (added RPC).",
-    "RPCs use security invoker + empty search_path, matching the existing coding agent RPCs.",
-    "COMPLETED is a terminal state reachable only from CHECKPOINTING after completion gates.",
-    "Phase B skipped by Claude to protect the handover."
+    "Phase N PASS is actual model-worker evidence, not selftest or mocks. The sealed report and full SHAs are recorded in docs/CONTINUITY-LIVE-CLOSURE-2026-10-04.md.",
+    "Explicit OpenCode model/provider selection and mount-isolated external worktrees; pre-leased native Office avoids production queue races; Gemini model explicitly selected.",
+    "Recovered retry stderr does not override typed successful terminal output plus exit 0. Sticky provider/parse failures, missing result, nonzero exit, timeout and sandbox denial remain fail-closed.",
+    "Preserve stable overall objective across workers. Validate leg scope from committed Git facts, including earlier markers and checkpoint schema.",
+    "Production activation was stopped at the existing exit-137 runtime outage, as explicitly required by Fahad. Coding worker remains healthy/untouched; Hermes untouched.",
+    "Only ordinary pushes to PR #106; no force push, production migration, merge, deploy, runtime restart or flag mutation."
   ],
   "constraints": [
-    "Do not merge PR #102 or apply the migration without Fahad's approval.",
-    "CONTINUITY_SUPERVISOR stays off by default.",
-    "Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, V5 UI, POC continuity_* tables, Hermes."
+    "No production changes until the stopped runtime blocker is resolved with owner direction and all activation prerequisites are rechecked.",
+    "Production coding-worker and Hermes remain untouched. No force-push or weakening fail-closed guards.",
+    "OpenCode/Gemini/Codex/Claude flags remain OFF in production; successful isolated drill flags do not authorize broad privacy or cost assertions.",
+    "Keep #107/#108 unmerged until their duplicate stack content is safely reconciled; ordered stack #102 -> #104 -> #105 -> #106 remains open."
   ],
   "errors": [
-    "First replay failed: continuity_checkpoints already existed (POC); fixed by renaming the new tables."
+    "Production fahad-office-runtime already Exited (137), OOMKilled=false, finished 2026-10-03T17:43:45.126290893Z; port 2132 health connection refused. Root cause not established."
   ],
   "quota_state": {
     "basis": "UNKNOWN",
@@ -57,11 +57,49 @@
     "limited": false,
     "retry_after_s": null
   },
-  "next_exact_action": "Review PR #102 (node --test, CI), then create codex/continuity-phase-b from origin/claude/continuity-foundation and build Phase B (src/continuity/store.js, lease.js, checkpointer.js with tests) per docs/CONTINUITY-IMPLEMENTATION-PLAN.md; do not merge #102 or apply the migration.",
+  "worker_state": {
+    "office": {
+      "result": "LIVE PHASE N PASS",
+      "reason": "Native session c5d818c5-c9fc-4ce0-b7a0-fde4ccab8e17 completed; production coding worker still healthy and untouched."
+    },
+    "opencode": {
+      "result": "LIVE PHASE N PASS / PRODUCTION OFF",
+      "reason": "Explicit opencode/nemotron-3.5-lightning-free via Zen; valid scope/checkpoint; live resumed-process SIGKILL proved dead."
+    },
+    "gemini-cli": {
+      "result": "LIVE PHASE N PASS / PRODUCTION OFF",
+      "reason": "Explicit gemini-flash-lite-latest; exact-commit recovery; preserved prior markers and completed gates."
+    },
+    "codex": {
+      "result": "IMPLEMENTED / CERTIFICATION DEFERRED",
+      "reason": "unchanged this sprint: needs CLI >=0.150.0 and a verified login"
+    },
+    "claude": {
+      "result": "IMPLEMENTED / CERTIFICATION DEFERRED",
+      "reason": "unchanged this sprint: needs CLI >=2.1.268 and a verified login"
+    }
+  },
+  "lease_state": "Maximum concurrent writers 1; persisted ACTIVE/FROZEN leases 0 after completion.",
+  "handoff_state": "Office -> OpenCode stop-before-transfer ordering proven; OpenCode started at exact Office commit.",
+  "restart_recovery": "Real resumed OpenCode PID 1713912 ALIVE then SIGKILL/ESRCH. Reloaded 2 sessions/4 checkpoints. First recovery refused WORKER_STOP_UNCONFIRMED; sealed proof allowed Gemini recovery from exact 89a8f246115dc79d1092d83e61e495c3f7408878.",
+  "test_environment": "Hostinger srv1964598.hstgr.cloud; isolated /opt/fahad-ai-office-phase-n PR checkout. Production application /opt/fahad-ai-office is a deployed package, not a Git checkout.",
+  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106",
+  "pr_head_before_this_sprint": "228ca3548f4706b56e0ff563034192a19ce31c45",
+  "next_exact_action": "Report Phase N PASS and the production runtime blocker. Obtain direction to repair the existing stopped runtime without touching the healthy coding worker. After repair, recheck health/version, backups, schema and PR stack before any ordered activation.",
   "unresolved_items": [
-    "Fahad's approval to apply migration 20261004090000_coding_continuity to production, then merge PR #102."
+    "Existing production runtime outage blocks activation.",
+    "Continuity migrations 20261004090000 and 20261005090000 remain unapplied; ordered stack remains unmerged.",
+    "Codex and Claude remain live-uncertified and OFF.",
+    "PRs #107/#108 remain unmerged and duplicate older stack content.",
+    "Documentation-only final head must pass CI."
   ],
-  "rollback_commit": "76738ed437abf39ada2f6dc9f161fd522c947f77",
-  "summary_md": "Phase A of the Coding Continuity Supervisor is implemented and tested on claude/continuity-foundation (PR #102, open). Migration not applied. Codex reviews #102, then builds Phase B stacked on it.",
-  "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/102"
+  "summary_md": "Phase N PASS on 7816ee6defb44315b95b1470097ffa45748e49ae, final disposable drill commit 7990334278fb596d181d6b1928ca9f8c96f72b48. Real three-worker chain, kill/restart/recovery, one writer, strict gates and cleanup verified. Production activation BLOCKED by pre-existing stopped runtime; no production mutations performed. See sealed closure documentation.",
+  "live_report": {
+    "path": "/opt/fahad-ai-office-phase-n/.continuity/phase-n-drill/report.json",
+    "sha256": "0270190efc8dad7da2f5fb3c80c22b5bfd3d9c254a8bb0cfb6fe168ad5b8c20b",
+    "verdict": "PASS",
+    "finished_at": "2026-10-04T09:49:10.389Z",
+    "base_commit": "7816ee6defb44315b95b1470097ffa45748e49ae",
+    "final_commit": "7990334278fb596d181d6b1928ca9f8c96f72b48"
+  }
 }

@@ -1,86 +1,101 @@
-# Codex: continue from here
+## ALTERNATIVE WORKERS + VPS PHASE N — EXACT RESUME POINT (2026-10-02; supersedes every section below)
 
-Claude Code designed the Coding Continuity Supervisor (PR #101, merged) and then implemented **Phase A** (PR #102, **open, not merged, migration NOT applied**). Codex continues from there. Everything needed is in this repository; no conversation history is required.
+Read `AGENTS.md`, the top of `docs/HANDOVER.md`, **`docs/CONTINUITY-VPS-WORKERS.md`** (the new runbook) and `.continuity/checkpoint.json` first. The sections below are history, not current work orders; their evidence and preserved VPS assets remain valid.
 
-## State at handover (2026-10-01)
+**What this sprint did (development + preparation only, production untouched):**
 
-| Item | Value |
-|---|---|
-| Main | `76738ed437abf39ada2f6dc9f161fd522c947f77` (docs-only merge of #101) |
-| Production | `2bb17b0347b3dde0ecfa2f22b089a9460d02b458` (deploy run 86, success). Nothing since has deployed. |
-| Phase A | **DONE** on branch `claude/continuity-foundation`, PR https://github.com/FahadTrail/fahad-ai-office/pull/102. Open; do not merge without Fahad. |
-| Phase A migration | `supabase/migrations/20261004090000_coding_continuity.sql` on that branch. **Not applied to production.** |
-| Phase B | **Not started.** No `claude/continuity-phase-b-foundation` branch exists. |
-| Phases C–N | Not started. |
-| Tests | `node --test` 522/522 on the Phase A branch, including the schema replay and the `coding_continuity` scenario. |
-| Live checkpoint | `.continuity/checkpoint.json` on the Phase A branch. |
+* Verified the current official interfaces and built the alternative chain **FAHAD OFFICE → OPENCODE → GEMINI CLI**: upgraded `src/continuity/adapters/opencode.js` into a real executable adapter and created `src/continuity/adapters/gemini-cli.js`, both OFF by default behind `CONTINUITY_OPENCODE_ENABLED` (+ five owner gate assertions) and `CONTINUITY_GEMINI_CLI_ENABLED`, both wired once through `externalAdaptersFromEnv` in `src/continuity/runtime.js` shared with production, both shown in the Hub's `PREPARED_ADAPTERS`.
+* Formalised the eight-category failure taxonomy (`FAILURE_TAXONOMY` / `failureCategory()` in `src/continuity/errors.js`) without renaming any runtime code; the shared external driver is reused unchanged — no duplicate worker infrastructure.
+* Grew the registry truthfully: new data-only migration `supabase/migrations/20261005090000_continuity_gemini_worker.sql` adds the disabled `gemini-cli` row (eight workers; scenario updated; fingerprint content unchanged; Phase A migration untouched).
+* Shipped `ops/setup-continuity-workers.sh` (`--check` verify-only, `--install` official npm packages, never touches credentials/flags/containers), `docs/CONTINUITY-VPS-WORKERS.md` (install, both official auth flows, flags, taxonomy, drill, rollback, truthful certification table) and `tools/continuity-phase-n-live.mjs` (`--check` / `--run` / `--selftest`): disposable branch and worktrees, isolated persisted store, real chain evidence (lease/session/checkpoint IDs, commit SHAs, stop-before-transfer ordering, one-writer replay, exact-commit resume) and the fail-closed restart sequence (real SIGKILL → OS-verified death proof → refused first recovery → sealed proof → reclaim → resume → completion).
+* Targeted tests only, all green: syntax sweep, focused continuity **75/75**, docs path-reference and Hermes separation suites, `npm run db:replay` **33 migrations** plus every scenario, drill `--selftest`; drill `--check` refuses this unauthenticated environment with 11 exact blockers (by design).
 
-**Phase A decision you must keep:** an applied 2026-09-22 POC already owns `continuity_checkpoints` and `continuity_handoffs`. The Supervisor tables are therefore `coding_checkpoints` and `coding_handoffs`. Never modify the POC tables. A `FROZEN` lease also blocks its branch until `reclaim_coding_lease`.
+**What was NOT done:** no authenticated model turn, no live worker run, no real handoff or restart drill (the `--run` path has never executed with credentials), no merge, no deploy, no migration application, no production flag change, no Hermes access, no force push. Codex and Claude Code remain `IMPLEMENTED / CERTIFICATION DEFERRED`.
 
-## Ready-to-paste prompt for Codex
+**Exact resume point for the next agent:**
 
-```
-You are continuing Fahad AI Office development from Claude Code. Do not restart or redesign the project.
+1. Read the four files named above; do not redo the interface verification, adapters, registry migration, script or runbook.
+2. On the VPS run `bash ops/setup-continuity-workers.sh --check`, then `--install`, then authenticate per `docs/CONTINUITY-VPS-WORKERS.md` (OpenCode official login or provider key by name; Gemini `GEMINI_API_KEY` or the official browser URL/code flow) and assert the drill-shell flags.
+3. Run `node tools/continuity-phase-n-live.mjs --check`, then `--run`, and review `.continuity/phase-n-drill/report.json` — a PASS verdict requires every listed evidence item; any gap fails with an exact blocker.
+4. Keep #102 → #104 → #105 → #106 open and stacked; ask the owner to close or re-cut #107 and #108.
+5. Nothing activates without Fahad: migration application, ordered merges, deploy and `CONTINUITY_SUPERVISOR` / worker-flag activation stay OFF until explicit approval after a PASS report.
 
-Repository: FahadTrail/fahad-ai-office (GitHub is the source of truth; no chat history is needed).
+## CLOUD-ONLY CLOSURE — EXACT RESUME POINT (2026-10-02; historical — superseded by the section above)
 
-1. Read AGENTS.md completely. Its rules are permanent.
-2. Read docs/HANDOVER.md, starting with the top section "CLAUDE FINAL IMPLEMENTATION → CODEX".
-3. Read docs/CODING-CONTINUITY-SUPERVISOR.md (locked architecture), docs/CONTINUITY-IMPLEMENTATION-PLAN.md
-   (phases A–N) and docs/DEVELOPMENT-CONTRACT.md.
-4. Inspect GitHub: main is 76738ed (or newer); Phase A is on branch claude/continuity-foundation, PR #102,
-   OPEN. Read .continuity/checkpoint.json on that branch.
-5. Verify production without changing it: the latest successful "Deploy Fahad AI Office" workflow run must
-   have head_sha 2bb17b0347b3dde0ecfa2f22b089a9460d02b458. Never SSH, never touch the server, never read secrets.
-6. Review PR #102: `git fetch origin && git checkout claude/continuity-foundation && npm ci && node --test`
-   (all green, including test/schema-replay.test.js) and confirm its CI is green. Fix only real defects, on that branch.
-7. Do NOT merge PR #102 and do NOT apply the migration. Both wait for Fahad's explicit approval
-   (production apply on Supabase project zkzibipinjeswhdxnfgf, then the read-only fingerprint check, then merge).
-8. Continue with Phase B on a stacked branch:
-   `git checkout -b codex/continuity-phase-b origin/claude/continuity-foundation`.
-   Build src/continuity/store.js, src/continuity/lease.js and src/continuity/checkpointer.js with unit tests,
-   exactly as Phase B in docs/CONTINUITY-IMPLEMENTATION-PLAN.md says (fake Supabase client and fake clock,
-   no runtime wiring, CONTINUITY_SUPERVISOR stays off). Open its PR against claude/continuity-foundation,
-   not main, and say it merges only after PR #102.
-9. Test: `node --test` green before every push. Never edit supabase/verify/schema-fingerprint.txt by hand.
-10. Checkpoint: update .continuity/checkpoint.json (validated by src/continuity/checkpoint.js) with every
-    commit, and put a CONTINUITY_CHECKPOINT block in each PR description.
-11. Preserve the architecture: the seven permanent workers (Office Coding Agent, Claude Code, Codex,
-    Antigravity, OpenCode, Kilo Code, Freebuff), GitHub as truth, Fahad AI Office as policy authority.
-    Do not touch core routing, capacity, FINANCE/AUDIT/fact gate, the V5 UI, the POC continuity_* tables
-    or anything Hermes-related. No scraping, no consumer logins as an API, no invented quota numbers.
-12. Before you run low on capacity, stop at a clean point, commit, push, update the checkpoint, and update
-    docs/HANDOVER.md (top section) with branch, PR, tests, CI and the exact next action.
-```
+Read `AGENTS.md`, the top of `docs/HANDOVER.md`, `docs/CONTINUITY-PHASE-N-READINESS.md` and `.continuity/checkpoint.json` first. The safe-stop, Graphify and development-only sections below are history, not current work orders. Their evidence and the preserved VPS assets remain valid and untouched.
 
-## Continuity checkpoint
+**What this sprint did (cloud-only, no laptop dependency):**
 
-```
-CONTINUITY_CHECKPOINT
-agent: Claude Code
-next_agent: Codex
-repository: FahadTrail/fahad-ai-office
-main_commit: 76738ed437abf39ada2f6dc9f161fd522c947f77
-production_commit: 2bb17b0347b3dde0ecfa2f22b089a9460d02b458 (deploy run 86, success 2026-10-01T09:24:19Z)
-branch: claude/continuity-foundation
-commit: head of claude/continuity-foundation (Phase A code 13db29ef744873b450ce805d5beb7403b3d2f13b, then the handover-docs commit on top)
-pr: https://github.com/FahadTrail/fahad-ai-office/pull/102 (OPEN, do not merge without Fahad)
-objective: Build the Coding Continuity Supervisor so development continues across the seven permanent workers with leases, checkpoints and automatic handoff.
-phase: A done; B next
-status: HANDOFF_READY
-completed: Phase A — migration 20261004090000_coding_continuity (6 tables, 8 RPCs, RLS, 7 seeded workers), scenario coding_continuity.sql, src/continuity/checkpoint.js, src/continuity/states.js, tests, regenerated schema fingerprint
-next_action: Review PR #102 (node --test, CI), then create codex/continuity-phase-b from origin/claude/continuity-foundation and build Phase B (store.js, lease.js, checkpointer.js + tests); do not merge #102 or apply the migration.
-tests: node --test 522/522 pass on claude/continuity-foundation (includes schema replay + coding_continuity scenario)
-ci: see PR #102 checks (validate)
-deploy: none; production remains 2bb17b0
-blockers: Merging PR #102 needs Fahad's approval to apply migration 20261004090000_coding_continuity to production (Supabase zkzibipinjeswhdxnfgf).
-files_changed: supabase/migrations/20261004090000_coding_continuity.sql, supabase/verify/scenarios/coding_continuity.sql, supabase/verify/schema-fingerprint.txt, src/continuity/checkpoint.js, src/continuity/states.js, test/continuity-schema.test.js, test/continuity-checkpoint.test.js, .continuity/checkpoint.json, docs/HANDOVER.md, docs/CODEX-CONTINUE.md, docs/CONTINUITY-IMPLEMENTATION-PLAN.md, docs/CODING-CONTINUITY-SUPERVISOR.md
-do_not_touch: src/model-gateway/, src/hub-capacity.js, src/office/finance.js and the AUDIT/CHIEF fact gate, V5/V4 UI, Dockerfile, docker-compose.yml, ops/deploy.sh, applied migrations (including the POC continuity_* tables), production .env and secrets, anything Hermes-related
-rollback: close PR #102 unmerged (nothing reached main or production); main 76738ed is unchanged
-timestamp: 2026-10-01T13:30:00Z
-```
+* Re-fetched GitHub and verified `codex/continuity-readiness` at `13c3668d1842f018fcdf4615aa9ae101a1c75c1c`, the same SHA as PR #106. Fast-forwarded locally; no force push. Three stale uncommitted 2026-10-01 edits were compared with the remote, found superseded, backed up outside the repository and discarded; their unique findings were carried into `docs/HANDOVER.md`.
+* Root-caused the AppArmor blocker as **host-specific**: in this cloud container `unshare --user` works, no AppArmor module is loaded, and `codex sandbox linux -- sh -c 'echo SANDBOX_OK'` runs the real Codex sandbox successfully. The VPS denial came from that hardened test container's policy, not from this repository. No host security was relaxed.
+* Made isolation handling portable and fail-closed: `src/continuity/errors.js` gained a vendor-neutral `sandboxDenial()` detector and the `SANDBOX_UNAVAILABLE` code; `src/continuity/adapters/codex.js` uses it instead of one literal `bwrap:` regex and pre-flights the host sandbox; `src/continuity/adapters/external-cli.js` exposes `verifySandbox()` for every external worker and reports `SANDBOX_UNAVAILABLE` / `HOST_CAPABILITY_REQUIRED`.
+* Ran the real validations that this environment can honestly support: full `node --test` 582/582, focused continuity suite 68/68, docs path-reference and Hermes separation suites green, and `npm run db:replay` replaying all 32 migrations plus the `coding_continuity` scenario on a real local PostgreSQL 14.
 
-## If something is unclear
+**What was NOT done, and why:** there is **no real executable coding worker** in this environment. The Office adapter has no Supabase or model-provider credential; Codex CLI 0.128.0 is below the required `>=0.150.0` and is not logged in (a flag-free `codex exec --json` reaches OpenAI and fails `401`); Claude Code 2.1.128 is below the required `>=2.1.268` and is not logged in; Gemini CLI and Cursor Agent are installed but unauthenticated and are not registry workers; Antigravity, OpenCode, Kilo and Freebuff are owner-gated or manual; Freebuff exposes no callable worker interface. The Phase 5 multi-worker handoff drill and the Phase 6 restart/resume drill therefore were **not** run, and no scripted substitute was presented as worker evidence.
 
-* Architecture: `docs/CODING-CONTINUITY-SUPERVISOR.md` wins over this file. Rules: `AGENTS.md` wins over everything.
-* A real contradiction: do not guess. Record it in the checkpoint's `unresolved_items` and in `docs/HANDOVER.md`, then continue with the unambiguous parts.
+**Exact resume point for the next agent:**
+
+1. Read the four files named above; do not redo the sync, the AppArmor diagnosis or this documentation.
+2. Provide one genuinely executable registry worker on a sandbox-capable host — either an authenticated Codex CLI at `>=0.150.0`, or a native Office adapter pointed at a Supabase instance plus a model provider. Nothing else in the core is missing.
+3. Only then run the real disposable-branch drill: Worker A lease → real change → real commit → checkpoint → drain → Worker B from that exact commit → Worker C, plus the restart/recovery pass, capturing session IDs, lease IDs, checkpoint IDs, commit SHAs, branch names and event IDs.
+4. Keep #102 → #104 → #105 → #106 open and stacked; ask the owner to close or re-cut #107 and #108, which target `main` and duplicate the stack.
+5. Do not merge, retarget, apply the production migration, deploy, or enable `CONTINUITY_SUPERVISOR` / `CONTINUITY_CODEX_ENABLED` / `CONTINUITY_CLAUDE_ENABLED` without Fahad's explicit approval.
+
+## SAFE STOP / EXACT RESUME POINT (2026-10-03; historical — superseded by the section above)
+
+Fahad ordered STOP. No more tests, workers, CI reruns, production changes, merges, deployments, migrations, or flag activation. Preserve all isolated VPS assets and local worktrees. Read `docs/PHASE-N-CLOUD-DRILL-2026-10-02.md`, the top of `docs/HANDOVER.md`, and `.continuity/checkpoint.json` before any later action. The previous Graphify/development-only instructions below are history, not current work orders.
+
+PR #106 branch: `codex/continuity-readiness`; observed head before safe-stop docs was `8c4b871c41266769f51b33941991693c177ef00e`. Safe-stop commits were then published directly to this existing branch because the Windows local checkout cannot authenticate a normal Git push; do not force-push its divergent local history. It has the same adapter/test changes uncommitted locally and must be preserved. The prior CI run at `39508d9` failed its docs path-reference check (a throwaway Claude file was not in this repository); the documentation at `8c4b871` clarified the location. CI was pending when STOP arrived. Do not start or rerun CI; merely inspect the current result if the user later resumes.
+
+Last completed real step: Office session `7361d625-fa8e-486a-8891-126abd10b13d` committed `08eae1570dbb489465be0f86a3b60cefa65c9f88` on disposable branch `phase-n/real-drill-c-20261002`, released its lease, and handed off to Codex session `04aea46d-e2a1-49a0-b692-75348161623a`. Codex authenticated and took ownership, but all shell commands failed because bubblewrap could not create a user namespace; it made no commit. Claude Code independently authenticated and wrote a disposable test file in a separate checkout; no Supervisor handoff to Claude occurred. A restarted test Supervisor verified the old Codex process stopped and Git/checkpoint matched, reclaimed its stale lease, and stopped with `NO_ELIGIBLE_WORKER`; zero ACTIVE/FROZEN test leases remained.
+
+Exact blocker: the VPS test container and Ubuntu AppArmor user-namespace policy deny the namespace required by Codex workspace-write sandbox. Do not disable AppArmor or bypass the sandbox. On a future explicit resume, first read-only inspect the preserved test assets, PR head, and CI; arrange a scoped security-reviewed isolated runner, then redo the real Codex-to-Claude handoff and completed restart/recovery drill. Production CONTINUITY_SUPERVISOR was checked OFF, and production containers remained healthy.
+
+# Codex: continue the Coding Continuity Supervisor
+
+## Current handoff: optional Graphify pilot (2026-10-02)
+
+Fahad authorized a final **development-only** Graphify pilot on the existing open #106 branch. Read `docs/GRAPHIFY.md` and the top of `docs/HANDOVER.md`. Official `graphifyy[sql]==0.9.73` was installed only in an ignored local virtual environment. The code-only graph and HTML/report are generated locally and ignored; no docs/media semantic model processing is enabled. The wrapper can build, update and query it, while `src/continuity/code-intelligence.js` provides bounded optional navigation hints. Coding Agent usage requires `CODING_GRAPHIFY_ENABLED=true` and a prebuilt graph in its own checkout; absence/failure falls back silently. No Supervisor control path depends on Graphify. Benchmark instrumentation is ready, but no savings are claimed.
+
+The #106 starting remote head for the pilot was `bcd572f520f0f900bd99a9c065ea4cc852d38c2c`, so the local-only/push-authentication statements in the section below are historical. Do not run the final Continuity test phase, real drill, migration, merge, deploy or activation without a new user instruction. Static syntax and targeted Graphify commands are the only verification in this sprint.
+
+The **new Graphify pilot commits** (`36f11f1`, `9465be2`) are local only until GitHub write authentication is restored; remote #106 still points to `bcd572f`. Preserve this checkout and push without force, then confirm the PR head. This is a new publication blocker, distinct from the historical one for the earlier Continuity commits.
+
+## Current handoff: development complete, testing intentionally deferred (2026-10-02)
+
+Fahad's latest instruction was development only; do not continue the Phase N/readiness work in the historical sections below. The existing #106 branch now contains implementation commit `8ea3f5a512c0b45ce876939fba812dc099a328c6`: Office, Codex and Claude Code have executable adapter code; the latter two require explicit enable flags, an installed supported CLI, a verified login, and the owner enabling their registry entries. No claim of a successful real invocation is made. The shared CLI driver, safe stop, same-worker CLI resume metadata, branch/worktree transfer, recovery guards, owner API controls, nested UI and event/error model are implemented. Read the new top of `docs/HANDOVER.md` and `.continuity/checkpoint.json` for exact state.
+
+No full tests, DB replay, browser/accessibility/mobile tests or real worker drill were run after this implementation. Existing `test/continuity-adapters.test.js` still describes the old Codex constructor and deprecated flag; update it in the **next testing phase** before executing it. The earlier implementation and docs commits were subsequently pushed to #106; the old authentication blocker is resolved. Keep #102/#104/#105/#106 open; no migration, merge, deploy or flag activation. Do not begin testing automatically: wait for Fahad's next direction.
+
+## Phase N readiness update (2026-10-01; historical, pre-development)
+
+Start with `docs/CONTINUITY-PHASE-N-READINESS.md` and the new top section of `docs/HANDOVER.md`. Automated UI checks, mobile sizes, keyboard/drawer behavior, privacy and shared-quota tests are complete; #106 also contains fail-closed Codex stop, Git-head and stale-writer verification fixes. Code head `3759ff9` passed Linux CI, including 573 Node tests, 15 container tests and 32-migration replay; check the documentation-only follow-up head too. The real Office → Codex → third-worker handoff and process-restart drill is **not** complete. No third adapter is executable, and this local Codex CLI cannot load its login configuration. The production activation package is a plan only. Arrange supported third-worker implementation/verification and an isolated real Phase N drill; do not merge, migrate, deploy or activate meanwhile. The older sections below explain the stack history.
+
+The authoritative current state is the top section of `docs/HANDOVER.md` and `.continuity/checkpoint.json`. Read `AGENTS.md` first, then `docs/CODING-CONTINUITY-SUPERVISOR.md`, `docs/CONTINUITY-IMPLEMENTATION-PLAN.md`, and `docs/DEVELOPMENT-CONTRACT.md`. GitHub contains the complete branch stack; no prior chat is needed.
+
+## Current stack (2026-10-01)
+
+| Order | Branch | PR | Scope |
+|---|---|---|---|
+| 1 | `claude/continuity-foundation` | [#102](https://github.com/FahadTrail/fahad-ai-office/pull/102) | Phase A schema, RPCs, validator; migration unapplied |
+| 2 | `codex/continuity-runtime-core` | [#104](https://github.com/FahadTrail/fahad-ai-office/pull/104) | Phase B store, lease, checkpointer |
+| 3 | `codex/continuity-workers` | [#105](https://github.com/FahadTrail/fahad-ai-office/pull/105) | Phases C-G supervisor, adapters, API, recovery |
+| 4 | `codex/continuity-readiness` | [#106](https://github.com/FahadTrail/fahad-ai-office/pull/106) | Phases H-M project view and temporary Git recovery drill |
+
+All PRs are open and unmerged. #102 is based on `main`; each later PR targets the branch immediately above it in this table. The Phase A branch was refreshed onto `main` commit `dfe216161fab509e21bfde0cc1126f7662d1abf3`. Production was last recorded at `2bb17b0347b3dde0ecfa2f22b089a9460d02b458`; no production action was taken in this sprint.
+
+The migration `supabase/migrations/20261004090000_coding_continuity.sql` has **not** been applied. It uses `coding_checkpoints` and `coding_handoffs` because the older, applied POC owns `continuity_checkpoints` and `continuity_handoffs`. Do not touch the POC tables. A frozen branch lease blocks writers until verified reclaim.
+
+## What is operational in code
+
+The supervisor is wired behind `CONTINUITY_SUPERVISOR=true` and is off by default. The native Office adapter is available; Codex requires the separate `CONTINUITY_CODEX_ENABLED` flag and a verified local CLI. Claude Code, Antigravity, OpenCode, Kilo, and Freebuff remain truthful disabled/manual adapters until their supported interfaces and account conditions are verified. Do not describe all seven as automatic.
+
+The project-nested dashboard is under Projects → project → Coding continuity. The recovery E2E uses a disposable local Git repository and worktrees; it is not the Phase N real multi-worker drill.
+
+## Validation and next action
+
+Focused Continuity tests passed 62/62 locally; the fictional-data browser audit passed 20/20 viewport/theme/motion cases with no critical or serious axe findings. #102, #104, #105, and #106 Linux CI passed; #106 code head `3759ff9` ran 573 Node tests (571 pass, 2 skip), 15 container tests (15 pass), and replayed 32 migrations. #105's first run failed because `src/continuity/runtime.js` contained an unrelated-system name caught by the separation guard; `1cdc883` fixed the runtime wording without changing the test, and the rerun passed. Windows full-suite results are not authoritative because existing Bash/PATH issues remain on Windows; the two real URL-to-path test bugs were fixed. Verify CI on the latest docs-only head before any later approval.
+
+The next release gate is Phase N, a real Office → Codex → third-worker handoff on a throwaway branch with commit, checkpoint, lease, and CI evidence. Its third worker's verified headless availability is unresolved. Coordinate that drill with Fahad. Do not apply the migration, merge the stack, deploy, or enable the flag until the requisite evidence and Fahad's explicit approval.
+
+At each new checkpoint, update `.continuity/checkpoint.json`, this file, and the top of `docs/HANDOVER.md`, and put a `CONTINUITY_CHECKPOINT` block in any new PR description. Do not alter core routing, capacity, FINANCE/AUDIT/fact gate, unrelated V5 UI, production, or separate-system resources.

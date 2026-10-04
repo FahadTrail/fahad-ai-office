@@ -1,9 +1,19 @@
 import { ContinuityStore } from './continuity/store.js';
 import { sanitizeContinuityValue } from './continuity/safe.js';
+import { CodexContinuityAdapter } from './continuity/adapters/codex.js';
+import { ClaudeCodeContinuityAdapter } from './continuity/adapters/claude-code.js';
+import { OpenCodeContinuityAdapter } from './continuity/adapters/opencode.js';
+import { GeminiCliContinuityAdapter } from './continuity/adapters/gemini-cli.js';
 
-const ACTIONS = new Set(['START_SESSION', 'PAUSE_SESSION', 'RESUME_SESSION', 'FORCE_CHECKPOINT', 'REQUEST_HANDOFF', 'COMPLETE_SESSION', 'DISABLE_WORKER', 'ENABLE_WORKER']);
+const ACTIONS = new Set(['START_SESSION', 'PAUSE_SESSION', 'RESUME_SESSION', 'FORCE_CHECKPOINT', 'REQUEST_HANDOFF', 'COMPLETE_SESSION', 'ABORT_SESSION', 'DISABLE_WORKER', 'ENABLE_WORKER']);
+const PREPARED_ADAPTERS = new Map([
+  ['codex', new CodexContinuityAdapter()],
+  ['claude-code', new ClaudeCodeContinuityAdapter()],
+  ['opencode', new OpenCodeContinuityAdapter()],
+  ['gemini-cli', new GeminiCliContinuityAdapter()],
+]);
 
-function publicState(state) {
+function publicState(state, { readiness = new Map(), adapters = new Map() } = {}) {
   const checkpointsBySession = new Map(state.checkpoints.map((checkpoint) => [checkpoint.session_id, checkpoint]));
   const usageByWorker = new Map();
   for (const snapshot of state.usage) if (!usageByWorker.has(snapshot.worker_key)) usageByWorker.set(snapshot.worker_key, snapshot);
@@ -31,7 +41,16 @@ function publicState(state) {
     };
   };
   return sanitizeContinuityValue({
-    workers: state.workers.map(({ key, display_name, kind, quota_source, enabled, capabilities, health, health_basis, last_seen_at, last_error }) => ({ key, displayName: display_name, kind, quotaSource: quota_source, enabled, capabilities, health, healthBasis: health_basis, lastSeenAt: last_seen_at, lastError: last_error, metrics: workerMetrics(key) })),
+    workers: state.workers.map(({ key, display_name, kind, quota_source, enabled, capabilities, health, health_basis, last_seen_at, last_error }) => {
+      const adapter = adapters.get(key);
+      const actual = adapter?.capabilities() || capabilities || {};
+      const ready = readiness.get(key) || {};
+      return { key, displayName: display_name, kind, quotaSource: actual.quotaSource || quota_source, enabled,
+        capabilities: actual, executionMode: actual.executionMode || 'DISABLED', authState: ready.authState || 'NOT_CONFIGURED',
+        availability: ready.ok === true ? 'OPERATIONAL' : ready.reason || 'NOT_CONFIGURED',
+        ownerAction: ready.ok ? null : actual.ownerAction || ready.reason || 'Configure and verify this worker.',
+        health, healthBasis: health_basis, lastSeenAt: last_seen_at, lastError: last_error, metrics: workerMetrics(key) };
+    }),
     sessions: state.sessions.map(({ id, worker_key, project_id, repository, branch, worktree, objective, status, started_at, heartbeat_at, ended_at, task_tokens, tokens_basis, exit_reason }) => ({ id, workerKey: worker_key, projectId: project_id, repository, branch, worktree, objective, status, startedAt: started_at, heartbeatAt: heartbeat_at, endedAt: ended_at, taskTokens: task_tokens, tokensBasis: tokens_basis, exitReason: exit_reason })),
     leases: state.leases.map(({ id, repository, branch, worktree, worker_key, session_id, status, started_at, heartbeat_at, expires_at, checkpoint_id }) => ({ id, repository, branch, worktree, workerKey: worker_key, sessionId: session_id, status, startedAt: started_at, heartbeatAt: heartbeat_at, expiresAt: expires_at, checkpointId: checkpoint_id })),
     checkpoints: state.checkpoints.map(({ id, session_id, sequence, last_commit, status, next_exact_action, created_at }) => ({ id, sessionId: session_id, sequence, lastCommit: last_commit, status, nextExactAction: next_exact_action, createdAt: created_at })),
@@ -40,15 +59,24 @@ function publicState(state) {
   });
 }
 
-export async function handleContinuityApi({ db, supervisor = null, request, response, url, sendJson, readJson }) {
+export async function handleContinuityApi({ db, supervisor = null, ownerAuthorized = false, request, response, url, sendJson, readJson }) {
   if (!url.pathname.startsWith('/api/continuity')) return false;
   if (request.method === 'GET' && url.pathname === '/api/continuity') {
     const store = supervisor?.store || new ContinuityStore(db);
-    const state = publicState(await store.readState({ projectId: url.searchParams.get('projectId') || null }));
+    const snapshot = await store.readState({ projectId: url.searchParams.get('projectId') || null });
+    const adapters = supervisor?.adapters || PREPARED_ADAPTERS;
+    const readiness = new Map(await Promise.all(snapshot.workers.map(async (worker) => {
+      const adapter = adapters.get(worker.key);
+      if (!adapter) return [worker.key, { ok: false, authState: 'NOT_CONFIGURED', reason: 'SUPERVISOR_OFF' }];
+      try { return [worker.key, await (adapter.authReadiness?.() || adapter.available())]; }
+      catch { return [worker.key, { ok: false, authState: 'OWNER_ACTION_REQUIRED', reason: 'READINESS_UNAVAILABLE' }]; }
+    })));
+    const state = publicState(snapshot, { readiness, adapters });
     return sendJson(response, 200, { ok: true, enabled: Boolean(supervisor?.started), ...state }), true;
   }
   if (request.method === 'POST' && url.pathname === '/api/continuity/actions') {
     if (!supervisor?.started) return sendJson(response, 503, { ok: false, error: 'CONTINUITY_SUPERVISOR_DISABLED' }), true;
+    if (!ownerAuthorized) return sendJson(response, 403, { ok: false, error: 'CONTINUITY_OWNER_AUTH_REQUIRED' }), true;
     const body = await readJson(request);
     const action = String(body.action || '').toUpperCase();
     if (!ACTIONS.has(action)) return sendJson(response, 400, { ok: false, error: 'CONTINUITY_ACTION_INVALID' }), true;
