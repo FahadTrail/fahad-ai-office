@@ -1,4 +1,10 @@
-## ALTERNATIVE REAL WORKERS + VPS PHASE N PREPARATION (2026-10-02; authoritative — supersedes the closure section below)
+## LIVE PHASE N PASS / PRODUCTION BLOCKED (2026-10-04; authoritative)
+
+The real Office → OpenCode → Gemini CLI chain, live SIGKILL/restart/recovery, strict completion gates and cleanup PASSED on code head 7816ee6defb44315b95b1470097ffa45748e49ae. Final drill commit: 7990334278fb596d181d6b1928ca9f8c96f72b48. No active/frozen drill leases or live drill processes remain. See [the sealed live closure](CONTINUITY-LIVE-CLOSURE-2026-10-04.md) for exact evidence, model choices and report hash.
+
+Production activation stopped at a pre-existing blocker: fahad-office-runtime is Exited (137) and healthz refuses connections. The healthy production coding worker remains untouched. No migrations, merges, deployment, restart or production flag changes were performed; Hermes untouched. Fahad's stop-on-production-blocker boundary remains in effect. Earlier preparation states below are historical, not current worker evidence.
+
+## ALTERNATIVE REAL WORKERS + VPS PHASE N PREPARATION (2026-10-02; historical)
 
 Fahad re-ordered the sprint: close Phase N **without** waiting for Codex or Claude subscription resets, using the chain **FAHAD OFFICE → OPENCODE → GEMINI CLI**, cloud/VPS only, no laptop dependency. Read `AGENTS.md`, `docs/CONTINUITY-VPS-WORKERS.md`, `docs/CODEX-CONTINUE.md` and `.continuity/checkpoint.json` first. The closure and safe-stop evidence below stay valid; only their “blocked / do nothing” verdicts are superseded by this preparation state.
 

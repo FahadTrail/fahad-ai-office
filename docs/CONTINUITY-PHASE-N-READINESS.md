@@ -1,5 +1,7 @@
 # Coding Continuity Supervisor — Phase N readiness and activation package
 
+> **2026-10-04 authoritative update:** real Office → OpenCode → Gemini CLI Phase N is PASS on 7816ee6defb44315b95b1470097ffa45748e49ae, including live death/restart/recovery and clean completion. Production activation is BLOCKED by the pre-existing stopped runtime (exit 137, failed health). No production action was performed. See [the sealed live closure](CONTINUITY-LIVE-CLOSURE-2026-10-04.md); older NOT RUN statements below are historical.
+
 > **2026-10-02 update — alternative-worker preparation.** Sections C and D
 > below are superseded by `docs/CONTINUITY-VPS-WORKERS.md`: the target chain
 > is now **FAHAD OFFICE → OPENCODE → GEMINI CLI** instead of waiting for
