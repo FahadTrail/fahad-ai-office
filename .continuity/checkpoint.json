@@ -12,10 +12,10 @@
   "phase": "N_ALT_WORKERS_VPS_PREP",
   "status": "HANDOFF_READY",
   "base_commit": "228ca3548f4706b56e0ff563034192a19ce31c45",
-  "last_commit": "228ca3548f4706b56e0ff563034192a19ce31c45",
+  "last_commit": "be3db14",
   "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
   "files_changed": [
-    "src/continuity/adapters/opencode.js",
+    "phase-n/opencode.md",
     "src/continuity/adapters/gemini-cli.js",
     "src/continuity/runtime.js",
     "src/continuity/errors.js",
@@ -95,7 +95,7 @@
   "test_environment": "Freebuff cloud container: Ubuntu 22.04, kernel 6.1.158+, no AppArmor module, unprivileged user namespaces allowed, PostgreSQL 14 server, Gemini CLI 0.40.1 (unauthenticated), no opencode binary, no credentials.",
   "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106",
   "pr_head_before_this_sprint": "228ca3548f4706b56e0ff563034192a19ce31c45",
-  "next_exact_action": "On the VPS: bash ops/setup-continuity-workers.sh --check then --install; authenticate OpenCode (official login or an existing provider key by name) and Gemini CLI (GEMINI_API_KEY or the official OAuth URL/code flow) and assert the five OpenCode gates plus CONTINUITY_OPENCODE_ENABLED and CONTINUITY_GEMINI_CLI_ENABLED in the drill shell; run node tools/continuity-phase-n-live.mjs --check and then --run; review .continuity/phase-n-drill/report.json evidence (lease/session/checkpoint IDs, commit SHAs, stop-before-transfer, one-writer replay, refused-unproven recovery, exact-commit resume, final history). Only after a PASS verdict and Fahad's review: migration application, ordered merges, deploy and flag activation.",
+  "next_exact_action": "Verify phase-n/opencode.md exists on the branch; continue Phase N drill checklist. VPS: bash ops/setup-continuity-workers.sh --check then --install; authenticate OpenCode and Gemini CLI; run drill --check and --run.",
   "unresolved_items": [
     "The real Office -> OpenCode -> Gemini CLI handoff drill and the real restart/recovery drill are prepared but not executed; they need an authenticated VPS environment.",
     "OpenCode and Gemini CLI adapters are PREPARED, not live-certified: no authenticated model turn has ever run through either adapter.",
