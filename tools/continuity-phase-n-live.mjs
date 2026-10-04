@@ -561,8 +561,15 @@ async function runDrill({ keep }) {
     const crashState = phaseAdapters.opencode.sessions.get(crashExecution.session.id);
     must(crashState, 'OPENCODE_CRASH_SESSION_STATE_MISSING');
     const victimPid = crashState.child.pid;
-    const aliveBefore = await pidStatus(victimPid, 'opencode');
-    must(!aliveBefore.dead, 'OPENCODE_ALREADY_DEAD', aliveBefore.method);
+    // spawn returns before the child has necessarily exec'd the mount wrapper
+    // and CLI. A pre-exec cmdline mismatch is not evidence of an old PID.
+    let aliveBefore = await pidStatus(victimPid, 'opencode');
+    const execDeadline = Date.now() + 5_000;
+    while (!crashState.finished && aliveBefore.method !== 'ALIVE' && Date.now() < execDeadline) {
+      await sleep(50);
+      aliveBefore = await pidStatus(victimPid, 'opencode');
+    }
+    must(!crashState.finished && aliveBefore.method === 'ALIVE', 'OPENCODE_ALREADY_DEAD', aliveBefore.method);
     evidence.add('termination.pre_kill', { pid: victimPid, status: aliveBefore.method, resumedFromCliSession: stateO.id });
     crashState.child.kill('SIGKILL');
     await Promise.race([crashState.done, sleep(15_000)]);
