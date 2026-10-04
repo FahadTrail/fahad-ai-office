@@ -289,6 +289,7 @@ async function runDrill({ keep }) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   // Keep the checkout's worktree registrations in sync with the moved tree.
   await git(repoRoot, 'worktree', 'prune').catch(() => {});
+  await mkdir(stateDir, { recursive: true });
   await mkdir(worktreesRoot, { recursive: true });
   const evidence = makeEvidence(stateDir);
   const branch = `continuity/phase-n-drill-${startedAt.replace(/[-:TZ.]/g, '').slice(0, 14)}`;
