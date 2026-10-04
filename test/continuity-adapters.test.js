@@ -325,6 +325,30 @@ test('a non-zero OpenCode JSON failure remains visible in bounded failure eviden
 });
 
 
+test('typed Gemini success supersedes recovered retry stderr but never real failures', async () => {
+  for (const [name, events, stderr, exitCode, expected] of [
+    ['recovered retry', [{ type: 'result', status: 'success' }], 'Quota exceeded. Retrying after 40s...', 0, null],
+    ['missing result', [], 'Quota exceeded', 0, 'QUOTA_EXHAUSTED'],
+    ['terminal error', [{ type: 'result', status: 'error', error: { type: 'quota_exhausted' } }], '', 0, 'QUOTA_EXHAUSTED'],
+    ['sticky provider error', [{ type: 'error', severity: 'error', error: { type: 'quota_exhausted' } }, { type: 'result', status: 'success' }], '', 0, 'QUOTA_EXHAUSTED'],
+    ['sandbox denial', [{ type: 'result', status: 'success' }], 'bwrap: No permissions to create a new namespace', 0, 'SANDBOX_UNAVAILABLE'],
+    ['nonzero exit', [{ type: 'result', status: 'success' }], '', 1, 'WORKER_CRASHED'],
+  ]) {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
+    child.kill = () => true;
+    const driver = new ExternalWorkerDriver({ spawn: () => child, env: {} });
+    const adapter = createGeminiCliAdapter();
+    const state = driver.launch({ binary: 'gemini', args: [], prompt: 'continue', cwd: resolve('test-worktree'),
+      onEvent: (event, current) => adapter.consumeEvent(event, current), timeoutMs: 5_000 });
+    child.stderr.write(stderr);
+    for (const event of events) child.stdout.write(`${JSON.stringify(event)}\n`);
+    child.emit('close', exitCode, null);
+    await state.done;
+    assert.equal(state.errorCode, expected, name);
+  }
+});
+
 test('Codex reports a sandbox bootstrap failure even when its turn exits successfully', () => {
   const adapter = new CodexContinuityAdapter();
   const state = { errorCode: null, resultSeen: false };

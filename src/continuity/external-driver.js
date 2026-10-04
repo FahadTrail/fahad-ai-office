@@ -1,7 +1,7 @@
 import { spawn as nodeSpawn, execFile as nodeExecFile } from 'node:child_process';
 import { isAbsolute } from 'node:path';
 import { redact } from '../coding-agent/policy.js';
-import { classifyCliFailure, continuityError } from './errors.js';
+import { classifyCliFailure, continuityError, sandboxDenial } from './errors.js';
 
 const SYSTEM_ENV = Object.freeze([
   'PATH', 'Path', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'XDG_CONFIG_HOME',
@@ -75,7 +75,13 @@ export class ExternalWorkerDriver {
       state.signal = signal;
       if (state.buffer.trim()) consume(state.buffer);
       state.buffer = '';
-      state.errorCode ||= classifyCliFailure({ event: state.providerFailure || state.lastEvent, exitCode: state.providerFailure ? 1 : code, stderr: state.stderr, timedOut: state.timedOut });
+      // A typed successful result plus exit 0 supersedes recovered retry
+      // diagnostics on stderr. Never clear a sticky parse/provider/sandbox
+      // failure, and never accept exit 0 without a terminal result.
+      const verifiedSuccess = code === 0 && state.resultSeen && !state.providerFailure && !state.timedOut;
+      state.errorCode ||= verifiedSuccess
+        ? (sandboxDenial(state.stderr) ? 'SANDBOX_UNAVAILABLE' : null)
+        : classifyCliFailure({ event: state.providerFailure || state.lastEvent, exitCode: state.providerFailure ? 1 : code, stderr: state.stderr, timedOut: state.timedOut });
       if (!state.errorCode && !state.resultSeen) state.errorCode = 'WORKER_OUTPUT_INVALID';
       resolveDone(state);
     };
