@@ -1,8 +1,8 @@
 {
   "schema": "continuity.checkpoint.v1",
-  "timestamp": "2026-10-04T09:28:00Z",
+  "timestamp": "2026-10-04T09:30:00Z",
   "repository": "FahadTrail/fahad-ai-office",
-  "branch": "codex/continuity-readiness",
+  "branch": "continuity/phase-n-drill-20261004092827",
   "worktree": "Freebuff cloud workspace; cloud-only, no dependency on the owner laptop",
   "agent_id": "freebuff",
   "agent_type": "cli",
@@ -12,10 +12,11 @@
   "phase": "N_ALT_WORKERS_VPS_PREP",
   "status": "HANDOFF_READY",
   "base_commit": "228ca3548f4706b56e0ff563034192a19ce31c45",
-  "last_commit": "a614194aa232d313bbeebc5ee253218095e4eb3a",
+  "last_commit": "f64a3f48c05e9cd3bcfdc4714d18837aac19465f",
   "rollback_commit": "dfe216161fab509e21bfde0cc1126f7662d1abf3",
   "files_changed": [
     "phase-n/office.md",
+    "phase-n/opencode.md",
     ".continuity/checkpoint.json"
   ],
   "tests_run": "node --test test/continuity-phase-n-office-gate.test.js → 6 passed, 0 failed",
@@ -81,7 +82,7 @@
   "test_environment": "Freebuff cloud container: Ubuntu 22.04, kernel 6.1.158+, no AppArmor module, unprivileged user namespaces allowed, PostgreSQL 14 server, Gemini CLI 0.40.1 (unauthenticated), no opencode binary, no credentials.",
   "pr": "https://github.com/FahadTrail/fahad-ai-office/pull/106",
   "pr_head_before_this_sprint": "228ca3548f4706b56e0ff563034192a19ce31c45",
-  "next_exact_action": "Rerun Phase N on the isolated VPS checkout with the recovered-retry classification fix and atomic valid-checkpoint instructions. The run based on 669c6fa reached Gemini successfully after real kill/restart/recovery, but stderr from recovered quota retries incorrectly marked exit 0/result success as QUOTA_EXHAUSTED. Gemini also left a dirty checkpoint: completion must still refuse that. Do not activate production: the existing runtime is Exited (137), healthz refuses connections; coding-worker is healthy and untouched. Stop production work at this blocker as requested by Fahad.",
+  "next_exact_action": "Create phase-n/opencode.md with one short line, update checkpoint, validate with checkpoint.js, commit and push to continuity/phase-n-drill-20261004092827 branch.",
   "unresolved_items": [
     "The real Office -> OpenCode -> Gemini CLI handoff drill and the real restart/recovery drill are prepared but not executed; they need an authenticated VPS environment.",
     "OpenCode and Gemini CLI adapters are PREPARED, not live-certified: no authenticated model turn has ever run through either adapter.",
