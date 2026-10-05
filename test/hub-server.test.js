@@ -58,12 +58,19 @@ test('Hub API lists workspaces and creates a workspace-scoped job', async () => 
   assert.equal(created.job.workspaceId, workspaceId);
   assert.equal(jobs[0].projectId, workspaceId);
   assert.equal(jobs[0].requestedProvider, 'auto');
+  assert.equal(jobs[0].priority, 'normal');
   const preferred = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, goal: 'Plan an answer', provider: 'anthropic' }) }).then((response) => response.json());
   assert.equal(preferred.ok, true);
   assert.equal(jobs[1].requestedProvider, 'anthropic');
   const denied = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, goal: 'Plan an answer', provider: 'qwen' }) });
   assert.equal(denied.status, 403);
   assert.equal(jobs.length, 2);
+  const urgent = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, goal: 'Prepare a harmless outline', priority: 'high' }) });
+  assert.equal(urgent.status, 201);
+  assert.equal(jobs[2].priority, 'high');
+  const invalid = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, goal: 'Prepare a harmless outline', priority: 'admin' }) });
+  assert.equal(invalid.status, 400);
+  assert.equal(jobs.length, 3);
   await new Promise((resolve) => server.close(resolve));
 });
 

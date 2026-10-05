@@ -12,6 +12,17 @@ const MEMORY_HELP = {
 };
 
 let styles = null;
+function localizeProject(ctx, root) {
+  if (ctx.language !== 'ar') return;
+  const labels = { 'Command Center': 'مركز المشروع', 'Project map': 'خريطة المشروع', 'Coding continuity': 'استمرارية البرمجة', 'Switch to this project': 'استخدم هذا المشروع', overall: 'مكتمل', 'Needs Fahad': 'يحتاج قرارك', 'Next actions': 'الخطوات الياية', Decisions: 'القرارات', Risks: 'المخاطر', Timeline: 'سجل النشاط', Handoffs: 'التسليمات', Artifacts: 'الملفات والنتائج', 'Open the library': 'افتح الملفات', 'Project memory & context': 'ملاحظات وسياق المشروع', 'What this project is (CHIEF reads this)': 'هدف وسياق المشروع — يقرأه CHIEF', 'Default repository for engineering tasks': 'مستودع المشروع للمهام البرمجية', 'Save context': 'احفظ السياق', 'Latest result': 'آخر نتيجة', 'No result in this project yet': 'ما في نتيجة لهذا المشروع بعد', 'Waiting for your decision': 'ينتظر قرارك', 'Already decided': 'قرارات محفوظة', 'No decisions recorded yet.': 'ما في قرارات محفوظة بعد.', 'No handoffs yet.': 'ما في تسليمات بعد.', 'No activity in the last 30 days.': 'ما في نشاط خلال آخر 30 يوم.', 'Nothing saved.': 'ما انحفظ شي بعد.', Edit: 'تعديل', Remove: 'إزالة', Add: 'إضافة', 'You': 'أنت', 'Office': 'المكتب', 'Loading…': 'جارٍ التحميل…', 'Nothing needs you in this project.': 'ما في شي ينتظر قرارك في هذا المشروع.', 'IN PROGRESS': 'قيد التنفيذ', 'NEEDS FAHAD': 'يحتاجك', 'UP TO DATE': 'محدّث', 'NO ACTIVITY': 'ما في نشاط', 'AT RISK': 'يحتاج متابعة' };
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement.closest('[dir="auto"], textarea, input')) continue;
+    const label = node.nodeValue.trim();
+    if (labels[label]) node.nodeValue = node.nodeValue.replace(label, labels[label]);
+  }
+}
 function ensureStyles() {
   if (styles) return styles;
   styles = new Promise((resolve) => {
@@ -51,9 +62,29 @@ export async function renderProject(ctx, id, mode = 'center') {
   if (mode === 'map') await drawMap(ctx, body, center);
   else if (mode === 'continuity') await drawContinuity(ctx, body, id);
   else drawCenter(ctx, body, center, project, memory, id);
+  localizeProject(ctx, view);
   const use = view.querySelector('#useProject');
   if (use) use.onclick = () => { const select = document.querySelector('#projectSelect'); select.value = id; select.onchange(); };
-  ctx.onChange(async () => { if (location.hash.startsWith(`#/project/${id}`)) renderProject(ctx, id, mode).catch(() => {}); });
+  ctx.onChange(() => { if (location.hash.startsWith(`#/project/${id}`)) ctx.rerender(); });
+}
+
+export async function renderContinuityPage(ctx, projectId, language = 'ar') {
+  const { api, esc, q, view, setTitle, when } = ctx;
+  const ar = language !== 'en';
+  await ensureStyles();
+  const [{ project }, data] = await Promise.all([api(`/api/projects/${projectId}`), api(`/api/continuity${q({ projectId })}`)]);
+  setTitle(ar ? 'الاستمرارية' : 'Continuity');
+  const active = data.sessions.find((session) => ['ACQUIRING', 'ACTIVE', 'DRAINING', 'CHECKPOINTING', 'HANDOFF_READY'].includes(session.status));
+  const worker = active ? data.workers.find((item) => item.key === active.workerKey) : null;
+  const checkpoint = active ? data.checkpoints.filter((item) => item.sessionId === active.id).toSorted((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0))[0] : null;
+  const handoffs = data.handoffs.toSorted((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 8);
+  view.innerHTML = `<div class="page page-wide continuity-owner"><div class="page-head"><div><span class="owner-kicker">${esc(project.name)}</span><h1>${ar ? 'الاستمرارية' : 'Continuity'}</h1><p class="page-summary">${ar ? 'متابعة مبسطة للشغل البرمجي الطويل: من يعمل، آخر حفظ، والخطوة الياية.' : 'A simple live view of long-running coding: current worker, last save and next action.'}</p></div><span class="state-chip" data-state="${data.enabled ? 'COMPLETED' : 'WAITING'}">${data.enabled ? (ar ? 'المشرف شغال' : 'Supervisor on') : (ar ? 'المشرف متوقف' : 'Supervisor off')}</span></div>
+    <section class="continuity-focus ${active ? 'is-live' : ''}"><div class="continuity-focus-top">${active ? '<span class="live-pulse"></span>' : ''}<div class="grow"><span>${ar ? 'الحالة الحالية' : 'Current state'}</span><h2>${esc(worker?.displayName || (ar ? 'ما في تشغيل نشط' : 'No active run'))}</h2></div>${active ? `<span class="pill running">${esc(active.status)}</span>` : `<span class="pill available">${ar ? 'جاهز' : 'Ready'}</span>`}</div><p dir="auto">${esc(active?.objective || (ar ? 'ما في مهمة Continuity شغالة لهذا المشروع.' : 'No Continuity task is active for this project.'))}</p>
+      <div class="continuity-owner-grid"><div><span>${ar ? 'آخر حفظ' : 'Last checkpoint'}</span><strong>${checkpoint ? `#${checkpoint.sequence}` : '—'}</strong><small>${checkpoint?.createdAt ? when(checkpoint.createdAt) : (ar ? 'ما في حفظ بعد' : 'No checkpoint yet')}</small></div><div><span>${ar ? 'آخر إجراء' : 'Last action'}</span><strong>${esc(active?.status || (ar ? 'استعداد' : 'Standby'))}</strong><small>${active?.heartbeatAt ? when(active.heartbeatAt) : '—'}</small></div><div><span>${ar ? 'الخطوة الياية' : 'Next action'}</span><strong dir="auto">${esc(checkpoint?.nextExactAction || (ar ? 'بانتظار مهمة' : 'Waiting for work'))}</strong><small>${ar ? 'من آخر checkpoint' : 'From the latest checkpoint'}</small></div></div></section>
+    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'سجل التسليم' : 'Handoff history'}</h2><span class="small muted">${handoffs.length}</span></div>${handoffs.length ? handoffs.map((item) => `<div class="handoff-row"><span class="role-token">${esc(item.fromWorker)}</span><span aria-hidden="true">←</span><span class="role-token">${esc(item.toWorker)}</span><span class="grow" dir="auto">${esc(item.reason || (ar ? 'استمرار العمل' : 'Continue work'))}</span><time>${when(item.createdAt)}</time></div>`).join('') : `<div class="owner-empty"><span aria-hidden="true">✓</span><p>${ar ? 'ما صار أي تسليم في هذا المشروع.' : 'No handoffs have occurred in this project.'}</p></div>`}</section>
+    <details class="disclosure continuity-advanced"><summary>${ar ? 'التفاصيل المتقدمة والتحكم' : 'Advanced details and controls'}</summary><div class="disclosure-body" id="continuityAdvanced"><div class="drawer-loading"></div></div></details></div>`;
+  await drawContinuity(ctx, view.querySelector('#continuityAdvanced'), projectId);
+  ctx.onChange(() => { if (location.hash === '#/continuity') ctx.rerender(); });
 }
 
 function basis(value) { return `<span class="continuity-basis">${value || 'UNKNOWN'}</span>`; }
@@ -137,6 +168,7 @@ function drawCenter(ctx, body, center, project, memory, id) {
       <div class="kpi"><span>Latest audit</span><strong>${verdict ? `<span class="verdict v-${esc(verdict.replace(/\s+/g, '-').toLowerCase())}">${esc(verdict)}</span>` : '<span class="muted">—</span>'}</strong><em>${center.latestAudit ? esc(when(center.latestAudit.at)) : 'No audit yet'}</em></div>
       <div class="kpi"><span>AI cost · 30 days</span><strong class="num">${esc(usd(center.costUsd))}</strong><em>Free routes first</em></div>
     </section>
+    <section class="cc-card"><div class="spread"><h2 class="cc-h2">${ctx.language === 'ar' ? 'الشغل الحالي' : 'Active work'}</h2><a class="btn btn-sm" href="#/new-work">${ctx.language === 'ar' ? 'مهمة جديدة' : 'New task'}</a></div><div id="projectWork" aria-live="polite">${ctx.language === 'ar' ? 'جارٍ التحميل…' : 'Loading…'}</div></section>
     <section aria-label="Team"><h2 class="cc-h2">Team</h2><div class="cc-team">${center.roster.map((member) => `<button type="button" class="member" data-employee="${esc(member.slug)}" data-state="${esc(member.state)}">
       <span class="member-top">${roleMark(member.key, member.label)}<span class="member-name">${esc(member.label)}</span></span>
       <span class="state-chip" data-state="${esc(member.state)}">${esc(stateWord(member))}</span>
@@ -171,11 +203,18 @@ function drawCenter(ctx, body, center, project, memory, id) {
         <label class="sr-only" for="mText">Memory</label><input id="mText" class="input input-sm grow" dir="auto" placeholder="e.g. The pilot runs in Business Bay"><button class="btn btn-sm" type="submit">Add</button></form></details>`;
 
   body.querySelectorAll('[data-employee]').forEach((element) => { element.onclick = () => ctx.openEmployee(element.dataset.employee); });
+  Promise.all([ctx.api(`/api/jobs${ctx.q({ workspaceId: id })}`), ctx.api(`/api/tasks${ctx.q({ workspaceId: id })}`)]).then(([{ jobs }, { tasks }]) => {
+    const holder = body.querySelector('#projectWork');
+    if (!holder) return;
+    const active = [...jobs.filter((job) => !['completed', 'failed', 'cancelled'].includes(job.status)).map((job) => ({ title: job.title, href: `#/job/${job.id}` })), ...tasks.filter((task) => ['running', 'attention'].includes(task.group)).map((task) => ({ title: task.title, href: `#/task/${task.id}` }))];
+    holder.innerHTML = active.length ? active.map((item) => `<a class="owner-row" href="${esc(item.href)}"><strong dir="auto">${esc(item.title)}</strong><span class="grow"></span><span>${ctx.language === 'ar' ? 'تابع التقدم' : 'View progress'}</span></a>`).join('') : `<p class="muted small">${ctx.language === 'ar' ? 'ما في شغل جاري في هذا المشروع.' : 'No work is active in this project.'}</p>`;
+  }).catch(() => { const holder = body.querySelector('#projectWork'); if (holder) holder.textContent = ctx.language === 'ar' ? 'تعذر تحميل الشغل. أعد فتح المشروع للمحاولة.' : 'Work could not be loaded. Reopen the project to retry.'; });
   ctx.api(`/api/attention${ctx.q({ workspaceId: id })}`).then(({ items }) => {
     const actions = items.filter((item) => item.priority !== 'INFO');
     const holder = body.querySelector('#ccNeeds');
     if (holder) holder.innerHTML = actions.length ? actions.map((item) => `<a class="need need-${esc(item.kind)}" href="${item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="need-kind">${esc(item.category || item.kind)}${item.priority === 'URGENT' ? ' · URGENT' : ''}</span><span dir="auto">${esc(item.title)}</span><span class="xs faint" dir="auto">${esc(item.detail || '')}</span></a>`).join('') : '<p class="muted small">Nothing needs you in this project.</p>';
-  }).catch(() => {});
+    localizeProject(ctx, body);
+  }).catch(() => { const holder = body.querySelector('#ccNeeds'); if (holder) holder.textContent = ctx.language === 'ar' ? 'تعذر تحميل القرارات. افتح الموافقات للمحاولة.' : 'Decisions could not be loaded. Open Approvals to retry.'; });
   body.querySelector('#projectForm').onsubmit = async (event) => {
     event.preventDefault();
     try { await ctx.api(`/api/projects/${id}`, { method: 'PATCH', body: { description: body.querySelector('#pDesc').value, defaultRepository: body.querySelector('#pRepo').value } }); ctx.toast('Saved'); } catch (error) { ctx.toast(error.message); }
