@@ -54,6 +54,25 @@ npm run coding-worker      # run the Coding Agent worker (needs Supabase + keys)
 Tests that need container root (isolated sandbox) skip elsewhere; CI runs them
 inside the built runtime image as root.
 
+## Cursor Cloud specific instructions
+
+Cloud Agent setup installs dependencies with `npm ci --no-audit --no-fund` and
+adds PostgreSQL 16 server binaries plus ripgrep. Node 22 is already on the
+base image. The suite and the Hub preview are started when needed; nothing
+has to be running on boot.
+
+* `node --test` is the full offline suite. It needs no credentials and no
+  network. Two isolated-sandbox tests skip unless the process is container
+  root; CI runs those inside the runtime image.
+* `npm run db:replay` uses the PostgreSQL 16 binaries at
+  `/usr/lib/postgresql/16/bin` and creates its own throwaway cluster. The
+  schema fingerprint test inside `node --test` uses the same replay.
+* Local Hub without Supabase or model keys: `node tools/hub-preview.mjs`
+  serves fictional data at `http://127.0.0.1:4173/`. Sending a chat there
+  runs the real Hub handlers against an in-memory store.
+* `npm run canary:agentic`, production migration apply, and deploy stay
+  owner-gated and need live credentials. Leave Hermes untouched.
+
 ## Rules for changes
 
 * Work on a branch, open a PR, keep CI green. Merging to `main` deploys
