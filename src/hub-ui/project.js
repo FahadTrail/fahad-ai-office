@@ -37,6 +37,7 @@ export async function renderProject(ctx, id, mode = 'center') {
   const { api, esc, q, view, setTitle } = ctx;
   await ensureStyles();
   const [{ project, memory }, center] = await Promise.all([api(`/api/projects/${id}`), api(`/api/command-center${q({ workspaceId: id })}`)]);
+  if (ctx.current && !ctx.current()) return;
   setTitle(project.name);
   const tone = STATUS_TONE[center.status] || 'available';
   view.innerHTML = `<div class="cc">
@@ -73,6 +74,7 @@ export async function renderContinuityPage(ctx, projectId, language = 'ar') {
   const ar = language !== 'en';
   await ensureStyles();
   const [{ project }, data] = await Promise.all([api(`/api/projects/${projectId}`), api(`/api/continuity${q({ projectId })}`)]);
+  if (ctx.current && !ctx.current()) return;
   setTitle(ar ? 'الاستمرارية' : 'Continuity');
   const active = data.sessions.find((session) => ['ACQUIRING', 'ACTIVE', 'DRAINING', 'CHECKPOINTING', 'HANDOFF_READY'].includes(session.status));
   const worker = active ? data.workers.find((item) => item.key === active.workerKey) : null;

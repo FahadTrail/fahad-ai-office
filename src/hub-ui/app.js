@@ -301,6 +301,7 @@ function openSearch() {
 
 // ------------------------------------------------------------------ router
 async function route() {
+  const navigation = state.navigation = (state.navigation || 0) + 1;
   clearTimers();
   toggleSidebar(false);
   const hash = location.hash || '#/';
@@ -317,25 +318,31 @@ async function route() {
   try {
     await (routes[section] || routes[''])();
   } catch (error) {
+    if (navigation !== state.navigation) return;
     view.innerHTML = `<div class="page">${errorBlock(error.message, esc)}</div>`;
   }
-  view.focus({ preventScroll: true });
+  if (navigation === state.navigation) view.focus({ preventScroll: true });
 }
 
 // ------------------------------------------------------------------ V5 owner home
 async function renderHome() {
+  const navigation = state.navigation;
   const ar = state.language === 'ar';
   setTitle(ar ? 'الرئيسية' : 'Home');
   view.innerHTML = `<div class="page page-wide owner-home"><div class="owner-loading"><div class="drawer-loading"></div><p class="muted">${ar ? 'نجمع حالة المكتب الحقيقية…' : 'Loading the live Office state…'}</p></div></div>`;
-  const [center, attention, office, capacity, platform, completed] = await Promise.all([
+  const [center, attention, office, capacity, platform, workTasks, jobData] = await Promise.all([
     api(`/api/command-center${q({ workspaceId: ws() })}`),
     api(`/api/attention${q({ workspaceId: ws() })}`),
     api(`/api/office${q({ workspaceId: ws() })}`),
     api('/api/capacity').catch(() => null),
     api(`/api/platform${q({ workspaceId: ws() })}`).catch(() => null),
-    api(`/api/tasks${q({ workspaceId: ws(), status: 'completed' })}`).catch(() => ({ tasks: [] })),
+    api(`/api/tasks${q({ workspaceId: ws() })}`),
+    api(`/api/jobs${q({ workspaceId: ws() })}`),
   ]);
-  const active = center.objectives?.active || [];
+  if (navigation !== state.navigation) return;
+  const active = jobData.jobs.filter((job) => !['completed', 'failed', 'cancelled'].includes(job.status));
+  const completed = { tasks: workTasks.tasks.filter((task) => task.group === 'completed') };
+  const codingNow = workTasks.tasks.filter((task) => ['running', 'attention'].includes(task.group));
   const needs = (attention.items || []).filter((item) => item.priority !== 'INFO');
   const results = (attention.items || []).filter((item) => item.priority === 'INFO');
   const working = (office.agents || []).filter((agent) => ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state));
@@ -345,7 +352,8 @@ async function renderHome() {
   const paid = capacity?.capacity?.paidFallback || {};
   const monthCost = capacity?.capacity?.costUsd?.month;
   const costLabel = (value) => value == null ? (ar ? 'غير متاح' : 'Unavailable') : usd(value);
-  const latest = [...results.map((item) => ({ ...item, href: item.taskId ? `#/task/${item.taskId}` : item.jobId ? `#/workflow/${item.jobId}` : '#/artifacts' })),
+  const latest = [...results.map((item) => ({ ...item, href: item.taskId ? `#/task/${item.taskId}` : item.jobId ? `#/job/${item.jobId}` : '#/artifacts' })),
+    ...jobData.jobs.filter((job) => job.status === 'completed').map((job) => ({ title: job.title, at: job.completed_at || job.created_at, href: `#/job/${job.id}` })),
     ...(completed.tasks || []).slice(0, 4).map((task) => ({ title: task.title, detail: task.summary, at: task.completedAt, href: `#/task/${task.id}` }))]
     .toSorted((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
   const linkFor = (item) => item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`;
@@ -363,7 +371,8 @@ async function renderHome() {
     <div class="owner-grid">
       <section class="owner-card owner-span-2"><div class="owner-card-head"><div><span class="owner-label">${ar ? 'المشروع الحالي' : 'Active project'}</span><h2 dir="auto">${esc(center.project?.name || state.workspaces.find((item) => item.id === ws())?.name || '')}</h2></div><a href="#/project/${esc(ws())}">${ar ? 'افتح مركز المشروع' : 'Open project center'}</a></div>
         ${center.project?.description ? `<p class="owner-objective" dir="auto">${esc(center.project.description)}</p>` : `<p class="muted">${ar ? 'أضف هدف وسياق المشروع عشان CHIEF يشتغل بدقة.' : 'Add the objective and context so CHIEF can work precisely.'}</p>`}
-        ${active.length ? `<div class="owner-live-list">${active.slice(0, 4).map((job) => `<a href="#/workflow/${esc(job.id)}"><span class="live-pulse"></span><span class="grow" dir="auto"><strong>${esc(job.title)}</strong><small>${job.progress}% ${ar ? 'مكتمل' : 'complete'}</small></span><span class="progress"><span style="width:${Math.max(3, job.progress)}%"></span></span></a>`).join('')}</div>` : empty(ar ? 'ما في هدف شغال الحين.' : 'No objective is running right now.', `<a class="btn btn-sm" href="#/chief">${ar ? 'ابدأ مع CHIEF' : 'Start with CHIEF'}</a>`)}</section>
+        ${active.length ? `<div class="owner-live-list">${active.slice(0, 4).map((job) => `<a href="#/job/${esc(job.id)}"><span class="live-pulse"></span><span class="grow" dir="auto"><strong>${esc(job.title)}</strong><small>${job.progress ?? 0}% ${ar ? 'مكتمل' : 'complete'}</small></span><span class="progress"><span style="width:${Math.max(3, job.progress || 0)}%"></span></span></a>`).join('')}</div>` : empty(ar ? 'ما في هدف شغال الحين.' : 'No objective is running right now.', `<a class="btn btn-sm" href="#/chief">${ar ? 'ابدأ مع CHIEF' : 'Start with CHIEF'}</a>`)}</section>
+      <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'CODING الحين' : 'CODING now'}</h2><a href="#/code">${ar ? 'مهمة جديدة' : 'New task'}</a></div>${codingNow.length ? codingNow.slice(0, 4).map((task) => `<a class="owner-row" href="#/task/${esc(task.id)}"><span class="grow" dir="auto"><strong>${esc(task.title)}</strong><small>${esc(task.now || task.summary || '')}</small></span></a>`).join('') : `<p class="muted">${ar ? 'ما في مهمة برمجية شغالة في هذا المشروع.' : 'No coding task is active in this project.'}</p>`}</section>
       <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'يحتاجك' : 'Needs you'}</h2><a href="#/attention">${ar ? 'الكل' : 'View all'}</a></div>
         ${needs.length ? needs.slice(0, 4).map((item) => `<a class="owner-row" href="${linkFor(item)}"><span class="owner-risk">${esc(item.category || item.kind)}</span><span class="grow" dir="auto"><strong>${esc(item.title)}</strong><small>${esc(item.detail || '')}</small></span></a>`).join('') : empty(ar ? 'الأمور طيبة، ما في قرار ينتظرك.' : 'All clear. No decision is waiting for you.')}</section>
       <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'آخر النتائج' : 'Latest results'}</h2><a href="#/artifacts">${ar ? 'الملفات' : 'Files'}</a></div>
@@ -527,7 +536,7 @@ async function fillChiefHome() {
     const card = (title, body, href = '', extra = '') => `<section class="ch-card ${extra}"><div class="ch-card-head"><h2>${title}</h2>${href ? `<a class="small" href="${href}">Open</a>` : ''}</div>${body}</section>`;
     holder.innerHTML = [
       card('Needs you', needs.length ? needs.slice(0, 4).map((item) => `<a class="ch-row" href="${item.taskId ? `#/task/${esc(item.taskId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="ch-kind k-${esc(item.kind)}">${esc(item.category || item.kind)}</span><span class="grow" dir="auto">${esc(item.title)}</span></a>`).join('') : '<p class="muted small">Nothing needs you. The Office will ask here and on Telegram when it does.</p>', '#/attention', needs.length ? 'ch-alert' : ''),
-      card('In progress', center.objectives.active.length ? center.objectives.active.map((job) => `<a class="ch-row" href="#/workflow/${esc(job.id)}"><span class="grow" dir="auto">${esc(job.title)}</span><span class="ch-pct num">${job.progress}%</span></a><span class="progress" aria-hidden="true"><span style="width:${Math.max(3, job.progress)}%"></span></span>`).join('') : '<p class="muted small">No objective running.</p>', `#/project/${esc(ws())}`),
+      card('In progress', center.objectives.active.length ? center.objectives.active.map((job) => `<a class="ch-row" href="#/workflow/${esc(job.id)}"><span class="grow" dir="auto">${esc(job.title)}</span><span class="ch-pct num">${job.progress}%</span></a><span class="progress" aria-hidden="true"><span style="width:${Math.max(3, job.progress || 0)}%"></span></span>`).join('') : '<p class="muted small">No objective running.</p>', `#/project/${esc(ws())}`),
       card('Team now', working.length ? `<div class="ch-team">${working.map((agent) => `<button type="button" class="ch-member" data-employee="${esc(agent.slug)}"><span class="ch-dot st-dot-${esc(String(agent.state).toLowerCase().replace(/\s+/g, '-'))}"></span><strong>${esc(agent.label)}</strong><span class="xs muted" dir="auto">${esc(agent.detail || '')}</span></button>`).join('')}</div>` : '<p class="muted small">Everyone is available.</p>', '#/office'),
       card('Recently completed', done.length ? done.map((item) => `<a class="ch-row" href="${item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="ch-kind k-completed">Done</span><span class="grow" dir="auto">${esc(item.title)}</span><span class="xs faint">${when(item.at)}</span></a>`).join('') : '<p class="muted small">Nothing finished in the last 3 days.</p>'),
       card('Decisions', center.decisionsForFahad.length ? center.decisionsForFahad.slice(0, 3).map((decision) => `<div class="ch-decision"><span class="xs faint">${esc(decision.from)}</span><div dir="auto">${esc(decision.text)}</div></div>`).join('')
@@ -614,10 +623,12 @@ async function renderNewWork() {
 }
 
 async function renderOwnerJob(id) {
+  const navigation = state.navigation;
   const ar = state.language === 'ar';
   let last = '';
   const load = async () => {
     const { snapshot } = await api(`/api/jobs/${id}`);
+    if (navigation !== state.navigation) return snapshot.job.status;
     if (last === JSON.stringify(snapshot)) return snapshot.job.status;
     last = JSON.stringify(snapshot);
     const { job, tasks, workspace } = snapshot;
@@ -631,6 +642,7 @@ async function renderOwnerJob(id) {
 }
 
 async function renderWork() {
+  const navigation = state.navigation;
   const ar = state.language === 'ar';
   setTitle(ar ? 'العمل' : 'Work');
   view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>${ar ? 'العمل' : 'Work'}</h1><p class="page-summary">${ar ? 'الأهداف اللي ينسقها CHIEF ومهام CODING، بمراحل واضحة.' : 'CHIEF-led objectives and CODING tasks, in clear owner-friendly stages.'}</p></div><div class="row"><a class="btn" href="#/new-work">${ar ? 'مهمة جديدة' : 'New task'}</a><a class="btn btn-primary" href="#/code">${ar ? 'مهمة CODING' : 'New CODING task'}</a></div></div><div class="owner-loading"><div class="drawer-loading"></div></div></div>`;
@@ -639,6 +651,7 @@ async function renderWork() {
     api(`/api/tasks${q({ workspaceId: ws() })}`),
     api(`/api/jobs${q({ workspaceId: ws() })}`),
   ]);
+  if (navigation !== state.navigation) return;
   const workflows = [...streams.map((item) => ({ ...item, href: `#/workflow/${item.id}` })), ...jobs.filter((item) => !streams.some((stream) => stream.id === item.id)).map((item) => ({ ...item, createdAt: item.created_at, completedAt: item.completed_at, href: `#/job/${item.id}` }))];
   const activeWorkflows = workflows.filter((item) => !['completed', 'failed', 'cancelled'].includes(item.status));
   const activeTasks = tasks.filter((item) => item.group === 'running' || item.group === 'attention');
@@ -857,7 +870,9 @@ async function renderOffice() { return (await loadOffice()).renderOffice(officeC
 async function openEmployee(slug) { return (await loadOffice()).openEmployee(officeContext(), slug); }
 let capabilitiesCache = null;
 function officeContext() {
+  const navigation = state.navigation;
   return {
+    current: () => state.navigation === navigation,
       api, esc, when, q, ws, view, setTitle, toast, every, reducedMotion, renderArtifact, rerender: route, language: state.language,
     onChange: (fn, onLive) => onLiveChange(fn, onLive),
     onLeave: (fn) => state.leave.push(fn),
@@ -893,9 +908,11 @@ function onLiveChange(fn, onLive) {
 }
 
 async function renderEmployees() {
+  const navigation = state.navigation;
   const ar = state.language === 'ar';
   setTitle(ar ? 'الفريق' : 'Team');
   const data = await api(`/api/office${q({ workspaceId: ws() })}`);
+  if (navigation !== state.navigation) return;
   const status = (agent) => agent.state === 'AVAILABLE' ? (ar ? 'متاح' : 'Available') : ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state) ? (ar ? 'يشتغل' : 'Working') : agent.state === 'WAITING' ? (ar ? 'ينتظر' : 'Waiting') : ['NEEDS FAHAD', 'BLOCKED'].includes(agent.state) ? (ar ? 'متوقف' : 'Blocked') : agent.state;
   view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>${ar ? 'الفريق' : 'Team'}</h1><p class="page-summary">${ar ? 'تسعة موظفين بأدوار ثابتة. المودلات تتغير حسب المهمة والسعة، ولا ترتبط بهوية الموظف.' : 'Nine fixed office roles. Models route dynamically by task and capacity; they are not employee identities.'}</p></div><a class="btn btn-primary" href="#/chief">${ar ? 'كلّف CHIEF' : 'Ask CHIEF'}</a></div>
     <div class="office-grid">${data.agents.map((agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}" data-employee="${esc(agent.slug)}">
@@ -954,6 +971,7 @@ async function renderWorkflow(jobId) {
 // Needs Fahad: an executive interruption centre. URGENT first, then what
 // needs an action, then information (major completions) — nothing routine.
 async function renderAttention() {
+  const navigation = state.navigation;
   const ar = state.language === 'ar';
   setTitle(ar ? 'الموافقات' : 'Approvals');
   const preview = (approval) => {
@@ -972,7 +990,8 @@ async function renderAttention() {
       api(`/api/attention${q({ workspaceId: ws() })}`),
       api(`/api/approvals${q({ workspaceId: ws() })}`),
     ]);
-    const href = (item) => (item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`);
+    if (navigation !== state.navigation) return;
+    const href = (item) => (item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/job/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`);
     const approvalCards = approvals.map((approval) => `<article class="approval-card risk-${esc(approval.risk || 'medium')}"><div class="approval-top"><span class="approval-risk">${esc(String(approval.risk || 'medium').toUpperCase())}</span><time>${when(approval.requested_at)}</time></div><h2 dir="auto">${esc(approval.summary || approval.action || (ar ? 'إجراء يحتاج موافقتك' : 'Action needs your approval'))}</h2><p>${ar ? 'الإجراء' : 'Action'}: <strong>${esc(approval.action || approval.tool_name)}</strong></p><p class="small muted">${ar ? 'السبب: خطوة محمية تتطلب قرار المالك قبل التنفيذ.' : 'Why: this protected action requires the owner before execution.'}</p><dl class="approval-facts"><div><dt>${ar ? 'المشروع' : 'Project'}</dt><dd>${esc(state.workspaces.find((item) => item.id === ws())?.name || '—')}</dd></div>${preview(approval)}</dl><div class="approval-actions"><a class="btn btn-ghost" href="#/task/${esc(approval.session_id)}">${ar ? 'راجع المهمة' : 'Review task'}</a><button class="btn btn-danger" data-approval-decision="rejected" data-id="${esc(approval.id)}">${ar ? 'رفض' : 'Reject'}</button><button class="btn btn-primary" data-approval-decision="approved" data-id="${esc(approval.id)}">${ar ? 'موافقة' : 'Approve'}</button></div></article>`).join('');
     const other = items.filter((item) => item.priority !== 'INFO' && !approvals.some((approval) => approval.session_id === item.taskId));
     const info = items.filter((item) => item.priority === 'INFO');
@@ -994,6 +1013,7 @@ async function renderAttention() {
 }
 
 async function renderProjects() {
+  const navigation = state.navigation;
   const ar = state.language === 'ar';
   setTitle(ar ? 'المشاريع' : 'Projects');
   view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>${ar ? 'المشاريع' : 'Projects'}</h1><p class="page-summary">${ar ? 'المشروع هو وحدة العمل: الهدف، الفريق، المهام، الملفات، القرارات والتكلفة في مكان واحد.' : 'A project holds its objective, team, work, files, decisions and cost.'}</p></div><button class="btn btn-primary" id="createProject">${ar ? '＋ مشروع جديد' : '＋ New project'}</button></div><div class="project-cards" id="projectCards"><div class="drawer-loading"></div></div></div>`;
@@ -1001,6 +1021,7 @@ async function renderProjects() {
     const [detail, center] = await Promise.all([api(`/api/projects/${workspace.id}`), api(`/api/command-center${q({ workspaceId: workspace.id })}`)]);
     return { ...workspace, ...detail, center };
   }));
+  if (navigation !== state.navigation) return;
   $('#projectCards').innerHTML = summaries.length ? summaries.map(({ project, stats, center }) => `<a class="project-card-v5" href="#/project/${esc(project.id)}"><div class="spread"><span class="project-status ${center?.objectives?.active?.length ? 'is-live' : ''}">${center?.objectives?.active?.length ? (ar ? 'شغال' : 'Active') : (ar ? 'جاهز' : 'Ready')}</span>${project.id === ws() ? `<span class="pill available">${ar ? 'الحالي' : 'Current'}</span>` : ''}</div><h2 dir="auto">${esc(project.name)}</h2><p dir="auto">${esc(project.description || (ar ? 'ما انضاف وصف المشروع بعد.' : 'No project objective has been added yet.'))}</p><dl><div><dt>${ar ? 'قيد التنفيذ' : 'Active'}</dt><dd>${center?.objectives?.active?.length || 0}</dd></div><div><dt>${ar ? 'المهام' : 'Tasks'}</dt><dd>${stats?.tasks || 0}</dd></div><div><dt>${ar ? 'مكتمل' : 'Completed'}</dt><dd>${stats?.completedTasks || 0}</dd></div><div><dt>${ar ? 'التكلفة' : 'Cost'}</dt><dd>${usd(center?.costUsd || 0)}</dd></div></dl><span class="project-open">${ar ? 'افتح مركز المشروع ←' : 'Open project center →'}</span></a>`).join('') : `<div class="empty"><h3>${ar ? 'أنشئ أول مشروع' : 'Create your first project'}</h3><p>${ar ? 'كل شغل المكتب يعيش داخل مشروع واضح.' : 'Every piece of Office work belongs to a clear project.'}</p></div>`;
   $('#createProject').onclick = async () => {
     const name = await ask(ar ? 'اسم المشروع الجديد' : 'New project name', '');
@@ -1076,9 +1097,11 @@ async function renderIntegrations() {
 
 // ------------------------------------------------------------------ models
 async function renderModels() {
+  const navigation = state.navigation;
   const ar = state.language === 'ar';
   setTitle(ar ? 'السعة والتكلفة' : 'Capacity & cost');
   const [data, office, capacity, platform] = await Promise.all([api(`/api/models${q({ workspaceId: ws() })}`), api(`/api/office${q({ workspaceId: ws() })}`).catch(() => null), api('/api/capacity').catch(() => null), api(`/api/platform${q({ workspaceId: ws() })}`).catch(() => null)]);
+  if (navigation !== state.navigation) return;
   const kind = { AVAILABLE: 'available', COOLDOWN: 'cooldown', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
   const waiting = (office?.agents || []).filter((agent) => agent.state === 'WAITING' && /free model capacity/i.test(agent.detail || ''));
   const available = Number(data.counts?.AVAILABLE || 0);
@@ -1087,7 +1110,7 @@ async function renderModels() {
   const paid = capacity?.capacity?.paidFallback || {};
   const poolState = (pool) => pool.state === 'available' ? (ar ? 'مجاني متاح' : 'Free available') : pool.state === 'exhausted' ? (ar ? 'ينتظر التجديد' : 'Waiting for reset') : pool.state === 'not_configured' ? (ar ? 'غير مربوط' : 'Not configured') : (ar ? 'محدود' : 'Limited');
   view.innerHTML = `<div class="page page-wide capacity-page"><div class="page-head"><div><h1>${ar ? 'السعة والتكلفة' : 'Capacity & cost'}</h1><p class="page-summary">${ar ? 'التوجيه تلقائي ومجاني أولًا. المودل محرك تنفيذ، مب هوية الموظف.' : 'Routing is automatic and free-first. A model is an execution engine, never an employee identity.'}</p></div></div>
-    <section class="capacity-overview"><div class="capacity-hero ${capacity?.summary?.freeCapacityNow === 'available' ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div><span>${ar ? 'الحالة الحين' : 'Current state'}</span><h2>${capacity?.summary?.freeCapacityNow === 'available' ? (ar ? 'السعة المجانية متاحة' : 'Free capacity available') : (ar ? 'السعة المجانية محدودة' : 'Free capacity limited')}</h2><p>${esc(capacity?.headline || modelsSummary(data.counts, waiting.length))}</p></div></div><div class="capacity-kpis"><div><span>${ar ? 'استخدام اليوم' : 'Today'}</span><strong>${usd(capacity?.capacity?.costUsd?.today || 0)}</strong><small>${tokens(capacity?.summary?.tokensToday || 0)} ${ar ? 'توكن' : 'tokens'}</small></div><div><span>${ar ? 'هذا الشهر' : 'This month'}</span><strong>${usd(capacity?.capacity?.costUsd?.month || 0)}</strong><small>${budget ? `${usd(budget.remainingUsd)} ${ar ? 'متبقي' : 'remaining'}` : (ar ? 'ميزانية غير متاحة' : 'Budget unavailable')}</small></div><div><span>${ar ? 'المحركات المتاحة' : 'Available engines'}</span><strong>${available}</strong><small>${blocked ? `${blocked} ${ar ? 'محجوب، والباقي مستمر' : 'blocked; others still route'}` : (ar ? 'ما في محجوب' : 'None blocked')}</small></div><div><span>${ar ? 'الرجوع المدفوع' : 'Paid fallback'}</span><strong>${paid.route ? (ar ? 'متاح بموافقة السياسة' : 'Policy available') : (ar ? 'غير متاح' : 'Unavailable')}</strong><small>${paid.route ? `${usd(paid.remainingUsd)} ${ar ? 'متبقي' : 'remaining'}` : (ar ? 'المجاني ما زال مستقل' : 'Free pools remain independent')}</small></div></div></section>
+    <section class="capacity-overview"><div class="capacity-hero ${capacity?.summary?.freeCapacityNow === 'available' ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div><span>${ar ? 'الحالة الحين' : 'Current state'}</span><h2>${capacity?.summary?.freeCapacityNow === 'available' ? (ar ? 'السعة المجانية متاحة' : 'Free capacity available') : !capacity ? (ar ? 'حالة السعة غير متاحة' : 'Capacity unavailable') : (ar ? 'السعة المجانية محدودة' : 'Free capacity limited')}</h2><p>${esc(capacity?.headline || modelsSummary(data.counts, waiting.length))}</p></div></div><div class="capacity-kpis"><div><span>${ar ? 'المكتب — اليوم' : 'Office — today'}</span><strong>${capacity?.capacity?.costUsd?.today == null ? (ar ? 'غير متاح' : 'Unavailable') : usd(capacity.capacity.costUsd.today)}</strong><small>${capacity?.summary?.tokensToday == null ? '—' : tokens(capacity.summary.tokensToday)} ${ar ? 'توكن' : 'tokens'}</small></div><div><span>${ar ? 'المكتب — الشهر' : 'Office — month'}</span><strong>${capacity?.capacity?.costUsd?.month == null ? (ar ? 'غير متاح' : 'Unavailable') : usd(capacity.capacity.costUsd.month)}</strong><small>${budget ? `${usd(budget.remainingUsd)} ${ar ? 'متبقي للمشروع' : 'project budget remaining'}` : (ar ? 'ميزانية غير متاحة' : 'Budget unavailable')}</small></div><div><span>${ar ? 'المحركات المتاحة' : 'Available engines'}</span><strong>${available}</strong><small>${blocked ? `${blocked} ${ar ? 'محجوب، والباقي مستمر' : 'blocked; others still route'}` : (ar ? 'ما في محجوب' : 'None blocked')}</small></div><div><span>${ar ? 'المدفوع — المكتب' : 'Office paid fallback'}</span><strong>${paid.route ? (ar ? 'متاح بموافقة السياسة' : 'Policy available') : (ar ? 'غير متاح' : 'Unavailable')}</strong><small>${paid.route ? `${usd(paid.remainingUsd)} ${ar ? 'متبقي' : 'remaining'}` : (ar ? 'المجاني ما زال مستقل' : 'Free pools remain independent')}</small></div></div></section>
     ${waiting.length ? `<div class="capacity-banner" role="status"><strong>${ar ? 'ينتظر السعة' : 'Waiting for capacity'}</strong> · ${waiting.map((agent) => esc(agent.label)).join(', ')} — ${ar ? 'بيكمل تلقائي أول ما تتوفر سعة مجانية.' : 'Work resumes automatically when free capacity returns.'}</div>` : ''}
     <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'مجموعات السعة' : 'Capacity pools'}</h2><span class="small muted">${capacity?.pools?.length || 0}</span></div><div class="pool-grid">${(capacity?.pools || []).map((pool) => `<article><div class="spread"><strong dir="auto">${esc(pool.label || pool.id)}</strong><span class="pill ${pool.state === 'available' ? 'available' : pool.state === 'exhausted' ? 'cooldown' : 'unavailable'}">${poolState(pool)}</span></div><p class="small muted">${pool.nextReset ? `${ar ? 'التجديد' : 'Reset'}: ${when(pool.nextReset)}` : (ar ? 'المزود ما أعلن حدًا دقيقًا' : 'Provider does not report an exact allowance')}</p></article>`).join('') || `<p class="muted">${ar ? 'بيانات المجموعات غير متاحة.' : 'Pool data is unavailable.'}</p>`}</div></section>
     <details class="disclosure"><summary>${ar ? 'تفاصيل المحركات المتقدمة' : 'Advanced engine details'}</summary><div class="disclosure-body"><div class="table-wrap"><table class="table"><thead><tr><th>${ar ? 'المحرك' : 'Engine'}</th><th>${ar ? 'الحالة' : 'Status'}</th><th class="hide-sm">${ar ? 'الفئة' : 'Cost class'}</th><th class="hide-sm">${ar ? 'الترتيب' : 'Order'}</th><th class="hide-sm">${ar ? 'الصحة' : 'Health'}</th><th class="hide-sm">${ar ? 'السبب' : 'Why'}</th></tr></thead><tbody>
@@ -1097,6 +1120,7 @@ async function renderModels() {
 
 // ------------------------------------------------------------------ settings
 async function renderSettings() {
+  const navigation = state.navigation;
   const ar = state.language === 'ar';
   setTitle(ar ? 'الإعدادات والمنصة' : 'Settings & platform');
   const [health, platform, models, continuity, capabilities] = await Promise.all([
@@ -1106,6 +1130,7 @@ async function renderSettings() {
     api(`/api/continuity${q({ projectId: ws() })}`).catch(() => null),
     api('/api/capabilities').catch(() => null),
   ]);
+  if (navigation !== state.navigation) return;
   const providers = new Map();
   for (const model of models?.models || []) {
     const item = providers.get(model.provider) || { provider: model.provider, statuses: [], reasons: [] };
