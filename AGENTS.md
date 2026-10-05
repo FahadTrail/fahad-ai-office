@@ -51,6 +51,37 @@ npm run canary:agentic     # LIVE provider canary + failover drill (needs keys)
 npm run coding-worker      # run the Coding Agent worker (needs Supabase + keys)
 ```
 
+## Cursor Cloud specific instructions
+
+Cursor Cloud Agents are a standby development worker for this repository. They
+must use the repository's existing Node.js 22/npm setup: run `npm ci` to install
+dependencies and `npm test` (equivalent to `node --test`) for the harmless,
+offline verification suite. Do not create a parallel application, build system,
+deployment path or environment architecture.
+
+* Core and Coding Continuity are closed and production-complete. Preserve them.
+  V5 Product Experience is the current phase, but do not begin or broaden V5
+  work unless Fahad gives an explicit implementation objective.
+* The visible Office agents are exactly **CHIEF, RESEARCH, CREATIVE, PRODUCT,
+  FINANCE, CODING, AUDIT, SOCIAL, LEGAL**. Agents are durable product roles;
+  models/providers are replaceable execution engines. Keep routing free-first.
+* Never place secrets in source, commits, prompts, logs, screenshots, artifacts,
+  PR descriptions or test output. Never request or use production Supabase
+  service-role keys, provider keys, deploy credentials, VPS/root credentials or
+  production `.env` files. If a future test genuinely needs a value, use only a
+  minimum non-production/test secret supplied through Cursor's Secrets UI.
+* One coding agent writes to a branch at a time. Before continuing handed-over
+  work, inspect the named branch, linked PR, latest remote SHA, CI state and the
+  previous agent's checkpoint. Continue from that SHA without reset, rebase,
+  history rewriting or force-push unless Fahad explicitly approves it.
+* Commit small coherent checkpoints and push them frequently. Leave a concise
+  checkpoint with branch, PR, latest SHA, tests run/results, files changed,
+  current state, next action and blockers before yielding to another agent.
+* Work through a non-default branch and PR. Never push directly to `main`.
+  Never merge, deploy to production, run production migrations, enable a
+  production flag or change production secrets without Fahad's explicit owner
+  approval.
+
 Tests that need container root (isolated sandbox) skip elsewhere; CI runs them
 inside the built runtime image as root.
 
