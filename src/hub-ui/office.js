@@ -407,7 +407,7 @@ export async function openEmployee(ctx, slug) {
     const tabs = [['now', 'Now'], ['artifacts', `Artifacts (${artifacts.length})`], ['handoffs', `Handoffs (${data.handoffs?.length || 0})`], ['history', 'History'], ...(agent.directChat ? [['chats', 'Conversations']] : []), ['tools', 'Tools']];
     const chat = agent.executor === 'coding'
       ? '<a class="btn btn-primary" href="#/code">Give CODING a task</a>'
-      : agent.executor === 'chief' ? '<a class="btn btn-primary" href="#/">Ask CHIEF</a>'
+      : agent.executor === 'chief' ? '<a class="btn btn-primary" href="#/chief">Ask CHIEF</a>'
         : `<form class="drawer-chat" id="drawerChat"><label class="sr-only" for="drawerChatInput">Message ${esc(agent.label)}</label><input id="drawerChatInput" class="input" dir="auto" placeholder="Talk to ${esc(agent.label)} directly…"><button class="btn btn-primary" type="submit">Send</button></form>`;
     panel.set(`${agent.label}`, `
       <div class="drawer-head" style="--agent:${esc(agent.color || 'var(--accent)')}">

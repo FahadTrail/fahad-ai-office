@@ -147,12 +147,14 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
         if (!workspace) return sendJson(response, 404, { ok: false, error: 'WORKSPACE_NOT_FOUND' });
         const policy = await readPolicy(db, workspaceId);
         if (!policy?.enabled) return sendJson(response, 403, { ok: false, error: 'WORKSPACE_DISABLED' });
+        const priority = body.priority ?? 'normal';
+        if (!['low', 'normal', 'high', 'urgent'].includes(priority)) return sendJson(response, 400, { ok: false, error: 'INVALID_PRIORITY' });
         const requestedProvider = typeof body.provider === 'string' ? body.provider : 'auto';
         if (requestedProvider !== 'auto') {
           const selected = modelCatalog(await readModelPermissions(db, workspaceId)).find((entry) => entry.provider === requestedProvider);
           if (!selected?.selectable) return sendJson(response, 403, { ok: false, error: 'MODEL_NOT_PERMITTED' });
         }
-        const job = await store.createJob({ title: goal.slice(0, 120), goal, projectId: workspaceId, requestedProvider });
+        const job = await store.createJob({ title: goal.slice(0, 120), goal, priority, projectId: workspaceId, requestedProvider });
         return sendJson(response, 201, { ok: true, job: { id: job.id, title: job.title, goal: job.goal, status: job.status, workspaceId } });
       }
       const jobMatch = requestUrl.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);

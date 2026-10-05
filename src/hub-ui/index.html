@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -34,26 +34,29 @@
       </a>
       <button id="sidebarClose" class="icon-btn only-mobile" aria-label="Close menu">✕</button>
     </div>
-    <label class="sr-only" for="projectSelect">Project</label>
+    <label class="sr-only" for="projectSelect" data-i18n="currentProject">المشروع الحالي</label>
     <select id="projectSelect" class="input input-sm project-select"></select>
-    <a href="#/" class="btn btn-primary btn-block new-chat" id="newChat">＋ New objective for CHIEF</a>
-    <button type="button" class="search-trigger" id="searchOpen" aria-label="Search the Office (Ctrl K)"><span>Search</span><kbd>⌘K</kbd></button>
+    <a href="#/chief" class="btn btn-primary btn-block new-chat" id="newChat" data-i18n="askChief">＋ اسأل CHIEF</a>
+    <button type="button" class="search-trigger" id="searchOpen" aria-label="Search the Office (Ctrl K)"><span data-i18n="search">بحث</span><kbd dir="ltr">⌘K</kbd></button>
     <nav class="nav">
-      <a class="nav-item" href="#/" data-nav="chat"><span class="nav-ico">◆</span>Chief</a>
-      <div id="recentChats" class="recent-chats"></div>
-      <a class="nav-sub" href="#/chats" data-nav="chats">All chats</a>
-      <a class="nav-item" href="#/employees" data-nav="employees"><span class="nav-ico">☷</span>Employees</a>
-      <a class="nav-item" href="#/projects" data-nav="projects"><span class="nav-ico">▣</span>Projects</a>
-      <a class="nav-item" href="#/attention" data-nav="attention"><span class="nav-ico">●</span>Needs Fahad<span id="attentionCount" class="count count-alert hidden"></span></a>
-      <a class="nav-item" href="#/office" data-nav="office"><span class="nav-ico">◉</span>Office<span id="workingCount" class="count hidden"></span></a>
+      <div class="nav-group" data-i18n="workspace">مساحة العمل</div>
+      <a class="nav-item" href="#/" data-nav="home"><span class="nav-ico">⌂</span><span data-i18n="home">الرئيسية</span></a>
+      <a class="nav-item" href="#/projects" data-nav="projects"><span class="nav-ico">▣</span><span data-i18n="projects">المشاريع</span></a>
+      <a class="nav-item" href="#/employees" data-nav="employees"><span class="nav-ico">☷</span><span data-i18n="team">الفريق</span><span id="workingCount" class="count hidden"></span></a>
+      <a class="nav-item" href="#/work" data-nav="work"><span class="nav-ico">✓</span><span data-i18n="work">العمل</span><span id="runningCount" class="count hidden"></span></a>
+      <a class="nav-item" href="#/attention" data-nav="attention"><span class="nav-ico">●</span><span data-i18n="approvals">الموافقات</span><span id="attentionCount" class="count count-alert hidden"></span></a>
+      <a class="nav-item" href="#/continuity" data-nav="continuity"><span class="nav-ico">↻</span><span data-i18n="continuity">الاستمرارية</span></a>
+      <div class="nav-group" data-i18n="platform">المنصة</div>
+      <a class="nav-item" href="#/models" data-nav="models"><span class="nav-ico">◎</span><span data-i18n="models">السعة والتكلفة</span></a>
+      <a class="nav-item" href="#/artifacts" data-nav="artifacts"><span class="nav-ico">◧</span><span data-i18n="files">الملفات والنتائج</span></a>
+      <a class="nav-item" href="#/settings" data-nav="settings"><span class="nav-ico">⚙︎</span><span data-i18n="settings">الإعدادات</span></a>
       <details class="nav-more" id="navMore">
-        <summary class="nav-item"><span class="nav-ico">⋯</span>More</summary>
-        <a class="nav-item" href="#/tasks" data-nav="tasks"><span class="nav-ico">✔︎</span>Tasks<span id="runningCount" class="count hidden"></span></a>
-        <a class="nav-item" href="#/artifacts" data-nav="artifacts"><span class="nav-ico">◧</span>Artifacts</a>
-        <a class="nav-item" href="#/models" data-nav="models"><span class="nav-ico">◎</span>Models</a>
-        <a class="nav-item" href="#/integrations" data-nav="integrations"><span class="nav-ico">⇄</span>Integrations</a>
-        <a class="nav-item" href="#/settings" data-nav="settings"><span class="nav-ico">⚙︎</span>Settings</a>
+        <summary class="nav-item"><span class="nav-ico">⋯</span><span data-i18n="more">المزيد</span></summary>
+        <a class="nav-item" href="#/office" data-nav="office"><span class="nav-ico">◉</span><span data-i18n="liveOffice">المكتب المباشر</span></a>
+        <a class="nav-item" href="#/chats" data-nav="chats"><span class="nav-ico">◇</span><span data-i18n="chats">المحادثات</span></a>
+        <a class="nav-item" href="#/integrations" data-nav="integrations"><span class="nav-ico">⇄</span><span data-i18n="integrations">الربط</span></a>
       </details>
+      <div id="recentChats" class="recent-chats hidden" aria-hidden="true"></div>
     </nav>
   </aside>
   <div id="scrim" class="scrim hidden"></div>

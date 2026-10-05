@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const file = (name) => fileURLToPath(new URL(`../src/hub-ui/${name}`, import.meta.url));
 
-test('Coding continuity is a valid nested project view and never a top-level destination', () => {
+test('Coding continuity remains a valid nested project view and also has an owner-safe top-level destination', () => {
   execFileSync(process.execPath, ['--check', file('project.js')]);
   const project = readFileSync(file('project.js'), 'utf8');
   const app = readFileSync(file('app.js'), 'utf8');
@@ -15,7 +15,9 @@ test('Coding continuity is a valid nested project view and never a top-level des
   assert.match(project, /href="#\/project\/\$\{esc\(id\)\}\/continuity"/);
   assert.match(project, /role="tab"[^>]+aria-selected="\$\{mode === 'continuity'\}"/);
   assert.match(app, /\['map', 'continuity'\]\.includes\(sub\)/);
-  assert.doesNotMatch(topNavigation, /continuity/i);
+  assert.match(topNavigation, /href="#\/continuity"[^>]+data-nav="continuity"/);
+  assert.match(project, /export async function renderContinuityPage/);
+  assert.match(project, /Advanced details and controls/);
 });
 
 test('continuity dashboard labels every number basis and exposes controls only when enabled', () => {

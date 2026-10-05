@@ -2,6 +2,7 @@
 // project map. Loaded on demand. Every number, state, summary and decision
 // comes from /api/command-center (real rows); empty sections say so.
 import { roleMark } from './characters.js?v=__UI_VERSION__';
+import { progressWidth } from './owner-facts.js';
 
 const STATUS_TONE = { 'NEEDS FAHAD': 'needs', 'AT RISK': 'blocked', 'IN PROGRESS': 'working', 'UP TO DATE': 'completed', 'NO ACTIVITY': 'available' };
 const NODE_STATE = { done: ['COMPLETED', 'Done'], working: ['WORKING', 'Working'], waiting: ['WAITING', 'Waiting'], ready: ['QUEUED', 'Up next'], failed: ['FAILED', 'Failed'], blocked: ['BLOCKED', 'Blocked'], capacity: ['WAITING', 'Waiting for free capacity'] };
@@ -12,6 +13,17 @@ const MEMORY_HELP = {
 };
 
 let styles = null;
+function localizeProject(ctx, root) {
+  if (ctx.language !== 'ar') return;
+  const labels = { 'Command Center': 'مركز المشروع', 'Project map': 'خريطة المشروع', 'Coding continuity': 'استمرارية البرمجة', 'Switch to this project': 'استخدم هذا المشروع', overall: 'التقدم', 'Needs Fahad': 'يحتاج قرارك', 'Next actions': 'الخطوات الياية', Decisions: 'القرارات', Risks: 'المخاطر', Timeline: 'سجل النشاط', Handoffs: 'التسليمات', Artifacts: 'الملفات والنتائج', 'Open the library': 'افتح الملفات', 'Project memory & context': 'ملاحظات وسياق المشروع', 'What this project is (CHIEF reads this)': 'هدف وسياق المشروع — يقرأه CHIEF', 'Default repository for engineering tasks': 'مستودع المشروع للمهام البرمجية', 'Save context': 'احفظ السياق', 'Latest result': 'آخر نتيجة', 'No result in this project yet': 'ما في نتيجة لهذا المشروع بعد', 'Waiting for your decision': 'ينتظر قرارك', 'Already decided': 'قرارات محفوظة', 'No decisions recorded yet.': 'ما في قرارات محفوظة بعد.', 'No handoffs yet.': 'ما في تسليمات بعد.', 'No activity in the last 30 days.': 'ما في نشاط خلال آخر 30 يوم.', 'Nothing saved.': 'ما انحفظ شي بعد.', Edit: 'تعديل', Remove: 'إزالة', Add: 'إضافة', 'You': 'أنت', 'Office': 'المكتب', 'Loading…': 'جارٍ التحميل…', 'Nothing needs you in this project.': 'ما في شي ينتظر قرارك في هذا المشروع.', 'IN PROGRESS': 'قيد التنفيذ', 'NEEDS FAHAD': 'يحتاجك', 'UP TO DATE': 'محدّث', 'NO ACTIVITY': 'ما في نشاط', 'AT RISK': 'يحتاج متابعة', 'Objectives in progress': 'أهداف قيد التنفيذ', 'Latest audit': 'آخر مراجعة', 'No audit yet': 'ما في مراجعة بعد', 'AI cost · 30 days': 'تكلفة الذكاء · 30 يوم', 'Free routes first': 'المجاني أولًا', Team: 'الفريق', Available: 'متاح', Working: 'يشتغل', Waiting: 'ينتظر', Thinking: 'يفكر', Testing: 'يختبر', Reviewing: 'يراجع', Blocked: 'متوقف', Failed: 'فشل', Completed: 'مكتمل', Queued: 'التالي', 'Up next': 'التالي', 'Waiting · capacity': 'ينتظر السعة' };
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.parentElement.closest('[dir="auto"], textarea, input')) continue;
+    const label = node.nodeValue.trim();
+    if (labels[label]) node.nodeValue = node.nodeValue.replace(label, labels[label]);
+  }
+}
 function ensureStyles() {
   if (styles) return styles;
   styles = new Promise((resolve) => {
@@ -26,8 +38,11 @@ export async function renderProject(ctx, id, mode = 'center') {
   const { api, esc, q, view, setTitle } = ctx;
   await ensureStyles();
   const [{ project, memory }, center] = await Promise.all([api(`/api/projects/${id}`), api(`/api/command-center${q({ workspaceId: id })}`)]);
+  if (ctx.current && !ctx.current()) return;
   setTitle(project.name);
   const tone = STATUS_TONE[center.status] || 'available';
+  const idle = center.status === 'NO ACTIVITY';
+  const progressLabel = idle ? '—' : `${center.progress}%`;
   view.innerHTML = `<div class="cc">
     <header class="cc-hero">
       <div class="cc-hero-main">
@@ -35,7 +50,7 @@ export async function renderProject(ctx, id, mode = 'center') {
         <h1 dir="auto">${esc(project.name)}</h1>
         ${project.description ? `<p class="cc-desc" dir="auto">${esc(project.description)}</p>` : ''}
       </div>
-      <div class="cc-ring" style="--p:${center.progress}" role="img" aria-label="Overall progress ${center.progress}%"><svg viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="52"/><circle class="ring-fg" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray="${center.progress} 100"/></svg><div><strong class="num">${center.progress}%</strong><span>overall</span></div></div>
+      <div class="cc-ring" style="--p:${idle ? 0 : center.progress}" role="img" aria-label="${idle ? 'Overall progress unavailable' : `Overall progress ${center.progress}%`}"><svg viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="52"/><circle class="ring-fg" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray="${idle ? 0 : center.progress} 100"/></svg><div><strong class="num" dir="ltr">${progressLabel}</strong><span>overall</span></div></div>
     </header>
     <div class="cc-switch">
       <div class="cc-tabs" role="tablist" aria-label="View">
@@ -51,9 +66,30 @@ export async function renderProject(ctx, id, mode = 'center') {
   if (mode === 'map') await drawMap(ctx, body, center);
   else if (mode === 'continuity') await drawContinuity(ctx, body, id);
   else drawCenter(ctx, body, center, project, memory, id);
+  localizeProject(ctx, view);
   const use = view.querySelector('#useProject');
   if (use) use.onclick = () => { const select = document.querySelector('#projectSelect'); select.value = id; select.onchange(); };
-  ctx.onChange(async () => { if (location.hash.startsWith(`#/project/${id}`)) renderProject(ctx, id, mode).catch(() => {}); });
+  ctx.onChange(() => { if (location.hash.startsWith(`#/project/${id}`)) ctx.rerender(); });
+}
+
+export async function renderContinuityPage(ctx, projectId, language = 'ar') {
+  const { api, esc, q, view, setTitle, when } = ctx;
+  const ar = language !== 'en';
+  await ensureStyles();
+  const [{ project }, data] = await Promise.all([api(`/api/projects/${projectId}`), api(`/api/continuity${q({ projectId })}`)]);
+  if (ctx.current && !ctx.current()) return;
+  setTitle(ar ? 'الاستمرارية' : 'Continuity');
+  const active = data.sessions.find((session) => ['ACQUIRING', 'ACTIVE', 'DRAINING', 'CHECKPOINTING', 'HANDOFF_READY'].includes(session.status));
+  const worker = active ? data.workers.find((item) => item.key === active.workerKey) : null;
+  const checkpoint = active ? data.checkpoints.filter((item) => item.sessionId === active.id).toSorted((a, b) => Number(b.sequence || 0) - Number(a.sequence || 0))[0] : null;
+  const handoffs = data.handoffs.toSorted((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 8);
+  view.innerHTML = `<div class="page page-wide continuity-owner"><div class="page-head"><div><span class="owner-kicker">${esc(project.name)}</span><h1>${ar ? 'الاستمرارية' : 'Continuity'}</h1><p class="page-summary">${ar ? 'متابعة مبسطة للشغل البرمجي الطويل: من يعمل، آخر حفظ، والخطوة الياية.' : 'A simple live view of long-running coding: current worker, last save and next action.'}</p></div><span class="state-chip" data-state="${data.enabled ? 'COMPLETED' : 'WAITING'}">${data.enabled ? (ar ? 'المشرف شغال' : 'Supervisor on') : (ar ? 'المشرف متوقف' : 'Supervisor off')}</span></div>
+    <section class="continuity-focus ${active ? 'is-live' : ''}"><div class="continuity-focus-top">${active ? '<span class="live-pulse"></span>' : ''}<div class="grow"><span>${ar ? 'الحالة الحالية' : 'Current state'}</span><h2>${esc(worker?.displayName || (ar ? 'ما في تشغيل نشط' : 'No active run'))}</h2></div>${active ? `<span class="pill running">${esc(active.status)}</span>` : `<span class="pill available">${ar ? 'جاهز' : 'Ready'}</span>`}</div><p dir="auto">${esc(active?.objective || (ar ? 'ما في مهمة Continuity شغالة لهذا المشروع.' : 'No Continuity task is active for this project.'))}</p>
+      <div class="continuity-owner-grid"><div><span>${ar ? 'آخر حفظ' : 'Last checkpoint'}</span><strong>${checkpoint ? `#${checkpoint.sequence}` : '—'}</strong><small>${checkpoint?.createdAt ? when(checkpoint.createdAt) : (ar ? 'ما في حفظ بعد' : 'No checkpoint yet')}</small></div><div><span>${ar ? 'آخر إجراء' : 'Last action'}</span><strong>${esc(active?.status || (ar ? 'استعداد' : 'Standby'))}</strong><small>${active?.heartbeatAt ? when(active.heartbeatAt) : '—'}</small></div><div><span>${ar ? 'الخطوة الياية' : 'Next action'}</span><strong dir="auto">${esc(checkpoint?.nextExactAction || (ar ? 'بانتظار مهمة' : 'Waiting for work'))}</strong><small>${ar ? 'من آخر checkpoint' : 'From the latest checkpoint'}</small></div></div></section>
+    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'سجل التسليم' : 'Handoff history'}</h2><span class="small muted">${handoffs.length}</span></div>${handoffs.length ? handoffs.map((item) => `<div class="handoff-row"><span class="role-token">${esc(item.fromWorker)}</span><span aria-hidden="true">←</span><span class="role-token">${esc(item.toWorker)}</span><span class="grow" dir="auto">${esc(item.reason || (ar ? 'استمرار العمل' : 'Continue work'))}</span><time>${when(item.createdAt)}</time></div>`).join('') : `<div class="owner-empty"><span aria-hidden="true">✓</span><p>${ar ? 'ما صار أي تسليم في هذا المشروع.' : 'No handoffs have occurred in this project.'}</p></div>`}</section>
+    <details class="disclosure continuity-advanced"><summary>${ar ? 'التفاصيل المتقدمة والتحكم' : 'Advanced details and controls'}</summary><div class="disclosure-body" id="continuityAdvanced"><div class="drawer-loading"></div></div></details></div>`;
+  await drawContinuity(ctx, view.querySelector('#continuityAdvanced'), projectId);
+  ctx.onChange(() => { if (location.hash === '#/continuity') ctx.rerender(); });
 }
 
 function basis(value) { return `<span class="continuity-basis">${value || 'UNKNOWN'}</span>`; }
@@ -135,13 +171,14 @@ function drawCenter(ctx, body, center, project, memory, id) {
       <a class="kpi" href="#/project/${esc(id)}/map"><span>Objectives in progress</span><strong class="num">${center.objectives.active.length}</strong><em>${center.objectives.completed} completed · ${center.objectives.failed} stopped (30 days)</em></a>
       <a class="kpi ${center.needsFahad ? 'kpi-alert' : ''}" href="#/attention"><span>Needs Fahad</span><strong class="num">${center.needsFahad}</strong><em>${center.needsFahad ? 'Open Needs Fahad' : 'Nothing waiting'}</em></a>
       <div class="kpi"><span>Latest audit</span><strong>${verdict ? `<span class="verdict v-${esc(verdict.replace(/\s+/g, '-').toLowerCase())}">${esc(verdict)}</span>` : '<span class="muted">—</span>'}</strong><em>${center.latestAudit ? esc(when(center.latestAudit.at)) : 'No audit yet'}</em></div>
-      <div class="kpi"><span>AI cost · 30 days</span><strong class="num">${esc(usd(center.costUsd))}</strong><em>Free routes first</em></div>
+      <div class="kpi"><span>AI cost · 30 days</span><strong class="num" dir="ltr">${center.costUsd == null ? (ctx.language === 'ar' ? 'غير متاح' : 'Unavailable') : esc(usd(center.costUsd))}</strong><em>Free routes first</em></div>
     </section>
+    <section class="cc-card"><div class="spread"><h2 class="cc-h2">${ctx.language === 'ar' ? 'الشغل الحالي' : 'Active work'}</h2><a class="btn btn-sm" href="#/new-work">${ctx.language === 'ar' ? 'مهمة جديدة' : 'New task'}</a></div><div id="projectWork" aria-live="polite">${ctx.language === 'ar' ? 'جارٍ التحميل…' : 'Loading…'}</div></section>
     <section aria-label="Team"><h2 class="cc-h2">Team</h2><div class="cc-team">${center.roster.map((member) => `<button type="button" class="member" data-employee="${esc(member.slug)}" data-state="${esc(member.state)}">
       <span class="member-top">${roleMark(member.key, member.label)}<span class="member-name">${esc(member.label)}</span></span>
       <span class="state-chip" data-state="${esc(member.state)}">${esc(stateWord(member))}</span>
       <span class="member-task" dir="auto">${esc(member.task || (member.state === 'AVAILABLE' ? 'Available' : member.detail || ''))}</span>
-      ${member.progress != null ? `<span class="progress" role="progressbar" aria-label="${esc(member.label)} objective progress" aria-valuenow="${member.progress}" aria-valuemin="0" aria-valuemax="100"><span style="width:${Math.max(3, member.progress)}%"></span></span>` : ''}
+      ${member.progress != null ? `<span class="progress" role="progressbar" aria-label="${esc(member.label)} objective progress" aria-valuenow="${member.progress}" aria-valuemin="0" aria-valuemax="100"><span style="width:${progressWidth(member.progress)}%"></span></span>` : ''}
       ${member.latest ? `<span class="member-latest" dir="auto"><span class="xs faint">Latest result</span> ${esc(member.latest.summary)}</span>` : '<span class="member-latest xs faint">No result in this project yet</span>'}
       ${member.artifact ? `<span class="member-artifact" dir="auto">◧ ${esc(member.artifact.title || member.artifact.type)}</span>` : ''}</button>`).join('')}</div></section>
     <div class="cc-cols">
@@ -171,11 +208,20 @@ function drawCenter(ctx, body, center, project, memory, id) {
         <label class="sr-only" for="mText">Memory</label><input id="mText" class="input input-sm grow" dir="auto" placeholder="e.g. The pilot runs in Business Bay"><button class="btn btn-sm" type="submit">Add</button></form></details>`;
 
   body.querySelectorAll('[data-employee]').forEach((element) => { element.onclick = () => ctx.openEmployee(element.dataset.employee); });
+  Promise.all([ctx.api(`/api/jobs${ctx.q({ workspaceId: id })}`), ctx.api(`/api/tasks${ctx.q({ workspaceId: id })}`)]).then(([{ jobs }, { tasks }]) => {
+    const holder = body.querySelector('#projectWork');
+    if (!holder) return;
+    const jobsOpen = jobs.filter((job) => !['completed', 'failed', 'cancelled'].includes(job.status));
+    const jobIds = new Set(jobsOpen.map((job) => job.id));
+    const active = [...jobsOpen.map((job) => ({ title: job.title, href: `#/job/${job.id}` })), ...tasks.filter((task) => ['running', 'attention'].includes(task.group) && !(task.jobId && jobIds.has(task.jobId))).map((task) => ({ title: task.title, href: `#/task/${task.id}` }))];
+    holder.innerHTML = active.length ? active.map((item) => `<a class="owner-row" href="${esc(item.href)}"><strong dir="auto">${esc(item.title)}</strong><span class="grow"></span><span>${ctx.language === 'ar' ? 'تابع التقدم' : 'View progress'}</span></a>`).join('') : `<p class="muted small">${ctx.language === 'ar' ? 'ما في شغل جاري في هذا المشروع.' : 'No work is active in this project.'}</p>`;
+  }).catch(() => { const holder = body.querySelector('#projectWork'); if (holder) holder.textContent = ctx.language === 'ar' ? 'تعذر تحميل الشغل. أعد فتح المشروع للمحاولة.' : 'Work could not be loaded. Reopen the project to retry.'; });
   ctx.api(`/api/attention${ctx.q({ workspaceId: id })}`).then(({ items }) => {
     const actions = items.filter((item) => item.priority !== 'INFO');
     const holder = body.querySelector('#ccNeeds');
     if (holder) holder.innerHTML = actions.length ? actions.map((item) => `<a class="need need-${esc(item.kind)}" href="${item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="need-kind">${esc(item.category || item.kind)}${item.priority === 'URGENT' ? ' · URGENT' : ''}</span><span dir="auto">${esc(item.title)}</span><span class="xs faint" dir="auto">${esc(item.detail || '')}</span></a>`).join('') : '<p class="muted small">Nothing needs you in this project.</p>';
-  }).catch(() => {});
+    localizeProject(ctx, body);
+  }).catch(() => { const holder = body.querySelector('#ccNeeds'); if (holder) holder.textContent = ctx.language === 'ar' ? 'تعذر تحميل القرارات. افتح الموافقات للمحاولة.' : 'Decisions could not be loaded. Open Approvals to retry.'; });
   body.querySelector('#projectForm').onsubmit = async (event) => {
     event.preventDefault();
     try { await ctx.api(`/api/projects/${id}`, { method: 'PATCH', body: { description: body.querySelector('#pDesc').value, defaultRepository: body.querySelector('#pRepo').value } }); ctx.toast('Saved'); } catch (error) { ctx.toast(error.message); }

@@ -8,25 +8,27 @@ import { artifactsSummary } from './summaries.js';
 import { download, fileName, moodboardPng, printArtifact, svgToPng, toCsv, toMarkdown } from './export.js?v=__UI_VERSION__';
 
 const FAMILY = {
-  table: 'Tables', financial_model: 'Finance', chart: 'Charts', compliance_matrix: 'Legal', audit_report: 'Audit', moodboard: 'Creative', content_calendar: 'Social',
-  kanban: 'Product', timeline: 'Product', flow: 'Product', checklist: 'Checklists', evidence: 'Research', risk_matrix: 'Risk',
+  table: ['Tables', 'جداول'], financial_model: ['Finance', 'مالية'], chart: ['Charts', 'رسوم'], compliance_matrix: ['Legal', 'قانونية'], audit_report: ['Audit', 'مراجعة'], moodboard: ['Creative', 'إبداع'], content_calendar: ['Social', 'محتوى'],
+  kanban: ['Product', 'منتج'], timeline: ['Product', 'منتج'], flow: ['Product', 'منتج'], checklist: ['Checklists', 'قوائم'], evidence: ['Research', 'بحث'], risk_matrix: ['Risk', 'مخاطر'],
 };
+const familyLabel = (type, ar) => (FAMILY[type] ? FAMILY[type][ar ? 1 : 0] : '');
 const needsAttention = (artifact) => (artifact.type === 'audit_report' && ['NEEDS WORK', 'BLOCKED'].includes(artifact.data?.verdict))
   || (artifact.type === 'compliance_matrix' && (artifact.data?.items || []).some((item) => ['RISK FLAG', 'PROFESSIONAL REVIEW REQUIRED'].includes(item.classification)));
 
 export async function renderLibrary(ctx, initialType = '') {
   const { api, esc, q, ws, view, setTitle, when } = ctx;
-  setTitle('Artifacts');
+  const ar = ctx.language === 'ar';
+  setTitle(ar ? 'الملفات والنتائج' : 'Files & results');
   const state = { project: ws(), agent: '', type: initialType, since: '', status: '', search: '' };
   view.innerHTML = `<div class="page page-wide library">
-    <div class="page-head"><div><h1>Artifacts</h1><p class="page-summary" id="libSummary" aria-live="polite">Every deliverable the Office produced — open, search, export.</p></div></div>
+    <div class="page-head"><div><h1>${ar ? 'الملفات والنتائج' : 'Files & results'}</h1><p class="page-summary" id="libSummary" aria-live="polite">${ar ? 'كل نتيجة أنجزها المكتب، مرتبة حسب المشروع والمهمة — افتحها أو نزّلها.' : 'Every completed Office output, organized by project and job — preview or download.'}</p></div></div>
     <div class="lib-filters" role="search">
-      <label class="sr-only" for="libSearch">Search</label><input id="libSearch" class="input" type="search" dir="auto" placeholder="Search titles, objectives and content…">
+      <label class="sr-only" for="libSearch">${ar ? 'بحث' : 'Search'}</label><input id="libSearch" class="input" type="search" dir="auto" placeholder="${ar ? 'ابحث في العناوين والأهداف والمحتوى…' : 'Search titles, objectives and content…'}">
       <label class="sr-only" for="libProject">Project</label><select id="libProject" class="input">${ctx.workspaces().map((workspace) => `<option value="${esc(workspace.id)}">${esc(workspace.name)}</option>`).join('')}</select>
-      <label class="sr-only" for="libAgent">Employee</label><select id="libAgent" class="input"><option value="">All employees</option></select>
-      <label class="sr-only" for="libType">Type</label><select id="libType" class="input"><option value="">All types</option></select>
-      <label class="sr-only" for="libSince">Date</label><select id="libSince" class="input"><option value="">Any time</option><option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select>
-      <label class="sr-only" for="libStatus">Status</label><select id="libStatus" class="input"><option value="">Any status</option><option value="attention">Needs attention</option><option value="clear">Clear</option></select>
+      <label class="sr-only" for="libAgent">${ar ? 'الموظف' : 'Employee'}</label><select id="libAgent" class="input"><option value="">${ar ? 'كل الموظفين' : 'All employees'}</option></select>
+      <label class="sr-only" for="libType">${ar ? 'النوع' : 'Type'}</label><select id="libType" class="input"><option value="">${ar ? 'كل الأنواع' : 'All types'}</option></select>
+      <label class="sr-only" for="libSince">${ar ? 'التاريخ' : 'Date'}</label><select id="libSince" class="input"><option value="">${ar ? 'أي وقت' : 'Any time'}</option><option value="1">${ar ? 'آخر 24 ساعة' : 'Last 24 hours'}</option><option value="7">${ar ? 'آخر 7 أيام' : 'Last 7 days'}</option><option value="30">${ar ? 'آخر 30 يوم' : 'Last 30 days'}</option></select>
+      <label class="sr-only" for="libStatus">${ar ? 'الحالة' : 'Status'}</label><select id="libStatus" class="input"><option value="">${ar ? 'أي حالة' : 'Any status'}</option><option value="attention">${ar ? 'يحتاج انتباه' : 'Needs attention'}</option><option value="clear">${ar ? 'واضح' : 'Clear'}</option></select>
     </div>
     <div id="libCount" class="small muted" aria-live="polite"></div>
     <div id="libGrid" class="lib-grid"><div class="drawer-loading"></div></div></div>`;
@@ -37,11 +39,11 @@ export async function renderLibrary(ctx, initialType = '') {
     const data = await api(`/api/artifacts${q({ workspaceId: state.project, limit: 200 })}`);
     artifacts = data.artifacts;
     types = data.types;
-    view.querySelector('#libSummary').textContent = artifactsSummary(artifacts);
+    view.querySelector('#libSummary').textContent = ar ? (artifacts.length ? `${artifacts.length} نتائج محفوظة — افتح أو نزّل اللي تحتاجه.` : 'ما في نتائج بعد. بتظهر هني أول ما ينجز المكتب الشغل.') : artifactsSummary(artifacts);
     const agents = [...new Map(artifacts.map((artifact) => [artifact.agent, artifact.agentLabel])).entries()];
-    view.querySelector('#libAgent').innerHTML = `<option value="">All employees</option>${agents.map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join('')}`;
+    view.querySelector('#libAgent').innerHTML = `<option value="">${ar ? 'كل الموظفين' : 'All employees'}</option>${agents.map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join('')}`;
     view.querySelector('#libAgent').value = agents.some(([key]) => key === state.agent) ? state.agent : '';
-    view.querySelector('#libType').innerHTML = `<option value="">All types</option>${types.map((type) => `<option value="${esc(type)}">${esc(ctx.labels[type] || type)}</option>`).join('')}`;
+    view.querySelector('#libType').innerHTML = `<option value="">${ar ? 'كل الأنواع' : 'All types'}</option>${types.map((type) => `<option value="${esc(type)}">${esc(ctx.labels[type] || type)}</option>`).join('')}`;
     view.querySelector('#libType').value = state.type;
     draw();
   };
@@ -59,14 +61,14 @@ export async function renderLibrary(ctx, initialType = '') {
   };
   const draw = () => {
     const list = artifacts.filter(matches);
-    view.querySelector('#libCount').textContent = `${list.length} of ${artifacts.length} deliverable${artifacts.length === 1 ? '' : 's'}`;
+    view.querySelector('#libCount').textContent = ar ? `${list.length} من ${artifacts.length} نتيجة` : `${list.length} of ${artifacts.length} deliverable${artifacts.length === 1 ? '' : 's'}`;
     view.querySelector('#libGrid').innerHTML = list.length ? list.map((artifact, index) => `<button type="button" class="lib-card" data-index="${artifacts.indexOf(artifact)}" style="--i:${index}">
-      <span class="lib-head">${roleMark(artifact.agent, artifact.agentLabel)}<span class="lib-type">${esc(FAMILY[artifact.type] || '')} · ${esc(ctx.labels[artifact.type] || artifact.type)}</span>${needsAttention(artifact) ? '<span class="lib-flag">Needs attention</span>' : ''}</span>
+      <span class="lib-head">${roleMark(artifact.agent, artifact.agentLabel)}<span class="lib-type">${esc(familyLabel(artifact.type, ar))} · ${esc(ctx.labels[artifact.type] || artifact.type)}</span>${needsAttention(artifact) ? `<span class="lib-flag">${ar ? 'يحتاج انتباه' : 'Needs attention'}</span>` : ''}</span>
       <span class="lib-title" dir="auto">${esc(artifact.title || ctx.labels[artifact.type] || artifact.type)}</span>
       <span class="lib-preview">${artifactPreview(artifact)}</span>
       <span class="lib-meta"><span>${esc(artifact.agentLabel)}</span><span>${esc(when(artifact.at))}</span></span>
       ${artifact.objective ? `<span class="lib-objective" dir="auto">${esc(artifact.objective)}</span>` : ''}</button>`).join('')
-      : `<div class="empty"><h3>${artifacts.length ? 'Nothing matches' : 'No deliverables yet'}</h3><p>${artifacts.length ? 'Try another filter or search.' : 'Ask CHIEF for a plan, budget, brand direction or review — the employees’ deliverables appear here.'}</p></div>`;
+      : `<div class="empty"><h3>${artifacts.length ? (ar ? 'ما في نتيجة تطابق البحث' : 'Nothing matches') : (ar ? 'ما في نتائج بعد' : 'No deliverables yet')}</h3><p>${artifacts.length ? (ar ? 'غيّر الفلتر أو كلمات البحث.' : 'Try another filter or search.') : (ar ? 'كلّف CHIEF، وبتظهر نتائج الموظفين هني.' : 'Ask CHIEF for a plan, budget, brand direction or review — the employees’ deliverables appear here.')}</p></div>`;
     view.querySelectorAll('.lib-card').forEach((card) => { card.onclick = () => openArtifact(ctx, artifacts[Number(card.dataset.index)]); });
   };
   const bindFilter = (id, key, reload = false) => { view.querySelector(id).oninput = (event) => { state[key] = event.target.value; if (reload) load().catch((error) => ctx.toast(error.message)); else draw(); }; };
