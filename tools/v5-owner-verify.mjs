@@ -32,7 +32,7 @@ await mkdir('/opt/cursor/artifacts', { recursive: true });
 const errors = [];
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
-  await context.addInitScript(() => localStorage.setItem('hub-workspace-id', '11111111-1111-4111-8111-111111111111'));
+  await context.addInitScript(() => { if (!localStorage.getItem('hub-workspace-id')) localStorage.setItem('hub-workspace-id', '11111111-1111-4111-8111-111111111111'); });
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(url);
@@ -114,7 +114,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
   await page.screenshot({ path: '/opt/cursor/artifacts/v5-settings-mobile-en.png', fullPage: true });
   const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
-  await desktop.addInitScript(() => localStorage.setItem('hub-workspace-id', '11111111-1111-4111-8111-111111111111'));
+  await desktop.addInitScript(() => { if (!localStorage.getItem('hub-workspace-id')) localStorage.setItem('hub-workspace-id', '11111111-1111-4111-8111-111111111111'); });
   const wide = await desktop.newPage();
   wide.on('pageerror', (error) => errors.push(error.message));
   await wide.goto(url);
@@ -141,6 +141,9 @@ try {
   const projectText = await wide.locator('.project-card-v5').first().innerText();
   assert.equal(projectText.includes('Unavailable') && projectText.includes('$0'), false);
   assert.match(projectText, /\$/);
+  const qahwa = await wide.locator('.project-card-v5', { hasText: 'Qahwa Run' }).innerText();
+  assert.match(qahwa, /\$0\.0073/);
+  assert.equal(qahwa.includes('Unavailable'), false);
   await wide.screenshot({ path: '/opt/cursor/artifacts/v5-projects-desktop-en-dark.png', fullPage: true });
   for (const route of ['/', '/projects', '/employees', '/work', '/new-work', '/attention', '/continuity', '/models', '/artifacts', '/settings']) {
     await wide.goto(`${url}#${route}`);

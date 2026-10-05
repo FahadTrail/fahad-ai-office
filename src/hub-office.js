@@ -500,13 +500,14 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
       const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
       const live = await workspaceActivity(db, workspaceId, 30 * 86400_000);
       const jobIds = live.jobs.map((job) => job.id);
-      const [project, artifacts, memory, knowledge, costs] = await Promise.all([
+      const [project, artifacts, memory, knowledge, costResult] = await Promise.all([
         rows(db.from('projects').select('id,name,description,default_repository,created_at').eq('id', workspaceId)).then((list) => list[0] || null),
         optionalRows(db.from('artifacts').select(ARTIFACT_COLUMNS).eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(40)),
         optionalRows(db.from('project_memory').select('kind,content,created_at').eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(60)),
         optionalRows(db.from('knowledge_items').select('agent_slug,title,source_url,source_date,expires_at').eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(40)),
-        jobIds.length ? db.from('jobs').select('cost_usd').in('id', jobIds).then(({ data, error }) => (error ? null : data || [])) : [],
+        jobIds.length ? db.from('jobs').select('cost_usd').in('id', jobIds) : Promise.resolve(null),
       ]);
+      const costs = costResult == null ? [] : costResult.error ? null : costResult.data || [];
       if (!project) return sendJson(response, 404, { ok: false, error: 'PROJECT_NOT_FOUND' }), true;
       const agentSlugById = new Map(live.agents.map((agent) => [agent.id, agent.slug]));
       const taskAgent = new Map(live.tasks.map((task) => [task.id, agentSlugById.get(task.agent_id)]));
