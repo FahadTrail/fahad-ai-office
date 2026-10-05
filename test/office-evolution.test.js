@@ -158,6 +158,7 @@ test('the Project Command Center summarizes real rows only', () => {
   assert.equal(view.latestAudit.verdict, 'NEEDS WORK');
   assert.deepEqual(view.risks.map((risk) => `${risk.from}:${risk.text}`), ['AUDIT:No backups', 'LEGAL:Privacy notice']);
   assert.equal(view.costUsd, 0.03);
+  assert.equal(commandCenter({ project: { id: 'p', name: 'Harbor' }, live, states: new Map(), costs: null }).costUsd, null);
   assert.deepEqual(view.memory.byKind, { brand_decision: 1 });
   assert.deepEqual(view.team, [], 'nobody is shown working without a task row');
 });

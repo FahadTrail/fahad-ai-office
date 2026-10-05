@@ -3,8 +3,9 @@
 // PLAYWRIGHT_MODULE and PW_CHROMIUM may point at an existing installation.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { startPreview } from './hub-preview.mjs';
+import { ownerWorkCounts } from '../src/hub-ui/owner-facts.js';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -26,15 +27,40 @@ db.rpc = async (name, args) => {
   }
   return originalRpc(name, args);
 };
-const browser = await chromium.launch({ headless: true, executablePath: process.env.PW_CHROMIUM || undefined });
+const browser = await chromium.launch({ headless: true, executablePath: process.env.PW_CHROMIUM || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+await mkdir('/opt/cursor/artifacts', { recursive: true });
 const errors = [];
 try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+  await context.addInitScript(() => localStorage.setItem('hub-workspace-id', '11111111-1111-4111-8111-111111111111'));
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(url);
   await page.locator('.owner-hero').waitFor();
   assert.equal(await page.locator('html').getAttribute('dir'), 'rtl');
+  const workspaceId = await page.locator('#projectSelect').inputValue();
+  const read = (path) => page.evaluate(async (apiPath) => (await fetch(apiPath)).json(), path);
+  const [jobData, taskData, office] = await Promise.all([
+    read(`./api/jobs?workspaceId=${workspaceId}`),
+    read(`./api/tasks?workspaceId=${workspaceId}`),
+    read(`./api/office?workspaceId=${workspaceId}`),
+  ]);
+  const counts = ownerWorkCounts({ jobs: jobData.jobs, tasks: taskData.tasks, agents: office.agents });
+  const employeesOnGoal = office.agents.filter((agent) => ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state) && agent.assignment?.jobId && jobData.jobs.some((job) => job.id === agent.assignment.jobId && !['completed', 'failed', 'cancelled'].includes(job.status))).length;
+  assert.ok(employeesOnGoal > 0, 'preview should have employees working on the active objective');
+  assert.equal(await page.locator('[data-owner-objectives]').innerText(), String(counts.objectives));
+  assert.notEqual(Number(await page.locator('[data-owner-objectives]').innerText()), counts.objectives + employeesOnGoal);
+  assert.equal(await page.locator('#runningCount').innerText(), String(counts.running));
+  const resultHrefs = await page.locator('[data-latest-result]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href')));
+  assert.ok(resultHrefs.length > 1);
+  assert.equal(new Set(resultHrefs).size, resultHrefs.length, 'latest results must not repeat the same job or task');
+  const healthLabel = await page.locator('[data-owner-health]').innerText();
+  assert.notEqual(healthLabel, '0');
+  assert.match(healthLabel, /سليمة|غير متاحة|غير مؤكدة|فيها خلل/);
+  for (const cost of await page.locator('.owner-cost dd').allInnerTexts()) {
+    if (cost.includes('غير متاح')) assert.equal(cost.includes('$'), false, cost);
+  }
+  await page.screenshot({ path: '/opt/cursor/artifacts/v5-home-mobile-ar.png', fullPage: true });
   await page.locator('#menuButton').click();
   await page.locator('[data-nav="projects"]').click();
   await page.locator('#createProject').click();
@@ -86,6 +112,42 @@ try {
   await page.getByRole('heading', { name: 'Settings & platform' }).waitFor();
   assert.equal(await page.locator('html').getAttribute('dir'), 'ltr');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await page.screenshot({ path: '/opt/cursor/artifacts/v5-settings-mobile-en.png', fullPage: true });
+  const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+  await desktop.addInitScript(() => localStorage.setItem('hub-workspace-id', '11111111-1111-4111-8111-111111111111'));
+  const wide = await desktop.newPage();
+  wide.on('pageerror', (error) => errors.push(error.message));
+  await wide.goto(url);
+  await wide.locator('.owner-hero').waitFor();
+  assert.equal(await wide.locator('[data-owner-objectives]').innerText(), String(counts.objectives));
+  const cleared = wide.waitForFunction(() => document.querySelector('[data-owner-objectives]')?.textContent === '0' && document.querySelector('#runningCount')?.classList.contains('hidden'));
+  await wide.locator('#projectSelect').selectOption({ label: 'Fahad AI Office' });
+  await cleared;
+  const restored = wide.waitForFunction((expected) => document.querySelector('[data-owner-objectives]')?.textContent === expected, String(counts.objectives));
+  await wide.locator('#projectSelect').selectOption({ label: 'Qahwa Run' });
+  await restored;
+  await wide.getByText('Qahwa Run — launch plan').waitFor();
+  await wide.screenshot({ path: '/opt/cursor/artifacts/v5-home-desktop-ar-light.png', fullPage: true });
+  await wide.goto(`${url}#/settings`);
+  await wide.locator('[data-theme-choice="dark"]').click();
+  await wide.locator('[data-language="en"]').click();
+  await wide.getByRole('heading', { name: 'Settings & platform' }).waitFor();
+  await wide.goto(`${url}#/`);
+  await wide.locator('.owner-hero').waitFor();
+  assert.equal(await wide.locator('html').getAttribute('dir'), 'ltr');
+  await wide.screenshot({ path: '/opt/cursor/artifacts/v5-home-desktop-en-dark.png', fullPage: true });
+  await wide.goto(`${url}#/projects`);
+  await wide.locator('.project-card-v5').first().waitFor();
+  const projectText = await wide.locator('.project-card-v5').first().innerText();
+  assert.equal(projectText.includes('Unavailable') && projectText.includes('$0'), false);
+  assert.match(projectText, /\$/);
+  await wide.screenshot({ path: '/opt/cursor/artifacts/v5-projects-desktop-en-dark.png', fullPage: true });
+  for (const route of ['/', '/projects', '/employees', '/work', '/new-work', '/attention', '/continuity', '/models', '/artifacts', '/settings']) {
+    await wide.goto(`${url}#${route}`);
+    await wide.waitForTimeout(300);
+    assert.equal(await wide.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `desktop overflow ${route}`);
+  }
+  await desktop.close();
   assert.deepEqual(errors, []);
   if (process.env.AXE_SCRIPT) {
     const axe = await readFile(process.env.AXE_SCRIPT, 'utf8');

@@ -1,6 +1,7 @@
 // Fahad AI Office — Workspace V2 client. No framework: hash routes render
 // views from the Hub's JSON API; polling keeps running work live.
 import { attentionSummary, chatsSummary, employeesSummary, integrationsSummary, modelsSummary, projectsSummary, tasksSummary } from './summaries.js';
+import { capacitySentence, countLabel, healthFacts, knownNumber, latestResults, ownerWorkCounts, progressWidth, projectFacts } from './owner-facts.js';
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 import { loginErrorMessage } from './auth.js';
 import { ARTIFACT_LABELS, renderArtifact, splitArtifacts } from './artifacts.js';
@@ -11,12 +12,12 @@ const COPY = {
   ar: {
     askChief: '＋ اسأل CHIEF', workspace: 'مساحة العمل', home: 'الرئيسية', projects: 'المشاريع', team: 'الفريق', work: 'العمل', approvals: 'الموافقات',
     continuity: 'الاستمرارية', platform: 'المنصة', models: 'السعة والتكلفة', files: 'الملفات والنتائج', settings: 'الإعدادات', more: 'المزيد',
-    liveOffice: 'المكتب المباشر', chats: 'المحادثات', integrations: 'الربط',
+    liveOffice: 'المكتب المباشر', chats: 'المحادثات', integrations: 'الربط', search: 'بحث', currentProject: 'المشروع الحالي',
   },
   en: {
     askChief: '＋ Ask CHIEF', workspace: 'Workspace', home: 'Home', projects: 'Projects', team: 'Team', work: 'Work', approvals: 'Approvals',
     continuity: 'Continuity', platform: 'Platform', models: 'Capacity & cost', files: 'Files & results', settings: 'Settings', more: 'More',
-    liveOffice: 'Live Office', chats: 'Chats', integrations: 'Integrations',
+    liveOffice: 'Live Office', chats: 'Chats', integrations: 'Integrations', search: 'Search', currentProject: 'Current project',
   },
 };
 function savedLanguage() { try { return localStorage.getItem('hub-language') || 'ar'; } catch { return 'ar'; } }
@@ -72,16 +73,33 @@ function when(value) {
 }
 function duration(ms) {
   if (ms == null) return '—';
+  const ar = state.language === 'ar';
   const minutes = Math.floor(ms / 60000);
-  if (minutes < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
-  if (minutes < 60) return `${minutes} min`;
-  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+  if (minutes < 1) return ar ? `${Math.max(1, Math.round(ms / 1000))} ث` : `${Math.max(1, Math.round(ms / 1000))}s`;
+  if (minutes < 60) return ar ? `${minutes} د` : `${minutes} min`;
+  return ar ? `${Math.floor(minutes / 60)} س ${minutes % 60} د` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 const usd = (value) => `$${Number(value || 0).toFixed(Number(value || 0) < 0.1 ? 4 : 2)}`;
-const tokens = (value) => (value >= 1e6 ? `${(value / 1e6).toFixed(2)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}K` : String(value || 0));
+const unavailableText = () => (state.language === 'ar' ? 'غير متاح' : 'Unavailable');
+const moneyText = (value) => (knownNumber(value) == null ? unavailableText() : usd(knownNumber(value)));
+const countText = (value) => countLabel(value) ?? '—';
+const percentText = (value) => (knownNumber(value) == null ? '—' : `${knownNumber(value)}%`);
+const tokens = (value) => (knownNumber(value) == null ? '—' : value >= 1e6 ? `${(value / 1e6).toFixed(2)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}K` : String(value));
 const modelName = (route) => String(route || '').split(':').slice(1).join(':') || route || '';
 const STATUS_WORDS = { queued: 'Queued', running: 'Running', awaiting_approval: 'Needs approval', blocked: 'Needs you', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', planning: 'Thinking', attention: 'Needs attention' };
-const pill = (status, label) => `<span class="pill ${esc(status)}">${esc(label || STATUS_WORDS[status] || status)}</span>`;
+function statusLabel(status) {
+  const arabic = { queued: 'بالانتظار', running: 'قيد التنفيذ', awaiting_approval: 'يحتاج موافقة', blocked: 'يحتاجك', completed: 'مكتمل', failed: 'فشل', cancelled: 'ملغي', planning: 'تفكير', attention: 'يحتاج انتباه' };
+  if (state.language === 'ar' && arabic[status]) return arabic[status];
+  return STATUS_WORDS[status] || status;
+}
+function agentStateLabel(name) {
+  const arabic = { AVAILABLE: 'متاح', QUEUED: 'التالي', THINKING: 'يفكر', WORKING: 'يشتغل', TESTING: 'يختبر', REVIEWING: 'يراجع', WAITING: 'ينتظر', BLOCKED: 'متوقف', FAILED: 'فشل', 'NEEDS FAHAD': 'يحتاجك', COMPLETED: 'أنجز' };
+  if (state.language === 'ar' && arabic[name]) return arabic[name];
+  if (name === 'AVAILABLE') return 'Available';
+  if (name === 'NEEDS FAHAD') return 'Needs you';
+  return name || '';
+}
+const pill = (status, label) => `<span class="pill ${esc(status)}">${esc(label || statusLabel(status))}</span>`;
 function every(ms, fn) { const id = setInterval(fn, ms); state.timers.push(id); return id; }
 function clearTimers() { state.timers.forEach(clearInterval); state.timers = []; const leave = state.leave; state.leave = []; leave.forEach((fn) => { try { fn(); } catch {} }); }
 function setTitle(text) { document.title = text ? `${text} · Fahad AI Office` : 'Fahad AI Office'; $('#topTitle').textContent = text || 'Fahad AI Office'; }
@@ -179,7 +197,8 @@ async function boot() {
     try { localStorage.setItem('hub-workspace-id', select.value); } catch {}
     refreshSidebar();
     connectLive();
-    location.hash = '#/';
+    if (!location.hash || location.hash === '#/' || location.hash === '#/home') route();
+    else location.hash = '#/';
   };
   $('#menuButton').onclick = () => toggleSidebar(true);
   $('#sidebarClose').onclick = () => toggleSidebar(false, { restoreFocus: true });
@@ -223,14 +242,15 @@ function toggleSidebar(open, { restoreFocus = false } = {}) {
 async function refreshSidebar() {
   if (!ws()) return;
   try {
-    const [{ conversations }, attention, { tasks }, office] = await Promise.all([
+    const [{ conversations }, attention, taskData, office, jobData] = await Promise.all([
       api(`/api/conversations${q({ workspaceId: ws() })}`),
       api(`/api/attention${q({ workspaceId: ws() })}`),
-      api(`/api/tasks${q({ workspaceId: ws(), status: 'running' })}`),
+      api(`/api/tasks${q({ workspaceId: ws() })}`).catch(() => null),
       api(`/api/office${q({ workspaceId: ws() })}`).catch(() => null),
+      api(`/api/jobs${q({ workspaceId: ws() })}`).catch(() => null),
     ]);
-    const working = office ? office.agents.filter((agent) => ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state)).length : 0;
-    $('#workingCount').textContent = working;
+    const working = office ? office.agents.filter((agent) => ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state)).length : null;
+    $('#workingCount').textContent = working ?? '';
     $('#workingCount').classList.toggle('hidden', !working);
     state.conversations = conversations;
     state.attention = attention.counts;
@@ -242,8 +262,15 @@ async function refreshSidebar() {
     count.classList.toggle('hidden', !attention.counts.action);
     $('#topAttention').classList.toggle('hidden', !attention.counts.action);
     const running = $('#runningCount');
-    running.textContent = tasks.length;
-    running.classList.toggle('hidden', !tasks.length);
+    if (!taskData || !jobData) {
+      running.textContent = '';
+      running.classList.add('hidden');
+    } else {
+      const counts = ownerWorkCounts({ jobs: jobData.jobs, tasks: taskData.tasks, agents: office?.agents || [] });
+      running.textContent = counts.running;
+      running.dataset.ownerRunning = String(counts.running);
+      running.classList.toggle('hidden', !counts.running);
+    }
   } catch {}
 }
 function markNav(key) {
@@ -256,15 +283,17 @@ function markNav(key) {
 // ------------------------------------------------------------------ search
 // One palette for conversations, projects, objectives, tasks, artifacts,
 // employees and memory. Debounced; a few results per kind from the server.
-const SEARCH_KIND = { employee: 'Employee', project: 'Project', conversation: 'Chat', objective: 'Objective', task: 'Task', artifact: 'Artifact', memory: 'Memory' };
+const SEARCH_KIND = { employee: ['Employee', 'موظف'], project: ['Project', 'مشروع'], conversation: ['Chat', 'محادثة'], objective: ['Objective', 'هدف'], task: ['Task', 'مهمة'], artifact: ['Artifact', 'ملف'], memory: ['Memory', 'ملاحظة'] };
+const searchKind = (kind) => (SEARCH_KIND[kind] ? SEARCH_KIND[kind][state.language === 'ar' ? 1 : 0] : kind);
 function openSearch() {
   if ($('.palette')) return;
   const previous = document.activeElement;
   const element = document.createElement('div');
   element.className = 'palette';
-  element.innerHTML = `<div class="palette-scrim"></div><div class="palette-panel" role="dialog" aria-modal="true" aria-label="Search the Office">
-    <input class="palette-input" id="paletteInput" dir="auto" placeholder="Search chats, projects, tasks, artifacts, employees, memory…" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="paletteList">
-    <ul class="palette-list" id="paletteList" role="listbox"><li class="palette-hint">Type at least two letters. Enter opens, Esc closes.</li></ul></div>`;
+  const ar = state.language === 'ar';
+  element.innerHTML = `<div class="palette-scrim"></div><div class="palette-panel" role="dialog" aria-modal="true" aria-label="${ar ? 'بحث المكتب' : 'Search the Office'}">
+    <input class="palette-input" id="paletteInput" dir="auto" placeholder="${ar ? 'ابحث في المحادثات والمشاريع والمهام والملفات والفريق…' : 'Search chats, projects, tasks, artifacts, employees, memory…'}" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="paletteList">
+    <ul class="palette-list" id="paletteList" role="listbox"><li class="palette-hint">${ar ? 'اكتب حرفين على الأقل. Enter يفتح، وEsc يغلق.' : 'Type at least two letters. Enter opens, Esc closes.'}</li></ul></div>`;
   document.body.append(element);
   const input = element.querySelector('#paletteInput');
   const list = element.querySelector('#paletteList');
@@ -274,8 +303,8 @@ function openSearch() {
   let seq = 0;
   const close = () => { element.remove(); previous?.focus?.(); };
   const paint = () => {
-    list.innerHTML = results.length ? results.map((result, index) => `<li role="option" id="opt-${index}" aria-selected="${index === active}" class="palette-item" data-index="${index}"><span class="palette-kind">${esc(SEARCH_KIND[result.kind] || result.kind)}</span><span class="grow" dir="auto">${esc(result.title)}</span>${result.detail ? `<span class="xs faint" dir="auto">${esc(result.detail)}</span>` : ''}</li>`).join('')
-      : `<li class="palette-hint">${input.value.trim().length < 2 ? 'Type at least two letters. Enter opens, Esc closes.' : 'Nothing found in this project.'}</li>`;
+    list.innerHTML = results.length ? results.map((result, index) => `<li role="option" id="opt-${index}" aria-selected="${index === active}" class="palette-item" data-index="${index}"><span class="palette-kind">${esc(searchKind(result.kind))}</span><span class="grow" dir="auto">${esc(result.title)}</span>${result.detail ? `<span class="xs faint" dir="auto">${esc(result.detail)}</span>` : ''}</li>`).join('')
+      : `<li class="palette-hint">${input.value.trim().length < 2 ? (state.language === 'ar' ? 'اكتب حرفين على الأقل. Enter يفتح، وEsc يغلق.' : 'Type at least two letters. Enter opens, Esc closes.') : (state.language === 'ar' ? 'ما لقينا شي في هذا المشروع.' : 'Nothing found in this project.')}</li>`;
     input.setAttribute('aria-activedescendant', results.length ? `opt-${active}` : '');
     list.querySelectorAll('.palette-item').forEach((item) => { item.onclick = () => go(Number(item.dataset.index)); });
   };
@@ -330,7 +359,7 @@ async function renderHome() {
   const ar = state.language === 'ar';
   setTitle(ar ? 'الرئيسية' : 'Home');
   view.innerHTML = `<div class="page page-wide owner-home"><div class="owner-loading"><div class="drawer-loading"></div><p class="muted">${ar ? 'نجمع حالة المكتب الحقيقية…' : 'Loading the live Office state…'}</p></div></div>`;
-  const [center, attention, office, capacity, platform, workTasks, jobData] = await Promise.all([
+  const [center, attention, office, capacity, platform, workTasks, jobData, healthz] = await Promise.all([
     api(`/api/command-center${q({ workspaceId: ws() })}`),
     api(`/api/attention${q({ workspaceId: ws() })}`),
     api(`/api/office${q({ workspaceId: ws() })}`),
@@ -338,50 +367,47 @@ async function renderHome() {
     api(`/api/platform${q({ workspaceId: ws() })}`).catch(() => null),
     api(`/api/tasks${q({ workspaceId: ws() })}`),
     api(`/api/jobs${q({ workspaceId: ws() })}`),
+    fetch('./healthz').then((response) => (response.ok ? response.json() : null)).catch(() => null),
   ]);
   if (navigation !== state.navigation) return;
+  const counts = ownerWorkCounts({ jobs: jobData.jobs, tasks: workTasks.tasks, agents: office.agents || [] });
   const active = jobData.jobs.filter((job) => !['completed', 'failed', 'cancelled'].includes(job.status));
-  const completed = { tasks: workTasks.tasks.filter((task) => task.group === 'completed') };
   const codingNow = workTasks.tasks.filter((task) => ['running', 'attention'].includes(task.group));
   const needs = (attention.items || []).filter((item) => item.priority !== 'INFO');
-  const results = (attention.items || []).filter((item) => item.priority === 'INFO');
-  const working = (office.agents || []).filter((agent) => ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state));
   const waiting = (office.agents || []).filter((agent) => ['WAITING', 'NEEDS FAHAD', 'BLOCKED'].includes(agent.state));
-  const healthOk = platform?.systemHealth?.hub === 'ok' && platform?.systemHealth?.database === 'ok';
+  const health = healthFacts({ health: healthz, platform });
+  const healthWord = { healthy: ar ? 'سليمة' : 'Healthy', unhealthy: ar ? 'فيها خلل' : 'Check failed', unknown: ar ? 'غير مؤكدة' : 'Unknown', unavailable: ar ? 'غير متاحة' : 'Unavailable' }[health.state];
   const freeState = capacity?.summary?.freeCapacityNow || 'unknown';
   const paid = capacity?.capacity?.paidFallback || {};
   const monthCost = capacity?.capacity?.costUsd?.month;
-  const costLabel = (value) => value == null ? (ar ? 'غير متاح' : 'Unavailable') : usd(value);
-  const latest = [...results.map((item) => ({ ...item, href: item.taskId ? `#/task/${item.taskId}` : item.jobId ? `#/job/${item.jobId}` : '#/artifacts' })),
-    ...jobData.jobs.filter((job) => job.status === 'completed').map((job) => ({ title: job.title, at: job.completed_at || job.created_at, href: `#/job/${job.id}` })),
-    ...(completed.tasks || []).slice(0, 4).map((task) => ({ title: task.title, detail: task.summary, at: task.completedAt, href: `#/task/${task.id}` }))]
-    .toSorted((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 5);
+  const latest = latestResults({ attention: (attention.items || []).filter((item) => item.priority === 'INFO'), jobs: jobData.jobs, tasks: workTasks.tasks });
+  const objectiveNote = counts.employeesOnObjectives ? (ar ? `${counts.employeesOnObjectives} من الفريق على نفس الأهداف` : `${counts.employeesOnObjectives} on these objectives`) : (ar ? 'ما في فريق شغال عليها' : 'No one is working on them yet');
   const linkFor = (item) => item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`;
-  const metric = (label, value, note, tone = '') => `<div class="owner-metric ${tone}"><span>${label}</span><strong class="num">${value}</strong><small>${note}</small></div>`;
+  const metric = (label, value, note, tone = '', extra = '') => `<div class="owner-metric ${tone}"><span>${label}</span><strong class="num" dir="ltr" ${extra}>${value}</strong><small>${note}</small></div>`;
   const empty = (text, action = '') => `<div class="owner-empty"><span aria-hidden="true">✓</span><p>${text}</p>${action}</div>`;
   view.innerHTML = `<div class="page page-wide owner-home">
     <header class="owner-hero"><div><span class="owner-kicker">FAHAD AI OFFICE</span><h1>${ar ? 'هلا فهد، هذا مكتبك اليوم' : 'Your Office, at a glance'}</h1><p>${ar ? 'كل المهم قدامك: الشغل الجاري، اللي ينتظر قرارك، السعة، والنتائج.' : 'Running work, owner decisions, capacity and results — in one place.'}</p></div>
       <div class="owner-actions"><a class="btn btn-primary btn-lg" href="#/chief">${ar ? 'اسأل CHIEF' : 'Ask CHIEF'}</a><a class="btn btn-lg" href="#/projects">${ar ? 'افتح المشاريع' : 'Open projects'}</a></div></header>
     <section class="owner-metrics" aria-label="${ar ? 'ملخص المكتب' : 'Office summary'}">
-      ${metric(ar ? 'أهداف شغالة' : 'Active objectives', active.length, ar ? `${working.length} موظفين يعملون` : `${working.length} employees working`, active.length ? 'tone-live' : '')}
+      ${metric(ar ? 'أهداف شغالة' : 'Active objectives', counts.objectives, objectiveNote, counts.objectives ? 'tone-live' : '', 'data-owner-objectives')}
       ${metric(ar ? 'ينتظر' : 'Waiting', waiting.length, ar ? 'سعة أو مدخلات' : 'Capacity or input', waiting.length ? 'tone-warn' : '')}
       ${metric(ar ? 'يحتاج قرارك' : 'Needs your attention', needs.length, needs.length ? (ar ? 'موافقات أو أسئلة أو عوائق' : 'Approvals, questions or blockers') : (ar ? 'ما عليك شي' : 'All clear'), needs.length ? 'tone-alert' : '')}
-      ${metric(ar ? 'الخدمة والبيانات' : 'Hub & database', healthOk ? (ar ? 'سليمة' : 'Healthy') : (ar ? 'غير مؤكد' : 'Unknown'), ar ? 'حالة الحاويات في تفاصيل المنصة' : 'Container status requires platform checks', healthOk ? 'tone-good' : 'tone-warn')}
+      ${metric(ar ? 'الخدمة والبيانات' : 'Hub & database', healthWord, ar ? 'حالة الحاويات في تفاصيل المنصة' : 'Container status requires platform checks', health.state === 'healthy' ? 'tone-good' : 'tone-warn', 'data-owner-health')}
     </section>
     <div class="owner-grid">
       <section class="owner-card owner-span-2"><div class="owner-card-head"><div><span class="owner-label">${ar ? 'المشروع الحالي' : 'Active project'}</span><h2 dir="auto">${esc(center.project?.name || state.workspaces.find((item) => item.id === ws())?.name || '')}</h2></div><a href="#/project/${esc(ws())}">${ar ? 'افتح مركز المشروع' : 'Open project center'}</a></div>
         ${center.project?.description ? `<p class="owner-objective" dir="auto">${esc(center.project.description)}</p>` : `<p class="muted">${ar ? 'أضف هدف وسياق المشروع عشان CHIEF يشتغل بدقة.' : 'Add the objective and context so CHIEF can work precisely.'}</p>`}
-        ${active.length ? `<div class="owner-live-list">${active.slice(0, 4).map((job) => `<a href="#/job/${esc(job.id)}"><span class="live-pulse"></span><span class="grow" dir="auto"><strong>${esc(job.title)}</strong><small>${job.progress ?? 0}% ${ar ? 'مكتمل' : 'complete'}</small></span><span class="progress"><span style="width:${Math.max(3, job.progress || 0)}%"></span></span></a>`).join('')}</div>` : empty(ar ? 'ما في هدف شغال الحين.' : 'No objective is running right now.', `<a class="btn btn-sm" href="#/chief">${ar ? 'ابدأ مع CHIEF' : 'Start with CHIEF'}</a>`)}</section>
+        ${active.length ? `<div class="owner-live-list">${active.slice(0, 4).map((job) => `<a href="#/job/${esc(job.id)}"><span class="live-pulse"></span><span class="grow" dir="auto"><strong>${esc(job.title)}</strong><small dir="ltr">${percentText(job.progress)} ${ar ? 'مكتمل' : 'complete'}</small></span><span class="progress"><span style="width:${progressWidth(job.progress)}%"></span></span></a>`).join('')}</div>` : empty(ar ? 'ما في هدف شغال الحين.' : 'No objective is running right now.', `<a class="btn btn-sm" href="#/chief">${ar ? 'ابدأ مع CHIEF' : 'Start with CHIEF'}</a>`)}</section>
       <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'CODING الحين' : 'CODING now'}</h2><a href="#/code">${ar ? 'مهمة جديدة' : 'New task'}</a></div>${codingNow.length ? codingNow.slice(0, 4).map((task) => `<a class="owner-row" href="#/task/${esc(task.id)}"><span class="grow" dir="auto"><strong>${esc(task.title)}</strong><small>${esc(task.now || task.summary || '')}</small></span></a>`).join('') : `<p class="muted">${ar ? 'ما في مهمة برمجية شغالة في هذا المشروع.' : 'No coding task is active in this project.'}</p>`}</section>
       <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'يحتاجك' : 'Needs you'}</h2><a href="#/attention">${ar ? 'الكل' : 'View all'}</a></div>
         ${needs.length ? needs.slice(0, 4).map((item) => `<a class="owner-row" href="${linkFor(item)}"><span class="owner-risk">${esc(item.category || item.kind)}</span><span class="grow" dir="auto"><strong>${esc(item.title)}</strong><small>${esc(item.detail || '')}</small></span></a>`).join('') : empty(ar ? 'الأمور طيبة، ما في قرار ينتظرك.' : 'All clear. No decision is waiting for you.')}</section>
       <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'آخر النتائج' : 'Latest results'}</h2><a href="#/artifacts">${ar ? 'الملفات' : 'Files'}</a></div>
-        ${latest.length ? latest.map((item) => `<a class="owner-row" href="${esc(item.href)}"><span class="owner-done">✓</span><span class="grow" dir="auto"><strong>${esc(item.title)}</strong><small>${esc(item.detail || '')}</small></span><time>${when(item.at)}</time></a>`).join('') : empty(ar ? 'النتائج المكتملة بتظهر هني.' : 'Completed results will appear here.')}</section>
+        ${latest.length ? latest.map((item) => `<a class="owner-row" data-latest-result href="${esc(item.href)}"><span class="owner-done">✓</span><span class="grow" dir="auto"><strong>${esc(item.title)}</strong><small>${esc(item.detail || '')}</small></span><time>${when(item.at)}</time></a>`).join('') : empty(ar ? 'النتائج المكتملة بتظهر هني.' : 'Completed results will appear here.')}</section>
       <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'السعة والتكلفة' : 'Capacity & cost'}</h2><a href="#/models">${ar ? 'التفاصيل' : 'Details'}</a></div>
-        <div class="capacity-state ${freeState === 'available' ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div><strong>${freeState === 'available' ? (ar ? 'السعة المجانية متاحة' : 'Free capacity available') : freeState === 'unknown' ? (ar ? 'حالة السعة غير متاحة' : 'Capacity unavailable') : (ar ? 'السعة المجانية محدودة' : 'Free capacity limited')}</strong><small>${esc(capacity?.headline || (ar ? 'بيانات السعة غير متاحة' : 'Capacity data unavailable'))}</small></div></div>
-        <dl class="owner-cost"><div><dt>${ar ? 'المكتب — اليوم' : 'Office — today'}</dt><dd>${costLabel(capacity?.capacity?.costUsd?.today)}</dd></div><div><dt>${ar ? 'المكتب — الشهر' : 'Office — month'}</dt><dd>${costLabel(monthCost)}</dd></div><div><dt>${ar ? 'المدفوع — المكتب' : 'Office paid fallback'}</dt><dd>${capacity ? (paid.route ? `${costLabel(paid.remainingUsd)} ${ar ? 'متبقي' : 'remaining'}` : (ar ? 'غير مفعّل' : 'Not active')) : (ar ? 'غير متاح' : 'Unavailable')}</dd></div></dl></section>
+        <div class="capacity-state ${freeState === 'available' ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div><strong>${freeState === 'available' ? (ar ? 'السعة المجانية متاحة' : 'Free capacity available') : freeState === 'unknown' ? (ar ? 'حالة السعة غير متاحة' : 'Capacity unavailable') : (ar ? 'السعة المجانية محدودة' : 'Free capacity limited')}</strong><small dir="auto">${esc(capacitySentence(capacity?.summary, state.language) || (ar ? (capacity ? 'تفاصيل السعة غير مكتملة.' : 'بيانات السعة غير متاحة') : (capacity?.headline || 'Capacity data unavailable')))}</small></div></div>
+        <dl class="owner-cost"><div><dt>${ar ? 'المكتب — اليوم' : 'Office — today'}</dt><dd dir="ltr">${moneyText(capacity?.capacity?.costUsd?.today)}</dd></div><div><dt>${ar ? 'المكتب — الشهر' : 'Office — month'}</dt><dd dir="ltr">${moneyText(monthCost)}</dd></div><div><dt>${ar ? 'المدفوع — المكتب' : 'Office paid fallback'}</dt><dd>${capacity ? (paid.route ? `<bdi dir="ltr">${moneyText(paid.remainingUsd)}</bdi> ${ar ? 'متبقي' : 'remaining'}` : (ar ? 'غير مفعّل' : 'Not active')) : unavailableText()}</dd></div></dl></section>
       <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'الفريق الحين' : 'Team now'}</h2><a href="#/employees">${ar ? 'الفريق' : 'Team'}</a></div>
-        <div class="owner-team">${(office.agents || []).map((agent) => `<a href="#/agent/${esc(agent.slug)}" title="${esc(agent.detail || '')}"><span class="team-dot st-dot-${esc(String(agent.state || 'available').toLowerCase().replace(/\s+/g, '-'))}"></span><strong>${esc(agent.label)}</strong><small>${esc(agent.state === 'AVAILABLE' ? (ar ? 'متاح' : 'Available') : agent.state)}</small></a>`).join('')}</div></section>
+        <div class="owner-team">${(office.agents || []).map((agent) => `<a href="#/agent/${esc(agent.slug)}" title="${esc(agent.detail || '')}"><span class="team-dot st-dot-${esc(String(agent.state || 'available').toLowerCase().replace(/\s+/g, '-'))}"></span><strong>${esc(agent.label)}</strong><small>${esc(agentStateLabel(agent.state))}</small></a>`).join('')}</div></section>
     </div></div>`;
   onLiveChange(() => { if (['#/', '#/home'].includes(location.hash || '#/')) route(); });
 }
@@ -530,17 +556,19 @@ async function fillChiefHome() {
       api(`/api/attention${q({ workspaceId: ws() })}`),
       api(`/api/office${q({ workspaceId: ws() })}`),
     ]);
+    const ar = state.language === 'ar';
+    const open = ar ? 'افتح' : 'Open';
     const needs = attention.items.filter((item) => item.priority !== 'INFO');
-    const done = attention.items.filter((item) => item.priority === 'INFO').slice(0, 4);
+    const done = latestResults({ attention: attention.items.filter((item) => item.priority === 'INFO') });
     const working = office.agents.filter((agent) => agent.state && agent.state !== 'AVAILABLE');
-    const card = (title, body, href = '', extra = '') => `<section class="ch-card ${extra}"><div class="ch-card-head"><h2>${title}</h2>${href ? `<a class="small" href="${href}">Open</a>` : ''}</div>${body}</section>`;
+    const card = (title, body, href = '', extra = '') => `<section class="ch-card ${extra}"><div class="ch-card-head"><h2>${title}</h2>${href ? `<a class="small" href="${href}">${open}</a>` : ''}</div>${body}</section>`;
     holder.innerHTML = [
-      card('Needs you', needs.length ? needs.slice(0, 4).map((item) => `<a class="ch-row" href="${item.taskId ? `#/task/${esc(item.taskId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="ch-kind k-${esc(item.kind)}">${esc(item.category || item.kind)}</span><span class="grow" dir="auto">${esc(item.title)}</span></a>`).join('') : '<p class="muted small">Nothing needs you. The Office will ask here and on Telegram when it does.</p>', '#/attention', needs.length ? 'ch-alert' : ''),
-      card('In progress', center.objectives.active.length ? center.objectives.active.map((job) => `<a class="ch-row" href="#/workflow/${esc(job.id)}"><span class="grow" dir="auto">${esc(job.title)}</span><span class="ch-pct num">${job.progress}%</span></a><span class="progress" aria-hidden="true"><span style="width:${Math.max(3, job.progress || 0)}%"></span></span>`).join('') : '<p class="muted small">No objective running.</p>', `#/project/${esc(ws())}`),
-      card('Team now', working.length ? `<div class="ch-team">${working.map((agent) => `<button type="button" class="ch-member" data-employee="${esc(agent.slug)}"><span class="ch-dot st-dot-${esc(String(agent.state).toLowerCase().replace(/\s+/g, '-'))}"></span><strong>${esc(agent.label)}</strong><span class="xs muted" dir="auto">${esc(agent.detail || '')}</span></button>`).join('')}</div>` : '<p class="muted small">Everyone is available.</p>', '#/office'),
-      card('Recently completed', done.length ? done.map((item) => `<a class="ch-row" href="${item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="ch-kind k-completed">Done</span><span class="grow" dir="auto">${esc(item.title)}</span><span class="xs faint">${when(item.at)}</span></a>`).join('') : '<p class="muted small">Nothing finished in the last 3 days.</p>'),
-      card('Decisions', center.decisionsForFahad.length ? center.decisionsForFahad.slice(0, 3).map((decision) => `<div class="ch-decision"><span class="xs faint">${esc(decision.from)}</span><div dir="auto">${esc(decision.text)}</div></div>`).join('')
-        : center.memory.decisions.length ? center.memory.decisions.slice(0, 3).map((item) => `<div class="ch-decision"><span class="xs faint">Decided</span><div dir="auto">${esc(item.content)}</div></div>`).join('') : '<p class="muted small">No decisions waiting.</p>', `#/project/${esc(ws())}`),
+      card(ar ? 'يحتاجك' : 'Needs you', needs.length ? needs.slice(0, 4).map((item) => `<a class="ch-row" href="${item.taskId ? `#/task/${esc(item.taskId)}` : `#/chat/${esc(item.conversationId || '')}`}"><span class="ch-kind k-${esc(item.kind)}">${esc(item.category || item.kind)}</span><span class="grow" dir="auto">${esc(item.title)}</span></a>`).join('') : `<p class="muted small">${ar ? 'ما عليك شي. المكتب بيسألك هني وفي تيليغرام إذا احتاج قرارك.' : 'Nothing needs you. The Office will ask here and on Telegram when it does.'}</p>`, '#/attention', needs.length ? 'ch-alert' : ''),
+      card(ar ? 'قيد التنفيذ' : 'In progress', center.objectives.active.length ? center.objectives.active.map((job) => `<a class="ch-row" href="#/job/${esc(job.id)}"><span class="grow" dir="auto">${esc(job.title)}</span><span class="ch-pct num" dir="ltr">${percentText(job.progress)}</span></a><span class="progress" aria-hidden="true"><span style="width:${progressWidth(job.progress)}%"></span></span>`).join('') : `<p class="muted small">${ar ? 'ما في هدف شغال.' : 'No objective running.'}</p>`, `#/project/${esc(ws())}`),
+      card(ar ? 'الفريق الحين' : 'Team now', working.length ? `<div class="ch-team">${working.map((agent) => `<button type="button" class="ch-member" data-employee="${esc(agent.slug)}"><span class="ch-dot st-dot-${esc(String(agent.state).toLowerCase().replace(/\s+/g, '-'))}"></span><strong>${esc(agent.label)}</strong><span class="xs muted" dir="auto">${esc(agent.detail || '')}</span></button>`).join('')}</div>` : `<p class="muted small">${ar ? 'الكل متاح.' : 'Everyone is available.'}</p>`, '#/employees'),
+      card(ar ? 'آخر النتائج' : 'Recently completed', done.length ? done.map((item) => `<a class="ch-row" href="${esc(item.href)}"><span class="ch-kind k-completed">${ar ? 'تم' : 'Done'}</span><span class="grow" dir="auto">${esc(item.title)}</span><span class="xs faint">${when(item.at)}</span></a>`).join('') : `<p class="muted small">${ar ? 'ما في نتيجة خلال آخر 3 أيام.' : 'Nothing finished in the last 3 days.'}</p>`),
+      card(ar ? 'القرارات' : 'Decisions', center.decisionsForFahad.length ? center.decisionsForFahad.slice(0, 3).map((decision) => `<div class="ch-decision"><span class="xs faint">${esc(decision.from)}</span><div dir="auto">${esc(decision.text)}</div></div>`).join('')
+        : center.memory.decisions.length ? center.memory.decisions.slice(0, 3).map((item) => `<div class="ch-decision"><span class="xs faint">${ar ? 'قرار محفوظ' : 'Decided'}</span><div dir="auto">${esc(item.content)}</div></div>`).join('') : `<p class="muted small">${ar ? 'ما في قرارات تنتظرك.' : 'No decisions waiting.'}</p>`, `#/project/${esc(ws())}`),
     ].join('');
     holder.querySelectorAll('[data-employee]').forEach((button) => { button.onclick = () => openEmployee(button.dataset.employee); });
   } catch (error) {
@@ -582,27 +610,27 @@ const stageWord = (phase) => PHASE_WORDS[phase] || phase || '';
 const taskGroup = (status) => (['awaiting_approval', 'blocked'].includes(status) ? 'attention' : status === 'queued' ? 'running' : status);
 
 async function renderChats() {
-  setTitle('Chats');
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Chats</h1><p class="page-summary" id="chatSummary" aria-live="polite">Every conversation with the Office, newest first.</p></div><a class="btn btn-primary" href="#/chief">＋ New chat</a></div>
-    <div class="row" style="margin-bottom:var(--s-4)"><input id="chatSearch" class="input grow" placeholder="Search chats…" dir="auto"><button id="showArchived" class="btn">Archived</button></div>
+  const ar = state.language === 'ar';
+  setTitle(ar ? 'المحادثات' : 'Chats');
+  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>${ar ? 'المحادثات' : 'Chats'}</h1><p class="page-summary" id="chatSummary" aria-live="polite">${ar ? 'كل محادثات المكتب، الأحدث أولًا.' : 'Every conversation with the Office, newest first.'}</p></div><a class="btn btn-primary" href="#/chief">${ar ? '＋ محادثة جديدة' : '＋ New chat'}</a></div>
+    <div class="row" style="margin-bottom:var(--s-4)"><input id="chatSearch" class="input grow" placeholder="${ar ? 'ابحث في المحادثات…' : 'Search chats…'}" dir="auto"><button id="showArchived" class="btn">${ar ? 'المؤرشفة' : 'Archived'}</button></div>
     <div id="chatList"></div></div>`;
   let archived = false;
   const load = async () => {
     const { conversations } = await api(`/api/conversations${q({ workspaceId: ws(), archived, q: $('#chatSearch').value.trim() })}`);
-    $('#chatSummary').textContent = chatsSummary(conversations, archived);
+    const ar = state.language === 'ar';
+    $('#chatSummary').textContent = ar ? (conversations.length ? `${conversations.length} محادثات. الأحدث: ${conversations[0].title}` : (archived ? 'ما في محادثات مؤرشفة.' : 'ما في محادثات بعد.')) : chatsSummary(conversations, archived);
     $('#chatList').innerHTML = conversations.length ? conversations.map((conversation) =>
       `<a class="list-item" href="#/chat/${esc(conversation.id)}"><div class="grow"><div class="title" dir="auto">${esc(conversation.title)}</div><div class="sub">${when(conversation.lastMessageAt)}</div></div></a>`).join('')
-      : `<div class="empty"><h3>${archived ? 'No archived chats' : 'No chats found'}</h3><p>Start a new chat from the button above.</p></div>`;
+      : `<div class="empty"><h3>${archived ? (ar ? 'ما في محادثات مؤرشفة' : 'No archived chats') : (ar ? 'ما في محادثات' : 'No chats found')}</h3><p>${ar ? 'ابدأ محادثة جديدة من الزر فوق.' : 'Start a new chat from the button above.'}</p></div>`;
   };
   let timer;
   $('#chatSearch').oninput = () => { clearTimeout(timer); timer = setTimeout(load, 250); };
-  $('#showArchived').onclick = () => { archived = !archived; $('#showArchived').textContent = archived ? 'Active' : 'Archived'; load(); };
+  $('#showArchived').onclick = () => { archived = !archived; $('#showArchived').textContent = archived ? (state.language === 'ar' ? 'النشطة' : 'Active') : (state.language === 'ar' ? 'المؤرشفة' : 'Archived'); load(); };
   await load();
 }
 
 // ------------------------------------------------------------------ tasks
-const TASK_TABS = [['running', 'Running'], ['attention', 'Needs attention'], ['completed', 'Completed'], ['failed', 'Failed'], ['cancelled', 'Cancelled']];
-
 function ownerStage(status) {
   const words = { planning: ['نرتب الشغل', 'Planning'], running: ['قيد التنفيذ', 'In progress'], waiting_for_capacity: ['ينتظر السعة', 'Waiting for capacity'], waiting: ['ينتظر', 'Waiting'], completed: ['مكتمل', 'Completed'], failed: ['يحتاج معالجة', 'Needs attention'], cancelled: ['ملغي', 'Cancelled'] };
   return (words[status] || ['قيد المتابعة', 'In progress'])[state.language === 'ar' ? 0 : 1];
@@ -655,12 +683,14 @@ async function renderWork() {
   const workflows = [...streams.map((item) => ({ ...item, href: `#/workflow/${item.id}` })), ...jobs.filter((item) => !streams.some((stream) => stream.id === item.id)).map((item) => ({ ...item, createdAt: item.created_at, completedAt: item.completed_at, href: `#/job/${item.id}` }))];
   const activeWorkflows = workflows.filter((item) => !['completed', 'failed', 'cancelled'].includes(item.status));
   const activeTasks = tasks.filter((item) => item.group === 'running' || item.group === 'attention');
+  const counts = ownerWorkCounts({ jobs, tasks });
   const finished = [...workflows.filter((item) => ['completed', 'failed'].includes(item.status)).map((item) => ({ ...item, kind: 'objective', at: item.completedAt || item.createdAt })),
     ...tasks.filter((item) => ['completed', 'failed', 'cancelled'].includes(item.group)).map((item) => ({ ...item, kind: 'task', at: item.completedAt || item.updatedAt }))]
     .toSorted((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 8);
-  const workflowRow = (item) => `<a class="work-card" href="${esc(item.href)}"><div class="work-icon">◆</div><div class="grow"><div class="spread"><strong dir="auto">${esc(item.title)}</strong>${pill(item.status === 'running' || item.status === 'planning' ? 'running' : item.status, ownerStage(item.status))}</div><p dir="auto">${esc(item.objective || '')}</p><div class="row xs muted"><span>CHIEF</span><span>${item.progress ?? 0}%</span></div><span class="progress"><span style="width:${Math.max(3, item.progress || 0)}%"></span></span></div></a>`;
-  const taskRow = (item) => `<a class="work-card" href="#/task/${esc(item.id)}"><div class="work-icon coding">⌘</div><div class="grow"><div class="spread"><strong dir="auto">${esc(item.title)}</strong>${pill(item.group === 'attention' ? 'attention' : item.status, item.group === 'attention' ? (ar ? 'يحتاجك' : 'Needs you') : STATUS_WORDS[item.status])}</div><p dir="auto">${esc(item.now || item.summary || '')}</p><div class="row xs muted"><span>CODING</span><span>${usd(item.costUsd)}</span>${item.currentModel ? `<span title="${esc(item.currentModel)}">${ar ? 'تفاصيل التنفيذ متاحة' : 'Execution detail available'}</span>` : ''}</div></div></a>`;
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>${ar ? 'العمل' : 'Work'}</h1><p class="page-summary">${ar ? `${activeWorkflows.length + activeTasks.length} شغل جاري أو ينتظر.` : `${activeWorkflows.length + activeTasks.length} item(s) running or waiting.`}</p></div><div class="row"><a class="btn" href="#/new-work">${ar ? 'مهمة جديدة' : 'New task'}</a><a class="btn btn-primary" href="#/code">${ar ? 'مهمة CODING' : 'New CODING task'}</a></div></div>
+  const workflowRow = (item) => `<a class="work-card" href="${esc(item.href)}"><div class="work-icon">◆</div><div class="grow"><div class="spread"><strong dir="auto">${esc(item.title)}</strong>${pill(item.status === 'running' || item.status === 'planning' ? 'running' : item.status, ownerStage(item.status))}</div><p dir="auto">${esc(item.objective || '')}</p><div class="row xs muted"><span>CHIEF</span><span dir="ltr">${percentText(item.progress)}</span></div><span class="progress"><span style="width:${progressWidth(item.progress)}%"></span></span></div></a>`;
+  const taskRow = (item) => { const linked = item.jobId && activeWorkflows.some((job) => job.id === item.jobId); return `<a class="work-card" href="#/task/${esc(item.id)}"><div class="work-icon coding">⌘</div><div class="grow"><div class="spread"><strong dir="auto">${esc(item.title)}</strong>${pill(item.group === 'attention' ? 'attention' : item.status, item.group === 'attention' ? (ar ? 'يحتاجك' : 'Needs you') : statusLabel(item.status))}</div><p dir="auto">${esc(item.now || item.summary || '')}</p><div class="row xs muted"><span>CODING</span><span dir="ltr">${moneyText(item.costUsd)}</span>${linked ? `<span>${ar ? 'ضمن الهدف' : 'Part of an objective'}</span>` : ''}${item.currentModel ? `<span title="${esc(item.currentModel)}">${ar ? 'تفاصيل التنفيذ متاحة' : 'Execution detail available'}</span>` : ''}</div></div></a>`; };
+  const workSummary = ar ? `${counts.objectives} أهداف قيد التنفيذ${counts.coding ? `، و${counts.coding} مهام برمجية منفصلة` : ''}.` : `${counts.objectives} objective(s) in progress${counts.coding ? `, plus ${counts.coding} separate coding task(s)` : ''}.`;
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>${ar ? 'العمل' : 'Work'}</h1><p class="page-summary" data-owner-running="${counts.running}">${workSummary}</p></div><div class="row"><a class="btn" href="#/new-work">${ar ? 'مهمة جديدة' : 'New task'}</a><a class="btn btn-primary" href="#/code">${ar ? 'مهمة CODING' : 'New CODING task'}</a></div></div>
     <section class="work-section"><div class="spread"><h2>${ar ? 'الأهداف' : 'Objectives'}</h2><span class="pill running">${activeWorkflows.length}</span></div>${activeWorkflows.length ? activeWorkflows.map(workflowRow).join('') : `<div class="empty"><h3>${ar ? 'ما في هدف شغال' : 'No active objective'}</h3><p>${ar ? 'اكتب المطلوب لـCHIEF وهو يوزع الشغل على الفريق.' : 'Tell CHIEF the outcome and the Office will coordinate the work.'}</p></div>`}</section>
     <section class="work-section"><div class="spread"><h2>${ar ? 'مهام CODING' : 'CODING tasks'}</h2><a class="small" href="#/tasks/running">${ar ? 'كل المهام' : 'All tasks'}</a></div>${activeTasks.length ? activeTasks.map(taskRow).join('') : `<div class="empty"><h3>${ar ? 'CODING متاح' : 'CODING is available'}</h3><p>${ar ? 'ابدأ مهمة تقنية بلغة واضحة، والموافقات الحساسة بتوصلك قبل التنفيذ.' : 'Start in plain language; protected actions still require your approval.'}</p></div>`}</section>
     <section class="work-section"><div class="spread"><h2>${ar ? 'آخر الأعمال' : 'Recent work'}</h2></div>${finished.length ? finished.map((item) => item.kind === 'objective' ? workflowRow(item) : taskRow(item)).join('') : `<div class="empty"><p>${ar ? 'الأعمال المكتملة بتظهر هني.' : 'Completed work will appear here.'}</p></div>`}</section></div>`;
@@ -668,22 +698,26 @@ async function renderWork() {
 }
 
 async function renderTasks(tab) {
-  setTitle('Tasks');
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>Tasks</h1><p class="page-summary" id="taskSummary" aria-live="polite">Development work the Office is doing or has done.</p></div><a class="btn btn-primary" href="#/code">＋ New task</a></div>
-    <div class="tabs" role="tablist">${TASK_TABS.map(([key, label]) => `<a class="tab ${key === tab ? 'active' : ''}" role="tab" href="#/tasks/${key}">${label}</a>`).join('')}</div>
+  const ar = state.language === 'ar';
+  const tabs = [['running', ar ? 'الجارية' : 'Running'], ['attention', ar ? 'تحتاجك' : 'Needs attention'], ['completed', ar ? 'المكتملة' : 'Completed'], ['failed', ar ? 'الفاشلة' : 'Failed'], ['cancelled', ar ? 'الملغية' : 'Cancelled']];
+  setTitle(ar ? 'المهام' : 'Tasks');
+  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>${ar ? 'المهام' : 'Tasks'}</h1><p class="page-summary" id="taskSummary" aria-live="polite">${ar ? 'مهام البرمجة الجارية والمكتملة.' : 'Development work the Office is doing or has done.'}</p></div><a class="btn btn-primary" href="#/code">${ar ? '＋ مهمة جديدة' : '＋ New task'}</a></div>
+    <div class="tabs" role="tablist">${tabs.map(([key, label]) => `<a class="tab ${key === tab ? 'active' : ''}" role="tab" href="#/tasks/${key}">${label}</a>`).join('')}</div>
     <div id="taskList"></div></div>`;
   const load = async () => {
     const { tasks } = await api(`/api/tasks${q({ workspaceId: ws(), status: tab })}`);
-    $('#taskSummary').textContent = tasksSummary(tasks, tab);
-    $('#taskList').innerHTML = tasks.length ? tasks.map(taskItem).join('') : `<div class="empty"><h3>Nothing here</h3><p>${tab === 'running' ? 'No task is running. Describe one in a chat or start one from the Coding Agent.' : 'No tasks in this group.'}</p></div>`;
+    const ar = state.language === 'ar';
+    $('#taskSummary').textContent = ar ? (tasks.length ? `${tasks.length} مهام. الأحدث: ${tasks[0].title}` : (tab === 'running' ? 'ما في مهمة برمجية جارية.' : 'ما في شي في هذه المجموعة.')) : tasksSummary(tasks, tab);
+    $('#taskList').innerHTML = tasks.length ? tasks.map(taskItem).join('') : `<div class="empty"><h3>${state.language === 'ar' ? 'ما في شي هني' : 'Nothing here'}</h3><p>${tab === 'running' ? (state.language === 'ar' ? 'ما في مهمة جارية.' : 'No task is running. Describe one in a chat or start one from the Coding Agent.') : (state.language === 'ar' ? 'ما في مهام في هذه المجموعة.' : 'No tasks in this group.')}</p></div>`;
   };
   await load();
   if (tab === 'running' || tab === 'attention') every(5000, () => load().catch(() => {}));
 }
 function taskItem(task) {
-  const sub = task.group === 'completed' ? (task.summary || 'Completed') : task.group === 'attention' ? (task.needs === 'approval' ? 'Waiting for your approval' : task.needs === 'question' ? 'Has a question for you' : 'Paused — needs you') : task.now;
+  const ar = state.language === 'ar';
+  const sub = task.group === 'completed' ? (task.summary || (ar ? 'مكتمل' : 'Completed')) : task.group === 'attention' ? (task.needs === 'approval' ? (ar ? 'ينتظر موافقتك' : 'Waiting for your approval') : task.needs === 'question' ? (ar ? 'عنده سؤال لك' : 'Has a question for you') : (ar ? 'متوقف — يحتاجك' : 'Paused — needs you')) : task.now;
   return `<a class="list-item" href="#/task/${esc(task.id)}"><div class="grow"><div class="title" dir="auto">${esc(task.title)}</div><div class="sub" dir="auto">${esc(sub || '')}</div>
-    <div class="sub faint xs">${esc(task.repository)} · ${when(task.updatedAt)} · ${usd(task.costUsd)}${task.pr?.number ? ` · PR #${esc(task.pr.number)}` : ''}</div></div>${pill(task.group, STATUS_WORDS[task.group === 'attention' ? 'attention' : task.status])}</a>`;
+    <div class="sub faint xs">${esc(task.repository)} · ${when(task.updatedAt)} · <bdi dir="ltr">${moneyText(task.costUsd)}</bdi>${task.pr?.number ? ` · PR #${esc(task.pr.number)}` : ''}</div></div>${pill(task.group, statusLabel(task.group === 'attention' ? 'attention' : task.status))}</a>`;
 }
 
 async function renderNewTask() {
@@ -789,37 +823,38 @@ async function renderTask(id) {
 
 function taskPage({ task, events, approvals }) {
   const t = task;
+  const ar = state.language === 'ar';
   const closed = ['completed', 'failed', 'cancelled'].includes(t.status);
   const group = taskGroup(t.status);
   const head = `<div class="task-head">
-    <div class="row">${pill(group, STATUS_WORDS[group === 'attention' ? 'attention' : t.status])}<span class="small muted">${esc(t.repository)}</span>${t.conversationId ? `<a class="small" href="#/chat/${esc(t.conversationId)}">Open chat</a>` : ''}</div>
+    <div class="row">${pill(group, statusLabel(group === 'attention' ? 'attention' : t.status))}<span class="small muted" dir="ltr">${esc(t.repository)}</span>${t.conversationId ? `<a class="small" href="#/chat/${esc(t.conversationId)}">${ar ? 'افتح المحادثة' : 'Open chat'}</a>` : ''}</div>
     <h1 dir="auto">${esc(t.title)}</h1>
-    <dl class="kv"><div><dt>Model</dt><dd title="${esc(t.currentModel || '')}">${esc(modelName(t.currentModel) || 'AUTO')}</dd></div><div><dt>Cost</dt><dd>${usd(t.metrics.costUsd)} <span class="faint small">of ${usd(t.budgetUsd)}</span></dd></div><div><dt>Elapsed</dt><dd>${duration(t.elapsedMs)}</dd></div><div><dt>Updated</dt><dd>${when(t.updatedAt)}</dd></div></dl>
+    <dl class="kv"><div><dt>${ar ? 'المحرك' : 'Model'}</dt><dd title="${esc(t.currentModel || '')}" dir="ltr">${esc(modelName(t.currentModel) || 'AUTO')}</dd></div><div><dt>${ar ? 'التكلفة' : 'Cost'}</dt><dd dir="ltr">${moneyText(t.metrics.costUsd)} <span class="faint small">${ar ? 'من' : 'of'} ${moneyText(t.budgetUsd)}</span></dd></div><div><dt>${ar ? 'المدة' : 'Elapsed'}</dt><dd>${duration(t.elapsedMs)}</dd></div><div><dt>${ar ? 'آخر تحديث' : 'Updated'}</dt><dd>${when(t.updatedAt)}</dd></div></dl>
   </div>`;
-  const now = closed ? '' : `<div class="now" dir="auto">${t.needs ? '' : '<span class="dots"><i></i><i></i><i></i></span>'}<span>${esc(t.needs ? 'Waiting for you.' : t.now)}</span></div>`;
+  const now = closed ? '' : `<div class="now" dir="auto">${t.needs ? '' : '<span class="dots"><i></i><i></i><i></i></span>'}<span>${esc(t.needs ? (state.language === 'ar' ? 'ينتظر قرارك.' : 'Waiting for you.') : t.now)}</span></div>`;
   const timeline = `<div class="card"><div class="timeline" role="list">${t.timeline.filter((step) => step.state !== 'skipped').map((step, index) => `<div class="step ${step.state}" role="listitem" title="${esc(step.label)}: ${esc(step.state.replace('_', ' '))}"><span class="dot">${{ passed: '✓', failed: '!', needs_input: '?', skipped: '–' }[step.state] || index + 1}</span><span>${esc(step.label)}</span></div>`).join('')}</div></div>`;
   const owner = ownerCard(t, approvals);
   const result = t.result || {};
   const pr = t.pr || result.pr;
-  const outcome = `<div class="card"><h2 class="card-title">${closed ? 'Result' : 'Progress so far'}</h2>
-    ${result.summary ? markdown(result.summary) : t.blocker && t.status === 'failed' ? errorBlock(t.blocker, esc) : '<p class="muted small">The summary appears here when the task finishes.</p>'}
+  const outcome = `<div class="card"><h2 class="card-title">${closed ? (ar ? 'النتيجة' : 'Result') : (ar ? 'التقدم' : 'Progress so far')}</h2>
+    ${result.summary ? markdown(result.summary) : t.blocker && t.status === 'failed' ? errorBlock(t.blocker, esc) : `<p class="muted small">${ar ? 'الملخص يظهر هني بعد اكتمال المهمة.' : 'The summary appears here when the task finishes.'}</p>`}
     <dl class="kv" style="margin-top:var(--s-3)">
-      <div><dt>Pull request</dt><dd>${pr?.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">#${esc(pr.number)}</a>` : '—'}</dd></div>
+      <div><dt>${ar ? 'طلب الدمج' : 'Pull request'}</dt><dd>${pr?.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">#${esc(pr.number)}</a>` : '—'}</dd></div>
       <div><dt>CI</dt><dd>${esc(t.ci?.state || result.ci?.state || '—')}</dd></div>
-      <div><dt>Tests</dt><dd>${t.lastTest ? (t.lastTest.exitCode === 0 ? 'Passing' : 'Failing') : '—'}</dd></div>
-      <div><dt>Deployment</dt><dd>${esc(result.deploy?.status || t.deploy?.status || (t.config?.deploy?.mode === 'merge' ? 'Pending' : 'Not requested'))}</dd></div>
+      <div><dt>${ar ? 'الاختبارات' : 'Tests'}</dt><dd>${t.lastTest ? (t.lastTest.exitCode === 0 ? (ar ? 'ناجحة' : 'Passing') : (ar ? 'فاشلة' : 'Failing')) : '—'}</dd></div>
+      <div><dt>${ar ? 'النشر' : 'Deployment'}</dt><dd>${esc(result.deploy?.status || t.deploy?.status || (t.config?.deploy?.mode === 'merge' ? (ar ? 'بانتظار' : 'Pending') : (ar ? 'غير مطلوب' : 'Not requested')))}</dd></div>
     </dl>
-    ${(t.filesChanged || []).length ? `<div class="small muted" style="margin-top:var(--s-3)">Files changed</div><div class="files">${t.filesChanged.map((file) => `<code>${esc(file)}</code>`).join('')}</div>` : ''}
+    ${(t.filesChanged || []).length ? `<div class="small muted" style="margin-top:var(--s-3)">${ar ? 'الملفات المتغيرة' : 'Files changed'}</div><div class="files">${t.filesChanged.map((file) => `<code dir="ltr">${esc(file)}</code>`).join('')}</div>` : ''}
   </div>`;
   const metrics = t.metrics;
-  const details = `<details class="disclosure"><summary>Original instruction</summary><div class="disclosure-body report" dir="auto">${esc(t.objective)}</div></details>
-    <details class="disclosure"><summary>Cost, models and efficiency</summary><div class="disclosure-body"><dl class="kv">
+  const details = `<details class="disclosure"><summary>${ar ? 'الطلب الأصلي' : 'Original instruction'}</summary><div class="disclosure-body report" dir="auto">${esc(t.objective)}</div></details>
+    <details class="disclosure"><summary>${ar ? 'التكلفة والمحركات والكفاءة' : 'Cost, models and efficiency'}</summary><div class="disclosure-body"><dl class="kv">
       <div><dt>Model calls</dt><dd>${metrics.modelCalls}</dd></div><div><dt>Iterations</dt><dd>${metrics.iterations}</dd></div>
       <div><dt>Input tokens</dt><dd>${tokens(metrics.inputTokens)} <span class="faint small">${metrics.inputTokens ? `${Math.round((metrics.cachedInputTokens / metrics.inputTokens) * 100)}% cached` : ''}</span></dd></div>
       <div><dt>Output tokens</dt><dd>${tokens(metrics.outputTokens)}</dd></div><div><dt>Model switches</dt><dd>${metrics.modelSwitches}</dd></div>
       <div><dt>Context trimmed</dt><dd>${tokens(Math.round((metrics.contextTrimmedChars || 0) / 4))} tokens</dd></div>
     </dl><div class="small muted" style="margin-top:var(--s-2)">Models used: ${esc(metrics.modelsUsed.join(', ') || '—')}</div></div></details>
-    <details class="disclosure"><summary>View details (${events.length} events)</summary><div class="disclosure-body"><div class="events">${events.map((event) => `<div class="${esc(event.level)}"><span class="faint">${esc(new Date(event.createdAt || event.created_at).toLocaleTimeString())} ${esc(event.type)}</span> ${esc(event.message)}</div>`).join('')}</div></div></details>`;
+    <details class="disclosure"><summary>${ar ? `التفاصيل (${events.length})` : `View details (${events.length} events)`}</summary><div class="disclosure-body"><div class="events">${events.map((event) => `<div class="${esc(event.level)}"><span class="faint" dir="ltr">${esc(new Date(event.createdAt || event.created_at).toLocaleTimeString())} ${esc(event.type)}</span> <span dir="auto">${esc(event.message)}</span></div>`).join('')}</div></div></details>`;
   const actions = closed ? '' : `<div class="row" style="margin-top:var(--s-4)">${t.status === 'blocked' && !t.needs?.kind?.includes('question') ? '<button class="btn" id="resumeTask">Resume</button>' : ''}<button class="btn btn-danger" id="cancelTask">Cancel task</button></div>`;
   return `<div class="page stack">${head}${owner}${now}${timeline}${outcome}${details}${actions}</div>`;
 }
@@ -831,18 +866,18 @@ function ownerCard(task, approvals) {
     return `<section class="owner-card" aria-live="polite"><h2>${esc(need.title)}</h2>${need.items.map((item) => `<div class="owner-item">
       <div class="small muted">${esc(item.who || 'An agent')} is asking</div>
       <div class="spread"><div class="what" dir="auto">${esc(item.what)}</div><span class="risk ${esc(item.risk)}">${esc(item.risk)} risk</span></div>
-      ${item.why ? `<p class="small" dir="auto"><strong>Why:</strong> ${esc(item.why)}</p>` : ''}
-      ${item.resources.length ? `<div class="small muted">Affects</div><div class="resources">${item.resources.map((resource) => `<code>${esc(resource)}</code>`).join('')}</div>` : ''}
+      ${item.why ? `<p class="small" dir="auto"><strong>${state.language === 'ar' ? 'السبب:' : 'Why:'}</strong> ${esc(item.why)}</p>` : ''}
+      ${item.resources.length ? `<div class="small muted">${state.language === 'ar' ? 'يؤثر على' : 'Affects'}</div><div class="resources">${item.resources.map((resource) => `<code dir="ltr">${esc(resource)}</code>`).join('')}</div>` : ''}
       ${item.kind === 'protected_change' ? '<p class="xs muted">Approving allows changes to exactly these files in this task only. Secrets, .env files, keys and Hermes can never be approved.</p>' : ''}
-      <div class="row"><button class="btn btn-success" data-decide="approved" data-id="${esc(item.id)}">Approve</button><button class="btn btn-danger" data-decide="rejected" data-id="${esc(item.id)}">Reject</button></div>
+      <div class="row"><button class="btn btn-success" data-decide="approved" data-id="${esc(item.id)}">${state.language === 'ar' ? 'موافقة' : 'Approve'}</button><button class="btn btn-danger" data-decide="rejected" data-id="${esc(item.id)}">${state.language === 'ar' ? 'رفض' : 'Reject'}</button></div>
     </div>`).join('')}</section>`;
   }
   const question = need.kind === 'question';
   return `<section class="owner-card" aria-live="polite"><h2>${esc(need.title)}</h2>
     ${question ? `<p class="what" dir="auto">${esc(need.question)}</p>${need.reason && need.reason !== need.question ? `<p class="small muted" dir="auto"><strong>Why:</strong> ${esc(need.reason)}</p>` : ''}` : `<p dir="auto">${esc(need.explanation)}</p>`}
-    <label class="field-label" for="replyText">${question ? 'Your answer' : 'Instructions for the agent (optional)'}</label>
+    <label class="field-label" for="replyText">${question ? (state.language === 'ar' ? 'جوابك' : 'Your answer') : (state.language === 'ar' ? 'تعليمات للوكيل (اختياري)' : 'Instructions for the agent (optional)')}</label>
     <textarea id="replyText" class="input" rows="3" dir="auto" placeholder="${question ? 'Type your answer…' : 'e.g. try a smaller change, or skip the docs update'}"></textarea>
-    <div class="row" style="margin-top:var(--s-3)"><button class="btn btn-primary" id="replySend">Reply &amp; Continue</button>${question ? '' : '<button class="btn" id="resumeTask">Resume without a message</button>'}</div>
+    <div class="row" style="margin-top:var(--s-3)"><button class="btn btn-primary" id="replySend">${state.language === 'ar' ? 'رد وتابع' : 'Reply &amp; Continue'}</button>${question ? '' : `<button class="btn" id="resumeTask">${state.language === 'ar' ? 'تابع بدون رسالة' : 'Resume without a message'}</button>`}</div>
   </section>`;
 }
 
@@ -918,13 +953,14 @@ async function renderEmployees() {
     <div class="office-grid">${data.agents.map((agent) => `<a class="agent-card ${STATE_CLASS[agent.state] || ''}" href="#/agent/${esc(agent.slug)}" data-employee="${esc(agent.slug)}">
       <div class="row">${avatar(agent)}<div class="grow"><div class="title">${esc(agent.label)}</div><div class="xs faint">${esc(agent.deliverable || '')}</div></div><span class="pill ${agent.state === 'AVAILABLE' ? 'available' : ['NEEDS FAHAD', 'BLOCKED'].includes(agent.state) ? 'attention' : 'running'}">${status(agent)}</span></div>
       <div class="small muted">${esc(agent.scope)}</div>
-      <div class="agent-now"><span>${ar ? 'المهمة الحالية' : 'Current assignment'}</span><strong dir="auto">${esc(agent.assignment?.objective || agent.assignment?.title || agent.detail || (ar ? 'متاح لمهمة جديدة' : 'Available for new work'))}</strong>${agent.progress != null ? `<span class="progress"><span style="width:${Math.max(3, agent.progress)}%"></span></span>` : ''}</div>
+      <div class="agent-now"><span>${ar ? 'المهمة الحالية' : 'Current assignment'}</span><strong dir="auto">${esc(agent.assignment?.objective || agent.assignment?.title || agent.detail || (ar ? 'متاح لمهمة جديدة' : 'Available for new work'))}</strong>${agent.progress != null ? `<span class="progress"><span style="width:${progressWidth(agent.progress)}%"></span></span>` : ''}</div>
       <div class="agent-output"><span>${ar ? 'آخر نتيجة' : 'Recent output'}</span><strong dir="auto">${esc(agent.recentArtifact?.title || (ar ? 'ما في نتيجة حديثة' : 'No recent output'))}</strong></div>
       <div class="row">${agent.directChat ? `<span class="tag">${ar ? 'محادثة مباشرة' : 'Direct chat'}</span>` : ''}${agent.executor === 'coding' ? `<span class="tag">${ar ? 'مهام برمجية' : 'Engineering tasks'}</span>` : ''}${agent.executor === 'chief' ? `<span class="tag">${ar ? 'ينسق الفريق' : 'Orchestrates'}</span>` : ''}</div></a>`).join('')}</div></div>`;
   view.querySelectorAll('[data-employee]').forEach((card) => { card.onclick = (event) => { event.preventDefault(); openEmployee(card.dataset.employee); }; });
 }
 
-const NODE_WORD = { done: 'Done', working: 'Working', waiting: 'Waiting', ready: 'Starting', failed: 'Failed', blocked: 'Blocked', capacity: 'Waiting for free model capacity — will resume automatically' };
+const NODE_WORD = { done: ['تم', 'Done'], working: ['يشتغل', 'Working'], waiting: ['ينتظر', 'Waiting'], ready: ['يبدأ', 'Starting'], failed: ['فشل', 'Failed'], blocked: ['متوقف', 'Blocked'], capacity: ['ينتظر السعة المجانية، وبيكمل تلقائي', 'Waiting for free model capacity — will resume automatically'] };
+const nodeWord = (value) => (NODE_WORD[value] ? NODE_WORD[value][state.language === 'ar' ? 0 : 1] : value);
 async function renderWorkflow(jobId) {
   let signature = '';
   const load = async () => {
@@ -940,11 +976,11 @@ async function renderWorkflow(jobId) {
     const needs = (node) => node.dependsOn.map((id) => byId.get(id)).filter((dep) => dep && dep.kind !== 'plan' && dep.kind !== 'synthesis').map((dep) => dep.agentLabel);
     const nodeRow = (node) => `<div class="flow-node st-${esc(node.state)}"><span class="flow-icon">${FLOW_ICON[node.state] || '○'}</span>
       <div class="grow"><div><strong>${esc(node.agentLabel)}</strong> — ${esc(node.title)}${node.revision ? ' <span class="pill st-waiting">revision</span>' : ''}</div>
-      <div class="xs faint">${esc(NODE_WORD[node.state] || node.state)}${needs(node).length ? ` · after ${esc([...new Set(needs(node))].join(', '))}` : ''}${node.completedAt ? ` · ${when(node.completedAt)}` : ''}${node.state === 'capacity' && node.resumesAt ? ` · retry ${esc(new Date(node.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}` : ''}</div>
+      <div class="xs faint">${esc(nodeWord(node.state))}${needs(node).length ? ` · ${state.language === 'ar' ? 'بعد' : 'after'} ${esc([...new Set(needs(node))].join(', '))}` : ''}${node.completedAt ? ` · ${when(node.completedAt)}` : ''}${node.state === 'capacity' && node.resumesAt ? ` · ${state.language === 'ar' ? 'إعادة' : 'retry'} ${esc(new Date(node.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}` : ''}</div>
       ${node.codingTask ? `<a class="xs" href="#/task/${esc(node.codingTask.id)}">Coding Agent task: ${esc(STATUS_WORDS[node.codingTask.status] || node.codingTask.status)} · ${esc(stageWord(node.codingTask.phase))}</a>` : ''}
       ${node.output?.summary ? `<div class="small" dir="auto">${esc(node.output.summary)}</div>` : ''}</div></div>`;
     view.innerHTML = `<div class="page stack">
-      <div class="page-head"><div><div class="row">${pill(data.job.status === 'completed' ? 'completed' : data.job.status === 'failed' ? 'failed' : 'running', data.job.status === 'completed' ? 'Completed' : data.job.status === 'failed' ? 'Failed' : 'In progress')}<span class="small muted">${data.job.progress}% · ${usd(data.job.costUsd)}</span>${data.job.conversationId ? `<a class="small" href="#/chat/${esc(data.job.conversationId)}">Open chat</a>` : ''}</div>
+      <div class="page-head"><div><div class="row">${pill(data.job.status === 'completed' ? 'completed' : data.job.status === 'failed' ? 'failed' : 'running', ownerStage(data.job.status))}<span class="small muted" dir="ltr">${percentText(data.job.progress)} · ${moneyText(data.job.costUsd)}</span>${data.job.conversationId ? `<a class="small" href="#/chat/${esc(data.job.conversationId)}">${state.language === 'ar' ? 'افتح المحادثة' : 'Open chat'}</a>` : ''}</div>
         <h1 dir="auto">${esc(data.job.title)}</h1><p dir="auto">${esc(data.job.objective)}</p></div></div>
       <div class="card"><h2 class="card-title">Workflow</h2>
         <div class="flow-node st-done"><span class="flow-icon">✓</span><div class="grow"><strong>Fahad</strong> — gave the objective</div></div>
@@ -1018,11 +1054,12 @@ async function renderProjects() {
   setTitle(ar ? 'المشاريع' : 'Projects');
   view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>${ar ? 'المشاريع' : 'Projects'}</h1><p class="page-summary">${ar ? 'المشروع هو وحدة العمل: الهدف، الفريق، المهام، الملفات، القرارات والتكلفة في مكان واحد.' : 'A project holds its objective, team, work, files, decisions and cost.'}</p></div><button class="btn btn-primary" id="createProject">${ar ? '＋ مشروع جديد' : '＋ New project'}</button></div><div class="project-cards" id="projectCards"><div class="drawer-loading"></div></div></div>`;
   const summaries = await Promise.all(state.workspaces.map(async (workspace) => {
-    const [detail, center] = await Promise.all([api(`/api/projects/${workspace.id}`), api(`/api/command-center${q({ workspaceId: workspace.id })}`)]);
-    return { ...workspace, ...detail, center };
+    const [detail, center] = await Promise.all([api(`/api/projects/${workspace.id}`).catch(() => null), api(`/api/command-center${q({ workspaceId: workspace.id })}`).catch(() => null)]);
+    return { workspace, detail, center };
   }));
   if (navigation !== state.navigation) return;
-  $('#projectCards').innerHTML = summaries.length ? summaries.map(({ project, stats, center }) => `<a class="project-card-v5" href="#/project/${esc(project.id)}"><div class="spread"><span class="project-status ${center?.objectives?.active?.length ? 'is-live' : ''}">${center?.objectives?.active?.length ? (ar ? 'شغال' : 'Active') : (ar ? 'جاهز' : 'Ready')}</span>${project.id === ws() ? `<span class="pill available">${ar ? 'الحالي' : 'Current'}</span>` : ''}</div><h2 dir="auto">${esc(project.name)}</h2><p dir="auto">${esc(project.description || (ar ? 'ما انضاف وصف المشروع بعد.' : 'No project objective has been added yet.'))}</p><dl><div><dt>${ar ? 'قيد التنفيذ' : 'Active'}</dt><dd>${center?.objectives?.active?.length || 0}</dd></div><div><dt>${ar ? 'المهام' : 'Tasks'}</dt><dd>${stats?.tasks || 0}</dd></div><div><dt>${ar ? 'مكتمل' : 'Completed'}</dt><dd>${stats?.completedTasks || 0}</dd></div><div><dt>${ar ? 'التكلفة' : 'Cost'}</dt><dd>${usd(center?.costUsd || 0)}</dd></div></dl><span class="project-open">${ar ? 'افتح مركز المشروع ←' : 'Open project center →'}</span></a>`).join('') : `<div class="empty"><h3>${ar ? 'أنشئ أول مشروع' : 'Create your first project'}</h3><p>${ar ? 'كل شغل المكتب يعيش داخل مشروع واضح.' : 'Every piece of Office work belongs to a clear project.'}</p></div>`;
+  const statusWord = { unavailable: ar ? 'غير متاح' : 'Unavailable', attention: ar ? 'يحتاج متابعة' : 'Needs attention', active: ar ? 'شغال' : 'Active', ready: ar ? 'جاهز' : 'Ready' };
+  $('#projectCards').innerHTML = summaries.length ? summaries.map(({ workspace, detail, center }) => { const facts = projectFacts({ center, stats: detail?.stats }); const project = detail?.project || workspace; return `<a class="project-card-v5" href="#/project/${esc(project.id)}"><div class="spread"><span class="project-status ${facts.state === 'active' ? 'is-live' : ''}">${statusWord[facts.state]}</span>${project.id === ws() ? `<span class="pill available">${ar ? 'الحالي' : 'Current'}</span>` : ''}</div><h2 dir="auto">${esc(project.name)}</h2><p dir="auto">${esc(project.description || (ar ? 'ما انضاف وصف المشروع بعد.' : 'No project objective has been added yet.'))}</p><dl><div><dt>${ar ? 'قيد التنفيذ' : 'Active'}</dt><dd>${countText(facts.active)}</dd></div><div><dt>${ar ? 'المهام' : 'Tasks'}</dt><dd>${countText(facts.tasks)}</dd></div><div><dt>${ar ? 'مكتمل' : 'Completed'}</dt><dd>${countText(facts.completed)}</dd></div><div><dt>${ar ? 'التكلفة' : 'Cost'}</dt><dd dir="ltr">${moneyText(facts.cost)}</dd></div></dl><span class="project-open">${ar ? 'افتح مركز المشروع' : 'Open project center'}</span></a>`; }).join('') : `<div class="empty"><h3>${ar ? 'أنشئ أول مشروع' : 'Create your first project'}</h3><p>${ar ? 'كل شغل المكتب يعيش داخل مشروع واضح.' : 'Every piece of Office work belongs to a clear project.'}</p></div>`;
   $('#createProject').onclick = async () => {
     const name = await ask(ar ? 'اسم المشروع الجديد' : 'New project name', '');
     if (!name) return;
@@ -1076,11 +1113,12 @@ function connection(status = '') {
 }
 const CONNECTION_TONE = { CONNECTED: 'ok', CONFIGURED: 'configured', 'NOT CONFIGURED': 'off', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
 async function renderIntegrations() {
-  setTitle('Integrations');
-  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>Integrations</h1><p class="page-summary" id="intSummary" aria-live="polite">What the Office can actually use.</p><p class="small muted"><strong>Connected</strong> means a real successful use was recorded — configuration alone never counts.</p></div></div>
+  const ar = state.language === 'ar';
+  setTitle(ar ? 'الربط' : 'Integrations');
+  view.innerHTML = `<div class="page page-wide"><div class="page-head"><div><h1>${ar ? 'الربط' : 'Integrations'}</h1><p class="page-summary" id="intSummary" aria-live="polite">${ar ? 'اللي يقدر المكتب يستخدمه فعليًا.' : 'What the Office can actually use.'}</p><p class="small muted">${ar ? '«متصل» يعني فيه استخدام ناجح مسجّل. مجرد وجود الإعداد ما يكفي.' : '<strong>Connected</strong> means a real successful use was recorded — configuration alone never counts.'}</p></div></div>
     <div class="conn-legend">${Object.values(CONNECTION).map((value) => `<span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span>`).join('')}</div><div id="capabilities"><div class="drawer-loading"></div></div></div>`;
   const [{ capabilities }, models] = await Promise.all([api('/api/capabilities'), api(`/api/models${q({ workspaceId: ws() })}`).catch(() => null)]);
-  const groups = [['Work tools', ['github', 'repository', 'pull_requests', 'ci', 'deployment', 'supabase_tools', 'tool_broker']], ['Research', ['web_search', 'web_fetch']], ['Channels', ['telegram']], ['Office data', ['database', 'memory']]];
+  const groups = [[ar ? 'أدوات الشغل' : 'Work tools', ['github', 'repository', 'pull_requests', 'ci', 'deployment', 'supabase_tools', 'tool_broker']], [ar ? 'البحث' : 'Research', ['web_search', 'web_fetch']], [ar ? 'القنوات' : 'Channels', ['telegram']], [ar ? 'بيانات المكتب' : 'Office data', ['database', 'memory']]];
   const card = (item) => { const value = connection(item.status); return `<div class="int-card"><div class="int-top"><strong>${esc(item.label)}</strong><span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span></div><div class="small muted">${esc(item.detail)}</div>${item.employees?.length ? `<div class="row">${item.employees.map((label) => `<span class="tag muted">${esc(label)}</span>`).join('')}</div>` : ''}</div>`; };
   const providers = new Map();
   for (const model of models?.models || []) {
@@ -1090,9 +1128,11 @@ async function renderIntegrations() {
   }
   const providerState = (entry) => (entry.statuses.includes('AVAILABLE') || entry.statuses.includes('COOLDOWN') ? CONNECTION.CONNECTED : entry.statuses.includes('ACCOUNT ACTION REQUIRED') ? CONNECTION.ACCOUNT
     : entry.reasons.some((reason) => /No credential/i.test(reason)) ? CONNECTION.NOT_CONFIGURED : CONNECTION.UNAVAILABLE);
-  $('#intSummary').textContent = integrationsSummary(capabilities.filter((item) => groups.some(([, ids]) => ids.includes(item.id))).map((item) => connection(item.status)));
+  const connectionStates = capabilities.filter((item) => groups.some(([, ids]) => ids.includes(item.id))).map((item) => connection(item.status));
+  const connected = connectionStates.filter((item) => item === 'CONNECTED').length;
+  $('#intSummary').textContent = ar ? (connectionStates.length ? `${connected} من ${connectionStates.length} أدوات فيها استخدام ناجح مسجّل.` : 'ما في أدوات مبلغ عنها بعد.') : integrationsSummary(connectionStates);
   $('#capabilities').innerHTML = groups.map(([title, ids]) => `<section class="int-group"><h2 class="int-title">${esc(title)}</h2><div class="int-grid">${capabilities.filter((item) => ids.includes(item.id)).map(card).join('')}</div></section>`).join('')
-    + (providers.size ? `<section class="int-group"><h2 class="int-title">Model providers</h2><div class="int-grid">${[...providers.values()].map((entry) => { const value = providerState(entry); return `<div class="int-card"><div class="int-top"><strong>${esc(entry.provider)}</strong><span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span></div><div class="small muted">${entry.statuses.length} model${entry.statuses.length === 1 ? '' : 's'} · ${esc(humanError(entry.reasons.find((reason) => reason) || ''))}</div></div>`; }).join('')}</div><p class="xs muted">Details per model: <a href="#/models">Models</a>.</p></section>` : '');
+    + (providers.size ? `<section class="int-group"><h2 class="int-title">${ar ? 'مزودو المحركات' : 'Model providers'}</h2><div class="int-grid">${[...providers.values()].map((entry) => { const value = providerState(entry); return `<div class="int-card"><div class="int-top"><strong>${esc(entry.provider)}</strong><span class="conn-badge conn-${CONNECTION_TONE[value]}">${esc(value)}</span></div><div class="small muted">${entry.statuses.length} ${ar ? 'محرك' : `model${entry.statuses.length === 1 ? '' : 's'}`} · ${esc(humanError(entry.reasons.find((reason) => reason) || ''))}</div></div>`; }).join('')}</div><p class="xs muted">${ar ? 'تفاصيل كل محرك:' : 'Details per model:'} <a href="#/models">${ar ? 'السعة والتكلفة' : 'Models'}</a>.</p></section>` : '');
 }
 
 // ------------------------------------------------------------------ models
@@ -1104,15 +1144,17 @@ async function renderModels() {
   if (navigation !== state.navigation) return;
   const kind = { AVAILABLE: 'available', COOLDOWN: 'cooldown', 'ACCOUNT ACTION REQUIRED': 'account', UNAVAILABLE: 'unavailable' };
   const waiting = (office?.agents || []).filter((agent) => agent.state === 'WAITING' && /free model capacity/i.test(agent.detail || ''));
-  const available = Number(data.counts?.AVAILABLE || 0);
-  const blocked = Number(data.counts?.['ACCOUNT ACTION REQUIRED'] || 0) + Number(data.counts?.UNAVAILABLE || 0);
+  const available = data?.counts ? (knownNumber(data.counts.AVAILABLE) ?? 0) : null;
+  const blocked = data?.counts ? Number(data.counts['ACCOUNT ACTION REQUIRED'] || 0) + Number(data.counts.UNAVAILABLE || 0) : null;
   const budget = platform?.usage?.budget;
   const paid = capacity?.capacity?.paidFallback || {};
+  const poolCount = Array.isArray(capacity?.pools) ? String(capacity.pools.length) : '—';
+  const capacityLine = capacitySentence(capacity?.summary, state.language) || (ar ? (capacity ? 'تفاصيل السعة غير مكتملة.' : 'بيانات السعة غير متاحة.') : (data?.counts ? (capacity?.headline || modelsSummary(data.counts, waiting.length)) : 'Capacity data unavailable'));
   const poolState = (pool) => pool.state === 'available' ? (ar ? 'مجاني متاح' : 'Free available') : pool.state === 'exhausted' ? (ar ? 'ينتظر التجديد' : 'Waiting for reset') : pool.state === 'not_configured' ? (ar ? 'غير مربوط' : 'Not configured') : (ar ? 'محدود' : 'Limited');
   view.innerHTML = `<div class="page page-wide capacity-page"><div class="page-head"><div><h1>${ar ? 'السعة والتكلفة' : 'Capacity & cost'}</h1><p class="page-summary">${ar ? 'التوجيه تلقائي ومجاني أولًا. المودل محرك تنفيذ، مب هوية الموظف.' : 'Routing is automatic and free-first. A model is an execution engine, never an employee identity.'}</p></div></div>
-    <section class="capacity-overview"><div class="capacity-hero ${capacity?.summary?.freeCapacityNow === 'available' ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div><span>${ar ? 'الحالة الحين' : 'Current state'}</span><h2>${capacity?.summary?.freeCapacityNow === 'available' ? (ar ? 'السعة المجانية متاحة' : 'Free capacity available') : !capacity ? (ar ? 'حالة السعة غير متاحة' : 'Capacity unavailable') : (ar ? 'السعة المجانية محدودة' : 'Free capacity limited')}</h2><p>${esc(capacity?.headline || modelsSummary(data.counts, waiting.length))}</p></div></div><div class="capacity-kpis"><div><span>${ar ? 'المكتب — اليوم' : 'Office — today'}</span><strong>${capacity?.capacity?.costUsd?.today == null ? (ar ? 'غير متاح' : 'Unavailable') : usd(capacity.capacity.costUsd.today)}</strong><small>${capacity?.summary?.tokensToday == null ? '—' : tokens(capacity.summary.tokensToday)} ${ar ? 'توكن' : 'tokens'}</small></div><div><span>${ar ? 'المكتب — الشهر' : 'Office — month'}</span><strong>${capacity?.capacity?.costUsd?.month == null ? (ar ? 'غير متاح' : 'Unavailable') : usd(capacity.capacity.costUsd.month)}</strong><small>${budget ? `${usd(budget.remainingUsd)} ${ar ? 'متبقي للمشروع' : 'project budget remaining'}` : (ar ? 'ميزانية غير متاحة' : 'Budget unavailable')}</small></div><div><span>${ar ? 'المحركات المتاحة' : 'Available engines'}</span><strong>${available}</strong><small>${blocked ? `${blocked} ${ar ? 'محجوب، والباقي مستمر' : 'blocked; others still route'}` : (ar ? 'ما في محجوب' : 'None blocked')}</small></div><div><span>${ar ? 'المدفوع — المكتب' : 'Office paid fallback'}</span><strong>${paid.route ? (ar ? 'متاح بموافقة السياسة' : 'Policy available') : (ar ? 'غير متاح' : 'Unavailable')}</strong><small>${paid.route ? `${usd(paid.remainingUsd)} ${ar ? 'متبقي' : 'remaining'}` : (ar ? 'المجاني ما زال مستقل' : 'Free pools remain independent')}</small></div></div></section>
+    <section class="capacity-overview"><div class="capacity-hero ${capacity?.summary?.freeCapacityNow === 'available' ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div><span>${ar ? 'الحالة الحين' : 'Current state'}</span><h2>${capacity?.summary?.freeCapacityNow === 'available' ? (ar ? 'السعة المجانية متاحة' : 'Free capacity available') : !capacity ? (ar ? 'حالة السعة غير متاحة' : 'Capacity unavailable') : (ar ? 'السعة المجانية محدودة' : 'Free capacity limited')}</h2><p dir="auto">${esc(capacityLine)}</p></div></div><div class="capacity-kpis"><div><span>${ar ? 'المكتب — اليوم' : 'Office — today'}</span><strong>${capacity?.capacity?.costUsd?.today == null ? (ar ? 'غير متاح' : 'Unavailable') : usd(capacity.capacity.costUsd.today)}</strong><small>${capacity?.summary?.tokensToday == null ? '—' : tokens(capacity.summary.tokensToday)} ${ar ? 'توكن' : 'tokens'}</small></div><div><span>${ar ? 'المكتب — الشهر' : 'Office — month'}</span><strong>${capacity?.capacity?.costUsd?.month == null ? (ar ? 'غير متاح' : 'Unavailable') : usd(capacity.capacity.costUsd.month)}</strong><small>${budget ? `${usd(budget.remainingUsd)} ${ar ? 'متبقي للمشروع' : 'project budget remaining'}` : (ar ? 'ميزانية غير متاحة' : 'Budget unavailable')}</small></div><div><span>${ar ? 'المحركات المتاحة' : 'Available engines'}</span><strong>${available == null ? '—' : available}</strong><small>${blocked == null ? unavailableText() : blocked ? `${blocked} ${ar ? 'محجوب، والباقي مستمر' : 'blocked; others still route'}` : (ar ? 'ما في محجوب' : 'None blocked')}</small></div><div><span>${ar ? 'المدفوع — المكتب' : 'Office paid fallback'}</span><strong>${paid.route ? (ar ? 'متاح بموافقة السياسة' : 'Policy available') : (ar ? 'غير متاح' : 'Unavailable')}</strong><small>${paid.route ? `<bdi dir="ltr">${moneyText(paid.remainingUsd)}</bdi> ${ar ? 'متبقي' : 'remaining'}` : (ar ? 'المجاني ما زال مستقل' : 'Free pools remain independent')}</small></div></div></section>
     ${waiting.length ? `<div class="capacity-banner" role="status"><strong>${ar ? 'ينتظر السعة' : 'Waiting for capacity'}</strong> · ${waiting.map((agent) => esc(agent.label)).join(', ')} — ${ar ? 'بيكمل تلقائي أول ما تتوفر سعة مجانية.' : 'Work resumes automatically when free capacity returns.'}</div>` : ''}
-    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'مجموعات السعة' : 'Capacity pools'}</h2><span class="small muted">${capacity?.pools?.length || 0}</span></div><div class="pool-grid">${(capacity?.pools || []).map((pool) => `<article><div class="spread"><strong dir="auto">${esc(pool.label || pool.id)}</strong><span class="pill ${pool.state === 'available' ? 'available' : pool.state === 'exhausted' ? 'cooldown' : 'unavailable'}">${poolState(pool)}</span></div><p class="small muted">${pool.nextReset ? `${ar ? 'التجديد' : 'Reset'}: ${when(pool.nextReset)}` : (ar ? 'المزود ما أعلن حدًا دقيقًا' : 'Provider does not report an exact allowance')}</p></article>`).join('') || `<p class="muted">${ar ? 'بيانات المجموعات غير متاحة.' : 'Pool data is unavailable.'}</p>`}</div></section>
+    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'مجموعات السعة' : 'Capacity pools'}</h2><span class="small muted">${poolCount}</span></div><div class="pool-grid">${(capacity?.pools || []).map((pool) => `<article><div class="spread"><strong dir="auto">${esc(pool.label || pool.id)}</strong><span class="pill ${pool.state === 'available' ? 'available' : pool.state === 'exhausted' ? 'cooldown' : 'unavailable'}">${poolState(pool)}</span></div><p class="small muted">${pool.nextReset ? `${ar ? 'التجديد' : 'Reset'}: ${when(pool.nextReset)}` : (ar ? 'المزود ما أعلن حدًا دقيقًا' : 'Provider does not report an exact allowance')}</p></article>`).join('') || `<p class="muted">${ar ? 'بيانات المجموعات غير متاحة.' : 'Pool data is unavailable.'}</p>`}</div></section>
     <details class="disclosure"><summary>${ar ? 'تفاصيل المحركات المتقدمة' : 'Advanced engine details'}</summary><div class="disclosure-body"><div class="table-wrap"><table class="table"><thead><tr><th>${ar ? 'المحرك' : 'Engine'}</th><th>${ar ? 'الحالة' : 'Status'}</th><th class="hide-sm">${ar ? 'الفئة' : 'Cost class'}</th><th class="hide-sm">${ar ? 'الترتيب' : 'Order'}</th><th class="hide-sm">${ar ? 'الصحة' : 'Health'}</th><th class="hide-sm">${ar ? 'السبب' : 'Why'}</th></tr></thead><tbody>
     ${data.models.map((model) => { const reason = esc(model.reason.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, (iso) => new Date(iso).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }))); return `<tr><td><div class="mono small" style="overflow-wrap:anywhere">${esc(model.model)}</div><div class="xs faint">${esc(model.provider)} · ${esc(model.billing)}</div><div class="xs muted show-sm">${reason}</div></td><td>${pill(kind[model.status], model.status)}</td><td class="hide-sm">${esc(model.billing)}</td><td class="hide-sm">${model.order || '—'}</td><td class="hide-sm">${esc(model.health)}</td><td class="small muted hide-sm" style="min-width:180px">${reason}</td></tr>`; }).join('')}
     </tbody></table></div><p class="xs muted" style="margin-top:var(--s-2)">${ar ? 'تعطل مزود واحد ما يخفي ولا يوقف الخيارات المتاحة من المزودين الآخرين.' : 'A blocked provider never hides or stops other available options.'}</p></div></details></div>`;
@@ -1138,15 +1180,17 @@ async function renderSettings() {
   }
   const providerStatus = (item) => item.statuses.includes('AVAILABLE') || item.statuses.includes('COOLDOWN') ? ['available', ar ? 'مربوط' : 'Connected']
     : item.reasons.some((reason) => /credential|key|not configured/i.test(reason)) ? ['unavailable', ar ? 'المفتاح غير موجود' : 'Key not configured'] : ['account', ar ? 'يحتاج إجراء' : 'Needs action'];
-  const capReady = (capabilities?.capabilities || []).filter((item) => /^Connected|^Available/.test(item.status || '')).length;
-  const runtimeOk = Boolean(health?.ok && platform?.systemHealth?.hub === 'ok' && platform?.systemHealth?.database === 'ok');
+  const capReady = capabilities ? (capabilities.capabilities || []).filter((item) => /^Connected|^Available/.test(item.status || '')).length : null;
+  const facts = healthFacts({ health, platform });
+  const healthWord = (key) => ({ healthy: ar ? 'سليم' : 'Healthy', unhealthy: ar ? 'فيه خلل' : 'Check failed', unknown: ar ? 'غير مؤكد' : 'Unknown', unavailable: ar ? 'غير متاح' : 'Unavailable' }[key] || (ar ? 'غير متاح' : 'Unavailable'));
+  const runtimeOk = facts.state === 'healthy';
   view.innerHTML = `<div class="page page-wide stack settings-v5"><div class="page-head"><div><h1>${ar ? 'الإعدادات والمنصة' : 'Settings & platform'}</h1><p class="page-summary">${ar ? 'إعدادات المالك وحالة المنصة بكلام واضح. الأسرار ما تنعرض أبدًا.' : 'Owner preferences and platform readiness in plain language. Secrets are never displayed.'}</p></div></div>
-    <section class="platform-health ${runtimeOk ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div class="grow"><span>${ar ? 'حالة المنصة' : 'Platform health'}</span><h2>${runtimeOk ? (ar ? 'الخدمة وقاعدة البيانات سليمة' : 'Hub and database are healthy') : (ar ? 'بعض الفحوصات غير متاحة' : 'Some checks are unavailable')}</h2><p>${ar ? 'هذه حالة الخدمة والبيانات. حالة حاويات التشغيل تحتاج فحص نشر منفصل؛ جاهزية Continuity تظهر أدناه.' : 'These checks cover the Hub and database. Container health requires separate deployment verification; Continuity readiness is shown below.'}</p></div><a class="btn" href="#/continuity">${ar ? 'الاستمرارية' : 'Continuity'}</a></section>
+    <section class="platform-health ${runtimeOk ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div class="grow"><span>${ar ? 'حالة المنصة' : 'Platform health'}</span><h2>${runtimeOk ? (ar ? 'الخدمة وقاعدة البيانات سليمة' : 'Hub and database are healthy') : facts.state === 'unhealthy' ? (ar ? 'فحص الخدمة أو البيانات فشل' : 'A Hub or database check failed') : (ar ? 'بعض الفحوصات غير متاحة' : 'Some checks are unavailable')}</h2><p>${ar ? 'هذه حالة الخدمة والبيانات. حالة حاويات التشغيل تحتاج فحص نشر منفصل؛ جاهزية Continuity تظهر أدناه.' : 'These checks cover the Hub and database. Container health requires separate deployment verification; Continuity readiness is shown below.'}</p></div><a class="btn" href="#/continuity">${ar ? 'الاستمرارية' : 'Continuity'}</a></section>
     <div class="settings-grid"><section class="card"><h2 class="card-title">${ar ? 'اللغة' : 'Language'}</h2><div class="chips" id="languageChips"><button class="chip ${state.language === 'ar' ? 'active' : ''}" data-language="ar">العربية</button><button class="chip ${state.language === 'en' ? 'active' : ''}" data-language="en">English</button></div><p class="small muted">${ar ? 'العربية هي الافتراضية، وكل المحتوى المختلط يدعم اتجاهه الطبيعي.' : 'Arabic is the default; mixed Arabic/English content keeps its natural direction.'}</p></section>
       <section class="card"><h2 class="card-title">${ar ? 'المظهر' : 'Appearance'}</h2><div class="chips" id="themeChips">${[['auto', ar ? 'النظام' : 'System'], ['dark', ar ? 'داكن' : 'Dark'], ['light', ar ? 'فاتح' : 'Light']].map(([value, label]) => `<button class="chip" data-theme-choice="${value}">${label}</button>`).join('')}</div></section>
       <section class="card"><h2 class="card-title">${ar ? 'الحساب' : 'Account'}</h2><p class="small muted">${ar ? 'الدخول خاص بالمالك ولا يوجد تسجيل عام.' : 'Owner-only access. Public signup is disabled.'}</p><button class="btn" id="logout">${ar ? 'تسجيل خروج' : 'Sign out'}</button></section>
       <section class="card"><h2 class="card-title">${ar ? 'المكتب المرئي' : 'Office view'}</h2><p class="small muted">${ar ? 'الشاشات الصغيرة تستخدم العرض الخفيف. العرض الغامر اختياري للكمبيوتر.' : 'Small screens use the light view. Immersive mode is optional on capable desktops.'}</p><label class="check"><input type="checkbox" id="autoImmersive"> <span>${ar ? 'استخدم العرض الغامر تلقائيًا على الأجهزة المناسبة' : 'Use immersive Office automatically on capable desktops'}</span></label><label class="small muted" for="officeQuality">${ar ? 'الجودة' : 'Quality'}</label><select class="input input-sm" id="officeQuality"><option value="">${ar ? 'تلقائي' : 'Automatic'}</option><option value="high">High</option><option value="balanced">Balanced</option><option value="light">Light</option></select></section></div>
-    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'جاهزية التشغيل' : 'Readiness'}</h2><a href="#/integrations">${ar ? 'كل أدوات الربط' : 'All integrations'}</a></div><div class="readiness-grid"><div><span>${ar ? 'Hub' : 'Hub'}</span><strong>${health?.ok ? (ar ? 'سليم' : 'Healthy') : (ar ? 'غير مؤكد' : 'Unknown')}</strong></div><div><span>${ar ? 'قاعدة البيانات' : 'Database'}</span><strong>${platform?.systemHealth?.database === 'ok' ? (ar ? 'سليمة' : 'Healthy') : (ar ? 'غير مؤكدة' : 'Unknown')}</strong></div><div><span>${ar ? 'الأدوات الجاهزة' : 'Ready tools'}</span><strong>${(capabilities ? capReady : '—')}</strong></div><div><span>${ar ? 'الموافقات المنتظرة' : 'Pending approvals'}</span><strong>${platform?.approvals?.length ?? '—'}</strong></div><div><span>${ar ? 'Continuity Supervisor' : 'Continuity Supervisor'}</span><strong>${continuity ? (continuity.enabled ? (ar ? 'شغال' : 'On') : (ar ? 'متوقف' : 'Off')) : (ar ? 'غير متاح' : 'Unavailable')}</strong></div><div><span>${ar ? 'العامل النشط' : 'Active worker'}</span><strong>${esc(continuity?.workers?.find((worker) => worker.enabled)?.displayName || (ar ? 'ما في عامل Continuity مفعّل' : 'No enabled Continuity worker'))}</strong></div></div></section>
+    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'جاهزية التشغيل' : 'Readiness'}</h2><a href="#/integrations">${ar ? 'كل أدوات الربط' : 'All integrations'}</a></div><div class="readiness-grid"><div><span>Hub</span><strong data-owner-health="${facts.hub}">${healthWord(facts.hub)}</strong></div><div><span>${ar ? 'قاعدة البيانات' : 'Database'}</span><strong>${healthWord(facts.database)}</strong></div><div><span>${ar ? 'الأدوات الجاهزة' : 'Ready tools'}</span><strong>${countText(capReady)}</strong></div><div><span>${ar ? 'الموافقات المنتظرة' : 'Pending approvals'}</span><strong>${platform?.approvals?.length ?? '—'}</strong></div><div><span>${ar ? 'Continuity Supervisor' : 'Continuity Supervisor'}</span><strong>${continuity ? (continuity.enabled ? (ar ? 'شغال' : 'On') : (ar ? 'متوقف' : 'Off')) : (ar ? 'غير متاح' : 'Unavailable')}</strong></div><div><span>${ar ? 'العامل النشط' : 'Active worker'}</span><strong>${esc(continuity?.workers?.find((worker) => worker.enabled)?.displayName || (ar ? 'ما في عامل Continuity مفعّل' : 'No enabled Continuity worker'))}</strong></div></div></section>
     <details class="disclosure"><summary>${ar ? 'حالة المزودين والمفاتيح' : 'Provider and key status'}</summary><div class="disclosure-body"><p class="small muted">${ar ? 'تظهر الحالة فقط؛ لا تظهر قيمة أي مفتاح.' : 'Only presence/readiness is shown. Secret values are never returned.'}</p><div class="provider-grid">${[...providers.values()].map((item) => { const [tone, label] = providerStatus(item); return `<div class="provider-safe"><strong>${esc(item.provider)}</strong><span class="pill ${tone}">${label}</span></div>`; }).join('') || `<p>${ar ? 'لا توجد بيانات مزودين.' : 'No provider data.'}</p>`}</div></div></details>
     <details class="disclosure"><summary>${ar ? 'تفاصيل تقنية متقدمة' : 'Advanced technical details'}</summary><div class="disclosure-body"><dl class="kv"><div><dt>Version</dt><dd class="mono">${esc(String(health?.version || platform?.systemHealth?.version || '—').slice(0, 12))}</dd></div><div><dt>${ar ? 'آخر نشاط للعامل' : 'Last worker activity'}</dt><dd>${platform?.systemHealth?.lastAgentActivityAt ? when(platform.systemHealth.lastAgentActivityAt) : '—'}</dd></div><div><dt>${ar ? 'آخر فحص مزودين' : 'Last provider canary'}</dt><dd>${esc(platform?.systemHealth?.lastCanary?.status || '—')}</dd></div><div><dt>${ar ? 'محركات متاحة' : 'Live engines'}</dt><dd>${platform?.modelPool?.live ?? '—'} / ${platform?.modelPool?.total ?? '—'}</dd></div></dl><p class="small muted">${ar ? 'معلومات تشخيصية فقط، بدون JSON خام أو أسرار.' : 'Diagnostic summary only, with no raw JSON or secrets.'}</p></div></details></div>`;
   let current = 'auto';
@@ -1170,7 +1214,8 @@ function dialog({ title, body = '', input = null, confirm = 'OK', danger = false
     const element = document.createElement('dialog');
     element.className = 'card';
     element.style.cssText = 'max-width:440px;width:calc(100vw - 32px);color:var(--text);border:1px solid var(--border-strong)';
-    element.innerHTML = `<form method="dialog"><h2 class="card-title">${esc(title)}</h2>${body ? `<p class="small muted">${esc(body)}</p>` : ''}${input !== null ? `<textarea class="input" rows="${input.multiline ? 3 : 1}" dir="auto">${esc(input.value)}</textarea>` : ''}<div class="row" style="justify-content:flex-end;margin-top:var(--s-4)"><button class="btn btn-ghost" value="cancel">${state.language === 'ar' ? 'إلغاء' : 'Cancel'}</button><button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" value="ok">${esc(confirm)}</button></div></form>`;
+    const okLabel = confirm === 'OK' ? (state.language === 'ar' ? 'تم' : 'OK') : confirm === 'Yes' ? (state.language === 'ar' ? 'نعم' : 'Yes') : confirm;
+    element.innerHTML = `<form method="dialog"><h2 class="card-title">${esc(title)}</h2>${body ? `<p class="small muted">${esc(body)}</p>` : ''}${input !== null ? `<textarea class="input" rows="${input.multiline ? 3 : 1}" dir="auto">${esc(input.value)}</textarea>` : ''}<div class="row" style="justify-content:flex-end;margin-top:var(--s-4)"><button class="btn btn-ghost" value="cancel">${state.language === 'ar' ? 'إلغاء' : 'Cancel'}</button><button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" value="ok">${esc(okLabel)}</button></div></form>`;
     document.body.append(element);
     element.addEventListener('close', () => {
       const ok = element.returnValue === 'ok';

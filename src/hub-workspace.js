@@ -200,7 +200,7 @@ export function taskView(session, { events = [], approvals = [], attempts = [] }
       inputTokens: input,
       cachedInputTokens: cached,
       outputTokens: output,
-      costUsd: Number(session.spent_usd || 0),
+      costUsd: session.spent_usd == null || session.spent_usd === '' ? null : Number(session.spent_usd),
       modelSwitches: session.provider_switches || 0,
       modelsUsed: models,
       compactions: events.filter((event) => event.type === 'checkpoint' && /compact/i.test(event.message)).length,
@@ -515,7 +515,8 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         const needs = ownerAction(session, own);
         const group = needs ? 'attention' : TERMINAL.has(session.status) ? session.status : 'running';
         return { id: session.id, title: session.title, repository: session.repository, status: session.status, group, phase: session.phase,
-          now: taskNow(session), needs: needs ? needs.kind : null, costUsd: Number(session.spent_usd || 0), currentModel: session.current_route,
+          now: taskNow(session), needs: needs ? needs.kind : null, jobId: session.job_id || null,
+          costUsd: session.spent_usd == null ? null : Number(session.spent_usd), currentModel: session.current_route,
           pr: session.state?.pr || null, conversationId: session.conversation_id || null,
           summary: session.result?.summary ? String(session.result.summary).slice(0, 280) : null,
           createdAt: session.created_at, updatedAt: session.updated_at, completedAt: session.completed_at };

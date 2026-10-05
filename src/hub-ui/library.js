@@ -8,9 +8,10 @@ import { artifactsSummary } from './summaries.js';
 import { download, fileName, moodboardPng, printArtifact, svgToPng, toCsv, toMarkdown } from './export.js?v=__UI_VERSION__';
 
 const FAMILY = {
-  table: 'Tables', financial_model: 'Finance', chart: 'Charts', compliance_matrix: 'Legal', audit_report: 'Audit', moodboard: 'Creative', content_calendar: 'Social',
-  kanban: 'Product', timeline: 'Product', flow: 'Product', checklist: 'Checklists', evidence: 'Research', risk_matrix: 'Risk',
+  table: ['Tables', 'جداول'], financial_model: ['Finance', 'مالية'], chart: ['Charts', 'رسوم'], compliance_matrix: ['Legal', 'قانونية'], audit_report: ['Audit', 'مراجعة'], moodboard: ['Creative', 'إبداع'], content_calendar: ['Social', 'محتوى'],
+  kanban: ['Product', 'منتج'], timeline: ['Product', 'منتج'], flow: ['Product', 'منتج'], checklist: ['Checklists', 'قوائم'], evidence: ['Research', 'بحث'], risk_matrix: ['Risk', 'مخاطر'],
 };
+const familyLabel = (type, ar) => (FAMILY[type] ? FAMILY[type][ar ? 1 : 0] : '');
 const needsAttention = (artifact) => (artifact.type === 'audit_report' && ['NEEDS WORK', 'BLOCKED'].includes(artifact.data?.verdict))
   || (artifact.type === 'compliance_matrix' && (artifact.data?.items || []).some((item) => ['RISK FLAG', 'PROFESSIONAL REVIEW REQUIRED'].includes(item.classification)));
 
@@ -62,7 +63,7 @@ export async function renderLibrary(ctx, initialType = '') {
     const list = artifacts.filter(matches);
     view.querySelector('#libCount').textContent = ar ? `${list.length} من ${artifacts.length} نتيجة` : `${list.length} of ${artifacts.length} deliverable${artifacts.length === 1 ? '' : 's'}`;
     view.querySelector('#libGrid').innerHTML = list.length ? list.map((artifact, index) => `<button type="button" class="lib-card" data-index="${artifacts.indexOf(artifact)}" style="--i:${index}">
-      <span class="lib-head">${roleMark(artifact.agent, artifact.agentLabel)}<span class="lib-type">${esc(FAMILY[artifact.type] || '')} · ${esc(ctx.labels[artifact.type] || artifact.type)}</span>${needsAttention(artifact) ? '<span class="lib-flag">Needs attention</span>' : ''}</span>
+      <span class="lib-head">${roleMark(artifact.agent, artifact.agentLabel)}<span class="lib-type">${esc(familyLabel(artifact.type, ar))} · ${esc(ctx.labels[artifact.type] || artifact.type)}</span>${needsAttention(artifact) ? `<span class="lib-flag">${ar ? 'يحتاج انتباه' : 'Needs attention'}</span>` : ''}</span>
       <span class="lib-title" dir="auto">${esc(artifact.title || ctx.labels[artifact.type] || artifact.type)}</span>
       <span class="lib-preview">${artifactPreview(artifact)}</span>
       <span class="lib-meta"><span>${esc(artifact.agentLabel)}</span><span>${esc(when(artifact.at))}</span></span>

@@ -121,7 +121,7 @@ export function workflowView({ job, tasks = [], agents = [], results = [], hando
   const decisions = nodes.filter((node) => node.output?.decisions).map((node) => ({ from: node.agentLabel, text: node.output.decisions }));
   return {
     job: { id: job.id, title: job.title, objective: job.goal, status: job.status, progress: job.progress || 0, createdAt: job.created_at, completedAt: job.completed_at || null,
-      costUsd: Number(job.cost_usd || 0), conversationId: job.conversation_id || null },
+      costUsd: job.cost_usd == null || job.cost_usd === '' ? null : Number(job.cost_usd), conversationId: job.conversation_id || null },
     multiAgent: nodes.some((node) => node.kind === 'workstream' || node.kind === 'development') && nodes.some((node) => node.kind === 'synthesis'),
     participants, nodes, decisions,
     handoffs: handoffs.map((handoff) => ({
@@ -236,7 +236,7 @@ export function commandCenter({ project, live, states, artifacts = [], memory = 
     artifacts: artifacts.slice(0, 12).map(artifactView),
     latestAudit: audits[0] ? { verdict: audits[0].data?.verdict || null, title: audits[0].title, at: audits[0].created_at } : null,
     risks,
-    costUsd: Number(costs.reduce((sum, row) => sum + Number(row.cost_usd || 0), 0).toFixed(6)),
+    costUsd: costs == null ? null : Number(costs.reduce((sum, row) => sum + Number(row.cost_usd || 0), 0).toFixed(6)),
     memory: { total: memory.length, byKind, decisions: memory.filter((item) => /decision/.test(item.kind)).slice(0, 6).map((item) => ({ kind: item.kind, content: item.content })) },
     knowledge: { total: knowledge.length, fresh: knowledge.filter((item) => !item.expires_at || Date.parse(item.expires_at) > now).length,
       recent: knowledge.slice(0, 6).map((item) => ({ agent: officeAgent(item.agent_slug)?.label || item.agent_slug, title: item.title, url: item.source_url, date: item.source_date })) },
@@ -505,7 +505,7 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
         optionalRows(db.from('artifacts').select(ARTIFACT_COLUMNS).eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(40)),
         optionalRows(db.from('project_memory').select('kind,content,created_at').eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(60)),
         optionalRows(db.from('knowledge_items').select('agent_slug,title,source_url,source_date,expires_at').eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(40)),
-        jobIds.length ? optionalRows(db.from('jobs').select('cost_usd').in('id', jobIds)) : [],
+        jobIds.length ? db.from('jobs').select('cost_usd').in('id', jobIds).then(({ data, error }) => (error ? null : data || [])) : [],
       ]);
       if (!project) return sendJson(response, 404, { ok: false, error: 'PROJECT_NOT_FOUND' }), true;
       const agentSlugById = new Map(live.agents.map((agent) => [agent.id, agent.slug]));
