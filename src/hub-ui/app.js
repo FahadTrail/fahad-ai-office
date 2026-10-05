@@ -11,12 +11,12 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const COPY = {
   ar: {
     askChief: '＋ اسأل CHIEF', workspace: 'مساحة العمل', home: 'الرئيسية', projects: 'المشاريع', team: 'الفريق', work: 'العمل', approvals: 'الموافقات',
-    continuity: 'الاستمرارية', platform: 'المنصة', models: 'السعة والتكلفة', files: 'الملفات والنتائج', settings: 'الإعدادات', more: 'المزيد',
+    continuity: 'الاستمرارية', platform: 'المنصة', models: 'السعة والتكلفة', deliverables: 'المخرجات', settings: 'الإعدادات', more: 'المزيد',
     liveOffice: 'المكتب المباشر', chats: 'المحادثات', integrations: 'الربط', search: 'بحث', currentProject: 'المشروع الحالي',
   },
   en: {
     askChief: '＋ Ask CHIEF', workspace: 'Workspace', home: 'Home', projects: 'Projects', team: 'Team', work: 'Work', approvals: 'Approvals',
-    continuity: 'Continuity', platform: 'Platform', models: 'Capacity & cost', files: 'Files & results', settings: 'Settings', more: 'More',
+    continuity: 'Continuity', platform: 'Platform', models: 'Capacity & cost', deliverables: 'Deliverables', settings: 'Settings', more: 'More',
     liveOffice: 'Live Office', chats: 'Chats', integrations: 'Integrations', search: 'Search', currentProject: 'Current project',
   },
 };
@@ -71,21 +71,12 @@ function when(value) {
   if (diff < 86400 && date.getDate() === new Date().getDate()) return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   return date.toLocaleString(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
-function duration(ms) {
-  if (ms == null) return '—';
-  const ar = state.language === 'ar';
-  const minutes = Math.floor(ms / 60000);
-  if (minutes < 1) return ar ? `${Math.max(1, Math.round(ms / 1000))} ث` : `${Math.max(1, Math.round(ms / 1000))}s`;
-  if (minutes < 60) return ar ? `${minutes} د` : `${minutes} min`;
-  return ar ? `${Math.floor(minutes / 60)} س ${minutes % 60} د` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
-}
 const usd = (value) => `$${Number(value || 0).toFixed(Number(value || 0) < 0.1 ? 4 : 2)}`;
 const unavailableText = () => (state.language === 'ar' ? 'غير متاح' : 'Unavailable');
 const moneyText = (value) => (knownNumber(value) == null ? unavailableText() : usd(knownNumber(value)));
 const countText = (value) => countLabel(value) ?? '—';
 const percentText = (value) => (knownNumber(value) == null ? '—' : `${knownNumber(value)}%`);
 const tokens = (value) => (knownNumber(value) == null ? '—' : value >= 1e6 ? `${(value / 1e6).toFixed(2)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}K` : String(value));
-const modelName = (route) => String(route || '').split(':').slice(1).join(':') || route || '';
 const STATUS_WORDS = { queued: 'Queued', running: 'Running', awaiting_approval: 'Needs approval', blocked: 'Needs you', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', planning: 'Thinking', attention: 'Needs attention' };
 function statusLabel(status) {
   const arabic = { queued: 'بالانتظار', running: 'قيد التنفيذ', awaiting_approval: 'يحتاج موافقة', blocked: 'يحتاجك', completed: 'مكتمل', failed: 'فشل', cancelled: 'ملغي', planning: 'تفكير', attention: 'يحتاج انتباه' };
@@ -342,11 +333,12 @@ async function route() {
   const routes = {
     '': renderHome, home: renderHome, chief: () => renderChat(null), chat: () => renderChat(id), chats: renderChats, work: renderWork, 'new-work': renderNewWork, job: () => renderOwnerJob(id),
     tasks: () => renderTasks(id || 'running'), task: () => renderTask(id), code: renderNewTask, attention: renderAttention,
-    projects: renderProjects, project: () => renderProject(id, sub), continuity: renderContinuity, models: renderModels, settings: renderSettings,
+    projects: renderProjects, project: () => renderProject(id, sub), deliverables: () => renderProject(ws(), 'deliverables'), continuity: renderContinuity, models: renderModels, settings: renderSettings,
     office: renderOffice, agent: async () => { await renderOffice(); await openEmployee(id); }, workflow: () => renderWorkflow(id), talk: () => renderChat(null, id),
     artifacts: () => renderArtifacts(id), employees: renderEmployees, integrations: renderIntegrations,
   };
-  markNav({ '': 'home', home: 'home', chief: 'home', chat: 'chats', task: 'work', tasks: 'work', code: 'work', project: 'projects', agent: 'employees', workflow: 'work', talk: 'employees' }[section] ?? section);
+  markNav(section === 'project' && sub === 'deliverables' ? 'deliverables'
+    : { '': 'home', home: 'home', chief: 'home', chat: 'chats', task: 'work', tasks: 'work', code: 'work', project: 'projects', agent: 'employees', workflow: 'work', talk: 'employees', artifacts: 'deliverables' }[section] ?? section);
   document.querySelectorAll('#recentChats a').forEach((link) => link.classList.toggle('active', link.getAttribute('href') === `#/chat/${id}`));
   try {
     await (routes[section] || routes[''])();
@@ -399,7 +391,7 @@ async function renderHome() {
       ${metric(ar ? 'الخدمة والبيانات' : 'Hub & database', healthWord, ar ? 'حالة الحاويات في تفاصيل المنصة' : 'Container status requires platform checks', health.state === 'healthy' ? 'tone-good' : 'tone-warn', 'data-owner-health')}
     </section>
     <div class="owner-grid">
-      <section class="owner-card owner-span-2"><div class="owner-card-head"><div><span class="owner-label">${ar ? 'المشروع الحالي' : 'Active project'}</span><h2 dir="auto">${esc(center.project?.name || state.workspaces.find((item) => item.id === ws())?.name || '')}</h2></div><a href="#/project/${esc(ws())}">${ar ? 'افتح مركز المشروع' : 'Open project center'}</a></div>
+      <section class="owner-card owner-span-2"><div class="owner-card-head"><div><span class="owner-label">${ar ? 'المشروع الحالي' : 'Active project'}</span><h2 dir="auto">${esc(center.project?.name || state.workspaces.find((item) => item.id === ws())?.name || '')}</h2></div><span class="row"><a href="#/deliverables">${ar ? 'المخرجات' : 'Deliverables'}</a><a href="#/project/${esc(ws())}">${ar ? 'افتح مركز المشروع' : 'Open project center'}</a></span></div>
         ${center.project?.description ? `<p class="owner-objective" dir="auto">${esc(center.project.description)}</p>` : `<p class="muted">${ar ? 'أضف هدف وسياق المشروع عشان CHIEF يشتغل بدقة.' : 'Add the objective and context so CHIEF can work precisely.'}</p>`}
         ${active.length ? `<div class="owner-live-list">${active.slice(0, 4).map((job) => `<a href="#/job/${esc(job.id)}"><span class="live-pulse"></span><span class="grow" dir="auto"><strong>${esc(job.title)}</strong><small dir="ltr">${percentText(job.progress)} ${ar ? 'مكتمل' : 'complete'}</small></span><span class="progress"><span style="width:${progressWidth(job.progress)}%"></span></span></a>`).join('')}</div>` : empty(ar ? 'ما في هدف شغال الحين.' : 'No objective is running right now.', `<a class="btn btn-sm" href="#/chief">${ar ? 'ابدأ مع CHIEF' : 'Start with CHIEF'}</a>`)}</section>
       <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'CODING الحين' : 'CODING now'}</h2><a href="#/code">${ar ? 'مهمة جديدة' : 'New task'}</a></div>${codingNow.length ? codingNow.slice(0, 4).map((task) => `<a class="owner-row" href="#/task/${esc(task.id)}"><span class="grow" dir="auto"><strong>${esc(task.title)}</strong><small dir="auto">${esc(ownerPhrase(task.now || task.summary || ''))}</small></span></a>`).join('') : `<p class="muted">${ar ? 'ما في مهمة برمجية شغالة في هذا المشروع.' : 'No coding task is active in this project.'}</p>`}</section>
@@ -481,7 +473,15 @@ async function renderChat(id, agentSlug = null) {
       busy(button, false);
     }
   };
-  if (!conversation) { prompt.focus(); if (!direct) { fillChiefHome(); onLiveChange(fillChiefHome); } return; }
+  if (!conversation) {
+    // "Continue with CHIEF" from a deliverable leaves a draft for Fahad to finish.
+    let draft = '';
+    try { draft = sessionStorage.getItem('hub-chief-draft') || ''; sessionStorage.removeItem('hub-chief-draft'); } catch {}
+    if (draft && !direct) { prompt.value = draft; autosize(prompt); prompt.setSelectionRange(draft.length, draft.length); }
+    prompt.focus();
+    if (!direct) { fillChiefHome(); onLiveChange(fillChiefHome); }
+    return;
+  }
 
   bind(view, {
     '#renameChat': async () => {
@@ -724,166 +724,12 @@ function taskItem(task) {
     <div class="sub faint xs">${esc(task.repository)} · ${when(task.updatedAt)} · <bdi dir="ltr">${moneyText(task.costUsd)}</bdi>${task.pr?.number ? ` · PR #${esc(task.pr.number)}` : ''}</div></div>${pill(task.group, statusLabel(task.group === 'attention' ? 'attention' : task.status))}</a>`;
 }
 
-async function renderNewTask() {
-  const ar = state.language === 'ar';
-  setTitle(ar ? 'مهمة CODING' : 'CODING task');
-  const [{ project }, { tasks }] = await Promise.all([api(`/api/projects/${ws()}`), api(`/api/tasks${q({ workspaceId: ws() })}`)]);
-  view.innerHTML = `<div class="page"><div class="page-head"><div><h1>${ar ? 'مهمة CODING' : 'CODING task'}</h1><p>${ar ? 'اكتب المطلوب؛ CODING يخطط ويطور ويختبر، والإجراءات المحمية تحتاج موافقتك.' : 'CODING plans, builds and tests. Protected actions still need your approval.'}</p></div></div>
-    <form class="card" id="taskForm">
-      <label class="field-label" for="instruction" style="margin-top:0;font-size:var(--fs-md);color:var(--text)">${ar ? 'شو تبغي نطوّر أو نصلح؟' : 'What do you want me to build or fix?'}</label>
-      <textarea id="instruction" class="input big-input" dir="auto" placeholder="Describe the change, the problem or the feature. Include acceptance criteria if you have them."></textarea>
-      <div class="small muted" style="margin-top:var(--s-2)">Repository: <strong>${esc(project.defaultRepository || 'not set')}</strong> · Budget $2 · Routing AUTO</div>
-      <details class="disclosure" style="margin-top:var(--s-3)"><summary>${ar ? 'خيارات متقدمة' : 'Advanced options'}</summary><div class="disclosure-body">
-        <label class="field-label" for="tRepo">Repository (owner/name)</label><input id="tRepo" class="input" value="${esc(project.defaultRepository || '')}" placeholder="owner/name">
-        <label class="field-label" for="tBudget">Budget (USD)</label><input id="tBudget" class="input" type="number" min="0.5" max="500" step="0.5" value="2">
-        <label class="field-label" for="tStrategy">Model routing</label><select id="tStrategy" class="input"><option value="">AUTO (recommended)</option><option value="economy">Economy — free and cheapest first</option><option value="balanced">Balanced</option><option value="quality">Quality — strongest first</option></select>
-        <label class="field-label" for="tTest">Test command (auto-detected when empty)</label><input id="tTest" class="input" placeholder="npm test">
-        <label class="row small muted" style="margin-top:var(--s-3)"><input id="tDeploy" type="checkbox"> Merge &amp; deploy after CI passes (the merge always asks for your approval)</label>
-      </div></details>
-      <p id="taskError" class="form-error hidden"></p>
-      <div class="row" style="margin-top:var(--s-4)"><button class="btn btn-primary btn-lg" type="submit" id="startTask">${ar ? 'ابدأ المهمة' : 'Start task'}</button></div>
-    </form>
-    <h2 class="section-title">${ar ? 'آخر المهام' : 'Recent tasks'}</h2><div>${tasks.slice(0, 8).map(taskItem).join('') || '<div class="muted small">No tasks yet.</div>'}</div></div>`;
-  $('#taskForm').onsubmit = async (event) => {
-    event.preventDefault();
-    const error = $('#taskError');
-    error.classList.add('hidden');
-    const button = $('#startTask');
-    busy(button, true, 'Starting…');
-    try {
-      const body = { workspaceId: ws(), instruction: $('#instruction').value.trim(), budgetUsd: Number($('#tBudget').value || 2) };
-      if ($('#tRepo').value.trim()) body.repository = $('#tRepo').value.trim();
-      if ($('#tStrategy').value) body.strategy = $('#tStrategy').value;
-      if ($('#tTest').value.trim()) body.testCommand = $('#tTest').value.trim();
-      if ($('#tDeploy').checked) body.deploy = true;
-      const { task } = await api('/api/tasks', { method: 'POST', body });
-      location.hash = `#/task/${task.id}`;
-    } catch (failure) {
-      error.textContent = failure.message;
-      error.classList.remove('hidden');
-    } finally {
-      busy(button, false);
-    }
-  };
-}
-
-async function renderTask(id) {
-  let drafting = '';
-  let lastSignature = '';
-  const load = async () => {
-    const data = await api(`/api/tasks/${id}`);
-    const signature = JSON.stringify([data.task.status, data.task.phase, data.task.now, data.task.spentUsd, data.task.iteration, data.approvals.map((approval) => approval.status), data.events[0]?.id]);
-    if (signature === lastSignature) return data.task;
-    lastSignature = signature;
-    const reply = $('#replyText');
-    if (reply) drafting = reply.value;
-    view.innerHTML = taskPage(data);
-    if ($('#replyText')) $('#replyText').value = drafting;
-    wireTask(data);
-    return data.task;
-  };
-  const task = await load();
-  setTitle(task.title);
-  if (!['completed', 'failed', 'cancelled'].includes(task.status)) every(4000, () => load().catch(() => {}));
-
-  function wireTask(data) {
-    bind(view, {
-      '[data-decide]': async (_, element) => {
-        const decision = element.dataset.decide;
-        const note = decision === 'rejected' ? await ask('Reject — tell the agent why (optional)', '', true) : null;
-        if (decision === 'rejected' && note === null) return;
-        busy(element, true);
-        try {
-          await api(`/api/approvals/${element.dataset.id}`, { method: 'POST', body: { decision, note: note || undefined } });
-          toast(decision === 'approved' ? 'Approved — the task continues' : 'Rejected — the agent will adapt');
-          lastSignature = '';
-          await load();
-          refreshSidebar();
-        } catch (error) { toast(error.message); busy(element, false); }
-      },
-      '#replySend': async (_, element) => {
-        const message = $('#replyText').value.trim();
-        if (!message) return toast('Write your answer first');
-        busy(element, true, 'Sending…');
-        try {
-          await api(`/api/tasks/${id}/reply`, { method: 'POST', body: { message } });
-          drafting = '';
-          toast('Sent — the same task continues');
-          lastSignature = '';
-          await load();
-          refreshSidebar();
-        } catch (error) { toast(error.message); busy(element, false); }
-      },
-      '#resumeTask': async () => { await api(`/api/tasks/${id}/resume`, { method: 'POST' }); toast('Resumed'); lastSignature = ''; await load(); },
-      '#cancelTask': async () => {
-        if (!(await confirmDialog('Cancel this task?', 'The agent stops at its next checkpoint. Work already pushed stays on its branch.'))) return;
-        await api(`/api/tasks/${id}/cancel`, { method: 'POST' });
-        lastSignature = '';
-        await load();
-      },
-    });
-  }
-}
-
-function taskPage({ task, events, approvals }) {
-  const t = task;
-  const ar = state.language === 'ar';
-  const closed = ['completed', 'failed', 'cancelled'].includes(t.status);
-  const group = taskGroup(t.status);
-  const head = `<div class="task-head">
-    <div class="row">${pill(group, statusLabel(group === 'attention' ? 'attention' : t.status))}<span class="small muted" dir="ltr">${esc(t.repository)}</span>${t.conversationId ? `<a class="small" href="#/chat/${esc(t.conversationId)}">${ar ? 'افتح المحادثة' : 'Open chat'}</a>` : ''}</div>
-    <h1 dir="auto">${esc(t.title)}</h1>
-    <dl class="kv"><div><dt>${ar ? 'المحرك' : 'Model'}</dt><dd title="${esc(t.currentModel || '')}" dir="ltr">${esc(modelName(t.currentModel) || 'AUTO')}</dd></div><div><dt>${ar ? 'التكلفة' : 'Cost'}</dt><dd dir="ltr">${moneyText(t.metrics.costUsd)} <span class="faint small">${ar ? 'من' : 'of'} ${moneyText(t.budgetUsd)}</span></dd></div><div><dt>${ar ? 'المدة' : 'Elapsed'}</dt><dd>${duration(t.elapsedMs)}</dd></div><div><dt>${ar ? 'آخر تحديث' : 'Updated'}</dt><dd>${when(t.updatedAt)}</dd></div></dl>
-  </div>`;
-  const now = closed ? '' : `<div class="now" dir="auto">${t.needs ? '' : '<span class="dots"><i></i><i></i><i></i></span>'}<span>${esc(t.needs ? (state.language === 'ar' ? 'ينتظر قرارك.' : 'Waiting for you.') : t.now)}</span></div>`;
-  const timeline = `<div class="card"><div class="timeline" role="list">${t.timeline.filter((step) => step.state !== 'skipped').map((step, index) => `<div class="step ${step.state}" role="listitem" title="${esc(step.label)}: ${esc(step.state.replace('_', ' '))}"><span class="dot">${{ passed: '✓', failed: '!', needs_input: '?', skipped: '–' }[step.state] || index + 1}</span><span>${esc(step.label)}</span></div>`).join('')}</div></div>`;
-  const owner = ownerCard(t, approvals);
-  const result = t.result || {};
-  const pr = t.pr || result.pr;
-  const outcome = `<div class="card"><h2 class="card-title">${closed ? (ar ? 'النتيجة' : 'Result') : (ar ? 'التقدم' : 'Progress so far')}</h2>
-    ${result.summary ? markdown(result.summary) : t.blocker && t.status === 'failed' ? errorBlock(t.blocker, esc) : `<p class="muted small">${ar ? 'الملخص يظهر هني بعد اكتمال المهمة.' : 'The summary appears here when the task finishes.'}</p>`}
-    <dl class="kv" style="margin-top:var(--s-3)">
-      <div><dt>${ar ? 'طلب الدمج' : 'Pull request'}</dt><dd>${pr?.url ? `<a href="${esc(pr.url)}" target="_blank" rel="noopener">#${esc(pr.number)}</a>` : '—'}</dd></div>
-      <div><dt>CI</dt><dd>${esc(t.ci?.state || result.ci?.state || '—')}</dd></div>
-      <div><dt>${ar ? 'الاختبارات' : 'Tests'}</dt><dd>${t.lastTest ? (t.lastTest.exitCode === 0 ? (ar ? 'ناجحة' : 'Passing') : (ar ? 'فاشلة' : 'Failing')) : '—'}</dd></div>
-      <div><dt>${ar ? 'النشر' : 'Deployment'}</dt><dd>${esc(result.deploy?.status || t.deploy?.status || (t.config?.deploy?.mode === 'merge' ? (ar ? 'بانتظار' : 'Pending') : (ar ? 'غير مطلوب' : 'Not requested')))}</dd></div>
-    </dl>
-    ${(t.filesChanged || []).length ? `<div class="small muted" style="margin-top:var(--s-3)">${ar ? 'الملفات المتغيرة' : 'Files changed'}</div><div class="files">${t.filesChanged.map((file) => `<code dir="ltr">${esc(file)}</code>`).join('')}</div>` : ''}
-  </div>`;
-  const metrics = t.metrics;
-  const details = `<details class="disclosure"><summary>${ar ? 'الطلب الأصلي' : 'Original instruction'}</summary><div class="disclosure-body report" dir="auto">${esc(t.objective)}</div></details>
-    <details class="disclosure"><summary>${ar ? 'التكلفة والمحركات والكفاءة' : 'Cost, models and efficiency'}</summary><div class="disclosure-body"><dl class="kv">
-      <div><dt>Model calls</dt><dd>${metrics.modelCalls}</dd></div><div><dt>Iterations</dt><dd>${metrics.iterations}</dd></div>
-      <div><dt>Input tokens</dt><dd>${tokens(metrics.inputTokens)} <span class="faint small">${metrics.inputTokens ? `${Math.round((metrics.cachedInputTokens / metrics.inputTokens) * 100)}% cached` : ''}</span></dd></div>
-      <div><dt>Output tokens</dt><dd>${tokens(metrics.outputTokens)}</dd></div><div><dt>Model switches</dt><dd>${metrics.modelSwitches}</dd></div>
-      <div><dt>Context trimmed</dt><dd>${tokens(Math.round((metrics.contextTrimmedChars || 0) / 4))} tokens</dd></div>
-    </dl><div class="small muted" style="margin-top:var(--s-2)">Models used: ${esc(metrics.modelsUsed.join(', ') || '—')}</div></div></details>
-    <details class="disclosure"><summary>${ar ? `التفاصيل (${events.length})` : `View details (${events.length} events)`}</summary><div class="disclosure-body"><div class="events">${events.map((event) => `<div class="${esc(event.level)}"><span class="faint" dir="ltr">${esc(new Date(event.createdAt || event.created_at).toLocaleTimeString())} ${esc(event.type)}</span> <span dir="auto">${esc(event.message)}</span></div>`).join('')}</div></div></details>`;
-  const actions = closed ? '' : `<div class="row" style="margin-top:var(--s-4)">${t.status === 'blocked' && !t.needs?.kind?.includes('question') ? '<button class="btn" id="resumeTask">Resume</button>' : ''}<button class="btn btn-danger" id="cancelTask">Cancel task</button></div>`;
-  return `<div class="page stack">${head}${owner}${now}${timeline}${outcome}${details}${actions}</div>`;
-}
-
-function ownerCard(task, approvals) {
-  const need = task.needs;
-  if (!need) return '';
-  if (need.kind === 'approval') {
-    return `<section class="owner-card" aria-live="polite"><h2>${esc(need.title)}</h2>${need.items.map((item) => `<div class="owner-item">
-      <div class="small muted">${esc(item.who || 'An agent')} is asking</div>
-      <div class="spread"><div class="what" dir="auto">${esc(item.what)}</div><span class="risk ${esc(item.risk)}">${esc(item.risk)} risk</span></div>
-      ${item.why ? `<p class="small" dir="auto"><strong>${state.language === 'ar' ? 'السبب:' : 'Why:'}</strong> ${esc(item.why)}</p>` : ''}
-      ${item.resources.length ? `<div class="small muted">${state.language === 'ar' ? 'يؤثر على' : 'Affects'}</div><div class="resources">${item.resources.map((resource) => `<code dir="ltr">${esc(resource)}</code>`).join('')}</div>` : ''}
-      ${item.kind === 'protected_change' ? '<p class="xs muted">Approving allows changes to exactly these files in this task only. Secrets, .env files, keys and Hermes can never be approved.</p>' : ''}
-      <div class="row"><button class="btn btn-success" data-decide="approved" data-id="${esc(item.id)}">${state.language === 'ar' ? 'موافقة' : 'Approve'}</button><button class="btn btn-danger" data-decide="rejected" data-id="${esc(item.id)}">${state.language === 'ar' ? 'رفض' : 'Reject'}</button></div>
-    </div>`).join('')}</section>`;
-  }
-  const question = need.kind === 'question';
-  return `<section class="owner-card" aria-live="polite"><h2>${esc(need.title)}</h2>
-    ${question ? `<p class="what" dir="auto">${esc(need.question)}</p>${need.reason && need.reason !== need.question ? `<p class="small muted" dir="auto"><strong>Why:</strong> ${esc(need.reason)}</p>` : ''}` : `<p dir="auto">${esc(need.explanation)}</p>`}
-    <label class="field-label" for="replyText">${question ? (state.language === 'ar' ? 'جوابك' : 'Your answer') : (state.language === 'ar' ? 'تعليمات للوكيل (اختياري)' : 'Instructions for the agent (optional)')}</label>
-    <textarea id="replyText" class="input" rows="3" dir="auto" placeholder="${question ? 'Type your answer…' : 'e.g. try a smaller change, or skip the docs update'}"></textarea>
-    <div class="row" style="margin-top:var(--s-3)"><button class="btn btn-primary" id="replySend">${state.language === 'ar' ? 'رد وتابع' : 'Reply &amp; Continue'}</button>${question ? '' : `<button class="btn" id="resumeTask">${state.language === 'ar' ? 'تابع بدون رسالة' : 'Resume without a message'}</button>`}</div>
-  </section>`;
-}
+// The CODING workspace (start a task, follow one as a chat-like thread) is
+// its own module, loaded on demand.
+const loadCoding = () => import('./coding.js?v=__UI_VERSION__');
+function codingContext() { return { ...officeContext(), confirmDialog, ask, refreshSidebar }; }
+async function renderNewTask() { return (await loadCoding()).renderCodingHome(codingContext()); }
+async function renderTask(id) { return (await loadCoding()).renderCodingTask(codingContext(), id); }
 
 // ------------------------------------------------------------------ office
 const agentCache = new Map();
@@ -1078,8 +924,9 @@ async function renderProjects() {
   };
 }
 
-// Command Center (and the project map) live in their own module.
+// Command Center, deliverables and the project map live in their own modules.
 async function renderProject(id, sub = '') {
+  if (!id) throw new Error(state.language === 'ar' ? 'اختر مشروع أول.' : 'Choose a project first.');
   if (id !== ws() && state.workspaces.some((project) => project.id === id)) {
     state.workspaceId = id;
     $('#projectSelect').value = id;
@@ -1087,8 +934,8 @@ async function renderProject(id, sub = '') {
     connectLive(); refreshSidebar();
   }
   const module = await import('./project.js?v=__UI_VERSION__');
-  const mode = ['map', 'continuity'].includes(sub) ? sub : 'center';
-  return module.renderProject({ ...officeContext(), usd, confirmDialog, ask, memoryKinds: MEMORY_KINDS, memoryLabel: (kind) => MEMORY_LABEL[kind] || kind, openEmployee }, id, mode);
+  const mode = sub === 'deliverables' ? 'deliverables' : ['map', 'continuity'].includes(sub) ? sub : 'center';
+  return module.renderProject({ ...officeContext(), usd, confirmDialog, ask, memoryKinds: MEMORY_KINDS, memoryLabel: (kind) => MEMORY_LABEL[kind] || kind, openEmployee, directSlugs: DIRECT_SLUGS }, id, mode);
 }
 
 async function renderContinuity() {

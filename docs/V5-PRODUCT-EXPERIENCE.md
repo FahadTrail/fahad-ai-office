@@ -17,7 +17,7 @@ Supabase state.
 | Approvals | What exact action needs my decision? | Pending owner approvals plus owner questions |
 | Continuity | Is long-running coding safe and what happens next? | Active worker, checkpoint, next action and handoffs; internals stay advanced |
 | Models | Is free capacity available and what is the paid exposure? | Capacity pools, routing state, daily/monthly usage and budget |
-| Files | Where are completed outputs? | Real project artifacts and results |
+| Deliverables (V5.3) | What has each employee delivered, and what needs my decision? | Real project results, artifacts and Coding sessions; see [V5.3](v5.3-deliverables-coding.md). The file library stays at `#/artifacts` |
 | Settings | Is the platform ready and how should it look/behave? | Health, provider/key presence, worker readiness and owner-safe preferences |
 
 ## Product rules

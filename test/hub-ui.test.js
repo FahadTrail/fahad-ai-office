@@ -8,7 +8,7 @@ import { escapeHtml, renderMarkdown } from '../src/hub-ui/markdown.js';
 const file = (name) => fileURLToPath(new URL(`../src/hub-ui/${name}`, import.meta.url));
 
 test('the Workspace V2 scripts are valid modules', () => {
-  for (const name of ['app.js', 'markdown.js', 'auth.js', 'office.js', 'characters.js', 'artifacts.js', 'project.js', 'library.js', 'export.js', 'humanize.js']) execFileSync(process.execPath, ['--check', file(name)]);
+  for (const name of ['app.js', 'markdown.js', 'auth.js', 'office.js', 'characters.js', 'artifacts.js', 'project.js', 'library.js', 'export.js', 'humanize.js', 'deliverables.js', 'coding.js']) execFileSync(process.execPath, ['--check', file(name)]);
 });
 
 test('markdown renders the common constructs', () => {
@@ -34,7 +34,8 @@ test('markdown never lets model output inject markup or script URLs', () => {
 
 test('the V2 interface uses the centralized design tokens and covers the owner flows', () => {
   const css = readFileSync(file('app.css'), 'utf8');
-  const js = readFileSync(file('app.js'), 'utf8');
+  // The CODING workspace lives in its own on-demand module since V5.3.
+  const js = readFileSync(file('app.js'), 'utf8') + readFileSync(file('coding.js'), 'utf8');
   for (const token of ['--bg', '--surface', '--text', '--accent', '--success', '--warning', '--danger', '--s-4', '--fs-md', '--r-md']) assert.match(css, new RegExp(`${token}:`));
   // Component rules use tokens, not raw colours (the token blocks are the only place colours are defined).
   const rules = css.replace(/:root(\[data-theme="(?:light|dark)"\])?\s*\{[\s\S]*?\n\}/g, '').replace(/@media \(prefers-color-scheme: light\)\s*\{[\s\S]*?\n\}/, '');

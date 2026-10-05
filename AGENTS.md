@@ -69,6 +69,10 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
+## V5.3 update (2026-10-05, open PR, unmerged)
+
+The Project Deliverables Center (`src/hub-deliverables.js`, `src/hub-ui/deliverables.js`) and the simplified chat-like Coding workspace (`src/hub-ui/coding.js`) are UI and Hub-read-layer only, on branch `claude/v5.3-deliverables-center`. The Office engine, the Coding controller, Continuity and production flags are unchanged. The one additive migration, `supabase/migrations/20261005160000_deliverable_reviews.sql`, is **not applied**; without it, pin, archive and approve report themselves unavailable and everything else works. Do not merge, deploy or apply the migration without Fahad. Details are in `docs/v5.3-deliverables-coding.md`.
+
 ## Continuity update (2026-10-02, development-only completion)
 
 Fahad stopped all readiness/testing work for this sprint. The #106 checkout adds an official Claude Code CLI adapter, a shared external driver, Codex CLI hardening, guarded worktree transfers, same-worker CLI resume metadata, owner controls and recovery safeguards. The three executable adapters in **source** are Office, Codex and Claude; the external two are default OFF and are not authenticated or live-verified by this sprint. Four other non-native workers remain manual/disabled. The two development commits are now on GitHub (#106 baseline `bcd572f`); the former push-authentication issue is historical. A separate local Graphify pilot (`docs/GRAPHIFY.md`) is code-only, read-only, optional and default OFF for Coding; it must not affect Supervisor decisions. No full Continuity test suite, DB replay, real handoff, UI audit or production action was run after this development. #102/#104/#105/#106 remain unmerged; migration unapplied; Supervisor OFF. See the current top of `docs/HANDOVER.md`, `docs/CODEX-CONTINUE.md` and `.continuity/checkpoint.json`. Do not start final testing without Fahad's next instruction.

@@ -117,7 +117,7 @@ test('progressive disclosure: V5 owner areas are primary and Office view options
   const index = read('src/hub-ui/index.html');
   const nav = index.slice(index.indexOf('<nav class="nav">'), index.indexOf('<details class="nav-more"'));
   assert.equal((nav.match(/class="nav-item"/g) || []).length, 9);
-  for (const route of ['#/', '#/projects', '#/employees', '#/work', '#/attention', '#/continuity', '#/models', '#/artifacts', '#/settings']) assert.ok(nav.includes(`href="${route}"`), route);
+  for (const route of ['#/', '#/projects', '#/deliverables', '#/employees', '#/work', '#/attention', '#/continuity', '#/models', '#/settings']) assert.ok(nav.includes(`href="${route}"`), route);
   const office = read('src/hub-ui/office.js');
   assert.match(office, /<details class="o3d-handoffs o3d-options"><summary>View<\/summary>/, 'light and quality live under View');
   assert.match(office, /id="officeSummary"/);

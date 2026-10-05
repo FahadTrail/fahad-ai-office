@@ -8,7 +8,7 @@ import { decide, parseAudit, renderDecision } from '../tools/hermes-decision.mjs
 const files = (dir) => readdirSync(dir).flatMap((name) => { const path = join(dir, name); return statSync(path).isDirectory() ? files(path) : [path]; });
 
 test('no Office module depends on Hermes: every mention is a guard', () => {
-  const guards = new Set(['src/coding-agent/policy.js', 'src/coding-agent/controller.js', 'src/coding-agent/prompts.js', 'src/coding-agent/tools.js', 'src/office/web-tools.js', 'src/hub-ui/app.js']);
+  const guards = new Set(['src/coding-agent/policy.js', 'src/coding-agent/controller.js', 'src/coding-agent/prompts.js', 'src/coding-agent/tools.js', 'src/office/web-tools.js', 'src/hub-ui/coding.js']);
   const src = fileURLToPath(new URL('../src/', import.meta.url));
   for (const path of files(src)) {
     const text = readFileSync(path, 'utf8');

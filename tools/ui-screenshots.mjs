@@ -21,6 +21,7 @@ export const SCREENS = {
   task: '#/task/e0000000-0000-4000-8000-000000000001', integrations: '#/integrations', chat: '#/chat/c0000000-0000-4000-8000-000000000001',
   finance: ['#/artifacts', 'Pilot budget'], legal: ['#/artifacts', 'Launch compliance'], creative: ['#/artifacts', 'brand direction'], audit: ['#/artifacts', 'First-pass readiness'],
   models: '#/models', settings: '#/settings', handoff: ['#/office', null, '.handoff-fresh .handoff-hit'],
+  deliverables: '#/deliverables', code: '#/code',
 };
 const VIEWPORTS = { desktop: [1440, 900], laptop: [1366, 768], tablet: [820, 1180], mobile: [390, 844] };
 

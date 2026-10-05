@@ -13,6 +13,7 @@ import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi, readDeploy
 import { handleWorkspaceApi } from './hub-workspace.js';
 import { handleOfficeApi } from './hub-office.js';
 import { handleContinuityApi } from './hub-continuity.js';
+import { handleDeliverablesApi } from './hub-deliverables.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
@@ -104,6 +105,7 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
       if (await handleContinuityApi({ db, supervisor: continuity, ownerAuthorized: authEnabled || Boolean(accessToken), request, response, url: requestUrl, sendJson, readJson })) return;
       if (await handleCodingApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
       if (await handleWorkspaceApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null, store })) return;
+      if (await handleDeliverablesApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
       if (await handleOfficeApi({ db, request, response, url: requestUrl, sendJson })) return;
 
       if (request.method === 'GET' && requestUrl.pathname === '/api/workspaces') {

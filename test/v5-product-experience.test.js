@@ -12,7 +12,7 @@ const read = (name) => readFileSync(fileURLToPath(new URL(`../${name}`, import.m
 test('V5 owner shell exposes the nine requested product areas and Arabic-first RTL', () => {
   const index = read('src/hub-ui/index.html');
   assert.match(index, /<html lang="ar" dir="rtl">/);
-  for (const nav of ['home', 'projects', 'employees', 'work', 'attention', 'continuity', 'models', 'artifacts', 'settings']) {
+  for (const nav of ['home', 'projects', 'deliverables', 'employees', 'work', 'attention', 'continuity', 'models', 'settings']) {
     assert.match(index, new RegExp(`data-nav="${nav}"`), nav);
   }
   assert.match(index, /data-i18n="askChief"/);
