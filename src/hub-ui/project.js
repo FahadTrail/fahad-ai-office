@@ -15,7 +15,7 @@ const MEMORY_HELP = {
 let styles = null;
 function localizeProject(ctx, root) {
   if (ctx.language !== 'ar') return;
-  const labels = { 'Command Center': 'مركز المشروع', 'Project map': 'خريطة المشروع', 'Coding continuity': 'استمرارية البرمجة', 'Switch to this project': 'استخدم هذا المشروع', overall: 'التقدم', 'Needs Fahad': 'يحتاج قرارك', 'Next actions': 'الخطوات الياية', Decisions: 'القرارات', Risks: 'المخاطر', Timeline: 'سجل النشاط', Handoffs: 'التسليمات', Artifacts: 'الملفات والنتائج', 'Open the library': 'افتح الملفات', 'Project memory & context': 'ملاحظات وسياق المشروع', 'What this project is (CHIEF reads this)': 'هدف وسياق المشروع — يقرأه CHIEF', 'Default repository for engineering tasks': 'مستودع المشروع للمهام البرمجية', 'Save context': 'احفظ السياق', 'Latest result': 'آخر نتيجة', 'No result in this project yet': 'ما في نتيجة لهذا المشروع بعد', 'Waiting for your decision': 'ينتظر قرارك', 'Already decided': 'قرارات محفوظة', 'No decisions recorded yet.': 'ما في قرارات محفوظة بعد.', 'No handoffs yet.': 'ما في تسليمات بعد.', 'No activity in the last 30 days.': 'ما في نشاط خلال آخر 30 يوم.', 'Nothing saved.': 'ما انحفظ شي بعد.', Edit: 'تعديل', Remove: 'إزالة', Add: 'إضافة', 'You': 'أنت', 'Office': 'المكتب', 'Loading…': 'جارٍ التحميل…', 'Nothing needs you in this project.': 'ما في شي ينتظر قرارك في هذا المشروع.', 'IN PROGRESS': 'قيد التنفيذ', 'NEEDS FAHAD': 'يحتاجك', 'UP TO DATE': 'محدّث', 'NO ACTIVITY': 'ما في نشاط', 'AT RISK': 'يحتاج متابعة', 'Objectives in progress': 'أهداف قيد التنفيذ', 'Latest audit': 'آخر مراجعة', 'No audit yet': 'ما في مراجعة بعد', 'AI cost · 30 days': 'تكلفة الذكاء · 30 يوم', 'Free routes first': 'المجاني أولًا', Team: 'الفريق', Available: 'متاح', Working: 'يشتغل', Waiting: 'ينتظر', Thinking: 'يفكر', Testing: 'يختبر', Reviewing: 'يراجع', Blocked: 'متوقف', Failed: 'فشل', Completed: 'مكتمل', Queued: 'التالي', 'Up next': 'التالي', 'Waiting · capacity': 'ينتظر السعة' };
+  const labels = { 'Command Center': 'مركز المشروع', Deliverables: 'المخرجات', 'Open all deliverables': 'افتح كل المخرجات', 'Project map': 'خريطة المشروع', 'Coding continuity': 'استمرارية البرمجة', 'Switch to this project': 'استخدم هذا المشروع', overall: 'التقدم', 'Needs Fahad': 'يحتاج قرارك', 'Next actions': 'الخطوات الياية', Decisions: 'القرارات', Risks: 'المخاطر', Timeline: 'سجل النشاط', Handoffs: 'التسليمات', Artifacts: 'الملفات والنتائج', 'Open the library': 'افتح الملفات', 'Project memory & context': 'ملاحظات وسياق المشروع', 'What this project is (CHIEF reads this)': 'هدف وسياق المشروع — يقرأه CHIEF', 'Default repository for engineering tasks': 'مستودع المشروع للمهام البرمجية', 'Save context': 'احفظ السياق', 'Latest result': 'آخر نتيجة', 'No result in this project yet': 'ما في نتيجة لهذا المشروع بعد', 'Waiting for your decision': 'ينتظر قرارك', 'Already decided': 'قرارات محفوظة', 'No decisions recorded yet.': 'ما في قرارات محفوظة بعد.', 'No handoffs yet.': 'ما في تسليمات بعد.', 'No activity in the last 30 days.': 'ما في نشاط خلال آخر 30 يوم.', 'Nothing saved.': 'ما انحفظ شي بعد.', Edit: 'تعديل', Remove: 'إزالة', Add: 'إضافة', 'You': 'أنت', 'Office': 'المكتب', 'Loading…': 'جارٍ التحميل…', 'Nothing needs you in this project.': 'ما في شي ينتظر قرارك في هذا المشروع.', 'IN PROGRESS': 'قيد التنفيذ', 'NEEDS FAHAD': 'يحتاجك', 'UP TO DATE': 'محدّث', 'NO ACTIVITY': 'ما في نشاط', 'AT RISK': 'يحتاج متابعة', 'Objectives in progress': 'أهداف قيد التنفيذ', 'Latest audit': 'آخر مراجعة', 'No audit yet': 'ما في مراجعة بعد', 'AI cost · 30 days': 'تكلفة الذكاء · 30 يوم', 'Free routes first': 'المجاني أولًا', Team: 'الفريق', Available: 'متاح', Working: 'يشتغل', Waiting: 'ينتظر', Thinking: 'يفكر', Testing: 'يختبر', Reviewing: 'يراجع', Blocked: 'متوقف', Failed: 'فشل', Completed: 'مكتمل', Queued: 'التالي', 'Up next': 'التالي', 'Waiting · capacity': 'ينتظر السعة' };
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node;
   while ((node = walker.nextNode())) {
@@ -55,6 +55,7 @@ export async function renderProject(ctx, id, mode = 'center') {
     <div class="cc-switch">
       <div class="cc-tabs" role="tablist" aria-label="View">
         <a role="tab" href="#/project/${esc(id)}" aria-selected="${mode === 'center'}">Command Center</a>
+        <a role="tab" href="#/project/${esc(id)}/deliverables" aria-selected="${mode === 'deliverables'}">Deliverables</a>
         <a role="tab" href="#/project/${esc(id)}/map" aria-selected="${mode === 'map'}">Project map</a>
         <a role="tab" href="#/project/${esc(id)}/continuity" aria-selected="${mode === 'continuity'}">Coding continuity</a>
       </div>
@@ -63,12 +64,16 @@ export async function renderProject(ctx, id, mode = 'center') {
     <div id="ccBody"></div>
   </div>`;
   const body = view.querySelector('#ccBody');
-  if (mode === 'map') await drawMap(ctx, body, center);
-  else if (mode === 'continuity') await drawContinuity(ctx, body, id);
-  else drawCenter(ctx, body, center, project, memory, id);
   localizeProject(ctx, view);
   const use = view.querySelector('#useProject');
   if (use) use.onclick = () => { const select = document.querySelector('#projectSelect'); select.value = id; select.onchange(); };
+  // The deliverables board refreshes itself in place (filters, scroll and an
+  // open drawer survive live updates); the other views re-render.
+  if (mode === 'deliverables') return (await import('./deliverables.js?v=__UI_VERSION__')).renderDeliverables(ctx, body, { id, center });
+  if (mode === 'map') await drawMap(ctx, body, center);
+  else if (mode === 'continuity') await drawContinuity(ctx, body, id);
+  else drawCenter(ctx, body, center, project, memory, id);
+  localizeProject(ctx, body);
   ctx.onChange(() => { if (location.hash.startsWith(`#/project/${id}`)) ctx.rerender(); });
 }
 
@@ -196,7 +201,7 @@ function drawCenter(ctx, body, center, project, memory, id) {
         <section class="cc-card"><h2 class="cc-h2">Handoffs</h2>${center.handoffs.length ? center.handoffs.slice(0, 6).map((handoff) => `<a class="cc-handoff" href="#/workflow/${esc(handoff.jobId)}">${roleMark(handoff.fromKey, handoff.from)}<span class="arrow" aria-hidden="true">→</span>${roleMark(handoff.toKey, handoff.to)}<span class="grow"><strong>${esc(handoff.from)} → ${esc(handoff.to)}</strong><span class="block small muted" dir="auto">${esc(handoff.task || '')}</span></span><span class="xs faint">${esc(handoff.status)}</span></a>`).join('') : '<p class="muted small">No handoffs yet.</p>'}</section>
       </div>
     </div>
-    <section class="cc-card"><div class="spread"><h2 class="cc-h2">Artifacts</h2><a class="small" href="#/artifacts">Open the library</a></div>${center.artifacts.length ? `<div class="cc-artifacts">${center.artifacts.slice(0, 4).map(renderArtifact).join('')}</div>` : '<p class="muted small">Deliverables (tables, charts, boards, matrices) appear here.</p>'}</section>
+    <section class="cc-card"><div class="spread"><h2 class="cc-h2">Artifacts</h2><a class="small" href="#/project/${esc(id)}/deliverables">Open all deliverables</a></div>${center.artifacts.length ? `<div class="cc-artifacts">${center.artifacts.slice(0, 4).map(renderArtifact).join('')}</div>` : '<p class="muted small">Deliverables (tables, charts, boards, matrices) appear here.</p>'}</section>
     <details class="cc-card cc-settings"><summary><h2 class="cc-h2">Project memory &amp; context</h2><span class="small muted">${memory.length} item${memory.length === 1 ? '' : 's'} the Office reuses</span></summary>
       <form id="projectForm" class="cc-form"><label class="field-label" for="pDesc">What this project is (CHIEF reads this)</label><textarea id="pDesc" class="input" rows="3" dir="auto">${esc(project.description)}</textarea>
         <label class="field-label" for="pRepo">Default repository for engineering tasks</label><input id="pRepo" class="input" value="${esc(project.defaultRepository)}" placeholder="owner/name">
