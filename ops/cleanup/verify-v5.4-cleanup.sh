@@ -60,20 +60,20 @@ run() {
 
 BEFORE=$(snapshot)
 run ok 'PREVIEW ONLY: nothing was deleted'
-grep -qF 'Jobs selected: 52   evidence rows held back: 14' "$WORK/out" || fail 'preview selects 52 jobs and holds 14 evidence rows'
-grep -qF "set cleanup.groups = 'A,B,C,P', cleanup.expect_jobs = '52'" "$WORK/out" || fail 'preview prints the apply settings'
+grep -qF 'Jobs selected: 53   evidence rows held back: 14' "$WORK/out" || fail 'preview selects 53 jobs and holds 14 evidence rows'
+grep -qF "set cleanup.groups = 'A,B,C,P', cleanup.expect_jobs = '53'" "$WORK/out" || fail 'preview prints the apply settings'
 [[ $(snapshot) == "$BEFORE" ]] || fail 'preview changed rows'
 
-run ok 'Jobs selected: 80   evidence rows held back: 0' "cleanup.groups = 'A,B,C,D,P'" "cleanup.include_evidence = 'yes'"
+run ok 'Jobs selected: 81   evidence rows held back: 0' "cleanup.groups = 'A,B,C,D,P'" "cleanup.include_evidence = 'yes'"
 run stop 'needs an explicit cleanup.groups list' "cleanup.apply = 'yes'"
 run stop 'may only list A, B, C, D and P' "cleanup.groups = 'A,X'"
-run stop 'must equal the selected job count (52)' "cleanup.groups = 'A,B,C,P'" "cleanup.apply = 'yes'" "cleanup.expect_jobs = '51'"
-run stop 'must equal the selected job count (52)' "cleanup.groups = 'A,B,C,P'" "cleanup.apply = 'yes'"
+run stop 'must equal the selected job count (53)' "cleanup.groups = 'A,B,C,P'" "cleanup.apply = 'yes'" "cleanup.expect_jobs = '52'"
+run stop 'must equal the selected job count (53)' "cleanup.groups = 'A,B,C,P'" "cleanup.apply = 'yes'"
 [[ $(snapshot) == "$BEFORE" ]] || fail 'refused runs changed rows'
 
 # Drift: a listed job gained a task since the manifest.
 q "insert into public.tasks (job_id, agent_id, title, status) values ('221b3c38-37c3-4147-9faf-d5d4ff726bae', (select id from public.agents where slug = 'chief-of-staff'), 'late task', 'done');"
-run stop 'these jobs no longer match the manifest: 221b3c38' "cleanup.groups = 'A,B,C,P'" "cleanup.apply = 'yes'" "cleanup.expect_jobs = '52'"
+run stop 'these jobs no longer match the manifest: 221b3c38' "cleanup.groups = 'A,B,C,P'" "cleanup.apply = 'yes'" "cleanup.expect_jobs = '53'"
 q "delete from public.tasks where title = 'late task';"
 # Activity in the last hour.
 q "insert into public.events (job_id, type, level, message, payload) values ('6adc823b-6172-4358-91ed-f42aab3f0b76', 'activity', 'info', 'recent', '{}');"
@@ -103,7 +103,7 @@ q "delete from public.continuity_events where message = 'late event';"
 
 # Apply the recommended groups.
 KNOWLEDGE_LINKED=$(q "select count(*) from public.knowledge_items where project_id = '2ae856da-00cb-4594-a7e6-710f2011d0c3' and job_id in (select job_id from fixture.v54_jobs where grp in ('B', 'C') and not evidence);")
-run ok 'APPLIED: 52 test objectives removed' "cleanup.groups = 'A,B,C,P'" "cleanup.expect_jobs = '52'" "cleanup.apply = 'yes'"
+run ok 'APPLIED: 53 test objectives removed' "cleanup.groups = 'A,B,C,P'" "cleanup.expect_jobs = '53'" "cleanup.apply = 'yes'"
 [[ $(q "select count(*) from public.jobs where id in (select job_id from fixture.v54_jobs where not evidence);") == 0 ]] || fail 'selected jobs remain'
 [[ $(q "select count(*) from public.jobs where id in (select job_id from fixture.v54_jobs where evidence);") == 28 ]] || fail 'evidence jobs must stay'
 [[ $(q "select count(*) from public.jobs where id in (select job_id from fixture.fx_kept_jobs);") == 3 ]] || fail 'REAL and UNCERTAIN jobs must stay'
@@ -119,8 +119,8 @@ run ok 'APPLIED: 52 test objectives removed' "cleanup.groups = 'A,B,C,P'" "clean
 [[ $(q "select count(*) from public.continuity_tasks;") == 1 ]] || fail 'only the kept Continuity task stays'
 [[ $(q "select count(*) from public.knowledge_items where job_id is null;") == "$KNOWLEDGE_LINKED" ]] || fail 'knowledge items of removed jobs stay, unlinked'
 [[ $(q "select count(*) from public.knowledge_items where project_id = '09627575-684a-4c8f-b21b-e25bcf6ed65f';") == 0 ]] || fail 'certification knowledge must go'
-[[ $(q "select (payload->>'removedModelCostUsd')::numeric > 0 and payload->'removed'->>'jobs' = '52' from public.events where payload->>'kind' = 'test_data_cleanup';") == t ]] || fail 'one audit event with counts and removed cost'
-echo 'ok   apply: 52 jobs removed; evidence, REAL and UNCERTAIN rows kept'
+[[ $(q "select (payload->>'removedModelCostUsd')::numeric > 0 and payload->'removed'->>'jobs' = '53' from public.events where payload->>'kind' = 'test_data_cleanup';") == t ]] || fail 'one audit event with counts and removed cost'
+echo 'ok   apply: 53 jobs removed; evidence, REAL and UNCERTAIN rows kept'
 
 run stop 'nothing left to remove in groups A,B,C' "cleanup.groups = 'A,B,C'"
 run ok 'APPLIED: 28 test objectives removed' "cleanup.groups = 'B,C,D'" "cleanup.include_evidence = 'yes'" "cleanup.expect_jobs = '28'" "cleanup.apply = 'yes'"
