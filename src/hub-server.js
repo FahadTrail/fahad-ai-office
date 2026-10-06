@@ -14,6 +14,7 @@ import { handleWorkspaceApi } from './hub-workspace.js';
 import { handleOfficeApi } from './hub-office.js';
 import { handleContinuityApi } from './hub-continuity.js';
 import { handleDeliverablesApi } from './hub-deliverables.js';
+import { rollExpiredBudgetPeriod } from './workspace-policy/supabase-store.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
@@ -353,7 +354,11 @@ async function readWorkspace(db, id) {
 
 async function readPolicy(db, workspaceId) {
   if (!workspaceId) return null;
-  const { data, error } = await db.from('workspace_policies').select('enabled,monthly_budget_usd,max_request_budget_usd,spent_usd,reserved_usd,budget_period_end').eq('workspace_id', workspaceId).maybeSingle();
+  const read = () => db.from('workspace_policies').select('enabled,monthly_budget_usd,max_request_budget_usd,spent_usd,reserved_usd,budget_period_end').eq('workspace_id', workspaceId).maybeSingle();
+  let { data, error } = await read();
+  if (error) throw new Error(`Could not load workspace policy: ${error.message}`);
+  // Show this month's budget, not the one that ended.
+  if (await rollExpiredBudgetPeriod(db, workspaceId, data?.budget_period_end)) ({ data, error } = await read());
   if (error) throw new Error(`Could not load workspace policy: ${error.message}`);
   return data;
 }

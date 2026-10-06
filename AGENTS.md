@@ -69,9 +69,38 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## V5.3 update (2026-10-05, open PR, unmerged)
+## V5.4 functional certification (2026-10-06, open PR, unmerged)
 
-The Project Deliverables Center (`src/hub-deliverables.js`, `src/hub-ui/deliverables.js`) and the simplified chat-like Coding workspace (`src/hub-ui/coding.js`) are UI and Hub-read-layer only, on branch `claude/v5.3-deliverables-center`. The Office engine, the Coding controller, Continuity and production flags are unchanged. The one additive migration, `supabase/migrations/20261005160000_deliverable_reviews.sql`, is **not applied**; without it, pin, archive and approve report themselves unavailable and everything else works. Do not merge, deploy or apply the migration without Fahad. Details are in `docs/v5.3-deliverables-coding.md`.
+The certification is on branch `v5.4-functional-certification`. The report is `docs/v5.4-certification.md`.
+
+**Fixes in the PR.** They are tested and not deployed:
+* Deliverables paging past 60 objectives.
+* One CHIEF decision no longer shows once per employee.
+* The Hub's create-project function (`supabase/migrations/20261005220000_create_hub_project_fix.sql`).
+* The monthly workspace budget rollover (`supabase/migrations/20261005230000_workspace_budget_rollover.sql`).
+* A `runtime_started` event for operability.
+
+**Production state:**
+* Both migrations are **not applied**.
+* The production workspace's budget period ended on 2026-10-01, so paid routes are refused until the period is rolled (`docs/v5.4-recovery-runbook.md`, case E).
+
+**Test data:** inventoried in `docs/v5.4-test-data-manifest.md`. The cleanup `ops/cleanup/v5.4-test-data-cleanup.sql` previews by default and is verified by `ops/cleanup/verify-v5.4-cleanup.sh`. It was **not executed**; Fahad approves any run.
+
+**Health:** `ops/health-snapshot.sql` reads it from the database when `/healthz` cannot be reached.
+
+Do not merge, deploy, apply the migrations or run the cleanup without Fahad.
+
+## V5.3 update (2026-10-05, live in production)
+
+**What it is:**
+* The Project Deliverables Center (`src/hub-deliverables.js`, `src/hub-ui/deliverables.js`).
+* The simplified chat-like Coding workspace (`src/hub-ui/coding.js`).
+
+**Status:**
+* Merged as #111 (`bbc5956`) and deployed.
+* The additive migration `supabase/migrations/20261005160000_deliverable_reviews.sql` is applied.
+
+Details are in `docs/v5.3-deliverables-coding.md`.
 
 ## Continuity update (2026-10-02, development-only completion)
 

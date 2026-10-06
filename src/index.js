@@ -28,6 +28,7 @@ import { SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-poli
 import { startTelegramChannel } from './channels/start.js';
 import { runOpsWatch } from './ops/ops-watch.js';
 import { createContinuityRuntime } from './continuity/runtime.js';
+import { recordRuntimeStart } from './ops/runtime-started.js';
 
 const IDLE_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 // Workspace-scoped jobs always use the fail-closed policy gateway. The global
@@ -125,6 +126,8 @@ function sleep(ms) {
 async function main() {
   if (!Number.isFinite(IDLE_MS) || IDLE_MS < 1000 || IDLE_MS > 60000) throw new Error('Invalid POLL_INTERVAL_MS');
   await checkHealth();
+  // The running version and every restart, readable from the database.
+  recordRuntimeStart(db, log);
   continuity = createContinuityRuntime({ db, log });
   if (continuity) {
     await continuity.start();

@@ -107,6 +107,9 @@
 .dl-empty h3 { margin: var(--s-2) 0 0; color: var(--text); font-size: var(--fs-lg); }
 .dl-empty p { max-width: 520px; margin: 0 0 var(--s-2); }
 .dl-empty-sm { padding: var(--s-8) var(--s-4); }
+.dl-older { display: flex; flex-direction: column; align-items: center; gap: var(--s-2); margin: var(--s-5) 0 var(--s-2); }
+.dl-older:empty { display: none; }
+.dl-older p { margin: 0; color: var(--danger); }
 .dl-empty-art { display: grid; grid-template-columns: repeat(3, 44px); gap: 6px; }
 .dl-empty-art i { height: 54px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); }
 .dl-empty-art i:nth-child(2) { height: 66px; background: var(--accent-soft); }

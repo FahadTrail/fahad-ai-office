@@ -901,6 +901,7 @@ function_acl|af7583fa8d0b36abe7e95d097d8fbf08|public.consume_agent_approval(p_ap
 function_acl|b84392ba8b5e24abf6e61bacb833fc62|public.heartbeat_coding_lease(p_lease uuid, p_token uuid, p_lease_seconds integer) service_role=X/postgres
 function_acl|c27e17317880754dd2d5dd697a5aac5b|public.model_usage_summary(p_since timestamp with time zone, p_workspace uuid) service_role=X/postgres
 function_acl|c36fcaa6f000027a77239dce03201055|public.begin_tool_execution(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid, p_agent uuid, p_broker text, p_tool text, p_action text, p_scopes text[], p_r
+function_acl|cea9415e7f946ccdd7e636c1d2130e65|public.roll_workspace_budget_period(p_workspace uuid) service_role=X/postgres
 function_acl|cf6f0427f71ead7bf0f2993d203fa86d|private.claim_next_job() service_role=X/postgres
 function_acl|d4095bf957857b1275a691716c66abd0|public.reserve_workspace_budget(p_workspace uuid, p_idempotency_key text, p_requested_usd numeric) service_role=X/postgres
 function_acl|d4b7718e34171be613b71b54e64e2c19|public.renew_agent_session_lease(p_session uuid, p_token uuid, p_lease_seconds integer) service_role=X/postgres
@@ -912,6 +913,7 @@ function_acl|f3f7f4060d021b46a5848a9a64ac7b7d|public.consume_agent_owner_inputs(
 function_acl|fb858cfc069a43fec892330ed7da6713|private.defer_task(p_task uuid, p_run uuid, p_until timestamp with time zone, p_info jsonb, p_max_waits integer) default
 function_acl|fd9cdfccbfd95bd0fd6b903b57345c91|private.claim_next_task(p_agent_slug text) default
 function|006e800564bfe00a5e5d7336d5341a63|public.claim_next_job() md5=7e179046bacf3a0152134ef2be8f5669
+function|02952ace869ebc198b3eafe342a0e10f|public.roll_workspace_budget_period(p_workspace uuid) md5=870ef2eda292b0d0a3d2752b965a9173
 function|05be6b59e4f6498fc6bba0e506a82309|public.claim_agent_session(p_worker text, p_lease_seconds integer) md5=a3c00cd22e7f3e65305dcea220e2b467
 function|08eb4c9e5d723a272c22d752e2ad0fc1|public.save_continuity_checkpoint(p_lease uuid, p_token uuid, p_payload jsonb, p_native_checkpoint uuid) md5=4fe1fc8e23fa1d3dbdb0962286d36c7e
 function|0d8abff3069e21cad6c6f7ed4c0edabf|public.model_usage_summary(p_since timestamp with time zone, p_workspace uuid) md5=496f4c4545543acb977582fa2219af80
@@ -952,6 +954,7 @@ function|b17eb7edb59bcfcb49ce406673f74e32|public.resume_agent_session(p_session 
 function|b93f9174def89154e0cfd87761d602be|public.request_agent_approval(p_session uuid, p_token uuid, p_call_id text, p_broker text, p_tool text, p_action text, p_risk text, p_summary text, p_arguments_
 function|c8049f4cf72ae52ca6abb4c24ffd0275|public.enforce_model_attempt_workspace() md5=984efbd3b908b96ee1818f21b3f20c2f
 function|ce1217e2ced868e848a27dc5f4a91735|private.fail_task(p_task uuid, p_run uuid, p_error text) md5=d31bad1c8f4208537383a81a6ab2764e
+function|ce5dbf18a2bc5a56bf22cee59ace46dc|public.create_hub_project(p_name text) md5=5d8461114dd0c6215655ebcaa545d976
 function|ce74342021ce30489d8d23fc9868521a|public.propose_handoff(p_from_session uuid, p_checkpoint uuid, p_reason text, p_packet text, p_to_worker text) md5=2a97379829afe0ea1461cadc61d3d861
 function|dcffc4fba40ac45136330aed9e1f1048|private.create_task(p_job uuid, p_agent_slug text, p_title text, p_brief text, p_sequence integer, p_depends_on uuid[], p_max_attempts integer) md5=ccb99185bf58
 function|df75c5a4afe73d6044c21cd585934b88|public.requeue_stale_tasks(p_older_than interval) md5=78e45404184454d399177ac4f5277939
@@ -961,7 +964,6 @@ function|e8ed34ca5353a7a7926279d1835f35d7|private.claim_next_job() md5=3179b94d2
 function|f3887d934509814c95872439cb0fe0d2|public.record_provider_outcome(p_provider text, p_model text, p_billing_class text, p_success boolean, p_health text, p_cooldown_until timestamp with time zone,
 function|faef2ec02cb757082861af5518fdacda|private.claim_next_task(p_agent_slug text) md5=f2813b22d8ab5b8fcdcb97e18ce4d068
 function|fc091562ad17eb9aebb12dd8306cb6b3|public.freeze_stale_coding_leases(p_grace_seconds integer) md5=6a54b13703e4468881b955cc732ce8ff
-function|fc8f08ae150e8d9d56eb44da58ff058c|public.create_hub_project(p_name text) md5=723a201f96e53bf5da234deaf1686350
 index|0039e40c313b7ebfa7fb6097b182f183|public CREATE INDEX idx_memory_scope ON public.memory USING btree (scope, scope_ref)
 index|005bcb6ec9b064226e23480d4548eb64|public CREATE UNIQUE INDEX coding_checkpoints_pkey ON public.coding_checkpoints USING btree (id)
 index|00bce40c90db0003b59cfdd2d6132408|public CREATE UNIQUE INDEX artifacts_pkey ON public.artifacts USING btree (id)

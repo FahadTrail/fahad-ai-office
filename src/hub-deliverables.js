@@ -25,13 +25,17 @@ const OFFICE_STAGES = new Set(['specialist', 'research', 'synthesis', 'chief_rev
 const CHIEF_STAGES = new Set(['synthesis', 'chief_review']);
 const VISUAL_ORDER = ['moodboard', 'financial_model', 'chart', 'kanban', 'timeline', 'compliance_matrix', 'audit_report', 'content_calendar', 'risk_matrix', 'flow', 'table', 'checklist', 'evidence'];
 
-// Bounded like the existing Office reads: the newest objectives, the library's
-// 200-artifact maximum and the outputs of those objectives.
-const JOB_WINDOW = 60;
-const ARTIFACT_WINDOW = 200;
-const SESSION_WINDOW = 60;
-const RESULT_WINDOW = 500;
+// The board is paged by objective (job), newest first: one page holds every
+// row that belongs to its objectives (tasks, outputs, artifacts, CODING
+// sessions), so no deliverable is ever split across pages or dropped for
+// being old. A refresh re-reads the newest page's whole window, which only
+// grows as new work arrives.
+const PAGE_SIZE = 60;
+const SINCE_CAP = 240;
+const RESULTS_PER_JOB = 16;
+const ARTIFACTS_PER_JOB = 12;
 const REPORT_LIMIT = 60_000;
+const JOB_COLUMNS = 'id,title,goal,status,progress,priority,conversation_id,created_at,completed_at';
 
 const ARTIFACT_COLUMNS = 'id,project_id,job_id,task_id,conversation_id,agent_slug,type,title,data,created_at';
 const SESSION_COLUMNS = 'id,workspace_id,job_id,title,objective,repository,work_branch,status,phase,state,result,blocker,error_code,next_action,conversation_id,created_at,updated_at,started_at,completed_at';
@@ -196,6 +200,19 @@ export function deliverablesBoard({ project, jobs = [], tasks = [], agents = [],
   const { chains } = versionChains(eligible);
   const used = new Set();
   const items = [];
+  // CHIEF consolidates the employees' "Decisions for Fahad" into the
+  // objective's final. Once the objective's last CHIEF step is delivered the
+  // decision is one action on CHIEF's card; employee cards keep the text but
+  // not a second "needs you". During a revision round, or if it failed, the
+  // employees' own decisions stay raised.
+  const lastChief = new Map();
+  for (const task of eligible) {
+    if (!CHIEF_STAGES.has(briefOf(task).stage)) continue;
+    const current = lastChief.get(task.job_id);
+    const later = current && Number(task.sequence || 0) === Number(current.sequence || 0) ? time(task.created_at) > time(current.created_at) : Number(task.sequence || 0) > Number(current?.sequence || 0);
+    if (!current || later) lastChief.set(task.job_id, task);
+  }
+  const consolidated = new Set([...lastChief.values()].filter((task) => task.status === 'done').map((task) => task.job_id));
 
   for (const [root, chain] of chains) {
     const latest = chain.at(-1);
@@ -213,8 +230,9 @@ export function deliverablesBoard({ project, jobs = [], tasks = [], agents = [],
     const versionKey = `task:${display.id}`;
     const reviewKey = `task:${root}`;
     const review = reviewByKey.get(reviewKey) || null;
+    const ownsDecision = CHIEF_STAGES.has(stage) || !consolidated.has(latest.job_id);
     const { status, reason } = latest.status === 'done'
-      ? deliveredStatus({ review, versionKey, decisions: parsed.decisions, flags: artifactFlags(own) })
+      ? deliveredStatus({ review, versionKey, decisions: ownsDecision ? parsed.decisions : '', flags: artifactFlags(own) })
       : pendingStatus(latest, { job, byId, agentById, now });
     const title = stage === 'specialist' ? latest.title : stage === 'direct' ? own[0]?.title || job?.title || latest.title : job?.title || latest.title;
     items.push({
@@ -335,6 +353,11 @@ async function rows(query) {
   return data || [];
 }
 
+// The exact number of rows, or null when it cannot be read (never a guess).
+async function countOf(query) {
+  try { const { count, error } = await query; return error || !Number.isInteger(count) ? null : count; } catch { return null; }
+}
+
 async function optional(query) {
   const { data, error } = await query;
   return error ? [] : data || [];
@@ -355,28 +378,97 @@ async function readReviews(db, projectId) {
 const missingTable = (error) => /PGRST205|42P01|does not exist|schema cache/i.test(`${error?.code || ''} ${error?.message || ''}`);
 const reviewsUnavailable = () => Object.assign(new Error('Pin, archive and approval need the V5.3 database update, which is not applied yet. Everything else works.'), { statusCode: 503, code: 'DELIVERABLE_REVIEWS_UNAVAILABLE' });
 
-export async function loadBoard(db, workspaceId, now = Date.now()) {
+// ------------------------------------------------------------------ paging
+// A cursor is the oldest objective of a page: "<created_at>|<id>". Objectives
+// are ordered newest first by (created_at, id), so objectives created in the
+// same instant still have one stable order and none is lost at a page edge.
+const CURSOR_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?)\|([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+
+export function parseCursor(value, name = 'cursor') {
+  const match = String(value || '').match(CURSOR_RE);
+  if (!match || !Number.isFinite(Date.parse(match[1]))) throw Object.assign(new Error(`${name} is not a valid page cursor`), { statusCode: 400 });
+  return { at: match[1], id: match[2].toLowerCase() };
+}
+
+export const cursorOf = (job) => (job ? `${job.created_at}|${job.id}` : null);
+
+// Sortable at microsecond precision (Date keeps milliseconds only).
+export function timeKey(value) {
+  const ms = Date.parse(value || '');
+  if (!Number.isFinite(ms)) return '';
+  const fraction = (String(value).match(/:\d{2}\.(\d{1,6})/) || [])[1] || '';
+  return `${new Date(Math.floor(ms / 1000) * 1000).toISOString().slice(0, 19)}.${fraction.padEnd(6, '0')}`;
+}
+// Strictly older than the cursor in the board order (created_at desc, id desc).
+export const olderThan = (job, cursor) => {
+  const [left, right] = [timeKey(job.created_at), timeKey(cursor.at)];
+  return left < right || (left === right && String(job.id).toLowerCase() < cursor.id);
+};
+export const byBoardOrder = (a, b) => {
+  const [left, right] = [timeKey(a.created_at), timeKey(b.created_at)];
+  return left === right ? String(b.id).localeCompare(String(a.id)) : right.localeCompare(left);
+};
+
+// The objectives of one page. mode: 'first' (newest page), 'before' (the
+// page after a cursor) or 'since' (everything from a cursor up, for refresh).
+async function pageJobs(db, workspaceId, { before = null, since = null } = {}) {
+  const base = () => db.from('jobs').select(JOB_COLUMNS).eq('project_id', workspaceId);
+  if (since) {
+    const list = (await rows(base().gte('created_at', since.at).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(SINCE_CAP + PAGE_SIZE)))
+      .filter((job) => !olderThan(job, since)).toSorted(byBoardOrder);
+    // A refresh window that outgrew its cap is reloaded from the top instead.
+    return { jobs: list.slice(0, SINCE_CAP), hasMore: null, truncated: list.length > SINCE_CAP };
+  }
+  const query = before ? base().lte('created_at', before.at) : base();
+  // Extra rows cover objectives that share the cursor's exact timestamp.
+  const list = (await rows(query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(PAGE_SIZE * 2 + 1)))
+    .filter((job) => !before || olderThan(job, before)).toSorted(byBoardOrder);
+  return { jobs: list.slice(0, PAGE_SIZE), hasMore: list.length > PAGE_SIZE, truncated: false };
+}
+
+// One page of the board: the objectives of the page and everything they own.
+export async function loadBoard(db, workspaceId, now = Date.now(), { before = null, since = null } = {}) {
   const project = await one(db.from('projects').select('id,name,description,default_repository').eq('id', workspaceId).maybeSingle());
   if (!project) return null;
-  const [jobs, agents, artifacts, sessions, approvals, reviews] = await Promise.all([
-    rows(db.from('jobs').select('id,title,goal,status,progress,priority,conversation_id,created_at,completed_at').eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(JOB_WINDOW)),
+  const page = await pageJobs(db, workspaceId, { before, since });
+  const jobs = page.jobs;
+  const jobIds = jobs.map((job) => job.id);
+  const oldest = jobs.at(-1) || null;
+  // Rows without an objective (structured outputs, older CODING sessions)
+  // belong to the page whose time window holds them: [oldest objective of the
+  // page, previous cursor). Every such row falls in exactly one window.
+  const windowed = (query) => {
+    if (before) query = query.lt('created_at', before.at);
+    if (since) query = query.gte('created_at', since.at);
+    else if (oldest && page.hasMore) query = query.gte('created_at', oldest.created_at);
+    return query.order('created_at', { ascending: false }).limit(PAGE_SIZE * ARTIFACTS_PER_JOB);
+  };
+  const [agents, approvals, reviews, total, orphans, looseSessions, tasks, results, artifacts, jobSessions] = await Promise.all([
     rows(db.from('agents').select('id,slug,name')),
-    optional(db.from('artifacts').select(ARTIFACT_COLUMNS).eq('project_id', workspaceId).order('created_at', { ascending: false }).limit(ARTIFACT_WINDOW)),
-    rows(db.from('agent_sessions').select(SESSION_COLUMNS).eq('workspace_id', workspaceId).order('created_at', { ascending: false }).limit(SESSION_WINDOW)),
     rows(db.from('agent_approvals').select('id,session_id,tool_name,action,risk,summary,arguments_preview,status,requested_at').eq('workspace_id', workspaceId).eq('status', 'pending')),
     readReviews(db, workspaceId),
+    before ? null : countOf(db.from('jobs').select('id', { count: 'exact', head: true }).eq('project_id', workspaceId)),
+    optional(windowed(db.from('artifacts').select(ARTIFACT_COLUMNS).eq('project_id', workspaceId).is('job_id', null))),
+    rows(windowed(db.from('agent_sessions').select(SESSION_COLUMNS).eq('workspace_id', workspaceId).is('job_id', null))),
+    jobIds.length ? rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at,not_before').in('job_id', jobIds)) : [],
+    jobIds.length ? rows(db.from('results').select('id,job_id,task_id,kind,summary,content,created_at').in('job_id', jobIds).order('created_at', { ascending: false }).limit(jobIds.length * RESULTS_PER_JOB)) : [],
+    jobIds.length ? optional(db.from('artifacts').select(ARTIFACT_COLUMNS).eq('project_id', workspaceId).in('job_id', jobIds).order('created_at', { ascending: false }).limit(jobIds.length * ARTIFACTS_PER_JOB)) : [],
+    jobIds.length ? rows(db.from('agent_sessions').select(SESSION_COLUMNS).eq('workspace_id', workspaceId).in('job_id', jobIds)) : [],
   ]);
-  const jobIds = jobs.map((job) => job.id);
-  const [tasks, results, launches] = jobIds.length ? await Promise.all([
-    rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at,not_before').in('job_id', jobIds)),
-    rows(db.from('results').select('id,job_id,task_id,kind,summary,content,created_at').in('job_id', jobIds).order('created_at', { ascending: false }).limit(RESULT_WINDOW)),
-    optional(db.from('events').select('job_id,task_id,payload').in('job_id', jobIds).eq('payload->>kind', 'task_launched').limit(200)),
-  ]) : [[], [], []];
-  // Older structured outputs keep their objective title.
+  // A CODING session belongs to the page of its own job; the objective that
+  // launched it may live on another page, so its title is read on its own.
+  const sessions = [...jobSessions, ...looseSessions];
+  const sessionIds = sessions.map((session) => session.id);
+  const launches = sessionIds.length ? await optional(db.from('events').select('job_id,task_id,payload').eq('payload->>kind', 'task_launched').in('payload->>session_id', sessionIds).limit(sessionIds.length * 2)) : [];
   const known = new Set(jobIds);
-  const olderIds = [...new Set(artifacts.map((artifact) => artifact.job_id).filter((id) => id && !known.has(id)))].slice(0, 100);
-  const older = olderIds.length ? await optional(db.from('jobs').select('id,title,goal,status,progress,priority,conversation_id,created_at,completed_at').in('id', olderIds)) : [];
-  return deliverablesBoard({ project, jobs: [...jobs, ...older], tasks, agents, results, artifacts, sessions, approvals, launches, reviews, now });
+  const launchingIds = [...new Set(launches.map((event) => event.job_id).filter((id) => id && !known.has(id)))];
+  const launching = launchingIds.length ? await optional(db.from('jobs').select(JOB_COLUMNS).eq('project_id', workspaceId).in('id', launchingIds)) : [];
+  const board = deliverablesBoard({ project, jobs: [...jobs, ...launching], tasks, agents, results, artifacts: [...artifacts, ...orphans], sessions, approvals, launches, reviews, now });
+  return {
+    ...board,
+    page: { mode: since ? 'since' : before ? 'before' : 'first', jobs: jobs.length, cursor: cursorOf(oldest) || (since ? cursorOf({ created_at: since.at, id: since.id }) : null), hasMore: page.hasMore, truncated: page.truncated },
+    totals: { objectives: total },
+  };
 }
 
 // The full output of one office task version (the board carries summaries).
@@ -442,7 +534,11 @@ export async function handleDeliverablesApi({ db, request, response, url, sendJs
   if (!/^\/api\/deliverables(\/|$)/.test(path)) return false;
   try {
     if (request.method === 'GET' && path === '/api/deliverables') {
-      const board = await loadBoard(db, uuid(url.searchParams.get('workspaceId'), 'workspaceId'), now());
+      const workspaceId = uuid(url.searchParams.get('workspaceId'), 'workspaceId');
+      const before = url.searchParams.get('before');
+      const since = url.searchParams.get('since');
+      if (before && since) throw Object.assign(new Error('Use either before or since, not both'), { statusCode: 400 });
+      const board = await loadBoard(db, workspaceId, now(), { before: before ? parseCursor(before, 'before') : null, since: since ? parseCursor(since, 'since') : null });
       if (!board) return sendJson(response, 404, { ok: false, error: 'PROJECT_NOT_FOUND' }), true;
       return sendJson(response, 200, { ok: true, ...board }), true;
     }
