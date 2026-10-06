@@ -1,0 +1,1 @@
+V5.4 activation: Coding Agent certification ping (safe to delete)
