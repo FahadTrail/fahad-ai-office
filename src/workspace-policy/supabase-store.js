@@ -1,5 +1,20 @@
 import { WorkspacePolicyError } from './contracts.js';
 
+// True when the period had ended and the database now holds the current
+// month: this call rolled it, or a concurrent one already had. The caller
+// re-reads the policy. Never throws: a missing function or a failed call
+// leaves the stored policy as it was.
+export async function rollExpiredBudgetPeriod(db, workspaceId, periodEnd, now = Date.now()) {
+  const end = Date.parse(periodEnd || '');
+  if (!workspaceId || !Number.isFinite(end) || end > now || typeof db?.rpc !== 'function') return false;
+  try {
+    const { error } = await db.rpc('roll_workspace_budget_period', { p_workspace: workspaceId });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 export class SupabaseWorkspacePolicyStore {
   constructor(client) {
     if (!client?.from || !client?.rpc) throw new TypeError('Supabase client is required');
@@ -7,12 +22,20 @@ export class SupabaseWorkspacePolicyStore {
   }
 
   async getPolicy(workspaceId) {
-    const { data: policy, error: policyError } = await this.db
+    const read = () => this.db
       .from('workspace_policies')
       .select('workspace_id,enabled,version,monthly_budget_usd,max_request_budget_usd,spent_usd,reserved_usd,budget_period_start,budget_period_end')
       .eq('workspace_id', workspaceId)
       .maybeSingle();
+    let { data: policy, error: policyError } = await read();
     if (policyError) throw storeError('WORKSPACE_POLICY_READ_FAILED', policyError);
+    // A monthly budget whose period ended starts the current month at zero
+    // spend; the database rolls it atomically, once. Without that function
+    // (migration not applied yet) the policy is used exactly as stored.
+    if (await rollExpiredBudgetPeriod(this.db, workspaceId, policy?.budget_period_end)) {
+      ({ data: policy, error: policyError } = await read());
+      if (policyError) throw storeError('WORKSPACE_POLICY_READ_FAILED', policyError);
+    }
     if (!policy) throw new WorkspacePolicyError('Workspace policy is missing', { code: 'WORKSPACE_POLICY_MISSING' });
 
     const [{ data: providers, error: providerError }, { data: tools, error: toolError }] = await Promise.all([

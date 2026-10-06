@@ -35,8 +35,9 @@ const COPY = {
     view: { grid: 'Board', list: 'List', grouped: 'Grouped' }, viewLabel: 'View',
     group: { employee: 'By employee', status: 'By status', objective: 'By objective', type: 'By type' },
     showing: (s, n) => `Showing ${s} of ${n}`, archivedCount: (n) => `${n} archived`,
+    objectivesShown: (s, n) => (n == null ? `Objectives shown: ${s}` : `Objectives shown: ${s} of ${n}`), loadOlder: 'Load older deliverables', loadingOlder: 'Loading older deliverables…', olderFailed: 'Older deliverables could not be loaded. Try again.',
     emptyTitle: 'No deliverables yet', emptyText: 'Ask CHIEF for a plan, a budget, a brand direction or a review. Every output the team produces lands here.',
-    noMatch: 'Nothing matches these filters.', loading: 'Loading the project’s deliverables…', loadFailed: 'Deliverables could not be loaded.',
+    noMatch: 'Nothing matches these filters.', noRecent: 'No deliverables in the objectives loaded so far.', loading: 'Loading the project’s deliverables…', loadFailed: 'Deliverables could not be loaded.',
     open: 'Open', for: 'For', delivered: (w) => `Delivered ${w}`, updatedAt: (w) => `Updated ${w}`, version: (a, b) => `Version ${a} of ${b}`, versionShort: (a) => `v${a}`,
     updating: (v) => `Updating — version ${v} is in progress`, earlier: 'You are viewing an earlier version.', latestVersion: 'Back to the latest version',
     yourDecision: 'Your decision', approve: 'Approve', approved: 'Approved', undo: 'Undo', requestRevision: 'Request revision', continueChief: 'Continue with CHIEF',
@@ -67,8 +68,9 @@ const COPY = {
     view: { grid: 'لوحة', list: 'قائمة', grouped: 'مجموعات' }, viewLabel: 'العرض',
     group: { employee: 'حسب الموظف', status: 'حسب الحالة', objective: 'حسب الهدف', type: 'حسب النوع' },
     showing: (s, n) => `${s} من ${n}`, archivedCount: (n) => `${n} مؤرشفة`,
+    objectivesShown: (s, n) => (n == null ? `الأهداف المعروضة: ${s}` : `الأهداف المعروضة: ${s} من ${n}`), loadOlder: 'حمّل المخرجات الأقدم', loadingOlder: 'نحمّل المخرجات الأقدم…', olderFailed: 'تعذر تحميل المخرجات الأقدم. جرّب مرة ثانية.',
     emptyTitle: 'ما في مخرجات بعد', emptyText: 'اطلب من CHIEF خطة أو ميزانية أو هوية أو مراجعة. كل مخرج يسويه الفريق بيظهر هني.',
-    noMatch: 'ما في شي يطابق هذي الفلاتر.', loading: 'نجمع مخرجات المشروع…', loadFailed: 'تعذر تحميل المخرجات.',
+    noMatch: 'ما في شي يطابق هذي الفلاتر.', noRecent: 'ما في مخرجات في الأهداف المعروضة حتى الآن.', loading: 'نجمع مخرجات المشروع…', loadFailed: 'تعذر تحميل المخرجات.',
     open: 'افتح', for: 'ضمن', delivered: (w) => `تسلّم ${w}`, updatedAt: (w) => `تحديث ${w}`, version: (a, b) => `النسخة ${a} من ${b}`, versionShort: (a) => `ن${a}`,
     updating: (v) => `تحديث جاري — النسخة ${v} قيد التنفيذ`, earlier: 'هذي نسخة أقدم.', latestVersion: 'ارجع لآخر نسخة',
     yourDecision: 'قرارك', approve: 'اعتماد', approved: 'معتمد', undo: 'تراجع', requestRevision: 'اطلب تعديل', continueChief: 'كمّل مع CHIEF',
@@ -206,6 +208,25 @@ export function countByStatus(items) {
   return counts;
 }
 
+// Pages are loaded newest first. A deliverable appears once: the newest
+// page's copy wins (it is the freshest read).
+export function mergePages(...pages) {
+  const byKey = new Map();
+  for (const page of pages) for (const item of page || []) if (!byKey.has(item.key)) byKey.set(item.key, item);
+  return [...byKey.values()];
+}
+export function mergeObjectives(...lists) {
+  const byId = new Map();
+  for (const list of lists) for (const objective of list || []) if (objective?.id && !byId.has(objective.id)) byId.set(objective.id, objective);
+  return [...byId.values()].sort((a, b) => (Date.parse(b.createdAt || 0) || 0) - (Date.parse(a.createdAt || 0) || 0));
+}
+// The header facts, counted over everything loaded (never a guessed total).
+export function summarizeDeliverables(items) {
+  const visible = items.filter((item) => !item.review?.archived);
+  const lastUpdate = visible.reduce((best, item) => ((Date.parse(item.updatedAt || 0) || 0) > (Date.parse(best || 0) || 0) ? item.updatedAt : best), null);
+  return { total: visible.length, archived: items.length - visible.length, counts: countByStatus(items), lastUpdate };
+}
+
 // ------------------------------------------------------------------ previews
 const arr = (value, max = 60) => (Array.isArray(value) ? value.slice(0, max) : []);
 const num = (value) => (Number.isFinite(Number(value)) && value !== null && value !== '' ? Number(value) : null);
@@ -318,8 +339,12 @@ export async function renderDeliverables(ctx, body, { id }) {
   const { when } = ctx;
   await ensureStyles();
   body.innerHTML = `<div class="dl-loading" role="status"><div class="drawer-loading"></div><p class="muted">${esc(t.loading)}</p></div>`;
-  let data = await ctx.api(`/api/deliverables${ctx.q({ workspaceId: id })}`);
+  // The newest page (refreshed live) and the older pages Fahad loaded.
+  let head = await ctx.api(`/api/deliverables${ctx.q({ workspaceId: id })}`);
   if (ctx.current && !ctx.current()) return;
+  const paging = { older: [], olderObjectives: [], olderJobs: 0, olderLoaded: false, loading: false, failed: false,
+    cursor: head.page?.cursor || null, hasMore: Boolean(head.page?.hasMore), windowStart: head.page?.cursor || null,
+    headJobs: head.page?.jobs ?? 0, total: head.totals?.objectives ?? null };
   const prefs = readPrefs();
   const filters = { search: '', status: '', agent: '', type: '', since: '', priority: '', objective: '', showArchived: false };
   const view = { mode: ['grid', 'list', 'grouped'].includes(prefs.mode) ? prefs.mode : 'grid', sort: t.sort[prefs.sort] ? prefs.sort : 'smart', group: t.group[prefs.group] ? prefs.group : 'employee' };
@@ -342,23 +367,25 @@ export async function renderDeliverables(ctx, body, { id }) {
       <label class="sr-only" for="dlGroup">${esc(t.groupLabel)}</label><select id="dlGroup" class="input input-sm" hidden>${Object.entries(t.group).map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join('')}</select>
       <div class="dl-views" role="group" aria-label="${esc(t.viewLabel)}">${['grid', 'list', 'grouped'].map((mode) => `<button type="button" class="dl-view" data-view="${mode}" aria-pressed="false" title="${esc(t.view[mode])}"><span aria-hidden="true">${{ grid: '▦', list: '☰', grouped: '⊞' }[mode]}</span><span class="dl-view-label">${esc(t.view[mode])}</span></button>`).join('')}</div>
     </div>
-    <p class="dl-count small muted" id="dlCount" aria-live="polite"></p>
-    <div id="dlBoard"></div></div>`;
+    <p class="dl-count small muted" id="dlCount" aria-live="polite" tabindex="-1"></p>
+    <div id="dlBoard"></div>
+    <div class="dl-older" id="dlOlder"></div></div>`;
   const $ = (selector) => body.querySelector(selector);
   $('#dlSort').value = view.sort;
   $('#dlGroup').value = view.group;
 
-  const items = () => data.deliverables || [];
+  const items = () => mergePages(head.deliverables, paging.older);
   const findItem = (key) => items().find((item) => item.key === key || item.version?.list?.some((entry) => entry.key === key));
 
   function drawSummary() {
-    const s = data.summary || {};
+    const s = summarizeDeliverables(items());
     const counts = s.counts || {};
-    const chief = s.chief;
+    const chief = head.summary?.chief;
+    const shown = paging.hasMore || paging.olderLoaded ? `<span>·</span><span>${esc(t.objectivesShown(paging.headJobs + paging.olderJobs, paging.total))}</span>` : '';
     $('#dlSummary').innerHTML = `<div class="dl-summary-main">
         ${chief ? `<div class="dl-chief">${roleMark('chief', 'CHIEF')}<div><span class="dl-label">${esc(t.chief)} · <time datetime="${esc(chief.at)}">${esc(when(chief.at))}</time></span><p dir="auto">${esc(chief.text)}</p>${chief.jobId ? `<a class="small" href="#/workflow/${esc(chief.jobId)}">${esc(t.openWorkflow)}</a>` : ''}</div></div>`
           : `<div class="dl-chief dl-chief-empty">${roleMark('chief', 'CHIEF')}<div><span class="dl-label">CHIEF</span><p>${esc(t.noChief)}</p></div></div>`}
-        <p class="dl-facts"><strong class="num">${esc(t.deliverables(s.total || 0))}</strong><span>·</span><span>${esc(t.readyOf(counts.ready || 0, s.total || 0))}</span>${s.lastUpdate ? `<span>·</span><span>${esc(t.updated(when(s.lastUpdate)))}</span>` : ''}${s.archived ? `<span>·</span><span>${esc(t.archivedCount(s.archived))}</span>` : ''}</p>
+        <p class="dl-facts"><strong class="num">${esc(t.deliverables(s.total || 0))}</strong><span>·</span><span>${esc(t.readyOf(counts.ready || 0, s.total || 0))}</span>${s.lastUpdate ? `<span>·</span><span>${esc(t.updated(when(s.lastUpdate)))}</span>` : ''}${s.archived ? `<span>·</span><span>${esc(t.archivedCount(s.archived))}</span>` : ''}${shown}</p>
       </div>
       <div class="dl-actions"><a class="btn btn-primary" href="#/chief">${esc(t.askChief)}</a><a class="btn" href="#/code">${esc(t.newCoding)}</a><a class="btn btn-ghost" href="#/artifacts">${esc(t.allFiles)}</a></div>`;
     const visible = ['ready', 'in_progress', 'needs_fahad', 'waiting', 'needs_review', 'blocked'].filter((status) => ['ready', 'in_progress', 'needs_fahad', 'waiting'].includes(status) || counts[status]);
@@ -373,10 +400,10 @@ export async function renderDeliverables(ctx, body, { id }) {
     const types = [...new Set(items().flatMap((item) => item.types || [item.type]))].sort((a, b) => typeLabel(a, language).localeCompare(typeLabel(b, language), language));
     $('#dlType').innerHTML = `<option value="">${esc(t.allTypes)}</option>${types.map((type) => `<option value="${esc(type)}">${esc(typeLabel(type, language))}</option>`).join('')}`;
     $('#dlType').value = types.includes(filters.type) ? filters.type : (filters.type = '');
-    const objectives = data.objectives || [];
+    const objectives = mergeObjectives(head.objectives, paging.olderObjectives);
     $('#dlObjective').innerHTML = `<option value="">${esc(t.allObjectives)}</option>${objectives.map((objective) => `<option value="${esc(objective.id)}">${esc(objective.title || '—')}</option>`).join('')}${items().some((item) => !item.objective) ? `<option value="none">${esc(t.noObjective)}</option>` : ''}`;
     $('#dlObjective').value = filters.objective && (filters.objective === 'none' || objectives.some((objective) => objective.id === filters.objective)) ? filters.objective : (filters.objective = '');
-    $('#dlArchived').disabled = !data.reviews?.available;
+    $('#dlArchived').disabled = !head.reviews?.available;
   }
 
   const cardHtml = (item) => {
@@ -407,6 +434,10 @@ export async function renderDeliverables(ctx, body, { id }) {
     $('#dlGroup').hidden = view.mode !== 'grouped';
     body.querySelectorAll('[data-view]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.view === view.mode)));
     const board = $('#dlBoard');
+    if (!items().length && paging.hasMore) {
+      board.innerHTML = `<div class="dl-empty dl-empty-sm"><p>${esc(t.noRecent)}</p></div>`;
+      return;
+    }
     if (!items().length) {
       board.innerHTML = `<div class="dl-empty"><span class="dl-empty-art" aria-hidden="true"><i></i><i></i><i></i></span><h3>${esc(t.emptyTitle)}</h3><p>${esc(t.emptyText)}</p><a class="btn btn-primary" href="#/chief">${esc(t.askChief)}</a></div>`;
       return;
@@ -443,15 +474,53 @@ export async function renderDeliverables(ctx, body, { id }) {
   $('#dlGroup').onchange = (event) => { view.group = event.target.value; savePrefs(view); drawBoard(); };
   body.querySelectorAll('[data-view]').forEach((button) => { button.onclick = () => { view.mode = button.dataset.view; savePrefs(view); drawBoard(); }; });
 
-  const redraw = () => { drawSummary(); drawFilters(); drawBoard(); };
+  function drawOlder() {
+    const holder = $('#dlOlder');
+    if (!paging.hasMore) { holder.innerHTML = ''; return; }
+    holder.innerHTML = `<button type="button" class="btn" id="dlLoadOlder"${paging.loading ? ' disabled aria-busy="true"' : ''}>${esc(paging.loading ? t.loadingOlder : t.loadOlder)}</button>${paging.failed ? `<p class="small" role="alert">${esc(t.olderFailed)}</p>` : ''}`;
+    holder.querySelector('#dlLoadOlder').onclick = loadOlder;
+  }
+  const redraw = () => { drawSummary(); drawFilters(); drawBoard(); drawOlder(); };
+  const restart = (next) => {
+    head = next;
+    Object.assign(paging, { older: [], olderObjectives: [], olderJobs: 0, olderLoaded: false, cursor: next.page?.cursor || null, hasMore: Boolean(next.page?.hasMore),
+      windowStart: next.page?.cursor || null, headJobs: next.page?.jobs ?? 0, total: next.totals?.objectives ?? paging.total });
+  };
+  // A refresh re-reads the newest window only: from the oldest objective of
+  // the first page up, so loaded older pages stay exactly as they were.
   const refresh = async () => {
     try {
-      const next = await ctx.api(`/api/deliverables${ctx.q({ workspaceId: id })}`);
+      const windowed = paging.olderLoaded && paging.windowStart;
+      const next = await ctx.api(`/api/deliverables${ctx.q(windowed ? { workspaceId: id, since: paging.windowStart } : { workspaceId: id })}`);
       if (!body.isConnected) return;
-      data = next;
+      if (next.page?.truncated) restart(await ctx.api(`/api/deliverables${ctx.q({ workspaceId: id })}`));
+      else if (!windowed) restart(next);
+      else {
+        head = next;
+        paging.headJobs = next.page?.jobs ?? paging.headJobs;
+        if (next.totals?.objectives != null) paging.total = next.totals.objectives;
+      }
+      if (!body.isConnected) return;
       redraw();
     } catch {}
   };
+  async function loadOlder() {
+    if (paging.loading || !paging.hasMore || !paging.cursor) return;
+    // The button is redrawn; keep keyboard focus on it (or on the count once
+    // every page is loaded) instead of dropping it to the page.
+    const hadFocus = document.activeElement?.id === 'dlLoadOlder';
+    paging.loading = true; paging.failed = false; drawOlder();
+    try {
+      const next = await ctx.api(`/api/deliverables${ctx.q({ workspaceId: id, before: paging.cursor })}`);
+      if (!body.isConnected) return;
+      Object.assign(paging, { older: mergePages(paging.older, next.deliverables), olderObjectives: mergeObjectives(paging.olderObjectives, next.objectives),
+        olderJobs: paging.olderJobs + (next.page?.jobs || 0), olderLoaded: true, cursor: next.page?.cursor || paging.cursor, hasMore: Boolean(next.page?.hasMore) });
+    } catch { paging.failed = true; }
+    paging.loading = false;
+    if (!body.isConnected) return;
+    redraw();
+    if (hadFocus) (paging.hasMore ? $('#dlLoadOlder') : $('#dlCount'))?.focus();
+  }
   // Live changes arrive often while the team works; the board reloads at
   // most every 10 seconds (the last change always lands).
   let lastLive = 0;
@@ -584,7 +653,7 @@ export async function renderDeliverables(ctx, body, { id }) {
 
   function drawDecisions(panel, item, extra) {
     const holder = panel.element.querySelector('#dlDecide');
-    const reviewsOn = Boolean(data.reviews?.available);
+    const reviewsOn = Boolean(head.reviews?.available);
     const delivered = ['ready', 'needs_fahad', 'needs_review'].includes(item.status) && item.kind !== 'coding' ? true : item.kind === 'coding' && item.deliveredAt && ['ready', 'needs_review'].includes(item.status);
     const decided = item.review?.decision && item.review.decisionKey === item.key ? item.review.decision : null;
     const pinned = Boolean(item.review?.pinned);
