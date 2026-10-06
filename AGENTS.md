@@ -69,26 +69,26 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## V5.4 functional certification (2026-10-06, open PR, unmerged)
+## V5.4 (2026-10-06, live in production)
 
-The certification is on branch `v5.4-functional-certification`. The report is `docs/v5.4-certification.md`.
+The V5.4 certification fixes were merged as #112 (`a8491e0`) and deployed. The report, with the production activation, is `docs/v5.4-certification.md`.
 
-**Fixes in the PR.** They are tested and not deployed:
+**What it fixes:**
 * Deliverables paging past 60 objectives.
 * One CHIEF decision no longer shows once per employee.
-* The Hub's create-project function (`supabase/migrations/20261005220000_create_hub_project_fix.sql`).
-* The monthly workspace budget rollover (`supabase/migrations/20261005230000_workspace_budget_rollover.sql`).
-* A `runtime_started` event for operability.
+* The Hub's create-project function (`supabase/migrations/20261005220000_create_hub_project_fix.sql`, applied).
+* The monthly workspace budget rollover (`supabase/migrations/20261005230000_workspace_budget_rollover.sql`, applied). Production rolled to October at the first V5.4 start.
+* A `runtime_started` event for operability. On a deploy's own start, its `version` names the previous commit; its `codeFingerprint` is the reliable identity.
 
-**Production state:**
-* Both migrations are **not applied**.
-* The production workspace's budget period ended on 2026-10-01, so paid routes are refused until the period is rolled (`docs/v5.4-recovery-runbook.md`, case E).
+**Continuity:** the Supervisor is **on** in production. Its first lease poll was at 2026-10-04 15:20 UTC, after the stack (#102, #104, #105, #106) was merged on 2026-10-04. The older Continuity notes below that say "unmerged" or "Supervisor OFF" are historical.
 
-**Test data:** inventoried in `docs/v5.4-test-data-manifest.md`. The cleanup `ops/cleanup/v5.4-test-data-cleanup.sql` previews by default and is verified by `ops/cleanup/verify-v5.4-cleanup.sh`. It was **not executed**; Fahad approves any run.
+**Coding Agent:** certified live on free routes on 2026-10-06, up to the merge approval. A session started from the Hub sets no `dataClass`. The controller then treats it as PRIVATE, and free routes are refused. Fahad decides whether the Hub offers that choice.
+
+**Test data:** inventoried in `docs/v5.4-test-data-manifest.md`: 81 confirmed test objectives, 53 of them in the recommended run. The cleanup `ops/cleanup/v5.4-test-data-cleanup.sql` previews by default and is verified by `ops/cleanup/verify-v5.4-cleanup.sh`. It was **not executed**; Fahad approves any run.
 
 **Health:** `ops/health-snapshot.sql` reads it from the database when `/healthz` cannot be reached.
 
-Do not merge, deploy, apply the migrations or run the cleanup without Fahad.
+Do not run the cleanup, change the Continuity flag or apply the optional grant hardening without Fahad.
 
 ## V5.3 update (2026-10-05, live in production)
 

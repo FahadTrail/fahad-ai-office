@@ -11,8 +11,11 @@
 -- "Failures" means the last 24 hours.
 select jsonb_pretty(jsonb_build_object(
   'generatedAt', now(),
-  -- Production version: one event per runtime start, which is written once
-  -- the V5.4 change is deployed. The deploy log and /healthz report the same commit.
+  -- Production version: one event per runtime start. On a deploy's own start
+  -- `version` still names the previous commit (ops/deploy.sh writes deployed-sha
+  -- after its health observations); `codeFingerprint` identifies the running
+  -- code (node src/build-info.js <checkout>). The deploy log and /healthz name
+  -- the deployed commit.
   'runtime', (
     select jsonb_build_object('version', e.payload->>'version', 'codeFingerprint', e.payload->>'codeFingerprint',
                               'startedAt', e.created_at, 'restartsLast24h',

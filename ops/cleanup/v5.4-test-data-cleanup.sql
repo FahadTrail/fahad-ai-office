@@ -24,9 +24,10 @@
 --     The workspace spent_usd counters are not changed.
 --
 -- Groups
---   A  this sprint's certification: 2 jobs and the whole CERTIFICATION V5.4
---      project (workspace policy, conversation, artifacts, knowledge items and
---      the neutral review row)
+--   A  the V5.4 certification and its production activation: 3 jobs and the
+--      whole CERTIFICATION V5.4 project (workspace policy, conversation,
+--      artifacts, knowledge items, the neutral review row and the activation's
+--      expired merge approval)
 --   B  probes, canaries, smoke and verification runs (27 jobs, 1 cited as evidence)
 --   C  tests, acceptance, benchmarks, burn-in, load and launch checks
 --      (37 jobs, 13 cited as evidence)
@@ -43,7 +44,7 @@
 --   psql "$DB_URL" -X -v ON_ERROR_STOP=1 -f ops/cleanup/v5.4-test-data-cleanup.sql
 -- Apply the recommended set, only after Fahad approves it:
 --   psql "$DB_URL" -X -v ON_ERROR_STOP=1 \
---     -c "set cleanup.groups = 'A,B,C,P'" -c "set cleanup.expect_jobs = '52'" \
+--     -c "set cleanup.groups = 'A,B,C,P'" -c "set cleanup.expect_jobs = '53'" \
 --     -c "set cleanup.apply = 'yes'" -f ops/cleanup/v5.4-test-data-cleanup.sql
 -- Supabase SQL editor: put the same SET statements, each ending in ';', on the
 -- lines above this script.
@@ -81,9 +82,10 @@ create temporary table v54_jobs (
 -- MANIFEST JOBS BEGIN
 -- (job_id, group, evidence, project_id, created_at, tasks, runs, model_attempts, tool_executions, agent_sessions, knowledge_items)
 insert into v54_jobs values
-  -- A: V5.4 certification (this sprint, CERTIFICATION V5.4 project)
+  -- A: V5.4 certification and its production activation (CERTIFICATION V5.4 project)
   ('3e322785-cd8a-418c-b21b-f4e3fc7b9f00', 'A', false, '09627575-684a-4c8f-b21b-e25bcf6ed65f', '2026-10-05T21:04:39.169404Z', 9, 9, 30, 0, 0, 15),
   ('a1c49941-5e46-458c-ab3e-9364035ed0d0', 'A', false, '09627575-684a-4c8f-b21b-e25bcf6ed65f', '2026-10-05T21:04:54.067702Z', 1, 1, 0, 0, 1, 0),
+  ('7f3ead76-dff2-47bd-b925-08d06cb86982', 'A', false, '09627575-684a-4c8f-b21b-e25bcf6ed65f', '2026-10-06T14:41:26.732739Z', 1, 1, 19, 18, 1, 0),
   -- B: probes, canaries, smoke and verification runs
   ('f61c09ba-278c-495e-aaa2-a9f7302ca095', 'B', false, null, '2026-09-20T18:42:32.707210Z', 1, 1, 0, 0, 0, 0),
   ('cf0a595e-fe1d-4cc4-9ba7-1b69251a6e17', 'B', false, null, '2026-09-20T18:45:01.049193Z', 1, 1, 0, 0, 0, 0),
@@ -263,9 +265,9 @@ begin
   v_poc := 'P' = any(v_groups) and exists (select 1 from public.continuity_tasks where id in (select task_id from v54_continuity));
 
   -- 2. The lists in this file are the reviewed manifest, unedited.
-  if (select count(*) from v54_jobs) <> 80
+  if (select count(*) from v54_jobs) <> 81
      or (select count(*) from v54_jobs where evidence) <> 28
-     or (select string_agg(grp || n, ',' order by grp) from (select grp, count(*) as n from v54_jobs group by grp) as x) <> 'A2,B27,C37,D14'
+     or (select string_agg(grp || n, ',' order by grp) from (select grp, count(*) as n from v54_jobs group by grp) as x) <> 'A3,B27,C37,D14'
      or (select count(*) from v54_conversations) <> 30
      or (select count(*) from v54_continuity) <> 2 then
     raise exception 'STOP: the lists in this file no longer match docs/v5.4-test-data-manifest.md';
