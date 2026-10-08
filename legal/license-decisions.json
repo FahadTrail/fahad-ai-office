@@ -36,6 +36,24 @@
       "conditions": "Self-hosted web font (src/hub-ui/fonts, Arabic subset, weights 400-700). Same OFL conditions as Inter.",
       "source": "https://github.com/IBM/plex/blob/master/LICENSE.txt",
       "reviewed": "2026-09-27"
+    },
+    {
+      "package": "font:Archivo",
+      "match": "^font:Archivo$",
+      "license": "OFL-1.1",
+      "decision": "APPROVED",
+      "conditions": "Self-hosted web font (src/hub-ui/fonts/archivo-*.woff2, Latin subset, weights 400-600, from @fontsource/archivo 5.3.0) used only for in-world screens in the immersive Office. Same OFL conditions as Inter.",
+      "source": "https://github.com/Omnibus-Type/Archivo/blob/master/OFL.txt",
+      "reviewed": "2026-10-08"
+    },
+    {
+      "package": "asset:Poly Haven HDRIs",
+      "match": "^asset:Poly Haven HDRIs$",
+      "license": "CC0-1.0",
+      "decision": "APPROVED",
+      "conditions": "Two 512x256 EXR environment maps (src/hub-ui/office3d/assets/env/, from @pmndrs/assets 1.7.0, CC0-1.0, originally Poly Haven) used only for image-based reflections in the immersive Office. Public-domain dedication; no obligations. Provenance is recorded per file in the asset manifest.",
+      "source": "https://polyhaven.com/license",
+      "reviewed": "2026-10-08"
     }
   ]
 }
