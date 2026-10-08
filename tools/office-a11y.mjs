@@ -36,7 +36,7 @@ for (const shot of CASES) {
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, hasTouch: Boolean(shot.size), isMobile: Boolean(shot.size) });
   await context.addInitScript(([id, language, light, view]) => {
     localStorage.setItem('hub-workspace-id', id); localStorage.setItem('hub-language', language); localStorage.setItem('hub-office-light-mode', light || 'auto');
-    localStorage.setItem('hub-office-view', view); localStorage.setItem('hub-office-quality', 'light');
+    localStorage.setItem('hub-office-view', view); localStorage.setItem('hub-office-quality', 'light'); localStorage.setItem('hub-office-watchdog', 'off');
     document.addEventListener('DOMContentLoaded', () => { const style = document.createElement('style'); style.textContent = '*, *::before, *::after { transition: none !important; animation: none !important; }'; document.head.append(style); });
   }, [WS, shot.language, shot.light, shot.view || '3d']);
   const page = await context.newPage();

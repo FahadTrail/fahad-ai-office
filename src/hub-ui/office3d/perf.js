@@ -9,7 +9,8 @@
 //   * warm-up: nothing is judged until the scene is ready, plus a settle time;
 //   * grace: every switch that compiles or rebuilds opens a short window;
 //   * median, not mean: a few long compile frames cannot move it;
-//   * gaps over pauseMs are pauses (throttling), not frames;
+//   * gaps over pauseMs are pauses (throttling) unless the page has focus —
+//     a focused, visible page is not throttled, so there they are slow frames;
 //   * sustained: slowness must last stepAfterMs (and giveUpAfterMs on the
 //     lowest tier) without a single good check in between.
 export const WATCHDOG = Object.freeze({
@@ -17,7 +18,8 @@ export const WATCHDOG = Object.freeze({
   graceMs: 3500, // after a view, mode, quality or size change
   window: 90, // frames in the median
   minFrames: 45,
-  pauseMs: 750, // a longer gap is a pause (throttled or hidden), not a frame
+  pauseMs: 750, // a longer gap without focus is a pause (throttled), not a frame
+  maxGapMs: 5000, // a longer gap is always a pause (a suspended or debugged page)
   floorFps: 20, // slow below this many frames per second at a 60 fps target…
   floorShare: 0.5, // …or below half of a lower target (30 fps at rest → 15)
   stepAfterMs: 6000,
@@ -50,10 +52,11 @@ export function createWatchdog({ tier = 'balanced', options = WATCHDOG } = {}) {
     pause() { reset(); },
     tier: () => current,
     state() { const fps = measured(); return { tier: current, fps: fps === null ? null : Math.round(fps), slowForMs: slowSince ? Math.round(lastNow - slowSince) : 0, judging: readyAt !== null }; },
-    frame(now, delta, target = 60) {
+    frame(now, delta, target = 60, focused = false) {
       lastNow = now;
       if (gaveUp || readyAt === null || now < quietUntil) return null;
-      if (!(delta > 0) || delta > options.pauseMs) { slowSince = 0; return null; } // a pause, not a frame
+      if (!(delta > 0) || delta > options.maxGapMs) { slowSince = 0; return null; } // a pause (or a stall), not a frame
+      if (delta > options.pauseMs && !focused) { slowSince = 0; return null; } // throttled while unfocused
       deltas.push(delta); targets.push(target);
       if (deltas.length > options.window) { deltas.shift(); targets.shift(); }
       if (deltas.length < options.minFrames) return null;

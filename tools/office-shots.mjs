@@ -52,7 +52,7 @@ for (const [name, shot] of Object.entries(SHOTS)) {
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme: 'light', reducedMotion: shot.reducedMotion ? 'reduce' : 'no-preference' });
   await context.addInitScript(([id, q, m]) => {
     localStorage.setItem('hub-workspace-id', id); localStorage.setItem('hub-office-view', '3d'); localStorage.setItem('hub-office-quality', q);
-    localStorage.setItem('hub-language', 'en'); window.__officePreviewMoment = m;
+    localStorage.setItem('hub-language', 'en'); window.__officePreviewMoment = m; localStorage.setItem('hub-office-watchdog', 'off');
   }, [WS, quality, shot.moment || moment]);
   const page = await context.newPage();
   // Software WebGL starves the main thread; CSS transitions would be caught mid-way.

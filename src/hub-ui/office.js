@@ -220,6 +220,7 @@ export async function renderOffice(ctx) {
         if (renderer.render !== '3d' || !$('#o3dStage')) return;
         immersive = module.mountOffice3D($('#o3dStage'), {
           state: presentation(), quality: readPref('hub-office-quality', '') || renderer.quality || 'balanced', reducedMotion: ctx.reducedMotion(), lightMode, rtl,
+          watchdog: readPref('hub-office-watchdog', 'on') !== 'off', // QA tools only: deterministic screenshots on software GPUs
           copy: { wall: t.wall }, stateWord: (value) => stateLabel(value, language), insets,
           stream: () => (data?.timeline || []).slice(0, 6).map((entry) => ({ text: entry.text, time: new Date(entry.at).toLocaleTimeString(language === 'ar' ? 'ar-AE' : 'en', { hour: '2-digit', minute: '2-digit' }) })),
           on: {

@@ -156,7 +156,9 @@ Office. These were the causes, and how each is fixed.
 * nothing is judged until the scene is ready, plus 5 s;
 * every view, mode, quality or size change opens a grace window;
 * it uses the median frame time;
-* gaps over 750 ms count as pauses, such as throttling, not as frames;
+* gaps over 750 ms count as pauses (throttling), but only while the page has no focus:
+  * a focused, visible page is not throttled, so there a gap is a slow frame;
+  * gaps over 5 s are always pauses, such as a suspended page or a debugger;
 * it steps down only after 6 s of continuous slowness, through High, Balanced, Lean and Light;
 * it falls back only after 20 s more on Light.
 
@@ -193,6 +195,8 @@ Office. These were the causes, and how each is fixed.
 ### Label fix
 
 * CHIEF's label is placed right after the focused desk, so it stays visible in a narrow Overview.
+
+QA tools set `hub-office-watchdog` to `off` so their screenshots stay deterministic on software GPUs. The Hub never sets it.
 
 ## QA tools
 

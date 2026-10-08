@@ -497,8 +497,8 @@ export function mountOffice3D(container, options = {}) {
       }
       awake = false;
       frames.push(delta); if (frames.length > 90) frames.shift();
-      if (!reducedMotion) {
-        const decision = watchdog.frame(now, delta, fps);
+      if (!reducedMotion && options.watchdog !== false) {
+        const decision = watchdog.frame(now, delta, fps, document.hasFocus());
         if (decision?.step) setQuality(decision.step);
         else if (decision?.giveUp) on.slow?.(decision.fps);
       }

@@ -314,13 +314,13 @@ test('floor strips (brass inlay, handoff light, history) face up so they are see
 });
 
 // Drives the watchdog with a steady frame interval for a duration (ms).
-const drive = (dog, { from, ms, delta, target = 60, spikes = [] }) => {
+const drive = (dog, { from, ms, delta, target = 60, spikes = [], focused = false }) => {
   const decisions = []; let now = from;
   while (now < from + ms) {
     const spike = spikes.find(([at]) => Math.abs(now - at) < delta / 2);
     const step = spike ? spike[1] : delta;
     now += step;
-    const decision = dog.frame(now, step, target);
+    const decision = dog.frame(now, step, target, focused);
     if (decision) decisions.push({ at: now, ...decision });
   }
   return { decisions, now };
@@ -350,6 +350,15 @@ test('watchdog: throttling gaps are pauses, not slowness', () => {
   // A throttled or covered window: one frame a second for a minute.
   const run = drive(dog, { from: 10000, ms: 60000, delta: 1000 });
   assert.deepEqual(run.decisions, []);
+  // A suspended page (laptop lid, debugger) is never judged, focused or not.
+  const suspended = createWatchdog({ tier: 'balanced' }); suspended.ready(0);
+  assert.deepEqual(drive(suspended, { from: 10000, ms: 120000, delta: 8000, focused: true }).decisions, []);
+});
+
+test('watchdog: a focused page drawing about one frame a second is genuinely slow and falls back', () => {
+  const dog = createWatchdog({ tier: 'balanced' }); dog.ready(0);
+  const run = drive(dog, { from: WATCHDOG.settleMs, ms: 240000, delta: 1000, focused: true });
+  assert.deepEqual(run.decisions.map((d) => d.step || 'giveUp'), ['lean', 'light', 'giveUp']);
 });
 
 test('watchdog: a persistently slow device steps down, then falls back only from the lowest tier', () => {
