@@ -111,6 +111,8 @@ export function statBar(state, { deliveries = [], now = Date.now() } = {}) {
 // Label priority: the focus first, then attention, work, deliveries, rest.
 export function labelPriority(employee, focusKey = null) {
   if (employee.key === focusKey) return 0;
+  // CHIEF stays central and visible in the Overview (§02): placed before every department.
+  if (employee.key === 'chief') return 0.5;
   const tone = deskSignal(employee).tone;
   return { attention: 1, working: 2, done: 3, caution: 3, neutral: 4, offline: 5 }[tone] ?? 4;
 }

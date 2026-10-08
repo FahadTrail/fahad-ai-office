@@ -111,8 +111,13 @@ export function describeOffice(state, language = 'en') {
 export function officeRenderer({ preference = 'auto', capability = {} } = {}) {
   if (preference === 'simplified') return { render: 'simplified', reason: 'chosen' };
   if (!capability.webgl) return { render: 'simplified', reason: 'webgl' };
-  if (capability.small) return { render: 'simplified', reason: 'small' };
+  // Phones and tablets get the simplified Office; a narrow window on a laptop
+  // or desktop (fine pointer, large screen) keeps the 3D Office down to the
+  // width its overlay needs.
+  if (capability.narrow) return { render: 'simplified', reason: 'small' };
+  if (capability.small && (capability.coarse || capability.handheld)) return { render: 'simplified', reason: 'small' };
   if (preference !== '3d' && capability.coarse) return { render: 'simplified', reason: 'coarse' };
   if (preference !== '3d' && capability.weakGpu) return { render: 'simplified', reason: 'weak' };
-  return { render: '3d', quality: capability.weakGpu || capability.coarse ? 'light' : capability.strong ? 'high' : 'balanced' };
+  // Balanced by default (composer, bloom, MSAA); High is chosen in Settings.
+  return { render: '3d', quality: capability.weakGpu || capability.coarse ? 'light' : 'balanced' };
 }

@@ -251,6 +251,8 @@ test('desk signals: state lives on the desk; red only for Blocked, Failed and Ne
   }
   assert.ok(labelPriority(employee('legal', 'BLOCKED')) < labelPriority(employee('coding', 'WORKING')));
   assert.equal(labelPriority(employee('research', 'AVAILABLE'), 'research'), 0, 'the focus label comes first');
+  assert.ok(labelPriority(employee('chief', 'AVAILABLE')) < labelPriority(employee('legal', 'BLOCKED')), 'CHIEF is placed before every department, so it stays visible in the Overview');
+  assert.ok(labelPriority(employee('chief', 'AVAILABLE'), 'finance') > labelPriority(employee('finance', 'WORKING'), 'finance'), 'except the focused desk');
 });
 
 test('CHIEF Forum and system states come only from real rows', () => {

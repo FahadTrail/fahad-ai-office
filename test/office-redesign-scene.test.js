@@ -13,6 +13,7 @@ import { CODING_STAGES, LIVE_TEXT_METRES, MIN_GLYPH_SHARE, codingStage, departme
 import { deskSignal } from '../src/hub-ui/office3d/states.js';
 import { BLEND_SECONDS, WARDROBE, buildClips, buildPersonGeometry } from '../src/hub-ui/office3d/people.js';
 import { WALKERS, cloudShade, walkPath, walkerCandidates } from '../src/hub-ui/office3d/life.js';
+import { TIERS, WATCHDOG, createErrorBudget, createWatchdog, floorFor, median } from '../src/hub-ui/office3d/perf.js';
 import { ZONES, seatPoint } from '../src/hub-ui/office3d/plan.js';
 import { deliveriesView, employeeQueues, pipelineView, usageView } from '../src/hub-office.js';
 import { handoffView } from '../src/hub-office-live.js';
@@ -61,11 +62,15 @@ test('presentation: one contract built only from Office data, now with queues, e
 
 test('renderer: the 3D Office is the Office; the simplified Office only when the device cannot draw it, or by choice', () => {
   const desktop = { webgl: true, weakGpu: false, small: false, coarse: false, reducedMotion: false, strong: true };
-  assert.deepEqual(officeRenderer({ capability: desktop }), { render: '3d', quality: 'high' });
+  assert.deepEqual(officeRenderer({ capability: desktop }), { render: '3d', quality: 'balanced' }, 'Balanced by default; High is a Settings choice');
   assert.equal(officeRenderer({ capability: { ...desktop, reducedMotion: true } }).render, '3d', 'reduced motion keeps the 3D Office, still');
   assert.deepEqual(officeRenderer({ preference: 'simplified', capability: desktop }), { render: 'simplified', reason: 'chosen' });
   assert.equal(officeRenderer({ capability: { ...desktop, webgl: false } }).reason, 'webgl');
-  assert.equal(officeRenderer({ capability: { ...desktop, small: true } }).reason, 'small');
+  // A narrow laptop window (or the Office in a side panel) keeps the 3D Office; phones and tablets do not.
+  assert.equal(officeRenderer({ capability: { ...desktop, small: true } }).render, '3d');
+  assert.equal(officeRenderer({ capability: { ...desktop, small: true, handheld: true } }).reason, 'small');
+  assert.equal(officeRenderer({ capability: { ...desktop, small: true, coarse: true } }).reason, 'small');
+  assert.equal(officeRenderer({ preference: '3d', capability: { ...desktop, narrow: true, small: true } }).reason, 'small', 'below the overlay width, even when chosen');
   assert.equal(officeRenderer({ capability: { ...desktop, coarse: true } }).reason, 'coarse');
   assert.equal(officeRenderer({ capability: { ...desktop, weakGpu: true } }).reason, 'weak');
   assert.deepEqual(officeRenderer({ preference: '3d', capability: { ...desktop, weakGpu: true } }), { render: '3d', quality: 'light' });
@@ -186,7 +191,13 @@ test('budgets: the vendored engine and the scene code stay small and keep their 
   const source = read('src/hub-ui/office3d/scene.js');
   assert.match(source, /high: \{ pixelRatio: 2, shadowSize: 4096, composer: true, ao: true/);
   assert.match(source, /light: \{ pixelRatio: 1, shadowSize: 1024, composer: false, ao: false/);
-  assert.match(source, /if \(next\) setQuality\(next\); else on\.slow\?\.\(average\)/);
+  assert.match(source, /if \(decision\?\.step\) setQuality\(decision\.step\);\s*else if \(decision\?\.giveUp\) on\.slow/);
+  assert.match(source, /watchdog\.ready\(performance\.now\(\)\)/, 'judged only after the scene is ready');
+  assert.match(source, /renderer\.compileAsync\(scene, camera\);\s*else renderer\.compile\(scene, camera\)/, 'programs compiled before judging');
+  assert.match(source, /renderer\.shadowMap\.autoUpdate = false/, 'shadows on demand');
+  assert.match(source, /new IntersectionObserver/, 'off-screen: no rendering');
+  assert.doesNotMatch(source, /sun\.visible =/, 'the light count never changes (no recompiles on mode switches)');
+  assert.match(source, /sun\.intensity < 0\.01 && sun\.shadow\.map\) renderer\.shadowMap\.needsUpdate = false/, 'the first shadow map is always drawn (shadow samplers need it, even at night)');
   assert.match(source, /renderer\.toneMapping = THREE\.AgXToneMapping/);
   assert.match(source, /bloom\.enabled = preset\.bloom > 0\.02/, 'bloom at night only');
   assert.match(source, /if \(document\.hidden\) return|disposed \|\| document\.hidden/, 'paused in hidden tabs');
@@ -195,11 +206,13 @@ test('budgets: the vendored engine and the scene code stay small and keep their 
 test('fail-safe and accessible: context loss and errors fall back; labels are real buttons; reduced motion respected', () => {
   const scene = read('src/hub-ui/office3d/scene.js'); const office = read('src/hub-ui/office.js'); const css = read('src/hub-ui/office.css');
   assert.match(scene, /webglcontextlost/);
-  assert.match(scene, /catch \(error\) \{ fail\(error\); \}/);
   assert.match(scene, /canvas\.setAttribute\('aria-hidden', 'true'\)/);
-  assert.match(office, /error: \(error\) => \{ console\.warn\('3D Office stopped:', error\?\.message \|\| error\); fallBack\('stopped'\); \}/);
+  assert.match(office, /if \(error\?\.contextLost && recoveries\.length < 2\) \{[^}]*remount\(\); return; \}/, 'a lost context is restored');
+  assert.match(office, /console\.warn\('3D Office stopped:', error\?\.message \|\| error\); fallBack\('stopped'\);/);
+  assert.match(scene, /if \(errors\.record\(performance\.now\(\)\)\) fail\(error\);/, 'one bad frame is survived');
   assert.match(office, /id="o3dUseSimplified"/, 'the loading screen offers the simplified Office');
   assert.match(office, /<button type="button" class="o3d-card">/, 'every label is a real button');
+  assert.match(office, /anchor\.key === frame\.focusKey \? 0 : anchor\.key === 'chief' \? 0\.5 :/, 'CHIEF\'s label is placed right after the focus');
   assert.match(office, /setAttribute\('aria-label', `\$\{departmentName\(anchor\.key, language\)\}/);
   assert.match(office, /aria-live="polite" id="o3dSummary"/);
   assert.match(office, /aria-labelledby="ovPanelTitle"/);
@@ -298,4 +311,71 @@ test('floor strips (brass inlay, handoff light, history) face up so they are see
     assert.ok(normalY > 0, `triangle ${t / 3} faces down`);
   }
   assert.equal(geometry.userData.length, 4);
+});
+
+// Drives the watchdog with a steady frame interval for a duration (ms).
+const drive = (dog, { from, ms, delta, target = 60, spikes = [] }) => {
+  const decisions = []; let now = from;
+  while (now < from + ms) {
+    const spike = spikes.find(([at]) => Math.abs(now - at) < delta / 2);
+    const step = spike ? spike[1] : delta;
+    now += step;
+    const decision = dog.frame(now, step, target);
+    if (decision) decisions.push({ at: now, ...decision });
+  }
+  return { decisions, now };
+};
+
+test('watchdog: a normal laptop is never judged by its first load, switches or compile stalls', () => {
+  const dog = createWatchdog({ tier: 'balanced' });
+  // Loading: shader compiles and texture uploads, frames of 0.3–2 s, before ready — ignored.
+  let run = drive(dog, { from: 0, ms: 8000, delta: 400 });
+  assert.deepEqual(run.decisions, []);
+  dog.ready(run.now);
+  // After ready: 60 fps with compile stalls every second (300 ms frames) — the median is untouched.
+  run = drive(dog, { from: run.now, ms: 30000, delta: 16.7, spikes: Array.from({ length: 30 }, (_, i) => [run.now + 6000 + i * 1000, 300]) });
+  assert.deepEqual(run.decisions, []);
+  // At rest (30 fps target) on a modest GPU: 22 fps is fine.
+  run = drive(dog, { from: run.now, ms: 30000, delta: 45, target: 30 });
+  assert.deepEqual(run.decisions, []);
+  // A switch to night (bloom compile): 2 s of 200 ms frames inside the grace window.
+  dog.grace(run.now, 4500);
+  run = drive(dog, { from: run.now, ms: 2000, delta: 200 });
+  assert.deepEqual(run.decisions, []);
+  assert.equal(dog.tier(), 'balanced');
+});
+
+test('watchdog: throttling gaps are pauses, not slowness', () => {
+  const dog = createWatchdog({ tier: 'balanced' }); dog.ready(0);
+  // A throttled or covered window: one frame a second for a minute.
+  const run = drive(dog, { from: 10000, ms: 60000, delta: 1000 });
+  assert.deepEqual(run.decisions, []);
+});
+
+test('watchdog: a persistently slow device steps down, then falls back only from the lowest tier', () => {
+  const dog = createWatchdog({ tier: 'balanced' }); dog.ready(0);
+  // 12 fps at a 60 fps target, for good.
+  const run = drive(dog, { from: WATCHDOG.settleMs, ms: 80000, delta: 83 });
+  assert.deepEqual(run.decisions.map((d) => d.step || 'giveUp'), ['lean', 'light', 'giveUp']);
+  const [lean, light, giveUp] = run.decisions;
+  assert.ok(lean.at - WATCHDOG.settleMs >= WATCHDOG.stepAfterMs, 'sustained before stepping');
+  assert.ok(light.at - lean.at >= WATCHDOG.stepAfterMs + WATCHDOG.graceMs, 'each step is judged afresh');
+  assert.ok(giveUp.at - light.at >= WATCHDOG.giveUpAfterMs, 'sustained again on the lowest tier');
+  assert.deepEqual(TIERS, ['high', 'balanced', 'lean', 'light']);
+  assert.equal(floorFor(60), 20); assert.equal(floorFor(30), 15);
+  assert.equal(median([5, 1, 300, 2, 4]), 4);
+  // One good check resets the clock: intermittent slowness never steps down.
+  const flaky = createWatchdog({ tier: 'balanced' }); flaky.ready(0);
+  let now = WATCHDOG.settleMs; const decisions = [];
+  for (let round = 0; round < 12; round += 1) {
+    let r = drive(flaky, { from: now, ms: 4000, delta: 83 }); decisions.push(...r.decisions); now = r.now;
+    r = drive(flaky, { from: now, ms: 3000, delta: 16.7 }); decisions.push(...r.decisions); now = r.now;
+  }
+  assert.deepEqual(decisions, []);
+});
+
+test('errors: one bad frame is survived; three within ten seconds stop the 3D Office', () => {
+  const budget = createErrorBudget();
+  assert.equal(budget.record(0), false); assert.equal(budget.record(20000), false); assert.equal(budget.record(25000), false);
+  assert.equal(budget.record(26000), true);
 });

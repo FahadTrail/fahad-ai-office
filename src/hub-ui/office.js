@@ -173,6 +173,11 @@ export async function renderOffice(ctx) {
   };
   $('#o3dUseSimplified').onclick = () => { writePref('hub-office-view', 'simplified'); renderer = officeRenderer({ preference: 'simplified', capability: capability(ctx) }); signature = ''; applyRenderer(); load().catch(() => {}); };
 
+  let recoveries = [];
+  const remount = () => {
+    if (immersive) { try { immersive.dispose(); } catch { /* already gone */ } immersive = null; }
+    setTimeout(() => { if (renderer.render === '3d' && data) drawImmersive(presentation()).catch(() => {}); }, 300);
+  };
   const fallBack = (reason) => {
     if (immersive) { try { immersive.dispose(); } catch { /* already gone */ } immersive = null; }
     renderer = { render: 'simplified', reason };
@@ -225,7 +230,12 @@ export async function renderOffice(ctx) {
             phase: (phase) => { stage.dataset.phase = phase; },
             frame: (frame) => placeLabels(frame),
             arrival: (handoff) => { fromLabels.set(handoff.toKey, { from: handoff.fromKey, until: performance.now() + 3000 }); },
-            error: (error) => { console.warn('3D Office stopped:', error?.message || error); fallBack('stopped'); },
+            error: (error) => {
+              // A lost GPU context is recovered with a fresh mount (twice in ten minutes at most).
+              recoveries = recoveries.filter((at) => Date.now() - at < 600_000);
+              if (error?.contextLost && recoveries.length < 2) { recoveries.push(Date.now()); console.warn('3D Office: WebGL context lost, restoring'); remount(); return; }
+              console.warn('3D Office stopped:', error?.message || error); fallBack('stopped');
+            },
             slow: () => fallBack('slow'),
           },
         });
@@ -385,7 +395,8 @@ export async function renderOffice(ctx) {
       element.querySelector('.o3d-task').textContent = employee.task || '';
       element.querySelector('.o3d-from').textContent = from && from.until > now ? `${t.from} ${departmentName(from.from, language)}` : '';
       element.querySelector('button').setAttribute('aria-label', `${departmentName(anchor.key, language)}: ${stateLabel(employee.visual, language)}${employee.task ? ` — ${employee.task}` : ''}`);
-      const priority = anchor.key === frame.focusKey ? 0 : { attention: 1, working: 2, done: 3, neutral: 4, offline: 5 }[tone];
+      // The focus first, then CHIEF (central and always visible in the Overview), then by urgency.
+      const priority = anchor.key === frame.focusKey ? 0 : anchor.key === 'chief' ? 0.5 : { attention: 1, working: 2, done: 3, neutral: 4, offline: 5 }[tone];
       entries.push({ key: anchor.key, anchor, distance: anchor.distance, priority, sizes: { full: measure(element, 'full'), name: measure(element, 'name') } });
     }
     const box = stageRect();
@@ -806,7 +817,8 @@ function capability(ctx) {
   } catch { webgl = false; }
   const fine = window.matchMedia?.('(pointer: fine)').matches;
   return {
-    webgl, weakGpu, small: window.innerWidth < 1024, coarse: !fine, reducedMotion: ctx.reducedMotion(),
+    webgl, weakGpu, small: window.innerWidth < 1024, narrow: window.innerWidth < 640 || window.innerHeight < 420,
+    handheld: Math.min(window.screen?.width || 0, window.screen?.height || 0) < 600, coarse: !fine, reducedMotion: ctx.reducedMotion(),
     strong: (navigator.deviceMemory || 4) >= 8 && (navigator.hardwareConcurrency || 4) >= 8,
   };
 }

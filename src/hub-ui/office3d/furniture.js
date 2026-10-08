@@ -33,6 +33,7 @@ export function buildFurniture({ materials, tier }) {
   const screens = []; // { key, kind, mesh, width, height }
   const footprints = []; // floor AO: [x, z, w, d, yaw, strength]
   let chiefStrip = null;
+  const liveChairs = []; // task chairs: transform nodes, drawn by shared instanced meshes
 
   // ------------------------------------------------------------ kit
   const at = (origin, yaw, offset) => local(origin, yaw, offset);
@@ -188,11 +189,11 @@ export function buildFurniture({ materials, tier }) {
     const chairGroup = new THREE.Group(); chairGroup.name = `chair:${key}`;
     const [cx, cz] = local([x, z], yaw, [0, depth / 2 + 0.38]);
     chairGroup.position.set(cx, y, cz); chairGroup.rotation.y = yaw;
-    if (!standing) {
+    if (!standing && executive) {
       const chairBuilder = createBuilder(materials);
       chair(chairBuilder, 0, 0, 0, { executive });
       chairBuilder.build(chairGroup); chairBuilder.dispose();
-    }
+    } else if (!standing) liveChairs.push(chairGroup); // drawn instanced (below), one draw per material
     root.add(chairGroup);
     footprints.push([cx, cz, 0.8, 0.8, yaw, 0.3]);
     // An invisible hit volume over the whole workstation (desk, chair, person).
@@ -375,8 +376,30 @@ export function buildFurniture({ materials, tier }) {
 
   b.build(root);
   b.dispose();
+  // The task chairs: one instanced mesh per material for all of them; each
+  // chair group stays a live transform (swivel, pushed in, a seated person).
+  const chairParts = [];
+  if (liveChairs.length) {
+    const template = new THREE.Group(); const chairBuilder = createBuilder(materials);
+    chair(chairBuilder, 0, 0, 0); chairBuilder.build(template); chairBuilder.dispose();
+    template.updateMatrixWorld(true);
+    for (const part of [...template.children]) {
+      const mesh = new THREE.InstancedMesh(part.geometry, part.material, liveChairs.length);
+      mesh.name = 'chairs'; mesh.castShadow = part.castShadow; mesh.receiveShadow = part.receiveShadow; mesh.frustumCulled = false;
+      root.add(mesh); chairParts.push({ mesh, offset: part.matrixWorld.clone() });
+    }
+  }
+  const chairMatrix = new THREE.Matrix4();
+  const syncChairs = () => {
+    for (const { mesh, offset } of chairParts) {
+      liveChairs.forEach((group, index) => { group.updateMatrixWorld(); mesh.setMatrixAt(index, chairMatrix.multiplyMatrices(group.matrixWorld, offset)); });
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  };
+  root.updateMatrixWorld(true); syncChairs();
+
   return {
-    root, workstations, screens, footprints, chiefStrip,
+    root, workstations, screens, footprints, chiefStrip, syncChairs,
     dispose() { root.traverse((node) => { if (node.isMesh) { node.geometry?.dispose(); if (node.material && !node.material.name) node.material.dispose?.(); } }); bookMaterial.dispose(); },
   };
 }

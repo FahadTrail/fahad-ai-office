@@ -56,6 +56,11 @@ export function createMaterials({ renderer, tier = 'balanced', onProgress = () =
   const made = new Map();
   const textures = [];
   const finishes = new Map(); // finish → { map, roughnessMap, normalMap, aoMap }
+  // Neutral 1×1 maps until the real ones arrive: a material's shader program
+  // depends on which maps it has, so starting with the same set means streamed
+  // textures swap in without recompiling anything (no first-load spikes).
+  const pixel = (rgba, srgb) => { const texture = new THREE.DataTexture(new Uint8Array(rgba), 1, 1, THREE.RGBAFormat); texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; texture.needsUpdate = true; return texture; };
+  const placeholder = { map: pixel([255, 255, 255, 255], true), orm: pixel([255, 255, 255, 255], false), normal: pixel([128, 128, 255, 255], false) };
   const anisotropy = Math.min(tier === 'high' ? 8 : tier === 'balanced' ? 4 : 2, renderer.capabilities.getMaxAnisotropy?.() || 1);
 
   const get = (name) => {
@@ -68,13 +73,13 @@ export function createMaterials({ renderer, tier = 'balanced', onProgress = () =
     material.userData.normalScale = normalScale;
     material.name = name;
     made.set(name, material);
-    if (finish && finishes.has(finish)) applyFinish(material, finishes.get(finish));
+    if (finish) applyFinish(material, finishes.get(finish) || placeholder, true);
     return material;
   };
-  const applyFinish = (material, set) => {
+  const applyFinish = (material, set, first = false) => {
     material.map = set.map; material.roughnessMap = set.orm; material.metalnessMap = material.metalness > 0 ? set.orm : null;
     material.normalMap = set.normal; material.normalScale.set(material.userData.normalScale, material.userData.normalScale);
-    material.needsUpdate = true;
+    if (first) material.needsUpdate = true; // later swaps keep the same maps, so the same program
   };
   const prepare = (texture, metres, srgb) => {
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
@@ -112,13 +117,17 @@ export function createMaterials({ renderer, tier = 'balanced', onProgress = () =
       const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
       loader.load(url, (texture) => { clearTimeout(timer); resolve(prepare(texture, metres, srgb)); }, undefined, (error) => { clearTimeout(timer); reject(error); });
     });
-    let done = 0; let compressed = 0;
+    let done = 0; let compressed = 0; let generating = Promise.resolve();
     await Promise.all(wanted.map(async (finish) => {
       const metres = MATERIAL_SPEC[finish].metres;
       try {
         const [map, orm, normal] = await Promise.all([one(`materials/${finish}-albedo.ktx2`, true, metres), one(`materials/${finish}-orm.ktx2`, false, metres), one(`materials/${finish}-normal.ktx2`, false, metres)]);
         install(finish, { map, orm, normal }); compressed += 1;
-      } catch { generate(finish); }
+      } catch {
+        // Generated on the device instead, one finish per frame so the page never stalls.
+        generating = generating.then(() => new Promise((resolve) => setTimeout(resolve, 16))).then(() => generate(finish));
+        await generating;
+      }
       done += 1; onProgress(done / wanted.length);
     }));
     loader?.dispose();
@@ -130,7 +139,7 @@ export function createMaterials({ renderer, tier = 'balanced', onProgress = () =
 
   return {
     get, load, setTravertineRoughness, definitions: DEFINITIONS,
-    dispose() { for (const material of made.values()) material.dispose(); for (const texture of textures) texture.dispose(); },
+    dispose() { for (const material of made.values()) material.dispose(); for (const texture of textures) texture.dispose(); for (const texture of Object.values(placeholder)) texture.dispose(); },
   };
 }
 

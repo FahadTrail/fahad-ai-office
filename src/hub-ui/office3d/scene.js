@@ -24,14 +24,17 @@ import { bakeFloor } from './bake.js?v=__UI_VERSION__';
 import { createHandoffs } from './handoffs3d.js?v=__UI_VERSION__';
 import { cloudShade, createLife } from './life.js?v=__UI_VERSION__';
 import { FORUM_STATES } from './states.js?v=__UI_VERSION__';
+import { createErrorBudget, createWatchdog, median } from './perf.js?v=__UI_VERSION__';
 
 // Quality tiers (§14): auto-selected, stepped down by the frame-rate watchdog.
 export const QUALITY = Object.freeze({
   high: { pixelRatio: 2, shadowSize: 4096, composer: true, ao: true, msaa: 4, fps: 60 },
   balanced: { pixelRatio: 1.5, shadowSize: 2048, composer: true, ao: false, msaa: 4, fps: 60 },
+  // Lean: the same look (composer, night bloom) at 1× resolution and 2× MSAA,
+  // so a slow laptop steps down without losing the night atmosphere.
+  lean: { pixelRatio: 1, shadowSize: 2048, composer: true, ao: false, msaa: 2, fps: 60 },
   light: { pixelRatio: 1, shadowSize: 1024, composer: false, ao: false, msaa: 0, fps: 30 },
 });
-const ORDER = ['high', 'balanced', 'light'];
 
 export function mountOffice3D(container, options = {}) {
   const { reducedMotion = false, on = {} } = options;
@@ -40,6 +43,10 @@ export function mountOffice3D(container, options = {}) {
   let current = options.state || { employees: [], handoffs: [], projects: [] };
   let disposed = false;
   const cleanup = [];
+  // Frame-rate watchdog (perf.js): steps quality down only on persistent
+  // slowness, after warm-up and outside compile/switch windows.
+  const watchdog = createWatchdog({ tier });
+  const errors = createErrorBudget();
 
   // ------------------------------------------------------------ renderer
   const canvas = document.createElement('canvas');
@@ -53,7 +60,14 @@ export function mountOffice3D(container, options = {}) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.info.autoReset = false; // draw calls are counted across every pass of a frame
-  canvas.addEventListener('webglcontextlost', (event) => { event.preventDefault(); fail(new Error('WebGL context lost')); });
+  // Shadows are re-rendered only when something that casts them moves (see the loop).
+  renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;
+  let shadowsAt = 0;
+  // A lost context (GPU reset, driver update) is recovered by the overlay with a fresh mount.
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault(); renderer.setAnimationLoop(null);
+    if (!disposed) on.error?.(Object.assign(new Error('WebGL context lost'), { contextLost: true }));
+  });
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(CAMERA_STATES.overview.fov, 1, 0.1, 600);
@@ -266,7 +280,7 @@ export function mountOffice3D(container, options = {}) {
     sun.position.set(dir[0] * 80, Math.max(dir[1], 0.02) * 80, dir[2] * 80);
     sun.color.set(kelvinToHex(preset.sunKelvin));
     sun.intensity = preset.sun; sun.userData.base = preset.sun;
-    sun.visible = preset.sun > 0.01;
+    // The sun stays in the scene at night (intensity 0): removing a light recompiles every material.
     bounce.position.set(-dir[0] * 40, 30, -dir[2] * 40);
     bounce.intensity = preset.sun * 0.07 + preset.artificial * 0.06;
     bounce.color.set(preset.artificial > 0.5 ? '#ffd2a1' : '#f3dcc0');
@@ -277,7 +291,8 @@ export function mountOffice3D(container, options = {}) {
     scene.environmentIntensity = preset.sky;
     renderer.toneMappingExposure = preset.exposure;
     scene.fog.color.set(preset.horizon);
-    scene.background = new THREE.Color(preset.horizon);
+    if (scene.background?.isColor) scene.background.set(preset.horizon); else scene.background = new THREE.Color(preset.horizon);
+    renderer.shadowMap.needsUpdate = true;
     materials.setTravertineRoughness(preset.roughness);
     baked.setNight(preset.artificial);
     architecture.setNight(preset.artificial);
@@ -291,6 +306,7 @@ export function mountOffice3D(container, options = {}) {
     const next = resolveMode(mode);
     lightMode = next.mode;
     if (reducedMotion) { lighting = next; applyLighting(next.preset); lightTween = null; on.phase?.(next.phase); for (const screen of screens) drawScreen(screen); wake(); return; }
+    watchdog.grace(performance.now(), MODE_TRANSITION_MS + 3000);
     lightTween = { from: { ...lighting.preset }, to: next, start: performance.now() };
     lighting = { ...lighting, phase: next.phase };
     for (const screen of screens) drawScreen(screen);
@@ -334,6 +350,7 @@ export function mountOffice3D(container, options = {}) {
     if (instant || reducedMotion) { shot = next; move = null; placeCamera(shot); }
     else { move = { from, to: next, start: performance.now(), duration: transitionMs(from, next) }; shot = next; }
     if (dof) dof.enabled = active.name === 'agent' && !reducedMotion;
+    watchdog.grace(performance.now());
     on.view?.(active);
     wake();
   };
@@ -415,7 +432,7 @@ export function mountOffice3D(container, options = {}) {
   const frames = [];
   function wake() { awake = true; }
   const loop = (now) => {
-    if (disposed || document.hidden) return;
+    if (disposed || document.hidden || !onScreen) return;
     const ambient = !reducedMotion;
     const fps = ambient && !move && !lightTween && !idleOrbit ? Math.min(30, settings.fps) : settings.fps;
     if (now - lastFrame < 1000 / fps - 1) return;
@@ -464,9 +481,15 @@ export function mountOffice3D(container, options = {}) {
         on.arrival?.(handoff);
       }
       applyDesks(now);
+      furniture.syncChairs();
       if (desksAnimating()) animating = true;
       if (move || animating) refreshNear();
       if (awake || animating || ambient) {
+        // Shadows: on demand, and at most 15 times a second while people or chairs move.
+        if (animating && now - shadowsAt > 66) renderer.shadowMap.needsUpdate = true;
+        // Night: no sun, no shadow pass (once the map exists; the samplers need a depth texture).
+        if (sun.intensity < 0.01 && sun.shadow.map) renderer.shadowMap.needsUpdate = false;
+        if (renderer.shadowMap.needsUpdate) shadowsAt = now;
         renderer.info.reset();
         if (composer) composer.render(); else renderer.render(scene, camera);
         lastInfo = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
@@ -474,27 +497,22 @@ export function mountOffice3D(container, options = {}) {
       }
       awake = false;
       frames.push(delta); if (frames.length > 90) frames.shift();
-      watchPerformance(now);
-    } catch (error) { fail(error); }
+      if (!reducedMotion) {
+        const decision = watchdog.frame(now, delta, fps);
+        if (decision?.step) setQuality(decision.step);
+        else if (decision?.giveUp) on.slow?.(decision.fps);
+      }
+    } catch (error) {
+      // One bad frame is survived; only repeated errors stop the 3D Office.
+      console.warn('3D Office frame error:', error?.message || error);
+      if (errors.record(performance.now())) fail(error);
+    }
   };
 
-  // Frame-rate watchdog: step quality down, then give up gracefully.
-  let slowSince = 0;
-  const watchPerformance = (now) => {
-    if (frames.length < 60 || reducedMotion) return;
-    const average = 1000 / (frames.reduce((sum, value) => sum + value, 0) / frames.length);
-    const floor = Math.min(24, settings.fps * 0.45);
-    if (average >= floor) { slowSince = 0; return; }
-    if (!slowSince) { slowSince = now; return; }
-    if (now - slowSince < 4000) return;
-    slowSince = 0; frames.length = 0;
-    const next = ORDER[ORDER.indexOf(tier) + 1];
-    if (next) setQuality(next); else on.slow?.(average);
-  };
   function setQuality(next) {
-    tier = next; settings = QUALITY[next];
+    tier = next; settings = QUALITY[next]; watchdog.grace(performance.now(), 4000);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, settings.pixelRatio));
-    sun.shadow.mapSize.set(settings.shadowSize, settings.shadowSize); sun.shadow.map?.dispose(); sun.shadow.map = null;
+    sun.shadow.mapSize.set(settings.shadowSize, settings.shadowSize); sun.shadow.map?.dispose(); sun.shadow.map = null; renderer.shadowMap.needsUpdate = true;
     buildComposer(); resize(); applyLighting(lighting.preset); on.quality?.(next);
   }
 
@@ -517,6 +535,7 @@ export function mountOffice3D(container, options = {}) {
     const { clientWidth: width, clientHeight: height } = container;
     if (!width || !height) return;
     renderer.setSize(width, height, false);
+    watchdog.grace(performance.now());
     composer?.setSize(width, height);
     aspect = width / height; camera.aspect = aspect; camera.updateProjectionMatrix();
     const fitted = overviewView({ aspect, insets: insets() });
@@ -529,7 +548,15 @@ export function mountOffice3D(container, options = {}) {
   };
   const observer = new ResizeObserver(resize);
   observer.observe(container);
-  const onVisibility = () => { if (!document.hidden) { lastFrame = 0; wake(); } };
+  const onVisibility = () => { if (!document.hidden) { lastFrame = 0; watchdog.grace(performance.now()); wake(); } };
+  // Off-screen (scrolled away, a collapsed panel): no rendering, no judging.
+  let onScreen = true;
+  const visibility = new IntersectionObserver(([entry]) => {
+    const next = entry.isIntersecting;
+    if (next && !onScreen) { lastFrame = 0; watchdog.grace(performance.now()); wake(); }
+    onScreen = next;
+  });
+  visibility.observe(container);
   document.addEventListener('visibilitychange', onVisibility);
 
   function fail(error) { if (!disposed) on.error?.(error); }
@@ -542,14 +569,22 @@ export function mountOffice3D(container, options = {}) {
   for (const screen of screens) drawScreen(screen, true);
   applyDesks();
   renderer.setAnimationLoop(loop);
+  let textureSource = null;
   const ready = (async () => {
     const [day, night] = await Promise.all([loadEnvironment('day'), loadEnvironment('night')]);
     environments.day = day || fallbackEnvironment(); environments.night = night || environments.day;
     applyLighting(lighting.preset); wake();
     on.progress?.(0.3);
     const textures = await materials.load();
-    wake();
+    // Compile every program the scene needs now, off the critical frames where the browser can.
+    try {
+      if (renderer.extensions.has('KHR_parallel_shader_compile')) await renderer.compileAsync(scene, camera);
+      else renderer.compile(scene, camera);
+    } catch { /* compiled on first use instead */ }
+    renderer.shadowMap.needsUpdate = true; wake();
     on.progress?.(1);
+    textureSource = textures;
+    watchdog.ready(performance.now());
     return textures;
   })().catch((error) => { fail(error); return null; });
 
@@ -568,20 +603,20 @@ export function mountOffice3D(container, options = {}) {
     setProject() { emitFrame(true); wake(); },
     setRtl() { wake(); },
     stats() {
-      const average = frames.length ? Math.round(1000 / (frames.reduce((sum, value) => sum + value, 0) / frames.length)) : null;
-      return { quality: tier, fps: average, drawCalls: lastInfo.calls, triangles: lastInfo.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, view: active.name, lightMode, phase: lighting.phase };
+      const typical = median(frames);
+      return { quality: tier, fps: typical ? Math.round(1000 / typical) : null, watch: watchdog.state(), textureSource, frameErrors: errors.count(), drawCalls: lastInfo.calls, triangles: lastInfo.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, view: active.name, lightMode, phase: lighting.phase };
     },
     dispose() {
       disposed = true;
       renderer.setAnimationLoop(null);
-      observer.disconnect();
+      observer.disconnect(); visibility.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
       for (const step of cleanup) step();
       architecture.dispose(); furniture.dispose(); plants.dispose(); life.dispose(); crew.dispose(); baked.dispose(); handoffs.dispose(); materials.dispose();
       for (const screen of screens) { screen.texture.dispose(); screen.material.dispose(); }
       for (const environment of new Set([environments.day, environments.night])) environment?.dispose?.();
       pmrem.dispose(); composer?.dispose?.();
-      renderer.dispose(); renderer.forceContextLoss?.();
+      renderer.dispose(); if (!renderer.getContext().isContextLost()) renderer.forceContextLoss?.();
       canvas.remove();
     },
   };

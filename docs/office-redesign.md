@@ -101,27 +101,98 @@ The licences are recorded in `legal/license-decisions.json`.
 
 ## Quality tiers and measurements
 
-Tiers: High (2× pixel ratio, 4096 shadows, MSAA composer, GTAO, depth of field
-in agent view, bloom at night), Balanced (1.5×, 2048), Light (1×, 1024, no
-composer).
+| Tier | Pixel ratio | Shadows | Composer | Other |
+| --- | --- | --- | --- | --- |
+| High | 2× | 4096 | MSAA 4× | GTAO, depth of field in agent view; chosen in Settings |
+| Balanced (default) | 1.5× | 2048 | MSAA 4× | bloom at night |
+| Lean | 1× | 2048 | MSAA 2× | bloom at night (the same look, fewer pixels) |
+| Light | 1× | 1024 | none | weak GPUs, touch devices |
 
-Measured with headless Chromium on software WebGL (SwiftShader), 1440 × 900:
+The day overview draws 160 calls, down from 196 before hardening. These calls
+include the shadow pass, which now runs only on the frames that need it.
 
-| View | Tier | Draw calls | Triangles |
-| --- | --- | --- | --- |
-| Day overview | Balanced | 196 | 684 k |
-| Night overview | Balanced | 133 | 349 k |
-| Agent | Balanced | 132 | 586 k |
-| Day overview | High | 250 | 936 k |
+Measured with headless Chromium on software WebGL (SwiftShader), 1440 × 900, Balanced:
 
-Frame rate on a real GPU is **not measured**; software WebGL reports about 0–1
-fps for every tier and says nothing about real devices.
+| View | Draw calls | Triangles |
+| --- | --- | --- |
+| Day overview | 160 | 684 k |
+| Night overview | 117 | 349 k |
+| CHIEF | 130 | 682 k |
+| Department | 127 | 678 k |
+| Agent | 115 | 608 k |
+| Handoffs (night) | 122 | 349 k |
+
+Software WebGL reports about 0–1 fps on every tier and says nothing about
+real devices. Real-device frame rate comes from the QA panel in the preview
+build (see QA tools).
 
 Bundle sizes (gzip):
 
 * engine: 224 KB;
-* scene modules: 73 KB;
-* overlay: 17.5 KB JS and 7.8 KB CSS.
+* scene modules: about 76 KB;
+* overlay: about 17.8 KB JS and 7.8 KB CSS.
+
+## Real-device hardening (2026-10-08)
+
+On a normal laptop, the real-device preview fell back to the simplified
+Office. These were the causes, and how each is fixed.
+
+### Watchdog false positives
+
+**Cause.**
+* The old watchdog used the *mean* frame time of the last 90 frames.
+* It stepped quality down after 4 s below 24 fps.
+* Expected first-load stalls dragged that mean down. They came from:
+  * shader compiles;
+  * a recompile of every textured material as each KTX2 set arrived;
+  * HDRI conversion;
+  * the night bloom compile;
+  * the sun light being removed at night, which recompiled every material on each Light and Immersive switch.
+* Every step down rebuilt the composer, which compiled again, so the cascade could reach Light and then fall back.
+* Machines reporting 8 GB and 8 cores started on High.
+
+**Fix.** The watchdog moved to `src/hub-ui/office3d/perf.js`, which is pure and tested:
+
+* nothing is judged until the scene is ready, plus 5 s;
+* every view, mode, quality or size change opens a grace window;
+* it uses the median frame time;
+* gaps over 750 ms count as pauses, such as throttling, not as frames;
+* it steps down only after 6 s of continuous slowness, through High, Balanced, Lean and Light;
+* it falls back only after 20 s more on Light.
+
+### First-load spikes
+
+**Fix.**
+* Materials start with neutral 1×1 maps, so streamed textures swap in without a recompile.
+* Programs are compiled before judging starts (`compileAsync` where the GPU supports it).
+* The sun stays in the scene at night with intensity 0.
+* If KTX2 decoding fails, finishes are generated one per frame.
+
+### Device detection
+
+**Cause.** Any viewport under 1024 px fell back, even a laptop window or a side panel, and even when 3D was chosen.
+
+**Fix.**
+* Only phones and tablets (coarse pointer or a small screen) and viewports under 640 × 420 use the simplified Office.
+* Balanced is the default tier; High is chosen in Settings.
+
+### Errors
+
+**Cause.** Any single frame error, or a lost WebGL context, fell back permanently.
+
+**Fix.**
+* One bad frame is survived; three within 10 s stop the 3D Office.
+* A lost context is restored with a fresh mount, at most twice in ten minutes.
+
+### Cost
+
+* Shadows are drawn on demand: at most 15 times a second while something moves, and not at all at night once the map exists.
+* The seven task chairs are three instanced meshes instead of 21.
+* Rendering stops while the Office is off-screen.
+
+### Label fix
+
+* CHIEF's label is placed right after the focused desk, so it stays visible in a narrow Overview.
 
 ## QA tools
 

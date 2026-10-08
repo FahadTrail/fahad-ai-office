@@ -59,7 +59,7 @@ for (const [name, shot] of Object.entries(SHOTS)) {
   await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => { const style = document.createElement('style'); style.textContent = '*, *::before, *::after { transition: none !important; }'; document.head.append(style); }));
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  page.on('console', (message) => { if (['error', 'warning'].includes(message.type()) && !/GPU stall|Automatic fallback|ReadPixels|WebGL-/.test(message.text())) errors.push(message.text()); });
+  page.on('console', (message) => { if (['error', 'warning'].includes(message.type()) && !/GPU stall|Automatic fallback|ReadPixels/.test(message.text())) errors.push(message.text()); });
   const started = Date.now();
   const { url } = await previewFor(shot.moment || moment);
   await page.goto(`${url}#/office`);
