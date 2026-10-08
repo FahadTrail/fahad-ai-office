@@ -1,3 +1,6 @@
+> **Superseded (2026-10-08).** This V5 design was replaced by the approved "Daylight
+> Atrium" redesign; see `docs/office-redesign.md`. Kept as history.
+
 # V5 — Immersive 3D Office (beta)
 
 The Live Office has two renderers of the same truth:

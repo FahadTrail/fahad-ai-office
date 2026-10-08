@@ -67,12 +67,24 @@ export function buildArchitecture({ materials, tier }) {
   root.add(inlay);
 
   // ------------------------------------------------------------ columns
-  for (const [x, z] of COLUMNS) {
+  // Instanced so the close views can cut away the ones in front of the focus.
+  const shaftGeometry = new THREE.CylinderGeometry(COLUMN_RADIUS, COLUMN_RADIUS, 1, 32).translate(0, 0.5, 0);
+  const footGeometry = new THREE.CylinderGeometry(COLUMN_RADIUS + 0.012, COLUMN_RADIUS + 0.012, 0.06, 32).translate(0, 0.03, 0);
+  const shafts = new THREE.InstancedMesh(shaftGeometry, materials.get('microcement'), COLUMNS.length);
+  const feet = new THREE.InstancedMesh(footGeometry, materials.get('bronze'), COLUMNS.length);
+  const columnMatrices = COLUMNS.map(([x, z]) => {
     const atrium = Math.abs(x) < 9.5 && Math.abs(z) < 7;
-    const height = atrium ? OFFICE.atrium : OFFICE.ceiling;
-    b.cylinder(COLUMN_RADIUS, COLUMN_RADIUS, height, 'microcement', { x, y: height / 2, z, segments: 32 });
-    b.cylinder(COLUMN_RADIUS + 0.012, COLUMN_RADIUS + 0.012, 0.06, 'bronze', { x, y: 0.03, z, segments: 32 });
-  }
+    return [new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion(), new THREE.Vector3(1, atrium ? OFFICE.atrium : OFFICE.ceiling, 1)), new THREE.Matrix4().makeTranslation(x, 0, z)];
+  });
+  const hiddenMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+  const showColumns = (hidden = new Set()) => {
+    columnMatrices.forEach(([shaft, foot], index) => { const gone = hidden.has(index); shafts.setMatrixAt(index, gone ? hiddenMatrix : shaft); feet.setMatrixAt(index, gone ? hiddenMatrix : foot); });
+    shafts.instanceMatrix.needsUpdate = true; feet.instanceMatrix.needsUpdate = true;
+    shafts.computeBoundingSphere(); feet.computeBoundingSphere();
+  };
+  showColumns();
+  let hiddenColumns = new Set();
+  for (const mesh of [shafts, feet]) { mesh.castShadow = true; mesh.receiveShadow = true; mesh.name = 'columns'; root.add(mesh); }
 
   // ------------------------------------------------------------ façade
   // Glass between bronze fins every 1.2 m; linen-clad solid sections behind
@@ -267,6 +279,8 @@ export function buildArchitecture({ materials, tier }) {
   b.dispose(); low.dispose(); high.dispose(); clerestory.dispose(); roofLow.dispose();
   return {
     root, lowCeiling, highCeiling, casters, inlay,
+    // Cutaway: hides the columns at these indices of COLUMNS (empty shows all).
+    setHiddenColumns(indices) { const next = new Set(indices); if (next.size === hiddenColumns.size && [...next].every((index) => hiddenColumns.has(index))) return false; hiddenColumns = next; showColumns(next); return true; },
     setNight(level) { glow.emissiveIntensity = level * 3.2; },
     dispose() { for (const item of disposables) item.dispose?.(); root.traverse((node) => { if (node.isMesh || node.isInstancedMesh) node.geometry?.dispose(); }); },
   };

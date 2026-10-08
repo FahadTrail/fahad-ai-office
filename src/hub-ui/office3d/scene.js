@@ -10,8 +10,8 @@
 // fetches Office data. Any rendering failure calls on.error() and the Live
 // Office falls back to the simplified Office.
 import * as THREE from '../vendor/three.js?v=__UI_VERSION__';
-import { OFFICE, ZONES, ZONE_KEYS, labelAnchor, zoneByNumber } from './plan.js?v=__UI_VERSION__';
-import { CAMERA_STATES, agentView, between, ceilingVisible, chiefView, departmentView, handoffsView, orbit, overviewView, stepBack, transitionMs } from './camera.js?v=__UI_VERSION__';
+import { COLUMNS, OFFICE, ZONES, ZONE_KEYS, labelAnchor, zoneByNumber } from './plan.js?v=__UI_VERSION__';
+import { CAMERA_STATES, agentView, between, ceilingVisible, occluders, chiefView, departmentView, handoffsView, orbit, overviewView, stepBack, transitionMs } from './camera.js?v=__UI_VERSION__';
 import { MODE_TRANSITION_MS, blendPreset, kelvinToHex, resolveMode, sunDirection } from './modes.js?v=__UI_VERSION__';
 import { createMaterials, assetUrl } from './materials.js?v=__UI_VERSION__';
 import { buildArchitecture } from './architecture.js?v=__UI_VERSION__';
@@ -22,6 +22,7 @@ import { deskSignal, forumState, statBar } from './states.js?v=__UI_VERSION__';
 import { createPeople } from './people.js?v=__UI_VERSION__';
 import { bakeFloor } from './bake.js?v=__UI_VERSION__';
 import { createHandoffs } from './handoffs3d.js?v=__UI_VERSION__';
+import { cloudShade, createLife } from './life.js?v=__UI_VERSION__';
 import { FORUM_STATES } from './states.js?v=__UI_VERSION__';
 
 // Quality tiers (§14): auto-selected, stepped down by the frame-rate watchdog.
@@ -145,11 +146,12 @@ export function mountOffice3D(container, options = {}) {
     desk.station.chair.add(person.root);
     person.root.position.set(0, 0, 0.04);
   }
+  const life = createLife({ scene, crew, desks, reducedMotion, tier });
   const POSE_CLIP = { relaxed: 'relaxed', typing: 'typing', reading: 'reading', waiting: 'waiting', blocked: 'blocked', sitback: 'sitback', phone: 'phone', review: 'review' };
   const applyPeople = () => {
     const forum = forumState(current);
     for (const [key, desk] of desks) {
-      const person = desk.person; if (!person) continue;
+      const person = desk.person; if (!person || desk.walking) continue;
       const signal = desk.signal;
       person.root.visible = signal.pose !== 'empty';
       if (!person.root.visible) continue;
@@ -189,6 +191,7 @@ export function mountOffice3D(container, options = {}) {
       shade.material.emissive.copy(lampColor);
       shade.material.emissiveIntensity = (signal.lamp * (0.6 + night * 1.8)) + flare * 2.5;
       pool.material.opacity = Math.min(1, signal.lamp * (0.12 + night * 0.5) + flare * 0.4);
+      pool.visible = pool.material.opacity > 0.01; // nothing drawn when the lamp is off
       // Approval: a hollow red ring pulsing every 6 s; blocked and failed: held.
       const pulse = signal.ring === 'approval' && !reducedMotion ? 0.55 + 0.45 * Math.max(0, Math.cos(((now / 1000) % 6) / 6 * Math.PI * 2)) : 1;
       ring.material.opacity = signal.ring ? pulse : 0;
@@ -219,14 +222,34 @@ export function mountOffice3D(container, options = {}) {
   };
 
   // ------------------------------------------------------------ post (AgX output, night bloom, AO on High)
-  let composer = null; let bloom = null; let ao = null;
+  let composer = null; let bloom = null; let ao = null; let dof = null;
+  let aoProxy = null;
+  const aoScene = () => {
+    if (aoProxy) return aoProxy;
+    aoProxy = new THREE.Scene();
+    const add = (root) => root.traverse((node) => {
+      if (!node.isMesh || node.material?.transparent || node.material?.visible === false || node.userData?.screen || node.parent?.name?.startsWith('ceiling')) return;
+      if (node.isSkinnedMesh || node.name?.startsWith('leaves') || !node.geometry?.boundingSphere && !node.isInstancedMesh) return;
+      node.updateWorldMatrix(true, false);
+      const proxy = node.isInstancedMesh ? new THREE.InstancedMesh(node.geometry, node.material, node.count) : new THREE.Mesh(node.geometry, node.material);
+      if (node.isInstancedMesh) proxy.instanceMatrix = node.instanceMatrix;
+      proxy.matrixAutoUpdate = false; proxy.matrix.copy(node.matrixWorld); proxy.matrixWorld.copy(node.matrixWorld);
+      aoProxy.add(proxy);
+    });
+    add(architecture.root); add(furniture.root);
+    return aoProxy;
+  };
   const buildComposer = () => {
-    composer?.dispose?.(); composer = null; bloom = null; ao = null;
+    composer?.dispose?.(); composer = null; bloom = null; ao = null; dof = null;
     if (!settings.composer) return;
     const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: settings.msaa });
     composer = new THREE.EffectComposer(renderer, target);
     composer.addPass(new THREE.RenderPass(scene, camera));
-    if (settings.ao) { ao = new THREE.GTAOPass(scene, camera, 1, 1); ao.blendIntensity = 0.85; composer.addPass(ao); }
+    // AO on High only, computed from a proxy of the large static meshes (shared
+    // geometry, no copies) so it costs a few draw calls rather than the scene again.
+    if (settings.ao) { ao = new THREE.GTAOPass(aoScene(), camera, 1, 1); ao.blendIntensity = 0.85; composer.addPass(ao); }
+    // Subtle depth of field in the agent view (High only).
+    if (settings.ao) { dof = new THREE.BokehPass(scene, camera, { focus: CAMERA_STATES.agent.distance, aperture: 0.0016, maxblur: 0.006 }); dof.enabled = false; composer.addPass(dof); }
     bloom = new THREE.UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.6, 0.82);
     bloom.enabled = false;
     composer.addPass(bloom);
@@ -242,7 +265,7 @@ export function mountOffice3D(container, options = {}) {
     const dir = sunDirection(preset);
     sun.position.set(dir[0] * 80, Math.max(dir[1], 0.02) * 80, dir[2] * 80);
     sun.color.set(kelvinToHex(preset.sunKelvin));
-    sun.intensity = preset.sun;
+    sun.intensity = preset.sun; sun.userData.base = preset.sun;
     sun.visible = preset.sun > 0.01;
     bounce.position.set(-dir[0] * 40, 30, -dir[2] * 40);
     bounce.intensity = preset.sun * 0.07 + preset.artificial * 0.06;
@@ -310,6 +333,7 @@ export function mountOffice3D(container, options = {}) {
     const from = currentShot();
     if (instant || reducedMotion) { shot = next; move = null; placeCamera(shot); }
     else { move = { from, to: next, start: performance.now(), duration: transitionMs(from, next) }; shot = next; }
+    if (dof) dof.enabled = active.name === 'agent' && !reducedMotion;
     on.view?.(active);
     wake();
   };
@@ -421,8 +445,13 @@ export function mountOffice3D(container, options = {}) {
       const cameraY = camera.position.y;
       architecture.lowCeiling.visible = ceilingVisible(cameraY, OFFICE.ceiling);
       architecture.highCeiling.visible = ceilingVisible(cameraY, OFFICE.atrium);
+      const close = ['department', 'agent'].includes(active.name) && !idleOrbit;
+      architecture.setHiddenColumns(close ? occluders(camera.position.toArray(), shot.target, COLUMNS, { halfAngle: Math.atan(Math.tan((camera.fov * Math.PI) / 360) * camera.aspect), keep: active.name === 'department' ? ZONES[active.key]?.bounds : null }) : []);
       plants.tick(now / 1000);
       if (crew.tick(delta / 1000, measurePeople())) animating = true;
+      if (life.tick(now, current)) animating = true;
+      // Passing clouds (ambient, day only).
+      if (!reducedMotion && sun.userData.base > 0.05) sun.intensity = sun.userData.base * cloudShade(now / 1000);
       const flow = handoffs.tick(now);
       if (flow.animating) animating = true;
       for (const handoff of flow.arrivals) {
@@ -548,7 +577,7 @@ export function mountOffice3D(container, options = {}) {
       observer.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
       for (const step of cleanup) step();
-      architecture.dispose(); furniture.dispose(); plants.dispose(); crew.dispose(); baked.dispose(); handoffs.dispose(); materials.dispose();
+      architecture.dispose(); furniture.dispose(); plants.dispose(); life.dispose(); crew.dispose(); baked.dispose(); handoffs.dispose(); materials.dispose();
       for (const screen of screens) { screen.texture.dispose(); screen.material.dispose(); }
       for (const environment of new Set([environments.day, environments.night])) environment?.dispose?.();
       pmrem.dispose(); composer?.dispose?.();

@@ -70,7 +70,7 @@ for (const [name, shot] of Object.entries(SHOTS)) {
   try { await shot.steps(page); } catch (error) { errors.push(`step: ${error.message.split('\n')[0]}`); }
   await page.waitForTimeout(2500);
   const clip = stageOnly ? await page.evaluate(() => { const box = document.querySelector('#o3dStage')?.getBoundingClientRect(); return box && box.width > 10 ? { x: box.x, y: box.y, width: box.width, height: box.height } : null; }) : null;
-  await page.screenshot({ path: join(outDir, `${name}.png`), ...(clip ? { clip } : {}) });
+  await page.screenshot({ path: join(outDir, `${name}.png`), timeout: 180_000, ...(clip ? { clip } : {}) });
   report[name] = { readyMs: readyAt, stats: await page.evaluate(() => window.__fahadOffice3d?.stats?.() || null).catch(() => null),
     overlay: await page.evaluate(() => ({ lightMode: document.querySelector('.ov-mode-btn[aria-pressed="true"]')?.dataset.light || null, view: document.querySelector('.ov-view[aria-pressed="true"]')?.dataset.view || null,
       labels: [...document.querySelectorAll('.o3d-label')].filter((element) => !element.hidden).map((element) => `${element.dataset.key}:${element.dataset.lod}`) })).catch(() => null), errors };

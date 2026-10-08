@@ -88,8 +88,8 @@ export async function renderOffice(ctx) {
         <dl class="ov-stats" id="ovStats" aria-live="polite"></dl>
         <div class="ov-toasts" id="ovToasts" aria-live="polite"></div>
       </div>
-      <aside class="ov-panel" id="ovPanel" hidden aria-labelledby="ovPanelTitle"></aside>
-      <aside class="ov-sheet" id="ovSheet" hidden aria-labelledby="ovSheetTitle"></aside>
+      <section class="ov-panel" id="ovPanel" hidden aria-labelledby="ovPanelTitle"></section>
+      <section class="ov-sheet" id="ovSheet" hidden aria-labelledby="ovSheetTitle"></section>
       <p class="sr-only" aria-live="polite" id="o3dSummary"></p>
     </section>
     <div class="office-body">

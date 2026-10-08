@@ -106,7 +106,7 @@ export function stripGeometry(points, width, heightAt = () => 0, lift = 0.0015) 
     along.push(distance, distance);
   }
   const index = [];
-  for (let i = 0; i < points.length - 1; i += 1) { const a = i * 2; index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  for (let i = 0; i < points.length - 1; i += 1) { const a = i * 2; index.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); } // counter-clockwise from above: faces up
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));

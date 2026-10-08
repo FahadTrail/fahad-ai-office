@@ -211,3 +211,22 @@ export function between(from, to, t) {
 
 // The ceiling over a zone draws only while the camera is beneath it.
 export function ceilingVisible(cameraY, height) { return cameraY < height - 0.25; }
+
+// Cutaway (§09 "UI never covers the focus"): in the close views the columns
+// standing in front of the focus are hidden, as the ceiling is: every column
+// inside the horizontal field of view, nearer than the target, and outside
+// the focused zone (`keep`, plan bounds [minX, minZ, maxX, maxZ]). Pure.
+export function occluders(position, target, points, { halfAngle = 0.6, keep = null } = {}) {
+  const [px, pz] = [position[0], position[2]]; const [dx, dz] = [target[0] - px, target[2] - pz];
+  const length = Math.hypot(dx, dz);
+  if (length < 0.5) return [];
+  const hidden = [];
+  points.forEach(([x, z], index) => {
+    if (keep && x > keep[0] + 0.5 && x < keep[2] - 0.5 && z > keep[1] + 0.5 && z < keep[3] - 0.5) return; // the zone's own interior columns stay
+    const ahead = ((x - px) * dx + (z - pz) * dz) / length;
+    if (ahead <= 0.3 || ahead >= length) return;
+    const across = Math.abs((x - px) * dz - (z - pz) * dx) / length;
+    if (Math.atan2(Math.max(0, across - 0.3), ahead) < halfAngle) hidden.push(index);
+  });
+  return hidden;
+}

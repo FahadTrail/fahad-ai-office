@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { COLUMNS, COLUMN_RADIUS, DOOR_WIDTH, FORUM, GLASS, OFFICE, OFFICE_WALL, PROMENADE, ROOMS, ZONES, ZONE_KEYS, floorHeight, labelAnchor, seatPoint, zoneAt, zoneByNumber } from '../src/hub-ui/office3d/plan.js';
 import { PULSE, afterglow, blockedHold, cometAt, inlayNetwork, measure, offsetPath, pathLength, planPulses, pointAt, routePath, tripSeconds } from '../src/hub-ui/office3d/routes.js';
 import { KEYFRAMES, LIGHT_MODES, MODE_MINUTES, kelvinToHex, lightingAt, resolveMode, sunDirection, uiPhase } from '../src/hub-ui/office3d/modes.js';
-import { CAMERA_STATES, TRANSITION, agentView, between, chiefView, departmentView, ease, handoffsView, orbit, overviewView, project, stepBack, transitionMs } from '../src/hub-ui/office3d/camera.js';
+import { CAMERA_STATES, TRANSITION, agentView, between, chiefView, departmentView, ease, handoffsView, occluders, orbit, overviewView, project, stepBack, transitionMs } from '../src/hub-ui/office3d/camera.js';
 import { FORUM_STATES, RED_STATES, deskSignal, forumState, isRed, labelPriority, statBar, systemState } from '../src/hub-ui/office3d/states.js';
 import { LOD, layoutLabels, lodFor, overlaps, slotBox } from '../src/hub-ui/office3d/labels.js';
 import { ROSTER } from '../src/hub-ui/office-presentation.js';
@@ -306,4 +306,20 @@ test('labels: LOD by distance; greedy slots never overlap, never cover the focus
   assert.equal(none[0].lod, 'dot'); assert.equal(none[0].box, null);
   const hidden = layoutLabels([{ key: 'a', priority: 0, distance: 5, anchor: { x: 30, y: 30, visible: false }, sizes: { full: [30, 10], name: [20, 10] } }], { width: 120, height: 120 });
   assert.equal(hidden[0].lod, 'hidden');
+});
+
+test('close views cut away only the columns between the camera and the focus', () => {
+  // A column on the line of sight is hidden; one behind the target, one behind
+  // the camera and one far to the side stay.
+  const hidden = occluders([0, 10, 0], [10, 1, 0], [[5, 0], [12, 0], [-2, 0], [5, 9], [8, 1]], { halfAngle: 0.5, keep: [7, -2, 13, 2] });
+  assert.deepEqual(hidden, [0]);
+  // Department views: every column hidden is really between camera and department.
+  for (const key of Object.keys(ZONES).filter((name) => name !== 'chief')) {
+    const view = departmentView(key);
+    for (const index of occluders(view.position, view.target, COLUMNS, { keep: ZONES[key].bounds })) {
+      const [x, z] = COLUMNS[index];
+      const toColumn = Math.hypot(x - view.position[0], z - view.position[2]);
+      assert.ok(toColumn < Math.hypot(view.target[0] - view.position[0], view.target[2] - view.position[2]), `${key}: column ${index} is not in front`);
+    }
+  }
 });
