@@ -37,27 +37,31 @@ const SHOTS = {
   '04-department': { steps: both(light('light'), view({ name: 'department', key: 'coding' })) },
   '05-agent': { steps: both(light('light'), view({ name: 'agent', key: 'finance' })) },
   '06-handoffs': { steps: both(light('immersive'), view({ name: 'handoffs' })) },
-  '07-blocked': { moment: 'needs', steps: both(light('light'), view({ name: 'agent', key: 'coding' })) },
-  '08-many-working': { steps: both(light('light'), view({ name: 'overview' })) },
+  '07-blocked': { moment: 'blocked', steps: both(light('light'), view({ name: 'department', key: 'legal' })) },
+  '08-many-working': { moment: 'many', steps: both(light('light'), view({ name: 'overview' })) },
   '09-idle': { moment: 'idle', steps: both(light('auto'), view({ name: 'overview' })) },
   '10-executive': { steps: both(light('light'), view({ name: 'overview' }), (page) => page.evaluate(() => window.__fahadOffice3d.summary?.(true))) },
 };
 
-const { server, url } = await startPreview({ port: 0 });
+const previews = new Map();
+const previewFor = async (name) => { if (!previews.has(name)) previews.set(name, await startPreview({ port: 0, moment: name })); return previews.get(name); };
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const report = {};
 for (const [name, shot] of Object.entries(SHOTS)) {
   if (only.length && !only.includes(name)) continue;
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme: 'light', reducedMotion: shot.reducedMotion ? 'reduce' : 'no-preference' });
   await context.addInitScript(([id, q, m]) => {
-    localStorage.setItem('hub-workspace-id', id); localStorage.setItem('hub-office-mode', 'immersive'); localStorage.setItem('hub-office-quality', q);
+    localStorage.setItem('hub-workspace-id', id); localStorage.setItem('hub-office-view', '3d'); localStorage.setItem('hub-office-quality', q);
     localStorage.setItem('hub-language', 'en'); window.__officePreviewMoment = m;
   }, [WS, quality, shot.moment || moment]);
   const page = await context.newPage();
+  // Software WebGL starves the main thread; CSS transitions would be caught mid-way.
+  await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => { const style = document.createElement('style'); style.textContent = '*, *::before, *::after { transition: none !important; }'; document.head.append(style); }));
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => { if (['error', 'warning'].includes(message.type()) && !/GPU stall|Automatic fallback|ReadPixels|WebGL-/.test(message.text())) errors.push(message.text()); });
   const started = Date.now();
+  const { url } = await previewFor(shot.moment || moment);
   await page.goto(`${url}#/office`);
   await page.waitForSelector('.o3d-canvas', { timeout: 60_000 }).catch(() => errors.push('no canvas'));
   await page.waitForFunction(() => window.__fahadOffice3d?.ready?.(), null, { timeout: 60_000 }).catch(() => {});
@@ -67,10 +71,12 @@ for (const [name, shot] of Object.entries(SHOTS)) {
   await page.waitForTimeout(2500);
   const clip = stageOnly ? await page.evaluate(() => { const box = document.querySelector('#o3dStage')?.getBoundingClientRect(); return box && box.width > 10 ? { x: box.x, y: box.y, width: box.width, height: box.height } : null; }) : null;
   await page.screenshot({ path: join(outDir, `${name}.png`), ...(clip ? { clip } : {}) });
-  report[name] = { readyMs: readyAt, stats: await page.evaluate(() => window.__fahadOffice3d?.stats?.() || null).catch(() => null), errors };
+  report[name] = { readyMs: readyAt, stats: await page.evaluate(() => window.__fahadOffice3d?.stats?.() || null).catch(() => null),
+    overlay: await page.evaluate(() => ({ lightMode: document.querySelector('.ov-mode-btn[aria-pressed="true"]')?.dataset.light || null, view: document.querySelector('.ov-view[aria-pressed="true"]')?.dataset.view || null,
+      labels: [...document.querySelectorAll('.o3d-label')].filter((element) => !element.hidden).map((element) => `${element.dataset.key}:${element.dataset.lod}`) })).catch(() => null), errors };
   console.log(name, JSON.stringify(report[name].stats), errors.length ? errors : '');
   await context.close();
 }
 writeFileSync(join(outDir, 'report.json'), JSON.stringify(report, null, 2));
 await browser.close();
-server.close();
+for (const preview of previews.values()) preview.server.close();

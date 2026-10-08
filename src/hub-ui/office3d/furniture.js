@@ -32,6 +32,7 @@ export function buildFurniture({ materials, tier }) {
   const workstations = new Map(); // key → live parts
   const screens = []; // { key, kind, mesh, width, height }
   const footprints = []; // floor AO: [x, z, w, d, yaw, strength]
+  let chiefStrip = null;
 
   // ------------------------------------------------------------ kit
   const at = (origin, yaw, offset) => local(origin, yaw, offset);
@@ -194,7 +195,12 @@ export function buildFurniture({ materials, tier }) {
     }
     root.add(chairGroup);
     footprints.push([cx, cz, 0.8, 0.8, yaw, 0.3]);
-    workstations.set(key, { key, desk: { x, z, yaw, y, top: deskTop }, chair: chairGroup, chairHome: [cx, cz], lamp: lampParts, monitors: monitorMeshes, standing });
+    // An invisible hit volume over the whole workstation (desk, chair, person).
+    const [hx, hz] = local([x, z], yaw, [0, 0.35]);
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(Math.max(1.6, width + 0.4), 1.9, depth + 1.6), new THREE.MeshBasicMaterial({ visible: false }));
+    hit.position.set(hx, y + 0.95, hz); hit.rotation.y = yaw; hit.userData = { key, pick: 'workstation' };
+    root.add(hit);
+    workstations.set(key, { key, desk: { x, z, yaw, y, top: deskTop }, chair: chairGroup, chairHome: [cx, cz], lamp: lampParts, monitors: monitorMeshes, standing, hit });
   };
 
   // ------------------------------------------------------------ the departments
@@ -204,6 +210,14 @@ export function buildFurniture({ materials, tier }) {
     b.box(t.length, 0.05, t.width, 'walnut', { x: t.x, y: y + t.height - 0.025, z: t.z, radius: 0.012 });
     for (const side of [-1, 1]) b.box(0.08, t.height - 0.05, t.width - 0.2, 'walnut', { x: t.x + side * (t.length / 2 - 0.25), y: y + (t.height - 0.05) / 2, z: t.z, radius: 0.01 });
     b.box(t.length - 0.6, 0.06, 0.06, 'bronze', { x: t.x, y: y + 0.12, z: t.z });
+    // The bronze edge strip: CHIEF's status light (§03), a live emissive loop.
+    const stripMaterial = new THREE.MeshStandardMaterial({ color: '#7b5d3c', metalness: 1, roughness: 0.35, emissive: new THREE.Color('#5b8cff'), emissiveIntensity: 0 });
+    const strip = [];
+    for (const [w, d, ox, oz] of [[t.length + 0.012, 0.012, 0, t.width / 2], [t.length + 0.012, 0.012, 0, -t.width / 2], [0.012, t.width, t.length / 2, 0], [0.012, t.width, -t.length / 2, 0]]) {
+      const geometry = new THREE.BoxGeometry(w, 0.018, d); geometry.translate(t.x + ox, y + t.height - 0.034, t.z + oz); strip.push(geometry.toNonIndexed());
+    }
+    chiefStrip = new THREE.Mesh(THREE.mergeGeometries(strip), stripMaterial); chiefStrip.name = 'chief-strip';
+    root.add(chiefStrip);
     footprints.push([t.x, t.z, t.length + 0.6, t.width + 0.6, 0, 0.5]);
     workstation('chief', { deskless: true, monitors: 2, depth: t.width, width: t.length, executive: true });
     for (const side of [-1, 1]) sideChair(t.x + side * (t.length / 2 + 0.55), t.z, side * Math.PI / 2, { fabric: 'leather', y });
@@ -362,7 +376,7 @@ export function buildFurniture({ materials, tier }) {
   b.build(root);
   b.dispose();
   return {
-    root, workstations, screens, footprints,
+    root, workstations, screens, footprints, chiefStrip,
     dispose() { root.traverse((node) => { if (node.isMesh) { node.geometry?.dispose(); if (node.material && !node.material.name) node.material.dispose?.(); } }); bookMaterial.dispose(); },
   };
 }

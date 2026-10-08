@@ -29,7 +29,38 @@ const agentId = (slug) => uuid('a0000000', AGENTS.findIndex(([entry]) => entry =
 const brief = (stage, extra = {}) => JSON.stringify({ workflow: 'chief-research-chief', workflow_version: 1, stage, ...extra });
 const art = (body) => `\n\`\`\`artifact\n${JSON.stringify(body)}\n\`\`\`\n`;
 
-export function previewTables(now = Date.now()) {
+// Moments of the same fictional afternoon, for the Office's required design
+// views: 'work' (default), 'many' (most of the Office working at once, fresh
+// handoffs), 'blocked' (LEGAL blocked after a failed step, one clear alert)
+// and 'idle' (everything delivered long ago, nobody working).
+export const PREVIEW_MOMENTS = Object.freeze(['work', 'many', 'blocked', 'idle']);
+
+export function previewTables(now = Date.now(), { moment = 'work' } = {}) {
+  const tables = baseTables(now);
+  const ago = (minutes) => new Date(now - minutes * 60_000).toISOString();
+  const task = (n) => tables.tasks.find((entry) => entry.id === uuid('d0000000', n));
+  if (moment === 'many') {
+    for (const n of [2, 3, 6, 7]) Object.assign(task(n), { status: 'running', started_at: ago(4), completed_at: null, not_before: null });
+    Object.assign(task(8), { status: 'running', started_at: ago(2), depends_on: [] });
+    const fresh = [['research-strategy', 'brand-creative', 2, 6, 1.5], ['brand-creative', 'content-media', 6, 7, 1], ['product-tech', 'qa-security', 3, 8, 2], ['legal-compliance', 'qa-security', 5, 8, 0.5]];
+    for (const [from, to, a, b, minutes] of fresh) tables.handoffs.push({ id: uuid('f0000000', 20 + a * 10 + b), job_id: uuid('b0000000', 1), from_agent_id: agentId(from), to_agent_id: agentId(to), from_task_id: uuid('d0000000', a), to_task_id: uuid('d0000000', b), created_at: ago(minutes) });
+    tables.agent_approvals = []; Object.assign(tables.agent_sessions[0], { status: 'running', phase: 'test' });
+  }
+  if (moment === 'blocked') {
+    Object.assign(task(5), { status: 'blocked', completed_at: ago(2) });
+    tables.handoffs.push({ id: uuid('f0000000', 90), job_id: uuid('b0000000', 1), from_agent_id: agentId('product-tech'), to_agent_id: agentId('legal-compliance'), from_task_id: uuid('d0000000', 3), to_task_id: uuid('d0000000', 5), created_at: ago(1) });
+    tables.agent_approvals = []; Object.assign(tables.agent_sessions[0], { status: 'completed', phase: 'done', completed_at: ago(30) });
+  }
+  if (moment === 'idle') {
+    for (const entry of tables.tasks) Object.assign(entry, { status: 'done', started_at: entry.started_at || ago(400), completed_at: ago(380), not_before: null });
+    for (const job of tables.jobs) Object.assign(job, { status: 'completed', progress: 100, completed_at: ago(380) });
+    for (const entry of tables.handoffs) entry.created_at = ago(390);
+    tables.agent_approvals = []; Object.assign(tables.agent_sessions[0], { status: 'completed', phase: 'done', completed_at: ago(370) });
+  }
+  return tables;
+}
+
+function baseTables(now) {
   const ago = (minutes) => new Date(now - minutes * 60_000).toISOString();
   const ahead = (minutes) => new Date(now + minutes * 60_000).toISOString();
   const J1 = uuid('b0000000', 1);
@@ -161,6 +192,8 @@ export function previewTables(now = Date.now()) {
       { id: uuid('40000000', 1), project_id: PREVIEW_WORKSPACE, agent_slug: 'research-strategy', title: 'Dubai coffee delivery landscape', source_url: '', source_date: '2026-09-26', expires_at: ahead(60 * 24 * 30), created_at: ago(27) },
     ],
     model_attempts: [
+      { id: uuid('30000000', 3), job_id: J1, task_id: T(4), provider: 'deepseek', model: 'deepseek-flash', status: 'succeeded', cost_usd: 0.0011, input_tokens: 6400, output_tokens: 1300, duration_ms: 21000, started_at: ago(7) },
+      { id: uuid('30000000', 4), job_id: J1, task_id: T(4), provider: 'deepseek', model: 'deepseek-flash', status: 'started', cost_usd: 0.0004, input_tokens: 3100, output_tokens: 400, duration_ms: 0, started_at: ago(2) },
       { id: uuid('30000000', 1), job_id: J1, provider: 'gemini', model: 'gemini-flash-latest', status: 'succeeded', cost_usd: 0, input_tokens: 9000, output_tokens: 1800, started_at: ago(40) },
       { id: uuid('30000000', 2), job_id: J1, provider: 'deepseek', model: 'deepseek-flash', status: 'succeeded', cost_usd: 0.0042, input_tokens: 12000, output_tokens: 2400, started_at: ago(8) },
     ],

@@ -83,6 +83,15 @@
   /* layers */
   --z-base: 1; --z-sticky: 10; --z-overlay: 30; --z-drawer: 40; --z-modal: 50; --z-toast: 60;
 
+  /* The Office overlay (Final Design Spec §08, §10, §13): frosted ivory by day,
+     smoked ink at night, following the scene's lighting phase rather than the
+     Hub theme. Red only for attention. AA contrast on both surfaces. */
+  --ov-day-surface: rgba(248, 245, 239, .8); --ov-day-surface-strong: rgba(250, 248, 244, .95); --ov-day-border: rgba(29, 27, 24, .1); --ov-day-text: #1d1b18; --ov-day-muted: #625b51; --ov-day-rule: rgba(29, 27, 24, .14);
+  --ov-night-surface: rgba(20, 22, 26, .74); --ov-night-surface-strong: rgba(22, 24, 29, .94); --ov-night-border: rgba(236, 230, 218, .13); --ov-night-text: #ece6da; --ov-night-muted: #aaa396; --ov-night-rule: rgba(236, 230, 218, .15);
+  --ov-working-day: #2a62c9; --ov-working-night: #7aa5f2; --ov-done-day: #23784b; --ov-done-night: #6cc093; --ov-attention-day: #bf3a32; --ov-attention-night: #f2726a;
+  --ov-caution-day: #8a5f0c; --ov-caution-night: #e3b04d; --ov-neutral-day: #7b7468; --ov-neutral-night: #9d968a;
+  --ov-ease: cubic-bezier(.22, 1, .36, 1); --ov-hover: 120ms; --ov-press: 80ms; --ov-select: 180ms; --ov-panel: 280ms; --ov-state: 400ms;
+
   /* layout */
   --sidebar-w: 256px;
   --content-w: 880px;

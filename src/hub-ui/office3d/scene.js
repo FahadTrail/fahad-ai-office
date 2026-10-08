@@ -10,7 +10,7 @@
 // fetches Office data. Any rendering failure calls on.error() and the Live
 // Office falls back to the simplified Office.
 import * as THREE from '../vendor/three.js?v=__UI_VERSION__';
-import { OFFICE, ZONES, ZONE_KEYS, zoneByNumber } from './plan.js?v=__UI_VERSION__';
+import { OFFICE, ZONES, ZONE_KEYS, labelAnchor, zoneByNumber } from './plan.js?v=__UI_VERSION__';
 import { CAMERA_STATES, agentView, between, ceilingVisible, chiefView, departmentView, handoffsView, orbit, overviewView, stepBack, transitionMs } from './camera.js?v=__UI_VERSION__';
 import { MODE_TRANSITION_MS, blendPreset, kelvinToHex, resolveMode, sunDirection } from './modes.js?v=__UI_VERSION__';
 import { createMaterials, assetUrl } from './materials.js?v=__UI_VERSION__';
@@ -21,6 +21,8 @@ import { LIVE_TEXT_METRES, RESOLUTION, drawChiefMonitor, drawDepartment, drawDes
 import { deskSignal, forumState, statBar } from './states.js?v=__UI_VERSION__';
 import { createPeople } from './people.js?v=__UI_VERSION__';
 import { bakeFloor } from './bake.js?v=__UI_VERSION__';
+import { createHandoffs } from './handoffs3d.js?v=__UI_VERSION__';
+import { FORUM_STATES } from './states.js?v=__UI_VERSION__';
 
 // Quality tiers (§14): auto-selected, stepped down by the frame-rate watchdog.
 export const QUALITY = Object.freeze({
@@ -91,6 +93,9 @@ export function mountOffice3D(container, options = {}) {
   scene.add(plants.root);
   const baked = bakeFloor({ footprints: furniture.footprints, tier });
   scene.add(baked.group);
+  const handoffs = createHandoffs({ reducedMotion });
+  scene.add(handoffs.group);
+  let bundles = [];
 
   // ------------------------------------------------------------ screens (§12)
   const stateWord = options.stateWord || ((value) => (String(value || '').charAt(0) + String(value || '').slice(1).toLowerCase()));
@@ -149,6 +154,9 @@ export function mountOffice3D(container, options = {}) {
       person.root.visible = signal.pose !== 'empty';
       if (!person.root.visible) continue;
       let clip = POSE_CLIP[signal.pose] || 'relaxed';
+      // The employee turns toward whoever just handed work over (3 s).
+      const glancing = desk.glance && performance.now() < desk.glance.until && !reducedMotion;
+      person.mesh.rotation.y += ((glancing ? desk.glance.yaw : 0) - person.mesh.rotation.y) * 0.08;
       if (key === 'chief' && (forum === 'active' || forum === 'routing') && signal.pose !== 'blocked') clip = 'lookUp';
       if (desk.station.standing && !['phone', 'review'].includes(clip)) clip = 'stand';
       const standing = ['stand', 'phone', 'review'].includes(clip);
@@ -156,7 +164,10 @@ export function mountOffice3D(container, options = {}) {
       crew.play(person, clip);
     }
   };
-  const lodScale = () => 36 / Math.max(1, overviewDistance);
+  // The spec's LOD distances are read on a scale where the farthest label in
+  // the fitted Overview sits just inside the medium band (38 of 40 m): zooming
+  // out reaches "dot", a department view reaches "name, state, task".
+  const lodScale = () => 38 / Math.max(1, overviewFar);
   const personPosition = new THREE.Vector3();
   const distances = new Map();
   const measurePeople = () => {
@@ -172,6 +183,9 @@ export function mountOffice3D(container, options = {}) {
       desk.lastState = employee.state; desk.signal = signal;
       const { shade, ring, pool } = desk.station.lamp;
       const flare = desk.flareAt && now - desk.flareAt < 600 ? Math.sin(((now - desk.flareAt) / 600) * Math.PI) : 0;
+      // A handoff arriving: the destination lamp ramps up over 400 ms and holds briefly.
+      const arrival = desk.arrivalAt && now - desk.arrivalAt < 3000 ? Math.min(1, (now - desk.arrivalAt) / 400) * (1 - Math.max(0, (now - desk.arrivalAt - 2400) / 600)) : 0;
+      signal.lamp = Math.max(signal.lamp, arrival * 0.8);
       shade.material.emissive.copy(lampColor);
       shade.material.emissiveIntensity = (signal.lamp * (0.6 + night * 1.8)) + flare * 2.5;
       pool.material.opacity = Math.min(1, signal.lamp * (0.12 + night * 0.5) + flare * 0.4);
@@ -189,6 +203,19 @@ export function mountOffice3D(container, options = {}) {
       chair.rotation.y = yaw + (resting ? Math.sin(now / 1000 * 0.21 + key.length) * 0.05 : 0);
     }
     applyPeople();
+    applyForum(now);
+  };
+  // The CHIEF Forum (§03): the table's bronze strip is CHIEF's status light.
+  let forumWas = 'idle'; let forumChangedAt = 0;
+  const stripBlue = new THREE.Color('#5b8cff'); const stripWarm = new THREE.Color('#ffb46b');
+  const applyForum = (now) => {
+    const strip = furniture.chiefStrip; if (!strip) return;
+    const forum = forumState(current);
+    if (forum !== forumWas) { forumWas = forum; forumChangedAt = now; }
+    const since = now - forumChangedAt;
+    const spec = FORUM_STATES[forum];
+    if (forum === 'completes') { strip.material.emissive.copy(stripWarm); strip.material.emissiveIntensity = reducedMotion ? 0.4 : since < 600 ? Math.sin((since / 600) * Math.PI) * 2.4 : 0.15; }
+    else { strip.material.emissive.copy(stripBlue); strip.material.emissiveIntensity = spec.strip * 2.2 + (forum === 'routing' && since < 400 && !reducedMotion ? 1.6 : 0); }
   };
 
   // ------------------------------------------------------------ post (AgX output, night bloom, AO on High)
@@ -231,6 +258,7 @@ export function mountOffice3D(container, options = {}) {
     materials.setTravertineRoughness(preset.roughness);
     baked.setNight(preset.artificial);
     architecture.setNight(preset.artificial);
+    handoffs.setNight(preset.bloom);
     for (const screen of screens || []) screen.material.color.setScalar(preset.screens);
     if (bloom) { bloom.enabled = preset.bloom > 0.02; bloom.strength = 0.25 + preset.bloom * 0.45; }
     container.style.setProperty('--o3d-sky', preset.backdrop[0]);
@@ -258,11 +286,11 @@ export function mountOffice3D(container, options = {}) {
     if (name === 'department') return departmentView(request.key, { aspect, insets: insets() }) || overviewView({ aspect, insets: insets() });
     if (name === 'agent') return agentView(request.key) || overviewView({ aspect, insets: insets() });
     if (name === 'chief') return chiefView({ aspect, insets: insets() });
-    if (name === 'handoffs') return handoffsView(request.routes || [], { aspect, insets: insets() });
+    if (name === 'handoffs') return handoffsView(handoffs.showHistory(current.handoffs || [], true), { aspect, insets: insets() });
     return overviewView({ aspect, insets: insets() });
   };
   let active = { name: 'overview' };
-  let overviewDistance = 50;
+  let overviewDistance = 50; let overviewFar = 70;
   let shot = viewFor(active);
   let move = null; // { from, to, start, duration }
   let lastInput = performance.now();
@@ -274,6 +302,8 @@ export function mountOffice3D(container, options = {}) {
     camera.lookAt(...view.target);
   };
   const setView = (request, { instant = false } = {}) => {
+    zoom = 1;
+    if ((request?.name || 'overview') !== 'handoffs') handoffs.showHistory([], false);
     const next = viewFor(request);
     active = { ...request, name: next.name, key: next.key };
     idleOrbit = null;
@@ -284,6 +314,75 @@ export function mountOffice3D(container, options = {}) {
     wake();
   };
   const currentShot = () => ({ position: camera.position.toArray(), target: shot.target, fov: camera.fov });
+
+  // ------------------------------------------------------------ labels: anchors for the overlay
+  // The overlay lays out floor labels (labels.js); the scene tells it where
+  // each label's floor ring is, how far it is, and what the focus covers.
+  const anchors = ZONE_KEYS.map((key) => ({ key, world: new THREE.Vector3(...labelAnchor(key)) }));
+  const projected = new THREE.Vector3();
+  let frameKey = '';
+  const focusRect = (key, width, height) => {
+    const zone = ZONES[key]; if (!zone) return null;
+    const { x, z } = zone.desk; const y = key === 'chief' ? -0.45 : 0;
+    const xs = []; const ys = [];
+    // CHIEF's focus is the table and the Office Wall it faces.
+    const points = [];
+    for (const dx of [-1.1, 1.1]) for (const dz of [-0.9, 1.2]) for (const dy of [0, 1.45]) points.push([x + dx, y + dy, z + dz]);
+    if (key === 'chief') for (const dx of [-3.7, 3.7]) for (const dy of [1.2, 3.7]) points.push([dx, dy, -6.8]);
+    for (const [px, py, pz] of points) {
+      projected.set(px, py, pz).project(camera);
+      if (projected.z > 1) continue;
+      xs.push(((projected.x + 1) / 2) * width); ys.push(((1 - projected.y) / 2) * height);
+    }
+    if (!xs.length) return null;
+    const rect = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    return rect.w > width * 0.96 ? null : rect;
+  };
+  const emitFrame = (force = false) => {
+    const width = container.clientWidth; const height = container.clientHeight;
+    const key = `${camera.matrixWorld.elements.map((value) => value.toFixed(3)).join(',')}|${width}x${height}`;
+    if (!force && key === frameKey) return;
+    frameKey = key;
+    camera.updateMatrixWorld();
+    const list = anchors.map(({ key: id, world }) => {
+      projected.copy(world).project(camera);
+      return { key: id, x: ((projected.x + 1) / 2) * width, y: ((1 - projected.y) / 2) * height, visible: projected.z < 1 && projected.z > -1, distance: world.distanceTo(camera.position) };
+    });
+    const focusKey = active.name === 'agent' || active.name === 'department' ? active.key : active.name === 'chief' ? 'chief' : null;
+    on.frame?.({ anchors: list, lodScale: lodScale(), focusKey, focusRect: active.name === 'agent' || active.name === 'chief' ? focusRect(focusKey, width, height) : null, width, height });
+  };
+
+  // ------------------------------------------------------------ picking
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+  const pickables = [...furniture.workstations.values()].map((station) => station.hit);
+  const hitAt = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    const targets = active.name === 'handoffs' ? [...handoffs.group.children.flatMap((child) => (child.isGroup ? child.children : [child])).filter((mesh) => mesh.userData?.handoff), ...pickables] : pickables;
+    return raycaster.intersectObjects(targets, false)[0]?.object || null;
+  };
+  let press = null;
+  canvas.addEventListener('pointerdown', (event) => { press = { x: event.clientX, y: event.clientY }; });
+  canvas.addEventListener('pointerup', (event) => {
+    if (!press || Math.hypot(event.clientX - press.x, event.clientY - press.y) > 6) { press = null; return; }
+    press = null;
+    const object = hitAt(event);
+    if (object?.userData?.handoff) on.handoff?.(object.userData.handoff);
+    else if (object?.userData?.key) on.select?.(object.userData.key);
+  });
+  canvas.addEventListener('pointermove', (event) => { if (event.buttons) return; canvas.style.cursor = hitAt(event) ? 'pointer' : 'default'; });
+  // Gentle zoom along the current view (the lens and elevation stay fixed).
+  let zoom = 1;
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    zoom = Math.max(0.7, Math.min(1.6, zoom * (1 + Math.sign(event.deltaY) * 0.06)));
+    const base = viewFor(active);
+    const offset = new THREE.Vector3(...base.position).sub(new THREE.Vector3(...base.target)).multiplyScalar(zoom);
+    shot = { ...base, position: new THREE.Vector3(...base.target).add(offset).toArray() };
+    move = null; placeCamera(shot); wake();
+  }, { passive: false });
 
   // ------------------------------------------------------------ loop
   let awake = true; let lastFrame = 0;
@@ -324,6 +423,17 @@ export function mountOffice3D(container, options = {}) {
       architecture.highCeiling.visible = ceilingVisible(cameraY, OFFICE.atrium);
       plants.tick(now / 1000);
       if (crew.tick(delta / 1000, measurePeople())) animating = true;
+      const flow = handoffs.tick(now);
+      if (flow.animating) animating = true;
+      for (const handoff of flow.arrivals) {
+        const desk = desks.get(handoff.toKey);
+        if (desk) {
+          desk.arrivalAt = now;
+          const from = ZONES[handoff.fromKey]?.desk; const to = ZONES[handoff.toKey]?.desk;
+          if (from && to) { const world = Math.atan2(-(from.x - to.x), -(from.z - to.z)); let turn = world - to.yaw; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); desk.glance = { yaw: Math.max(-0.7, Math.min(0.7, turn)), until: now + 3000 }; }
+        }
+        on.arrival?.(handoff);
+      }
       applyDesks(now);
       if (desksAnimating()) animating = true;
       if (move || animating) refreshNear();
@@ -331,7 +441,7 @@ export function mountOffice3D(container, options = {}) {
         renderer.info.reset();
         if (composer) composer.render(); else renderer.render(scene, camera);
         lastInfo = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
-        on.frame?.({ camera, width: container.clientWidth, height: container.clientHeight });
+        emitFrame();
       }
       awake = false;
       frames.push(delta); if (frames.length > 90) frames.shift();
@@ -380,10 +490,13 @@ export function mountOffice3D(container, options = {}) {
     renderer.setSize(width, height, false);
     composer?.setSize(width, height);
     aspect = width / height; camera.aspect = aspect; camera.updateProjectionMatrix();
-    overviewDistance = overviewView({ aspect, insets: insets() }).distance;
+    const fitted = overviewView({ aspect, insets: insets() });
+    overviewDistance = fitted.distance;
+    overviewFar = Math.max(...ZONE_KEYS.map((key) => { const [x, y, z] = labelAnchor(key); return Math.hypot(x - fitted.position[0], y - fitted.position[1], z - fitted.position[2]); }));
     shot = viewFor(active);
     if (!move) placeCamera(shot);
     wake();
+    if (typeof emitFrame === 'function') requestAnimationFrame(() => emitFrame(true));
   };
   const observer = new ResizeObserver(resize);
   observer.observe(container);
@@ -413,10 +526,17 @@ export function mountOffice3D(container, options = {}) {
 
   return {
     ready,
-    update(next) { current = next; for (const screen of screens) drawScreen(screen); applyDesks(); wake(); },
+    update(next) {
+      current = next;
+      bundles = handoffs.update(current.handoffs || []).bundles;
+      if (active.name === 'handoffs') handoffs.showHistory(current.handoffs || [], true);
+      for (const screen of screens) drawScreen(screen); applyDesks(); wake(); emitFrame(true);
+    },
+    relayout: () => emitFrame(true),
+    bundles: () => bundles,
     setView, view: () => active, back() { setView(stepBack(active)); },
     setLightMode, lightMode: () => lightMode, phase: () => lighting.phase,
-    setProject() { wake(); },
+    setProject() { emitFrame(true); wake(); },
     setRtl() { wake(); },
     stats() {
       const average = frames.length ? Math.round(1000 / (frames.reduce((sum, value) => sum + value, 0) / frames.length)) : null;
@@ -428,7 +548,7 @@ export function mountOffice3D(container, options = {}) {
       observer.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
       for (const step of cleanup) step();
-      architecture.dispose(); furniture.dispose(); plants.dispose(); crew.dispose(); baked.dispose(); materials.dispose();
+      architecture.dispose(); furniture.dispose(); plants.dispose(); crew.dispose(); baked.dispose(); handoffs.dispose(); materials.dispose();
       for (const screen of screens) { screen.texture.dispose(); screen.material.dispose(); }
       for (const environment of new Set([environments.day, environments.night])) environment?.dispose?.();
       pmrem.dispose(); composer?.dispose?.();
