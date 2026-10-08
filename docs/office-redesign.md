@@ -144,6 +144,9 @@ The ten views are:
 9. idle;
 10. executive summary.
 
+The contact sheet of all ten views (final commit, Balanced tier, fictional
+preview data) is `docs/office-redesign/office-redesign-10-views.png`.
+
 The accessibility audit last ran on 2026-10-08:
 
 * 0 serious or critical findings in all 6 cases;
