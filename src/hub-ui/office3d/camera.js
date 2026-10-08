@@ -11,7 +11,7 @@
 //
 // Transitions take 700–900 ms on cubic-bezier(0.22, 1, 0.36, 1) and arc
 // above the glass. Keys 0–8 jump to zones; Esc steps back.
-import { FORUM, OFFICE, OFFICE_BOX, OFFICE_WALL, ZONES, zoneBox } from './plan.js';
+import { FORUM, OFFICE, OFFICE_BOX, OFFICE_WALL, ZONES, zoneBox } from './plan.js?v=__UI_VERSION__';
 
 export const CAMERA_STATES = Object.freeze({
   overview: Object.freeze({ fov: 38, elevation: 52, bearing: 135, margin: 0.08 }),

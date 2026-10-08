@@ -100,7 +100,7 @@ export async function renderOffice(ctx) {
   let immersive = null;
   let mounting = null;
   // Read-only view mode and renderer statistics (visual/performance QA, preview panel).
-  window.__fahadOffice3d = { stats: () => immersive?.stats() || null, mode: () => mode, area: (id) => immersive?.focusWing(id), light: (name) => immersive?.setTime(name) };
+  window.__fahadOffice3d = { stats: () => immersive?.stats() || null, mode: () => mode, view: (request, options) => immersive?.setView(request, options), lightMode: (name) => immersive?.setLightMode(name), ready: () => immersive?.ready };
   const load = async () => {
     const [next, library] = await Promise.all([
       api(`/api/office${q({ workspaceId: ws() })}`),
@@ -173,7 +173,7 @@ export async function renderOffice(ctx) {
             slow: () => fallBack('This device is too slow for the immersive Office; showing the light Office.'),
           },
         });
-        immersive.setFollow(readPref('hub-office-follow', '') === 'on');
+        immersive.setFollow?.(readPref('hub-office-follow', '') === 'on');
         progress('Ready', 100);
         view.querySelector('#o3dLoading').hidden = true;
       } catch (error) {
@@ -211,13 +211,13 @@ export async function renderOffice(ctx) {
       <a class="small" href="#/workflow/${esc(project.id)}">Open project →</a>`;
   };
   view.querySelector('#o3dProject').onchange = (event) => { immersive?.setProject(event.target.value); drawProjectCard(presentation(), event.target.value); };
-  view.querySelector('#o3dFollow').onchange = (event) => { immersive?.setFollow(event.target.checked); writePref('hub-office-follow', event.target.checked ? 'on' : ''); };
+  view.querySelector('#o3dFollow').onchange = (event) => { immersive?.setFollow?.(event.target.checked); writePref('hub-office-follow', event.target.checked ? 'on' : ''); };
   view.querySelector('#o3dFollow').checked = readPref('hub-office-follow', '') === 'on';
-  view.querySelector('#o3dOverview').onclick = () => { view.querySelector('#o3dArea').value = ''; immersive?.overview(); };
+  view.querySelector('#o3dOverview').onclick = () => { view.querySelector('#o3dArea').value = ''; immersive?.setView({ name: 'overview' }); };
   // Area: frame one department; Light: day, evening or night (blends smoothly).
-  view.querySelector('#o3dArea').onchange = (event) => { if (event.target.value) immersive?.focusWing(event.target.value); else immersive?.overview(); };
+  view.querySelector('#o3dArea').onchange = (event) => { if (event.target.value) immersive?.focusWing(event.target.value); else immersive?.setView({ name: 'overview' }); };
   view.querySelector('#o3dLight').value = readPref('hub-office-light', '');
-  view.querySelector('#o3dLight').onchange = (event) => { writePref('hub-office-light', event.target.value); immersive?.setTime(event.target.value); };
+  view.querySelector('#o3dLight').onchange = (event) => { writePref('hub-office-light', event.target.value); immersive?.setLightMode?.(event.target.value || 'auto'); };
   // Quality: remount the scene at the chosen tier (auto = detected).
   view.querySelector('#o3dQuality').value = readPref('hub-office-quality', '');
   view.querySelector('#o3dQuality').onchange = (event) => { writePref('hub-office-quality', event.target.value); if (immersive) { immersive.dispose(); immersive = null; drawImmersive(); } };

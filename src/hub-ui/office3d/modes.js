@@ -18,16 +18,16 @@ export const UI_NIGHT_FROM = 18 * 60 + 30;
 export const UI_DAY_FROM = 5 * 60 + 30;
 export const MODE_TRANSITION_MS = 1200;
 
-const NIGHT = { sunElevation: -12, sunAzimuth: 300, sunKelvin: 3200, sun: 0, sky: 0.16, hemi: 0.05, exposure: 1.0, artificial: 1, screens: 1, bloom: 1, roughness: 0.4, backdrop: ['#0a1220', '#1a2234'], horizon: '#26324a' };
+const NIGHT = { sunElevation: -12, sunAzimuth: 300, sunKelvin: 3200, sun: 0, sky: 0.07, hemi: 0.02, exposure: 1.0, artificial: 1, screens: 1, bloom: 1, roughness: 0.4, backdrop: ['#0a1220', '#1a2234'], horizon: '#26324a' };
 // Keyframes over the day, in minutes. 10:30 is the Light preset, 21:30 the
 // Immersive one; Auto interpolates between neighbours.
 export const KEYFRAMES = Object.freeze([
   [0, NIGHT],
   [5 * 60 + 30, { ...NIGHT, sky: 0.22, artificial: 0.85, bloom: 0.6, backdrop: ['#1c2638', '#3a3a48'], horizon: '#4a4652' }],
-  [7 * 60, { sunElevation: 9, sunAzimuth: 100, sunKelvin: 4300, sun: 2.1, sky: 0.55, hemi: 0.12, exposure: 1.0, artificial: 0.25, screens: 0.75, bloom: 0, roughness: 0.53, backdrop: ['#c9d3dc', '#efe2cf'], horizon: '#f2dcc0' }],
-  [10 * 60 + 30, { sunElevation: 46, sunAzimuth: 128, sunKelvin: 5600, sun: 3.0, sky: 0.85, hemi: 0.16, exposure: 1.0, artificial: 0, screens: 0.7, bloom: 0, roughness: 0.55, backdrop: ['#cfd8de', '#eee6da'], horizon: '#efe7dc' }],
-  [12 * 60, { sunElevation: 66, sunAzimuth: 175, sunKelvin: 5800, sun: 3.2, sky: 0.9, hemi: 0.17, exposure: 1.0, artificial: 0, screens: 0.7, bloom: 0, roughness: 0.55, backdrop: ['#cdd8e0', '#eee7dc'], horizon: '#efe8de' }],
-  [17 * 60, { sunElevation: 20, sunAzimuth: 252, sunKelvin: 4400, sun: 2.5, sky: 0.7, hemi: 0.14, exposure: 1.0, artificial: 0.2, screens: 0.75, bloom: 0, roughness: 0.54, backdrop: ['#c7cfd8', '#ecd9c0'], horizon: '#efd3ae' }],
+  [7 * 60, { sunElevation: 9, sunAzimuth: 100, sunKelvin: 4300, sun: 2.6, sky: 0.32, hemi: 0.08, exposure: 0.9, artificial: 0.25, screens: 0.75, bloom: 0, roughness: 0.53, backdrop: ['#c9d3dc', '#efe2cf'], horizon: '#f2dcc0' }],
+  [10 * 60 + 30, { sunElevation: 46, sunAzimuth: 128, sunKelvin: 5600, sun: 3.4, sky: 0.42, hemi: 0.08, exposure: 0.86, artificial: 0, screens: 0.7, bloom: 0, roughness: 0.55, backdrop: ['#cfd8de', '#eee6da'], horizon: '#efe7dc' }],
+  [12 * 60, { sunElevation: 66, sunAzimuth: 175, sunKelvin: 5800, sun: 3.6, sky: 0.44, hemi: 0.08, exposure: 0.86, artificial: 0, screens: 0.7, bloom: 0, roughness: 0.55, backdrop: ['#cdd8e0', '#eee7dc'], horizon: '#efe8de' }],
+  [17 * 60, { sunElevation: 20, sunAzimuth: 252, sunKelvin: 4400, sun: 3.0, sky: 0.38, hemi: 0.08, exposure: 0.88, artificial: 0.2, screens: 0.75, bloom: 0, roughness: 0.54, backdrop: ['#c7cfd8', '#ecd9c0'], horizon: '#efd3ae' }],
   [18 * 60 + 30, { sunElevation: 2, sunAzimuth: 287, sunKelvin: 2900, sun: 0.7, sky: 0.34, hemi: 0.09, exposure: 1.0, artificial: 0.85, screens: 0.9, bloom: 0.55, roughness: 0.46, backdrop: ['#3a4560', '#c58a5c'], horizon: '#d9946a' }],
   [20 * 60, NIGHT],
   [21 * 60 + 30, NIGHT],

@@ -8,7 +8,7 @@
 //   blocked: a red dot held at the destination threshold, pulsing every 6 s
 //
 // Only real handoff records are ever routed (office-presentation.js).
-import { FORUM, PROMENADE, ZONES, seatPoint } from './plan.js';
+import { FORUM, PROMENADE, ZONES, seatPoint } from './plan.js?v=__UI_VERSION__';
 
 export const PULSE = Object.freeze({
   length: 1.2, speed: 4, minTrip: 2.5, maxTrip: 6, fade: 1.2, ember: 0.08, emberSeconds: 30,

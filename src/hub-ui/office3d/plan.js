@@ -103,7 +103,7 @@ export const COLUMNS = Object.freeze([
 
 // Façade: low-iron glass between bronze fins every 1.2 m; solid linen-clad
 // sections behind each department display; the entrance on the south.
-export const FACADE = Object.freeze({ finSpacing: 1.2, finDepth: 0.32, finWidth: 0.05, solidWidth: 5.2 });
+export const FACADE = Object.freeze({ finSpacing: 1.2, finDepth: 0.24, finWidth: 0.04, solidWidth: 5.2 });
 
 // Ceiling: white-oak slats 40 × 120 mm on black felt; the atrium rises to
 // 8.4 m over the Promenade with the Ø 8 m oculus over the Forum.
