@@ -1,1 +1,6 @@
 * text=auto eol=lf
+*.ktx2 binary
+*.exr binary
+*.wasm binary
+*.woff2 binary
+*.glb binary

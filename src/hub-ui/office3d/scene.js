@@ -1,1047 +1,623 @@
-// The immersive Office: an architectural model of Fahad AI Office rendered
-// with Three.js. Loaded only when the Live Office enters immersive mode.
+// The immersive Office — "Daylight Atrium" (Final Design Spec, October 2026).
+// Loaded only when the Live Office shows the 3D Office.
 //
-//   mountOffice3D(container, { state, dark, tokens, quality, reducedMotion, on })
-//     → { update(state), focus(key), overview(), setProject(id), setFollow(on),
-//         setTime(day|evening|night|''), focusWing(id), dispose(), stats() }
+//   mountOffice3D(container, options) → controller
+//     options: { state, quality, reducedMotion, lightMode, rtl, copy, insets(), avoidRects(), on: { … } }
+//     controller: update(state) · setView({ name, key }) · back() · view() · setLightMode(mode)
+//                 setProject(id) · setRtl(rtl) · stats() · dispose()
 //
-// It consumes the presentation state only (office-presentation.js); it never
-// fetches or queries anything. Any rendering failure calls on.error() and the
-// Live Office falls back to the light Office.
+// It consumes the presentation state only (office-presentation.js) and never
+// fetches Office data. Any rendering failure calls on.error() and the Live
+// Office falls back to the simplified Office.
 import * as THREE from '../vendor/three.js?v=__UI_VERSION__';
-import { CAMERA, ENTRANCE, PARTITIONS, PLINTH, WALLS, WINGS, WORKSPACES, anchor, focusPreset, glanceYaw, wingPreset } from './layout.js?v=__UI_VERSION__';
-import { CODING_STAGES, motionFor, stateVisual } from './state-visuals.js?v=__UI_VERSION__';
-import { POSES, WING_ACCENTS, applyPose, createCharacterFactory } from './characters.js?v=__UI_VERSION__';
-import { drawBoard, drawEngineeringPanel, drawMonitor, drawProjectWall, surfacePalette } from './surfaces.js?v=__UI_VERSION__';
-import { LIGHTING, TRANSITION_MS, blendLighting, easeLight, resolveTime } from './lighting.js?v=__UI_VERSION__';
-import { addDecor, drawArt } from './decor.js?v=__UI_VERSION__';
-import { DETAIL_REPEAT, drawDetail } from './textures.js?v=__UI_VERSION__';
+import { COLUMNS, OFFICE, ZONES, ZONE_KEYS, labelAnchor, zoneByNumber } from './plan.js?v=__UI_VERSION__';
+import { CAMERA_STATES, agentView, between, ceilingVisible, occluders, chiefView, departmentView, handoffsView, orbit, overviewView, stepBack, transitionMs } from './camera.js?v=__UI_VERSION__';
+import { MODE_TRANSITION_MS, blendPreset, kelvinToHex, resolveMode, sunDirection } from './modes.js?v=__UI_VERSION__';
+import { createMaterials, assetUrl } from './materials.js?v=__UI_VERSION__';
+import { buildArchitecture } from './architecture.js?v=__UI_VERSION__';
+import { buildFurniture } from './furniture.js?v=__UI_VERSION__';
+import { buildPlants } from './plants.js?v=__UI_VERSION__';
+import { LIVE_TEXT_METRES, RESOLUTION, drawChiefMonitor, drawDepartment, drawDeskMonitor, drawOfficeWall, drawRoutingMap, screenPalette } from './screens.js?v=__UI_VERSION__';
+import { deskSignal, forumState, statBar } from './states.js?v=__UI_VERSION__';
+import { createPeople } from './people.js?v=__UI_VERSION__';
+import { bakeFloor } from './bake.js?v=__UI_VERSION__';
+import { createHandoffs } from './handoffs3d.js?v=__UI_VERSION__';
+import { cloudShade, createLife } from './life.js?v=__UI_VERSION__';
+import { FORUM_STATES } from './states.js?v=__UI_VERSION__';
+import { createErrorBudget, createWatchdog, median } from './perf.js?v=__UI_VERSION__';
 
-const QUALITY = Object.freeze({
-  high: { pixelRatio: 2, shadows: true, shadowSize: 2048, board: [1024, 512], monitor: [320, 200], fps: 60, plants: 1 },
-  balanced: { pixelRatio: 1.5, shadows: true, shadowSize: 1024, board: [768, 384], monitor: [256, 160], fps: 45, plants: 1 },
-  light: { pixelRatio: 1, shadows: false, shadowSize: 0, board: [640, 320], monitor: [192, 120], fps: 30, plants: 0.5 },
-});
-const ORDER = ['high', 'balanced', 'light'];
-
-// Finishes (V5.1): warm oak floor, warm-white walls, walnut, brushed metal,
-// felt and stone, separated in tone so daylight never washes them together.
-// Wing floor finishes (colour multiplied by the procedural detail).
-const WING_FLOORS = Object.freeze({
-  atrium: { kind: 'stone', light: '#e2dbd0', dark: '#4d4c50', roughness: 0.34 },
-  intelligence: { kind: 'ash', light: '#dccfba', dark: '#4d443c', roughness: 0.55 },
-  strategy: { kind: 'walnut', light: '#b0906f', dark: '#3e3029', roughness: 0.45 },
-  creative: { kind: 'concrete', light: '#d3cdc3', dark: '#46433f', roughness: 0.6 },
-  build: { kind: 'resin', light: '#8a8c92', dark: '#2b2d32', roughness: 0.4 },
-});
-
-const MATERIALS = (dark) => ({
-  plinth: { color: dark ? '#24252a' : '#ddd7ce', roughness: 0.9 },
-  floor: { color: dark ? '#4a4038' : '#d2bfa4', roughness: 0.58 },
-  wood: { color: dark ? '#7a604a' : '#c29a70', roughness: 0.45 },
-  walnut: { color: dark ? '#5b4435' : '#7a5a44', roughness: 0.38 },
-  white: { color: dark ? '#4a4e58' : '#ece8e2', roughness: 0.5 },
-  metal: { color: dark ? '#9aa0aa' : '#a9adb4', roughness: 0.28, metalness: 0.85 },
-  dark: { color: dark ? '#0d0f13' : '#2a2c31', roughness: 0.3, metalness: 0.4 },
-  bezel: { color: dark ? '#1a1c21' : '#cfcfd3', roughness: 0.25, metalness: 0.6 },
-  wall: { color: dark ? '#3f4148' : '#e9e4dc', roughness: 0.92 },
-  textile: { color: dark ? '#4c515c' : '#bdb4a7', roughness: 1 },
-  felt: { color: dark ? '#383c46' : '#8c929c', roughness: 1 },
-  feltWarm: { color: dark ? '#5a463c' : '#b8977e', roughness: 1 },
-  stone: { color: dark ? '#55565c' : '#e3ddd3', roughness: 0.35 },
-  inlay: { color: dark ? '#6a6660' : '#cbbfae', roughness: 0.3 },
-  plant: { color: dark ? '#3d5a45' : '#5f7f5f', roughness: 0.9, flatShading: true },
-  pot: { color: dark ? '#4a4d55' : '#cfc7bb', roughness: 0.8 },
-  // Emitters: task-lamp shades and pendants glow by evening and night
-  // (emissive, no extra light cost); the time of day sets the intensity.
-  lamp: { color: dark ? '#ffe2b8' : '#f4f1ec', roughness: 0.4, emissive: '#ffb46b', emissiveIntensity: 0 },
-  pendant: { color: dark ? '#3a3c42' : '#e8e6e2', roughness: 0.5, emissive: '#ffd6a3', emissiveIntensity: 0 },
-  cove: { color: dark ? '#6b6258' : '#cdbba3', roughness: 0.4, metalness: 0.3, emissive: '#ffc68a', emissiveIntensity: 0 },
-  glass: { color: dark ? '#9fb4d0' : '#cfdeec', roughness: 0.04, metalness: 0.1, transparent: true, opacity: dark ? 0.14 : 0.2, depthWrite: false },
-  facade: { color: dark ? '#7f93b3' : '#bcd3e6', roughness: 0.05, metalness: 0.2, transparent: true, opacity: dark ? 0.12 : 0.28, depthWrite: false },
+// Quality tiers (§14): auto-selected, stepped down by the frame-rate watchdog.
+export const QUALITY = Object.freeze({
+  high: { pixelRatio: 2, shadowSize: 4096, composer: true, ao: true, msaa: 4, fps: 60 },
+  balanced: { pixelRatio: 1.5, shadowSize: 2048, composer: true, ao: false, msaa: 4, fps: 60 },
+  // Lean: the same look (composer, night bloom) at 1× resolution and 2× MSAA,
+  // so a slow laptop steps down without losing the night atmosphere.
+  lean: { pixelRatio: 1, shadowSize: 2048, composer: true, ao: false, msaa: 2, fps: 60 },
+  light: { pixelRatio: 1, shadowSize: 1024, composer: false, ao: false, msaa: 0, fps: 30 },
 });
 
-export function mountOffice3D(container, { state, dark = false, tokens = {}, quality = 'balanced', reducedMotion = false, time = '', on = {} }) {
-  let tier = QUALITY[quality] ? quality : 'balanced';
+export function mountOffice3D(container, options = {}) {
+  const { reducedMotion = false, on = {} } = options;
+  let tier = QUALITY[options.quality] ? options.quality : 'balanced';
   let settings = QUALITY[tier];
-  let palette = surfacePalette(tokens, dark);
-  let current = state;
-  let selectedProject = null;
-  let follow = false;
+  let current = options.state || { employees: [], handoffs: [], projects: [] };
   let disposed = false;
-  const disposables = [];
-  const track = (item) => { disposables.push(item); return item; };
+  const cleanup = [];
+  // Frame-rate watchdog (perf.js): steps quality down only on persistent
+  // slowness, after warm-up and outside compile/switch windows.
+  const watchdog = createWatchdog({ tier });
+  const errors = createErrorBudget();
 
   // ------------------------------------------------------------ renderer
   const canvas = document.createElement('canvas');
   canvas.className = 'o3d-canvas';
   canvas.setAttribute('aria-hidden', 'true');
   container.append(canvas);
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: tier !== 'light', alpha: true, powerPreference: 'high-performance' });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !settings.composer, powerPreference: 'high-performance', stencil: false });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, settings.pixelRatio));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = dark ? 1.15 : 1.05;
-  renderer.shadowMap.enabled = settings.shadows;
+  renderer.toneMapping = THREE.AgXToneMapping;
+  renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
-  canvas.addEventListener('webglcontextlost', (event) => { event.preventDefault(); fail(new Error('WebGL context lost')); });
+  renderer.info.autoReset = false; // draw calls are counted across every pass of a frame
+  // Shadows are re-rendered only when something that casts them moves (see the loop).
+  renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;
+  let shadowsAt = 0;
+  // A lost context (GPU reset, driver update) is recovered by the overlay with a fresh mount.
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault(); renderer.setAnimationLoop(null);
+    if (!disposed) on.error?.(Object.assign(new Error('WebGL context lost'), { contextLost: true }));
+  });
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(CAMERA.fov, 1, 0.5, 400);
+  const camera = new THREE.PerspectiveCamera(CAMERA_STATES.overview.fov, 1, 0.1, 600);
+  scene.fog = new THREE.Fog('#efe7dc', 90, 220);
 
   // ------------------------------------------------------------ lights
-  // DAY / EVENING / NIGHT (lighting.js) sets every value below; the scene
-  // blends between them smoothly when the time of day changes.
-  const hemi = new THREE.HemisphereLight('#ffffff', '#d9d2c5', 1);
-  const sun = new THREE.DirectionalLight('#fff6ea', 2);
-  sun.castShadow = settings.shadows;
-  sun.shadow.mapSize.set(settings.shadowSize || 512, settings.shadowSize || 512);
-  Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 20, bottom: -20, near: 1, far: 90 });
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.02;
-  sun.shadow.radius = 3;
-  const fill = new THREE.DirectionalLight('#dbe7ff', 0.4);
-  fill.position.set(24, 14, -10);
-  scene.add(hemi, sun, fill);
-  let hasEnvironment = false;
-  // Image-based lighting: a soft studio environment gives wood, metal, glass
-  // and screens real reflections (PBR). Skipped on the light tier, where
-  // every per-pixel cost matters more than reflections.
-  if (tier !== 'light') try {
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const room = new THREE.RoomEnvironment();
-    scene.environment = track(pmrem.fromScene(room, 0.04).texture);
-    room.traverse?.((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); });
-    pmrem.dispose();
-    hasEnvironment = true;
-  } catch { /* lights alone still draw the Office */ }
+  const sun = new THREE.DirectionalLight('#ffffff', 3);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(settings.shadowSize, settings.shadowSize);
+  Object.assign(sun.shadow.camera, { left: -34, right: 34, top: 34, bottom: -34, near: 1, far: 200 });
+  sun.shadow.bias = -0.0002; sun.shadow.normalBias = 0.025; sun.shadow.radius = 4;
+  scene.add(sun, sun.target);
+  const hemi = new THREE.HemisphereLight('#f4efe6', '#b9a68a', 0.15);
+  const bounce = new THREE.DirectionalLight('#f3dcc0', 0.2); // warm bounce from the stone, no shadows
+  scene.add(hemi, bounce, bounce.target);
 
-  // ------------------------------------------------------------ helpers
-  let mats = MATERIALS(dark);
-  // Without image-based lighting (light tier) metals have nothing to
-  // reflect and read as black: they become satin instead.
-  if (!hasEnvironment) for (const name of ['metal', 'dark', 'bezel']) mats[name] = { ...mats[name], metalness: Math.min(mats[name].metalness ?? 0, 0.3), roughness: Math.max(mats[name].roughness, 0.45) };
-  // Procedural detail (textures.js): drawn once, shared, repeated per metre.
-  const detailCache = new Map();
-  const detailTexture = (kind, area = null) => {
-    if (!detailCache.has(kind)) {
-      const c = document.createElement('canvas'); c.width = c.height = ['oak', 'walnut', 'stone'].includes(kind) && tier !== 'light' ? 1024 : 512;
-      const texture = track(new THREE.CanvasTexture(drawDetail(c, kind)));
-      texture.colorSpace = THREE.SRGBColorSpace; texture.wrapS = texture.wrapT = THREE.RepeatWrapping; texture.anisotropy = tier === 'light' ? 1 : 4;
-      detailCache.set(kind, texture);
-    }
-    const base = detailCache.get(kind);
-    if (!area) return base;
-    const sized = track(base.clone());
-    sized.repeat.set(area[0] / DETAIL_REPEAT[kind], area[1] / DETAIL_REPEAT[kind]);
-    return sized;
-  };
-  const MATERIAL_DETAIL = { wood: 'grain', walnut: 'veneer', stone: 'stone', inlay: 'stone', felt: 'concrete', feltWarm: 'concrete', textile: 'concrete' };
-  const materialCache = new Map();
-  const material = (name) => {
-    if (!materialCache.has(name)) materialCache.set(name, track(new THREE.MeshStandardMaterial({ ...mats[name], ...(MATERIAL_DETAIL[name] ? { map: detailTexture(MATERIAL_DETAIL[name]) } : {}) })));
-    return materialCache.get(name);
-  };
-  const box = (w, h, d, mat, [x, y, z], parent, { shadow = true, receive = true } = {}) => {
-    const mesh = new THREE.Mesh(track(new THREE.BoxGeometry(w, h, d)), typeof mat === 'string' ? material(mat) : mat);
-    mesh.position.set(x, y, z); mesh.castShadow = shadow && settings.shadows; mesh.receiveShadow = receive;
-    parent.add(mesh);
-    return mesh;
-  };
-  const roundedSlab = (w, d, h, r, mat, [x, y, z], parent) => {
-    const shape = new THREE.Shape();
-    shape.moveTo(-w / 2 + r, -d / 2); shape.lineTo(w / 2 - r, -d / 2); shape.quadraticCurveTo(w / 2, -d / 2, w / 2, -d / 2 + r);
-    shape.lineTo(w / 2, d / 2 - r); shape.quadraticCurveTo(w / 2, d / 2, w / 2 - r, d / 2); shape.lineTo(-w / 2 + r, d / 2);
-    shape.quadraticCurveTo(-w / 2, d / 2, -w / 2, d / 2 - r); shape.lineTo(-w / 2, -d / 2 + r); shape.quadraticCurveTo(-w / 2, -d / 2, -w / 2 + r, -d / 2);
-    const geometry = track(new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: true, bevelThickness: 0.015, bevelSize: 0.015, bevelSegments: 2, curveSegments: 6 }));
-    geometry.rotateX(Math.PI / 2);
-    const mesh = new THREE.Mesh(geometry, typeof mat === 'string' ? material(mat) : mat);
-    mesh.position.set(x, y + h, z); mesh.castShadow = settings.shadows; mesh.receiveShadow = true;
-    parent.add(mesh);
-    return mesh;
-  };
-  // Soft contact shadow under furniture (cheap ambient occlusion).
-  const contactTexture = (() => {
-    const c = document.createElement('canvas'); c.width = c.height = 128;
-    const g = c.getContext('2d');
-    const gradient = g.createRadialGradient(64, 64, 4, 64, 64, 62);
-    gradient.addColorStop(0, 'rgba(0,0,0,0.42)'); gradient.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = gradient; g.fillRect(0, 0, 128, 128);
-    return track(new THREE.CanvasTexture(c));
-  })();
-  const contactMaterial = track(new THREE.MeshBasicMaterial({ map: contactTexture, transparent: true, depthWrite: false, opacity: dark ? 0.9 : 0.55 }));
-  const contact = (w, d, [x, z], parent) => {
-    const mesh = new THREE.Mesh(track(new THREE.PlaneGeometry(w, d)), contactMaterial);
-    mesh.rotation.x = -Math.PI / 2; mesh.position.set(x, 0.012, z); mesh.renderOrder = 1;
-    parent.add(mesh);
-  };
-  const canvasTexture = ([w, h]) => {
-    const c = document.createElement('canvas'); c.width = w; c.height = h;
-    const texture = track(new THREE.CanvasTexture(c));
-    texture.colorSpace = THREE.SRGBColorSpace; texture.minFilter = THREE.LinearFilter; texture.generateMipmaps = false;
-    return { canvas: c, texture };
-  };
-  const screenMaterials = [];
-  const screenMaterial = (texture) => { const made = track(new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })); screenMaterials.push(made); return made; };
-
-  // Light without lights (V5.1): soft additive decals for lamp pools, screen
-  // glow, daylight patches and wall washes. Their opacity follows the time of
-  // day; they cost one merged draw call each and no per-pixel lighting.
-  const gradientTexture = (draw) => {
-    const c = document.createElement('canvas'); c.width = c.height = 128;
-    draw(c.getContext('2d'));
-    const texture = track(new THREE.CanvasTexture(c)); texture.colorSpace = THREE.SRGBColorSpace;
-    return texture;
-  };
-  const poolTexture = gradientTexture((g) => {
-    const gradient = g.createRadialGradient(64, 64, 2, 64, 64, 63);
-    gradient.addColorStop(0, 'rgba(255,255,255,0.9)'); gradient.addColorStop(0.45, 'rgba(255,255,255,0.35)'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = gradient; g.fillRect(0, 0, 128, 128);
+  // ------------------------------------------------------------ environment (HDR reflections)
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const environments = { day: null, night: null };
+  const fallbackEnvironment = () => { const room = new THREE.RoomEnvironment(); const texture = pmrem.fromScene(room, 0.04).texture; room.traverse?.((node) => { node.geometry?.dispose?.(); node.material?.dispose?.(); }); return texture; };
+  const loadEnvironment = (name) => new Promise((resolve) => {
+    const url = assetUrl(`env/${name}.exr`);
+    if (!url) return resolve(null);
+    new THREE.EXRLoader().setDataType(THREE.HalfFloatType).load(url, (texture) => {
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      const target = pmrem.fromEquirectangular(texture); texture.dispose();
+      resolve(target.texture);
+    }, undefined, () => resolve(null));
   });
-  const windowTexture = gradientTexture((g) => {
-    const gradient = g.createLinearGradient(0, 0, 0, 128);
-    gradient.addColorStop(0, 'rgba(255,255,255,0.95)'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = gradient; g.fillRect(6, 0, 116, 128);
-    g.clearRect(62, 0, 4, 128);
+
+  // ------------------------------------------------------------ materials and the building
+  const materials = createMaterials({ renderer, tier, onProgress: (share) => on.progress?.(0.3 + share * 0.5) });
+  const architecture = buildArchitecture({ materials, tier });
+  scene.add(architecture.root);
+  const furniture = buildFurniture({ materials, tier });
+  scene.add(furniture.root);
+  const plants = buildPlants({ materials, tier, reducedMotion });
+  scene.add(plants.root);
+  const baked = bakeFloor({ footprints: furniture.footprints, tier });
+  scene.add(baked.group);
+  const handoffs = createHandoffs({ reducedMotion });
+  scene.add(handoffs.group);
+  let bundles = [];
+
+  // ------------------------------------------------------------ screens (§12)
+  const stateWord = options.stateWord || ((value) => (String(value || '').charAt(0) + String(value || '').slice(1).toLowerCase()));
+  const screens = furniture.screens.map((entry, index) => {
+    const [width, height] = RESOLUTION[entry.kind === 'table' ? 'table' : entry.kind === 'wall' ? 'wall' : entry.kind === 'department' ? 'department' : 'desk'][tier];
+    const canvasEl = document.createElement('canvas'); canvasEl.width = width; canvasEl.height = height;
+    const texture = new THREE.CanvasTexture(canvasEl);
+    texture.colorSpace = THREE.SRGBColorSpace; texture.generateMipmaps = false; texture.minFilter = THREE.LinearFilter; texture.anisotropy = 4;
+    const material = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
+    entry.mesh.material = material;
+    return { ...entry, index, canvas: canvasEl, texture, material, signature: '', near: false };
   });
-  const washTexture = gradientTexture((g) => {
-    const gradient = g.createLinearGradient(0, 128, 0, 0);
-    gradient.addColorStop(0, 'rgba(255,255,255,0.9)'); gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = gradient; g.fillRect(0, 0, 128, 128);
-  });
-  const additive = (map, color) => {
-    const made = track(new THREE.MeshBasicMaterial({ map, color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
-    made.userData.mergeable = true;
-    return made;
+  const employeeOf = (key) => current.employees?.find((employee) => employee.key === key) || { key, state: 'AVAILABLE' };
+  const drawScreen = (screen, force = false) => {
+    const employee = employeeOf(screen.key);
+    const signal = deskSignal(employee);
+    const palette = screenPalette(lighting.phase);
+    const signature = JSON.stringify([screen.near, lighting.phase, screen.kind === 'wall' || screen.kind === 'table' || screen.key === 'chief' ? [current.projects, current.handoffs?.map((h) => [h.id, h.fresh]), current.summary, options.stream?.()] : null,
+      employee.state, employee.task, employee.objective, employee.detail, employee.progress, employee.queue, employee.artifact?.id, employee.coding, employee.enabled]);
+    if (!force && signature === screen.signature) return;
+    screen.signature = signature;
+    if (screen.kind === 'department') drawDepartment(screen.canvas, { employee, signal, palette, stateWord });
+    else if (screen.kind === 'wall') drawOfficeWall(screen.canvas, { state: current, stats: statBar(current, { deliveries: current.deliveries || [] }), stream: options.stream?.() || [], palette, labels: options.copy?.wall || {} });
+    else if (screen.kind === 'table') drawRoutingMap(screen.canvas, { state: current, palette });
+    else if (screen.key === 'chief') drawChiefMonitor(screen.canvas, { state: current, palette, index: furniture.screens.filter((other) => other.key === 'chief' && other.kind === 'desk').indexOf(furniture.screens[screen.index]), near: screen.near });
+    else drawDeskMonitor(screen.canvas, { employee, signal, palette, near: screen.near, index: screen.index, artifactTitle: employee.artifact?.title });
+    screen.texture.needsUpdate = true;
   };
-  const fx = {
-    poolWarm: additive(poolTexture, '#ffb86e'), poolCool: additive(poolTexture, '#7ea4ff'),
-    window: additive(windowTexture, '#fff1d6'), wash: additive(washTexture, '#ffc58c'),
-    accent: track(new THREE.MeshBasicMaterial({ vertexColors: true })),
-  };
-  fx.accent.userData.mergeable = true;
-  const decal = (w, d, [x, y, z], name, parent, { vertical = false } = {}) => {
-    const mesh = new THREE.Mesh(track(new THREE.PlaneGeometry(w, d)), fx[name]);
-    if (!vertical) mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(x, y, z); mesh.renderOrder = 1;
-    parent.add(mesh);
-  };
-  // A thin department-accent light strip (vertex colour, one shared material).
-  const strip = (length, [x, y, z], color, yaw = 0) => {
-    const geometry = track(new THREE.BoxGeometry(length, 0.025, 0.025));
-    const tint = new THREE.Color(color);
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: geometry.attributes.position.count }, () => [tint.r, tint.g, tint.b]).flat(), 3));
-    const mesh = new THREE.Mesh(geometry, fx.accent);
-    mesh.position.set(x, y, z); mesh.rotation.y = yaw;
-    world.add(mesh);
+  const screenPosition = new THREE.Vector3();
+  const refreshNear = () => {
+    for (const screen of screens) {
+      if (screen.kind !== 'desk') continue;
+      screen.mesh.getWorldPosition(screenPosition);
+      const near = screenPosition.distanceTo(camera.position) < LIVE_TEXT_METRES;
+      if (near !== screen.near) { screen.near = near; drawScreen(screen); }
+    }
   };
 
-  // ------------------------------------------------------------ architecture
-  const world = new THREE.Group();
-  scene.add(world);
-  box(PLINTH.width, PLINTH.height, PLINTH.depth, 'plinth', [0, -PLINTH.height / 2, PLINTH.centerZ], world, { shadow: false });
-  // Floors (V5.1 final polish): oak planks across the Office and a finish
-  // per wing — stone slabs in the atrium, pale ash in Intelligence, walnut
-  // herringbone in Strategy, warm concrete in Creative, dark resin in Build.
-  const floorMaterials = [];
-  const floorMaterial = (options) => { const made = track(new THREE.MeshStandardMaterial(options)); floorMaterials.push(made); return made; };
-  const floor = new THREE.Mesh(track(new THREE.PlaneGeometry(PLINTH.width - 1.2, PLINTH.depth - 1.2)), floorMaterial({ ...mats.floor, map: detailTexture('oak', [PLINTH.width - 1.2, PLINTH.depth - 1.2]) }));
-  floor.rotation.x = -Math.PI / 2; floor.position.set(0, 0.002, PLINTH.centerZ); floor.receiveShadow = true;
-  world.add(floor);
-  for (const wing of WINGS) {
-    const finish = WING_FLOORS[wing.id];
-    const rug = new THREE.Mesh(track(new THREE.PlaneGeometry(wing.width, wing.depth)), floorMaterial({
-      color: dark ? finish.dark : finish.light, roughness: finish.roughness, map: detailTexture(finish.kind, [wing.width, wing.depth]) }));
-    rug.rotation.x = -Math.PI / 2; rug.position.set(wing.x, 0.006, wing.z); rug.receiveShadow = true;
-    world.add(rug);
+  // ------------------------------------------------------------ desk signals (§05)
+  const lampColor = new THREE.Color(kelvinToHex(2700));
+  const desks = new Map([...furniture.workstations].map(([key, station]) => [key, { station, signal: deskSignal({ key }), flareAt: 0, lastState: null }]));
+  // ------------------------------------------------------------ people (§05)
+  const crew = createPeople({ tier, reducedMotion });
+  for (const [key, desk] of desks) {
+    const person = crew.create(key);
+    desk.person = person;
+    desk.station.chair.add(person.root);
+    person.root.position.set(0, 0, 0.04);
   }
-  // The back and left walls are glazed facades (decor.js); the near wall stays low.
-  for (const [x1, z1, x2, z2] of WALLS.slice(2)) {
-    const length = Math.hypot(x2 - x1, z2 - z1);
-    const wall = box(length, 1.4, 0.24, 'wall', [(x1 + x2) / 2, 0.7, (z1 + z2) / 2], world);
-    wall.rotation.y = -Math.atan2(z2 - z1, x2 - x1);
-  }
-  for (const [x1, z1, x2, z2] of PARTITIONS) {
-    const length = Math.hypot(x2 - x1, z2 - z1);
-    const group = new THREE.Group();
-    group.position.set((x1 + x2) / 2, 0, (z1 + z2) / 2); group.rotation.y = -Math.atan2(z2 - z1, x2 - x1);
-    const pane = box(length, 2.1, 0.03, 'glass', [0, 1.1, 0], group, { shadow: false, receive: false });
-    pane.renderOrder = 2;
-    box(length, 0.05, 0.07, 'metal', [0, 2.17, 0], group, { receive: false });
-    box(length, 0.06, 0.08, 'metal', [0, 0.03, 0], group, { receive: false });
-    world.add(group);
-  }
-
-  // Architecture (V5.1): slim columns where the wings meet, a reception desk
-  // at the entrance and a library wall in the Intelligence wing. All static:
-  // merged per material with the rest of the building.
-  for (const [x, z] of [[-7.5, -7], [-7.5, 8], [7.5, -7], [7.5, 4], [2.5, -15], [-19.6, 8], [19.6, 5]]) {
-    box(0.28, 2.5, 0.28, 'white', [x, 1.25, z], world);
-  }
-  const reception = new THREE.Group(); reception.position.set(4.2, 0, 8.3); reception.rotation.y = -0.2;
-  box(2.6, 0.98, 0.62, 'white', [0, 0.49, 0], reception);
-  roundedSlab(2.9, 0.78, 0.05, 0.12, 'walnut', [0, 1.0, 0.02], reception);
-  world.add(reception);
-  for (let unit = 0; unit < 5; unit += 1) {
-    const shelf = new THREE.Group(); shelf.position.set(-19.25, 0, -5.4 + unit * 2.5);
-    box(0.42, 2.0, 2.2, 'walnut', [0, 1.0, 0], shelf);
-    for (let row = 0; row < 4; row += 1) {
-      const finishes = ['textile', 'white', 'wood'];
-      box(0.3, 0.3, 1.95, finishes[(row + unit) % 3], [0.08, 0.34 + row * 0.44, 0], shelf, { receive: false });
-    }
-    world.add(shelf);
-  }
-
-  // Brand wall at the entrance and a small lounge.
-  const brand = canvasTexture([1024, 200]);
-  const drawBrand = () => {
-    const g = brand.canvas.getContext('2d');
-    g.fillStyle = dark ? '#1c1f26' : '#ffffff'; g.fillRect(0, 0, 1024, 200);
-    g.fillStyle = tokens.accent || '#5e98ff'; g.beginPath(); g.roundRect(56, 60, 80, 80, 20); g.fill();
-    g.fillStyle = '#ffffff'; g.font = '700 52px Inter, system-ui, sans-serif'; g.textAlign = 'center'; g.fillText('F', 96, 119);
-    g.fillStyle = dark ? '#f2f2f4' : '#1d1d1f'; g.textAlign = 'left'; g.font = '600 64px Inter, system-ui, sans-serif'; g.fillText('Fahad AI Office', 168, 122);
-    brand.texture.needsUpdate = true;
-  };
-  drawBrand();
-  const brandWall = new THREE.Group();
-  brandWall.position.set(ENTRANCE.brandWall.x, 0, ENTRANCE.brandWall.z);
-  brandWall.rotation.y = 0.35;
-  box(ENTRANCE.brandWall.width, ENTRANCE.brandWall.height, 0.3, 'wall', [0, ENTRANCE.brandWall.height / 2, 0], brandWall);
-  const brandFace = new THREE.Mesh(track(new THREE.PlaneGeometry(ENTRANCE.brandWall.width * 0.86, ENTRANCE.brandWall.width * 0.86 * 200 / 1024)), screenMaterial(brand.texture));
-  brandFace.position.set(0, ENTRANCE.brandWall.height * 0.55, 0.16);
-  brandWall.add(brandFace);
-  world.add(brandWall);
-  const lounge = new THREE.Group();
-  lounge.position.set(ENTRANCE.lounge.x, 0, ENTRANCE.lounge.z);
-  box(3.2, 0.42, 1.0, 'textile', [0, 0.21, 0], lounge); box(3.2, 0.5, 0.25, 'textile', [0, 0.62, -0.38], lounge);
-  roundedSlab(1.2, 0.7, 0.05, 0.3, 'walnut', [0, 0.36, 1.2], lounge);
-  box(0.06, 0.36, 0.06, 'metal', [0, 0.18, 1.2], lounge);
-  contact(4, 2.6, [0, 0.4], lounge);
-  world.add(lounge);
-
-  const plantGeometry = track(new THREE.IcosahedronGeometry(0.55, 1));
-  const potGeometry = track(new THREE.CylinderGeometry(0.32, 0.26, 0.55, 16));
-  const plant = (x, z, scale = 1) => {
-    const group = new THREE.Group();
-    group.position.set(x, 0, z); group.scale.setScalar(scale);
-    const pot = new THREE.Mesh(potGeometry, material('pot')); pot.position.y = 0.275; pot.castShadow = settings.shadows;
-    const leaves = new THREE.Mesh(plantGeometry, material('plant')); leaves.position.y = 1.05; leaves.scale.set(1, 1.35, 1); leaves.castShadow = settings.shadows;
-    group.add(pot, leaves);
-    contact(1.3, 1.3, [0, 0], group);
-    world.add(group);
-  };
-  const plants = [[-18.6, -14.6], [18.6, -14.6], [-18.4, 9.8], [3.4, 9.3], [17.8, 8.4], [3.6, -14.5], [-4.6, 3.4], [4.6, 3.4], [-7.4, 9.5]];
-  plants.slice(0, Math.ceil(plants.length * settings.plants)).forEach(([x, z], index) => plant(x, z, index > 6 ? 0.75 : 1));
-  const art = canvasTexture([512, 352]);
-  drawArt(art.canvas, dark); art.texture.needsUpdate = true;
-  const ceiling = new THREE.Group();
-  world.add(ceiling);
-  addDecor({ THREE, world, ceiling, box, roundedSlab, plant, decal, strip, material, track, settings, WORKSPACES, WALLS, WING_ACCENTS,
-    art: track(new THREE.MeshStandardMaterial({ map: art.texture, roughness: 0.8 })) });
-
-  // ------------------------------------------------------------ workspaces
-  const factory = createCharacterFactory(THREE);
-  disposables.push({ dispose: factory.dispose });
-  const workspaces = new Map();
-  const pickables = [];
-  const monitorGeometry = track(new THREE.BoxGeometry(0.62, 0.38, 0.03));
-  const chairSeat = track(new THREE.BoxGeometry(0.52, 0.08, 0.5));
-  const chairBack = track(new THREE.BoxGeometry(0.5, 0.6, 0.07));
-  const chairPost = track(new THREE.CylinderGeometry(0.03, 0.03, 0.42, 8));
-  const chairBase = track(new THREE.CylinderGeometry(0.28, 0.3, 0.04, 20));
-
-  for (const [key, spec] of Object.entries(WORKSPACES)) {
-    const group = new THREE.Group();
-    group.position.set(spec.x, 0, spec.z); group.rotation.y = spec.yaw;
-    group.userData = { key };
-    const executive = spec.desk === 'executive';
-    const studio = spec.desk === 'studio';
-    const engineering = spec.desk === 'engineering';
-    const deskWidth = executive ? 2.8 : studio ? 2.4 : engineering ? 2.3 : 1.9;
-    const deskDepth = executive ? 1.15 : studio ? 1.2 : 0.95;
-    // Desk: top + slim legs (executive: solid walnut pedestal).
-    roundedSlab(deskWidth, deskDepth, 0.05, 0.08, executive ? 'walnut' : 'wood', [0, 0.72, 0], group);
-    if (executive) box(deskWidth * 0.9, 0.7, 0.08, 'walnut', [0, 0.36, -deskDepth / 2 + 0.1], group);
-    else for (const sx of [-1, 1]) box(0.05, 0.72, deskDepth * 0.85, 'metal', [sx * (deskWidth / 2 - 0.12), 0.36, 0], group);
-    contact(deskWidth + 1.4, deskDepth + 2.2, [0, 0.4], group);
-    // Monitors on the desk (engineering: two).
-    const monitors = [];
-    const monitorCount = engineering ? 2 : 1;
-    for (let index = 0; index < monitorCount; index += 1) {
-      const offset = monitorCount === 1 ? 0 : (index - 0.5) * 0.7;
-      const stand = box(0.05, 0.28, 0.05, 'metal', [offset, 0.9, -deskDepth / 2 + 0.2], group, { receive: false });
-      stand.castShadow = false;
-      const frame = new THREE.Mesh(monitorGeometry, material('dark'));
-      frame.position.set(offset, 1.14, -deskDepth / 2 + 0.2); frame.castShadow = settings.shadows;
-      const surface = canvasTexture(settings.monitor);
-      const screen = new THREE.Mesh(track(new THREE.PlaneGeometry(0.58, 0.34)), screenMaterial(surface.texture));
-      screen.position.set(offset, 1.14, -deskDepth / 2 + 0.216);
-      screen.userData.dynamic = true;
-      // Monitors face the employee: the employee sits on +z looking to -z.
-      group.add(frame, screen);
-      monitors.push({ ...surface, screen });
-    }
-    // Chair + figure (the employee sits on the +z side, facing the desk).
-    const seat = new THREE.Group();
-    seat.position.set(0, 0, deskDepth / 2 + 0.45);
-    seat.rotation.y = Math.PI;
-    const base = new THREE.Mesh(chairBase, material('metal')); base.position.y = 0.02;
-    const post = new THREE.Mesh(chairPost, material('metal')); post.position.y = 0.24;
-    const cushion = new THREE.Mesh(chairSeat, material(executive ? 'dark' : 'textile')); cushion.position.y = 0.46; cushion.castShadow = settings.shadows;
-    const back = new THREE.Mesh(chairBack, material(executive ? 'dark' : 'textile')); back.position.set(0, 0.8, -0.24); back.castShadow = settings.shadows;
-    seat.add(base, post, cushion, back);
-    const figure = factory.create({ key, accent: WING_ACCENTS[spec.wing] });
-    figure.root.position.set(0, 0.5, 0.02);
-    figure.root.userData.dynamic = true;
-    figure.root.rotation.y = 0;
-    seat.add(figure.root);
-    group.add(seat);
-    // The wall display behind the desk (for CHIEF: the project wall).
-    const board = spec.board;
-    const boardGroup = new THREE.Group();
-    boardGroup.position.set(0, 0, -board.back);
-    box(board.width + 0.06, board.height + 0.06, 0.05, 'bezel', [0, 1.1 + board.height / 2, -0.03], boardGroup, { receive: false });
-    const surface = canvasTexture(executive ? [Math.round(settings.board[0] * 1.25), Math.round(settings.board[1] * 1.25 * board.height / board.width * 2)] : settings.board);
-    const display = new THREE.Mesh(track(new THREE.PlaneGeometry(board.width, board.height)), screenMaterial(surface.texture));
-    display.position.set(0, 1.1 + board.height / 2, 0.005);
-    display.userData = { key, board: true, dynamic: true };
-    boardGroup.add(display);
-    box(0.08, 1.1, 0.08, 'metal', [-board.width / 2 + 0.3, 0.55, -0.04], boardGroup, { receive: false });
-    box(0.08, 1.1, 0.08, 'metal', [board.width / 2 - 0.3, 0.55, -0.04], boardGroup, { receive: false });
-    group.add(boardGroup);
-    // Indicator above the employee (attention, waiting, warning, done, error).
-    const indicator = new THREE.Group();
-    indicator.position.set(0, 2.25, deskDepth / 2 + 0.45);
-    const dot = new THREE.Mesh(track(new THREE.SphereGeometry(0.07, 16, 12)), track(new THREE.MeshBasicMaterial({ color: palette.warning, toneMapped: false })));
-    const halo = new THREE.Mesh(track(new THREE.RingGeometry(0.11, 0.14, 32)), track(new THREE.MeshBasicMaterial({ color: palette.warning, transparent: true, opacity: 0.5, side: THREE.DoubleSide, toneMapped: false, depthWrite: false })));
-    indicator.add(dot, halo);
-    indicator.visible = false;
-    indicator.userData.dynamic = true;
-    group.add(indicator);
-    addProps(key, spec, group, { deskWidth, deskDepth });
-    // Hit volume for picking the whole workspace.
-    const hit = new THREE.Mesh(track(new THREE.BoxGeometry(deskWidth + 0.8, 2.2, deskDepth + 1.6)), track(new THREE.MeshBasicMaterial({ visible: false })));
-    hit.position.set(0, 1.1, 0.4); hit.userData = { key, dynamic: true };
-    group.add(hit);
-    pickables.push(hit, display);
-    world.add(group);
-    workspaces.set(key, { key, group, figure, monitors, board: { ...surface, display, kind: board.kind }, indicator, dot, halo, seed: pickables.length * 1.7,
-      pose: POSES.relaxed, visual: stateVisual({ state: 'AVAILABLE' }), signature: '', dim: 1 });
-  }
-
-  // Distinct, data-free props give each area its identity (documents,
-  // materials, hardware); real work stays on the screens.
-  function addProps(key, spec, group, { deskWidth, deskDepth }) {
-    const side = deskWidth / 2 + 0.9;
-    // A task lamp on every desk (V5.1): brushed-metal arm, warm shade at night.
-    const lamp = new THREE.Group(); lamp.position.set(-deskWidth / 2 + 0.22, 0.76, -deskDepth / 2 + 0.24);
-    box(0.16, 0.02, 0.16, 'metal', [0, 0.01, 0], lamp, { receive: false });
-    const arm = box(0.025, 0.46, 0.025, 'metal', [0.06, 0.24, 0.02], lamp, { receive: false }); arm.rotation.z = -0.28;
-    box(0.22, 0.05, 0.12, 'lamp', [0.16, 0.46, 0.04], lamp, { receive: false });
-    group.add(lamp);
-    if (key === 'chief') {
-      for (const sx of [-0.8, 0.8]) {
-        const guest = new THREE.Group(); guest.position.set(sx, 0, -deskDepth / 2 - 0.85);
-        const seat = new THREE.Mesh(chairSeat, material('textile')); seat.position.y = 0.44; seat.castShadow = settings.shadows;
-        const back = new THREE.Mesh(chairBack, material('textile')); back.position.set(0, 0.76, -0.24); back.castShadow = settings.shadows;
-        const leg = new THREE.Mesh(chairPost, material('metal')); leg.position.y = 0.22;
-        guest.add(seat, back, leg); group.add(guest);
-      }
-    }
-    if (['research', 'legal', 'audit'].includes(key)) {
-      // A low credenza with document stacks and binders.
-      box(1.6, 0.62, 0.45, 'white', [side, 0.31, -0.4], group);
-      for (let index = 0; index < (key === 'research' ? 4 : 3); index += 1) box(0.26, 0.06 + (index % 3) * 0.05, 0.34, index % 2 ? 'white' : 'textile', [side - 0.55 + index * 0.36, 0.66 + ((index % 3) * 0.025), -0.4], group);
-    }
-    if (key === 'creative') {
-      // Material sample wall: architectural finishes, not brand data.
-      const wall = new THREE.Group(); wall.position.set(-side - 0.3, 0, -1.2);
-      box(1.3, 1.9, 0.06, 'white', [0, 1.15, 0], wall);
-      const finishes = ['wood', 'walnut', 'metal', 'textile', 'pot', 'plant'];
-      finishes.forEach((finish, index) => box(0.5, 0.42, 0.03, finish, [-0.3 + (index % 2) * 0.6, 1.75 - Math.floor(index / 2) * 0.55, 0.05], wall, { receive: false }));
-      group.add(wall);
-    }
-    if (key === 'social') {
-      for (const sx of [-0.55, 0.55]) { const phone = box(0.14, 0.26, 0.012, 'dark', [sx, 0.92, -0.1], group, { receive: false }); phone.rotation.x = -0.35; }
-    }
-    if (key === 'coding') {
-      box(0.62, 1.25, 0.62, 'dark', [side + 0.2, 0.625, -0.6], group);
-      for (let index = 0; index < 5; index += 1) box(0.5, 0.02, 0.01, 'metal', [side + 0.2, 0.3 + index * 0.2, -0.28], group, { receive: false });
-    }
-    if (key === 'product') {
-      const stand = new THREE.Group(); stand.position.set(-side, 0, -0.5); stand.rotation.y = 0.35;
-      box(1.1, 0.75, 0.03, 'white', [0, 1.35, 0], stand); box(0.04, 1.0, 0.04, 'metal', [0, 0.5, 0], stand);
-      group.add(stand);
-    }
-    if (key === 'finance') {
-      const frame = new THREE.Mesh(monitorGeometry, material('dark'));
-      frame.position.set(0.72, 1.12, -deskDepth / 2 + 0.28); frame.rotation.y = -0.35; frame.castShadow = settings.shadows;
-      group.add(frame);
-    }
-  }
-
-  // Needs Fahad beacon beside CHIEF.
-  const beacon = new THREE.Group();
-  beacon.position.set(WORKSPACES.chief.x + 2.2, 0, WORKSPACES.chief.z + 1.2);
-  box(0.05, 1.9, 0.05, 'metal', [0, 0.95, 0], beacon, { receive: false });
-  const beaconLight = new THREE.Mesh(track(new THREE.SphereGeometry(0.16, 20, 14)), track(new THREE.MeshBasicMaterial({ color: palette.warning, toneMapped: false })));
-  beaconLight.position.y = 2.0;
-  const beaconHalo = new THREE.Mesh(track(new THREE.RingGeometry(0.24, 0.32, 40)), track(new THREE.MeshBasicMaterial({ color: palette.warning, transparent: true, opacity: 0.45, side: THREE.DoubleSide, toneMapped: false, depthWrite: false })));
-  beaconHalo.position.y = 2.0;
-  beacon.add(beaconLight, beaconHalo);
-  beacon.visible = false;
-  beacon.userData.dynamic = true;
-  beaconLight.userData = { beacon: true };
-  pickables.push(beaconLight);
-  world.add(beacon);
-
-  // ------------------------------------------------------------ batching
-  // Static furniture and architecture are merged per material (within each
-  // workspace, so Project Mode can still dim a workspace): far fewer draw
-  // calls, same look.
-  const mergeStatic = (root) => {
-    root.updateMatrixWorld(true);
-    const inverse = new THREE.Matrix4().copy(root.matrixWorld).invert();
-    const buckets = new Map();
-    const visit = (node) => {
-      if (node.userData.dynamic) return;
-      if (node.isMesh && node !== root && (node.material?.isMeshStandardMaterial || node.material?.userData.mergeable) || node.isMesh && node.material === contactMaterial) {
-        const bucket = buckets.get(node.material) || { meshes: [], cast: false };
-        bucket.meshes.push(node); bucket.cast ||= node.castShadow;
-        buckets.set(node.material, bucket);
-      }
-      for (const child of node.children) if (!(child.isGroup && workspaces.has(child.userData.key) && root === world)) visit(child);
-    };
-    for (const child of root.children) visit(child);
-    for (const [mat, bucket] of buckets) {
-      if (bucket.meshes.length < 2) continue;
-      const positions = []; const normals = []; const uvs = []; const colors = [];
-      const coloured = bucket.meshes.every((mesh) => mesh.geometry.attributes.color);
-      for (const mesh of bucket.meshes) {
-        const matrix = new THREE.Matrix4().multiplyMatrices(inverse, mesh.matrixWorld);
-        const geometry = (mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone()).applyMatrix4(matrix);
-        const count = geometry.attributes.position.count;
-        positions.push(...geometry.attributes.position.array);
-        normals.push(...(geometry.attributes.normal ? geometry.attributes.normal.array : new Float32Array(count * 3)));
-        uvs.push(...(geometry.attributes.uv ? geometry.attributes.uv.array : new Float32Array(count * 2)));
-        if (coloured) colors.push(...geometry.attributes.color.array);
-        geometry.dispose();
-        mesh.parent.remove(mesh);
-      }
-      const merged = track(new THREE.BufferGeometry());
-      merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-      merged.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-      if (coloured) merged.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-      const mesh = new THREE.Mesh(merged, mat);
-      mesh.castShadow = bucket.cast && settings.shadows; mesh.receiveShadow = !mat.userData.mergeable;
-      if (mat === contactMaterial || mat.userData.mergeable) mesh.renderOrder = 1;
-      if (mat === material('facade') || mat === material('glass')) mesh.renderOrder = 2;
-      root.add(mesh);
+  const life = createLife({ scene, crew, desks, reducedMotion, tier });
+  const POSE_CLIP = { relaxed: 'relaxed', typing: 'typing', reading: 'reading', waiting: 'waiting', blocked: 'blocked', sitback: 'sitback', phone: 'phone', review: 'review' };
+  const applyPeople = () => {
+    const forum = forumState(current);
+    for (const [key, desk] of desks) {
+      const person = desk.person; if (!person || desk.walking) continue;
+      const signal = desk.signal;
+      person.root.visible = signal.pose !== 'empty';
+      if (!person.root.visible) continue;
+      let clip = POSE_CLIP[signal.pose] || 'relaxed';
+      // The employee turns toward whoever just handed work over (3 s).
+      const glancing = desk.glance && performance.now() < desk.glance.until && !reducedMotion;
+      person.mesh.rotation.y += ((glancing ? desk.glance.yaw : 0) - person.mesh.rotation.y) * 0.08;
+      if (key === 'chief' && (forum === 'active' || forum === 'routing') && signal.pose !== 'blocked') clip = 'lookUp';
+      if (desk.station.standing && !['phone', 'review'].includes(clip)) clip = 'stand';
+      const standing = ['stand', 'phone', 'review'].includes(clip);
+      person.root.position.set(standing && !desk.station.standing ? 0.55 : 0, 0, standing ? -0.1 : 0.04);
+      crew.play(person, clip);
     }
   };
-  for (const workspace of workspaces.values()) mergeStatic(workspace.group);
-  ceiling.userData.dynamic = true; // merged on its own (below), not into the building
-  mergeStatic(world);
-  ceiling.userData.dynamic = false;
-  mergeStatic(ceiling);
+  // The spec's LOD distances are read on a scale where the farthest label in
+  // the fitted Overview sits just inside the medium band (38 of 40 m): zooming
+  // out reaches "dot", a department view reaches "name, state, task".
+  const lodScale = () => 38 / Math.max(1, overviewFar);
+  const personPosition = new THREE.Vector3();
+  const distances = new Map();
+  const measurePeople = () => {
+    for (const [key, desk] of desks) { if (!desk.person) continue; desk.person.root.getWorldPosition(personPosition); distances.set(key, personPosition.distanceTo(camera.position) * lodScale()); }
+    return distances;
+  };
+  const applyDesks = (now = performance.now()) => {
+    const night = lighting.preset.artificial;
+    for (const [key, desk] of desks) {
+      const employee = employeeOf(key);
+      const signal = deskSignal(employee);
+      if (desk.lastState && desk.lastState !== 'COMPLETED' && employee.state === 'COMPLETED' && !reducedMotion) desk.flareAt = now;
+      desk.lastState = employee.state; desk.signal = signal;
+      const { shade, ring, pool } = desk.station.lamp;
+      const flare = desk.flareAt && now - desk.flareAt < 600 ? Math.sin(((now - desk.flareAt) / 600) * Math.PI) : 0;
+      // A handoff arriving: the destination lamp ramps up over 400 ms and holds briefly.
+      const arrival = desk.arrivalAt && now - desk.arrivalAt < 3000 ? Math.min(1, (now - desk.arrivalAt) / 400) * (1 - Math.max(0, (now - desk.arrivalAt - 2400) / 600)) : 0;
+      signal.lamp = Math.max(signal.lamp, arrival * 0.8);
+      shade.material.emissive.copy(lampColor);
+      shade.material.emissiveIntensity = (signal.lamp * (0.6 + night * 1.8)) + flare * 2.5;
+      pool.material.opacity = Math.min(1, signal.lamp * (0.12 + night * 0.5) + flare * 0.4);
+      pool.visible = pool.material.opacity > 0.01; // nothing drawn when the lamp is off
+      // Approval: a hollow red ring pulsing every 6 s; blocked and failed: held.
+      const pulse = signal.ring === 'approval' && !reducedMotion ? 0.55 + 0.45 * Math.max(0, Math.cos(((now / 1000) % 6) / 6 * Math.PI * 2)) : 1;
+      ring.material.opacity = signal.ring ? pulse : 0;
+      ring.visible = Boolean(signal.ring);
+      // Offline: the empty chair is pushed in under the desk.
+      const chair = desk.station.chair;
+      const pushed = signal.chair === 'pushed-in';
+      const [hx, hz] = desk.station.chairHome; const yaw = desk.station.desk.yaw;
+      chair.position.set(hx - (pushed ? Math.sin(yaw) * 0.42 : 0), chair.position.y, hz - (pushed ? Math.cos(yaw) * 0.42 : 0));
+      // Ambient (neutral): a slow chair swivel while at rest.
+      const resting = ['relaxed', 'waiting'].includes(signal.pose) && !reducedMotion;
+      chair.rotation.y = yaw + (resting ? Math.sin(now / 1000 * 0.21 + key.length) * 0.05 : 0);
+    }
+    applyPeople();
+    applyForum(now);
+  };
+  // The CHIEF Forum (§03): the table's bronze strip is CHIEF's status light.
+  let forumWas = 'idle'; let forumChangedAt = 0;
+  const stripBlue = new THREE.Color('#5b8cff'); const stripWarm = new THREE.Color('#ffb46b');
+  const applyForum = (now) => {
+    const strip = furniture.chiefStrip; if (!strip) return;
+    const forum = forumState(current);
+    if (forum !== forumWas) { forumWas = forum; forumChangedAt = now; }
+    const since = now - forumChangedAt;
+    const spec = FORUM_STATES[forum];
+    if (forum === 'completes') { strip.material.emissive.copy(stripWarm); strip.material.emissiveIntensity = reducedMotion ? 0.4 : since < 600 ? Math.sin((since / 600) * Math.PI) * 2.4 : 0.15; }
+    else { strip.material.emissive.copy(stripBlue); strip.material.emissiveIntensity = spec.strip * 2.2 + (forum === 'routing' && since < 400 && !reducedMotion ? 1.6 : 0); }
+  };
 
-  // ------------------------------------------------------------ time of day
-  // DAY / EVENING / NIGHT: every light, emitter, decal and the stage backdrop
-  // follow one preset; a change blends over TRANSITION_MS (instant with
-  // reduced motion). Rendering runs only while the blend moves.
-  let timeName = resolveTime(time, dark);
-  let light = { ...LIGHTING[timeName] };
+  // ------------------------------------------------------------ post (AgX output, night bloom, AO on High)
+  let composer = null; let bloom = null; let ao = null; let dof = null;
+  let aoProxy = null;
+  const aoScene = () => {
+    if (aoProxy) return aoProxy;
+    aoProxy = new THREE.Scene();
+    const add = (root) => root.traverse((node) => {
+      if (!node.isMesh || node.material?.transparent || node.material?.visible === false || node.userData?.screen || node.parent?.name?.startsWith('ceiling')) return;
+      if (node.isSkinnedMesh || node.name?.startsWith('leaves') || !node.geometry?.boundingSphere && !node.isInstancedMesh) return;
+      node.updateWorldMatrix(true, false);
+      const proxy = node.isInstancedMesh ? new THREE.InstancedMesh(node.geometry, node.material, node.count) : new THREE.Mesh(node.geometry, node.material);
+      if (node.isInstancedMesh) proxy.instanceMatrix = node.instanceMatrix;
+      proxy.matrixAutoUpdate = false; proxy.matrix.copy(node.matrixWorld); proxy.matrixWorld.copy(node.matrixWorld);
+      aoProxy.add(proxy);
+    });
+    add(architecture.root); add(furniture.root);
+    return aoProxy;
+  };
+  const buildComposer = () => {
+    composer?.dispose?.(); composer = null; bloom = null; ao = null; dof = null;
+    if (!settings.composer) return;
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: settings.msaa });
+    composer = new THREE.EffectComposer(renderer, target);
+    composer.addPass(new THREE.RenderPass(scene, camera));
+    // AO on High only, computed from a proxy of the large static meshes (shared
+    // geometry, no copies) so it costs a few draw calls rather than the scene again.
+    if (settings.ao) { ao = new THREE.GTAOPass(aoScene(), camera, 1, 1); ao.blendIntensity = 0.85; composer.addPass(ao); }
+    // Subtle depth of field in the agent view (High only).
+    if (settings.ao) { dof = new THREE.BokehPass(scene, camera, { focus: CAMERA_STATES.agent.distance, aperture: 0.0016, maxblur: 0.006 }); dof.enabled = false; composer.addPass(dof); }
+    bloom = new THREE.UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.6, 0.82);
+    bloom.enabled = false;
+    composer.addPass(bloom);
+    composer.addPass(new THREE.OutputPass());
+  };
+  buildComposer();
+
+  // ------------------------------------------------------------ lighting modes (§10)
+  let lightMode = options.lightMode || 'auto';
+  let lighting = resolveMode(lightMode);
   let lightTween = null;
-  const backdrop = container.parentElement || container;
-  const applyLighting = (L) => {
-    // Light tier (no reflections): more ambient, more at night, and brighter
-    // pools, so the Office stays readable without adding real lights.
-    hemi.color.set(L.sky); hemi.groundColor.set(L.ground); hemi.intensity = hasEnvironment ? L.hemi : L.hemi + 0.35 + L.lamps * 0.55;
-    sun.color.set(L.sunColor); sun.intensity = L.sun; sun.position.set(...L.sunPos);
-    fill.color.set(L.fillColor); fill.intensity = L.fill;
-    if (hasEnvironment) scene.environmentIntensity = L.env;
-    renderer.toneMappingExposure = hasEnvironment ? L.exposure : L.exposure + L.lamps * 0.28;
-    material('lamp').emissiveIntensity = L.lamps * 1.5;
-    material('pendant').emissiveIntensity = L.lamps * 1.1;
-    material('cove').emissiveIntensity = L.washes * 0.55;
-    fx.poolWarm.opacity = L.pools * (dark ? 0.62 : 0.4) * (hasEnvironment ? 1 : 1.3);
-    fx.poolCool.opacity = L.glow * (dark ? 0.26 : 0.18);
-    fx.window.opacity = L.windows * (dark ? 0.22 : 0.5);
-    fx.wash.opacity = L.washes * 0.45;
-    fx.accent.color.setScalar(0.4 + L.accents * 0.9);
-    for (const made of screenMaterials) made.color.setScalar(L.screens);
-    // Light tier at night: a faint baked-looking lift on the floors (their
-    // own colour, emissive) keeps the plan readable without real lights.
-    if (!hasEnvironment) for (const made of floorMaterials) { if (made.emissiveMap !== made.map) { made.emissive.copy(made.color); made.emissiveMap = made.map; made.needsUpdate = true; } made.emissiveIntensity = L.lamps * 0.35; }
-    const [sky, ground] = dark ? L.backdropDark : L.backdrop;
-    backdrop.style.setProperty('--o3d-sky', sky);
-    backdrop.style.setProperty('--o3d-ground', ground);
+  const applyLighting = (preset) => {
+    const dir = sunDirection(preset);
+    sun.position.set(dir[0] * 80, Math.max(dir[1], 0.02) * 80, dir[2] * 80);
+    sun.color.set(kelvinToHex(preset.sunKelvin));
+    sun.intensity = preset.sun; sun.userData.base = preset.sun;
+    // The sun stays in the scene at night (intensity 0): removing a light recompiles every material.
+    bounce.position.set(-dir[0] * 40, 30, -dir[2] * 40);
+    bounce.intensity = preset.sun * 0.07 + preset.artificial * 0.06;
+    bounce.color.set(preset.artificial > 0.5 ? '#ffd2a1' : '#f3dcc0');
+    hemi.intensity = preset.hemi;
+    const useNight = preset.sun < 0.4;
+    const environment = (useNight ? environments.night : environments.day) || environments.day || environments.night;
+    if (environment && scene.environment !== environment) scene.environment = environment;
+    scene.environmentIntensity = preset.sky;
+    renderer.toneMappingExposure = preset.exposure;
+    scene.fog.color.set(preset.horizon);
+    if (scene.background?.isColor) scene.background.set(preset.horizon); else scene.background = new THREE.Color(preset.horizon);
+    renderer.shadowMap.needsUpdate = true;
+    materials.setTravertineRoughness(preset.roughness);
+    baked.setNight(preset.artificial);
+    architecture.setNight(preset.artificial);
+    handoffs.setNight(preset.bloom);
+    for (const screen of screens || []) screen.material.color.setScalar(preset.screens);
+    if (bloom) { bloom.enabled = preset.bloom > 0.02; bloom.strength = 0.25 + preset.bloom * 0.45; }
+    container.style.setProperty('--o3d-sky', preset.backdrop[0]);
+    container.style.setProperty('--o3d-ground', preset.backdrop[1]);
   };
-  applyLighting(light);
-  backdrop.dataset.light = timeName;
-  const setTime = (preference) => {
-    const next = resolveTime(preference, dark);
-    if (next === timeName && !lightTween) return;
-    timeName = next; backdrop.dataset.light = next;
-    if (reducedMotion) { light = { ...LIGHTING[next] }; applyLighting(light); lightTween = null; wake(); return; }
-    lightTween = { from: { ...light }, to: LIGHTING[next], start: performance.now() };
+  const setLightMode = (mode) => {
+    const next = resolveMode(mode);
+    lightMode = next.mode;
+    if (reducedMotion) { lighting = next; applyLighting(next.preset); lightTween = null; on.phase?.(next.phase); for (const screen of screens) drawScreen(screen); wake(); return; }
+    watchdog.grace(performance.now(), MODE_TRANSITION_MS + 3000);
+    lightTween = { from: { ...lighting.preset }, to: next, start: performance.now() };
+    lighting = { ...lighting, phase: next.phase };
+    for (const screen of screens) drawScreen(screen);
+    on.phase?.(next.phase);
     wake();
   };
+  // Auto follows the real clock: re-evaluated every minute.
+  const autoTimer = setInterval(() => { if (lightMode === 'auto' && !lightTween) { const next = resolveMode('auto'); if (next.phase !== lighting.phase) on.phase?.(next.phase); lighting = next; applyLighting(next.preset); wake(); } }, 60_000);
+  cleanup.push(() => clearInterval(autoTimer));
 
-  // ------------------------------------------------------------ handoffs
-  const handoffGroup = new THREE.Group();
-  handoffGroup.userData.dynamic = true;
-  world.add(handoffGroup);
-  let handoffs = [];
-  const packetGeometry = track(new THREE.SphereGeometry(0.11, 16, 12));
-  const seenPackets = new Set();
-  const buildHandoffs = () => {
-    for (const child of [...handoffGroup.children]) { handoffGroup.remove(child); child.geometry?.dispose(); }
-    handoffs = [];
-    const unique = new Map();
-    for (const handoff of current.handoffs) { const pair = `${handoff.fromKey}>${handoff.toKey}`; if (!unique.has(pair)) unique.set(pair, handoff); }
-    for (const handoff of unique.values()) {
-      const from = anchor(handoff.fromKey); const to = anchor(handoff.toKey);
-      if (!from || !to) continue;
-      const mid = new THREE.Vector3((from[0] + to[0]) / 2, 3.2 + Math.hypot(to[0] - from[0], to[2] - from[2]) * 0.08, (from[2] + to[2]) / 2);
-      const curve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(...from), mid, new THREE.Vector3(...to));
-      const inProject = (!selectedProject || handoff.jobId === selectedProject) && (!focused || handoff.fromKey === focused || handoff.toKey === focused);
-      const line = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, focused ? 0.014 : handoff.fresh ? 0.05 : 0.032, 6, false),
-        track(new THREE.MeshBasicMaterial({ color: palette.accent, transparent: true, opacity: inProject ? (handoff.fresh ? 0.9 : 0.55) : 0.08, toneMapped: false, depthWrite: false })));
-      const hit = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.35, 6, false), track(new THREE.MeshBasicMaterial({ visible: false })));
-      hit.userData = { handoff };
-      handoffGroup.add(line, hit);
-      pickables.push(hit);
-      const record = { handoff, curve, line, hit, packet: null, t: 0 };
-      const key = `${handoff.id}@${handoff.at}`;
-      if (handoff.fresh && inProject && !reducedMotion && !seenPackets.has(key)) {
-        record.packet = new THREE.Mesh(packetGeometry, track(new THREE.MeshBasicMaterial({ color: palette.accent, toneMapped: false })));
-        record.packet.position.copy(curve.getPoint(0));
-        handoffGroup.add(record.packet);
-      }
-      seenPackets.add(key);
-      handoffs.push(record);
-    }
-    for (let index = pickables.length - 1; index >= 0; index -= 1) if (pickables[index].userData.handoff && !handoffGroup.children.includes(pickables[index])) pickables.splice(index, 1);
+  // ------------------------------------------------------------ camera states (§09)
+  let aspect = 16 / 9;
+  const insets = () => options.insets?.() || {};
+  const viewFor = (request) => {
+    const name = request?.name || 'overview';
+    if (name === 'department') return departmentView(request.key, { aspect, insets: insets() }) || overviewView({ aspect, insets: insets() });
+    if (name === 'agent') return agentView(request.key) || overviewView({ aspect, insets: insets() });
+    if (name === 'chief') return chiefView({ aspect, insets: insets() });
+    if (name === 'handoffs') return handoffsView(handoffs.showHistory(current.handoffs || [], true), { aspect, insets: insets() });
+    return overviewView({ aspect, insets: insets() });
   };
-
-  // ------------------------------------------------------------ labels (DOM)
-  // Real buttons over the scene: readable, keyboard-reachable, and the
-  // accessible equivalent of clicking a 3D workspace.
-  const labels = document.createElement('div');
-  labels.className = 'o3d-labels';
-  container.append(labels);
-  const labelFor = new Map();
-  for (const key of workspaces.keys()) {
-    const button = document.createElement('button');
-    button.type = 'button'; button.className = 'o3d-label'; button.dataset.key = key;
-    // First click flies to the workspace; a click on the focused workspace
-    // (or Enter from the keyboard) opens the employee panel.
-    button.onpointerdown = () => { button.dataset.armed = String(focused === key); };
-    button.onclick = () => { const open = button.dataset.armed !== 'false'; delete button.dataset.armed; if (open) on.select?.(key); else if (focused !== key) focus(key); };
-    button.onfocus = () => focus(key);
-    labels.append(button);
-    labelFor.set(key, button);
-  }
-  const beaconButton = document.createElement('a');
-  beaconButton.className = 'o3d-label o3d-needs'; beaconButton.href = '#/attention';
-  labels.append(beaconButton);
-
-  // ------------------------------------------------------------ state → scene
-  const drawSurfaces = (force = false) => {
-    for (const [key, workspace] of workspaces) {
-      const employee = current.employees.find((entry) => entry.key === key);
-      const visual = stateVisual(employee || { state: 'AVAILABLE', key });
-      const signature = JSON.stringify([employee?.state, employee?.task, employee?.artifact?.id, employee?.coding, key === 'chief' ? [current.projects, current.summary, selectedProject] : null, dark]);
-      workspace.visual = visual;
-      workspace.pose = POSES[visual.pose] || POSES.relaxed;
-      if (!force && signature === workspace.signature) continue;
-      workspace.signature = signature;
-      if (key === 'chief') drawProjectWall(workspace.board.canvas, { state: current, palette, selected: selectedProject });
-      else if (key === 'coding') drawEngineeringPanel(workspace.board.canvas, { employee, panel: visual.panel, palette, stages: CODING_STAGES });
-      else drawBoard(workspace.board.canvas, { kind: workspace.board.kind, employee, visual, palette, seed: workspace.seed });
-      workspace.board.texture.needsUpdate = true;
-      for (const monitor of workspace.monitors) { drawMonitor(monitor.canvas, { visual, palette, label: employee?.label || key.toUpperCase() }); monitor.texture.needsUpdate = true; }
-      const tone = { attention: palette.warning, waiting: palette.muted, warning: palette.warning, done: palette.success, error: palette.danger }[visual.indicator];
-      // COMPLETED shows a brief pulse only when the scene sees it happen.
-      const justCompleted = visual.indicator === 'done' && workspace.lastState && workspace.lastState !== 'COMPLETED';
-      workspace.lastState = employee?.state || 'AVAILABLE';
-      workspace.indicator.visible = Boolean(visual.indicator) && visual.indicator !== 'waiting' && (visual.indicator !== 'done' || justCompleted);
-      if (tone) { workspace.dot.material.color.set(tone); workspace.halo.material.color.set(tone); }
-      workspace.completedAt = justCompleted ? performance.now() : 0;
-    }
+  let active = { name: 'overview' };
+  let overviewDistance = 50; let overviewFar = 70;
+  let shot = viewFor(active);
+  let move = null; // { from, to, start, duration }
+  let lastInput = performance.now();
+  let idleOrbit = null;
+  const placeCamera = (view) => {
+    camera.position.set(...view.position);
+    camera.fov = view.fov;
+    camera.updateProjectionMatrix();
+    camera.lookAt(...view.target);
   };
-  const drawLabels = () => {
-    for (const employee of current.employees) {
-      const button = labelFor.get(employee.key);
-      if (!button) continue;
-      const inProject = !selectedProject || current.projects.find((project) => project.id === selectedProject)?.team.includes(employee.key);
-      button.dataset.state = employee.state;
-      button.classList.toggle('dimmed', !inProject);
-      button.innerHTML = `<span class="o3d-name">${escape(employee.label)}</span><span class="o3d-state">${escape(stateWord(employee.visual))}</span>${employee.task ? `<span class="o3d-task" dir="auto">${escape(employee.task)}</span>` : ''}<span class="o3d-open" aria-hidden="true">Open panel ›</span>`;
-      button.setAttribute('aria-label', `${employee.label}: ${stateWord(employee.visual)}${employee.task ? ` — ${employee.task}` : ''}. Open workspace`);
-    }
-    beaconButton.hidden = !current.needsFahad;
-    beaconButton.textContent = `${current.needsFahad} ${current.needsFahad === 1 ? 'needs' : 'need'} you`;
-    beaconButton.setAttribute('aria-label', `${current.needsFahad} ${current.needsFahad === 1 ? 'item needs' : 'items need'} your attention. Open Needs Fahad`);
-    beacon.visible = current.needsFahad > 0;
-  };
-  const applyProjectDim = () => {
-    const team = selectedProject ? current.projects.find((project) => project.id === selectedProject)?.team || [] : null;
-    for (const [key, workspace] of workspaces) {
-      const target = !team || team.includes(key) || key === 'chief' ? 1 : 0.28;
-      workspace.dim = target;
-    }
-  };
-
-  // ------------------------------------------------------------ camera rig
-  const view = { target: new THREE.Vector3(...CAMERA.overview.target), azimuth: CAMERA.overview.azimuth, polar: CAMERA.overview.polar, distance: CAMERA.overview.distance };
-  let tween = null;
-  const placeCamera = () => {
-    const sinPolar = Math.sin(view.polar);
-    camera.position.set(view.target.x + view.distance * sinPolar * Math.sin(view.azimuth), view.target.y + view.distance * Math.cos(view.polar), view.target.z + view.distance * sinPolar * Math.cos(view.azimuth));
-    camera.lookAt(view.target);
-  };
-  // Camera moves (V5.1): duration grows with the distance travelled, a
-  // smootherstep ease starts and lands softly, and long moves rise a little
-  // mid-flight (a crane, not a cut) so the Office stays readable.
-  const moveTo = (preset, duration) => {
-    const to = { target: new THREE.Vector3(...preset.target), azimuth: preset.azimuth, polar: preset.polar, distance: preset.distance };
-    if (reducedMotion || duration === 0) { Object.assign(view, { ...to, target: to.target }); placeCamera(); wake(); return; }
-    const travel = view.target.distanceTo(to.target) + Math.abs(view.distance - to.distance) * 0.5;
-    tween = { from: { target: view.target.clone(), azimuth: view.azimuth, polar: view.polar, distance: view.distance }, to, start: performance.now(),
-      duration: duration ?? clamp(800 + travel * 22, 950, 1800), rise: travel > 8 ? Math.min(10, travel * 0.18) : 0 };
+  const setView = (request, { instant = false } = {}) => {
+    zoom = 1;
+    if ((request?.name || 'overview') !== 'handoffs') handoffs.showHistory([], false);
+    const next = viewFor(request);
+    active = { ...request, name: next.name, key: next.key };
+    idleOrbit = null;
+    const from = currentShot();
+    if (instant || reducedMotion) { shot = next; move = null; placeCamera(shot); }
+    else { move = { from, to: next, start: performance.now(), duration: transitionMs(from, next) }; shot = next; }
+    if (dof) dof.enabled = active.name === 'agent' && !reducedMotion;
+    watchdog.grace(performance.now());
+    on.view?.(active);
     wake();
   };
-  let focused = null;
-  const controlsHeight = () => (container.parentElement?.querySelector('.o3d-controls')?.offsetHeight || 40) + 14;
-  // The overview distance is fitted to the stage so the whole plinth shows
-  // at any aspect ratio.
-  let overviewPreset = { ...CAMERA.overview };
-  const fitOverview = () => {
-    const corners = [];
-    // Keep the building clear of the view controls (one or two rows).
-    const top = Math.min(0.78, 1 - (2 * (controlsHeight() + 24)) / Math.max(1, container.clientHeight));
-    // Fit the furnished area (walls, workspaces, entrance); the plinth's far
-    // corners may be cropped slightly.
-    for (const x of [-19.6, 19.6]) for (const z of [-15.6, 9.8]) for (const y of [0, 3.6]) corners.push(new THREE.Vector3(x, y, z));
-    const probe = camera.clone();
-    const fits = (distance) => {
-      const sin = Math.sin(CAMERA.overview.polar);
-      const [tx, ty, tz] = CAMERA.overview.target;
-      probe.position.set(tx + distance * sin * Math.sin(CAMERA.overview.azimuth), ty + distance * Math.cos(CAMERA.overview.polar), tz + distance * sin * Math.cos(CAMERA.overview.azimuth));
-      probe.lookAt(tx, ty, tz); probe.updateMatrixWorld(); probe.updateProjectionMatrix();
-      return corners.every((corner) => { const p = corner.clone().project(probe); return Math.abs(p.x) < 1.1 && p.y < top && p.y > -1.02; });
-    };
-    let low = 20; let high = 140;
-    for (let step = 0; step < 18; step += 1) { const mid = (low + high) / 2; if (fits(mid)) high = mid; else low = mid; }
-    overviewPreset = { ...CAMERA.overview, distance: high };
-  };
-  function focus(key) { focused = key; ceiling.visible = false; labels.classList.add('zoomed'); buildHandoffs(); moveTo(focusPreset(key)); on.focus?.(key); }
-  const overview = () => { focused = null; ceiling.visible = true; labels.classList.remove('zoomed'); buildHandoffs(); moveTo(overviewPreset); on.focus?.(null); };
+  const currentShot = () => ({ position: camera.position.toArray(), target: shot.target, fov: camera.fov });
 
-  // Gentle orbit (drag) and zoom (wheel) — clicks remain the main interaction.
-  let drag = null;
-  canvas.addEventListener('pointerdown', (event) => { drag = { x: event.clientX, y: event.clientY, azimuth: view.azimuth, polar: view.polar, moved: false }; });
-  window.addEventListener('pointerup', onPointerUp);
-  canvas.addEventListener('pointermove', (event) => {
-    if (drag) {
-      const dx = event.clientX - drag.x; const dy = event.clientY - drag.y;
-      if (Math.hypot(dx, dy) > 4) drag.moved = true;
-      if (drag.moved) {
-        tween = null;
-        view.azimuth = clamp(drag.azimuth - dx * 0.004, -0.4, 1.9);
-        view.polar = clamp(drag.polar - dy * 0.003, 0.55, 1.25);
-        placeCamera(); wake();
-      }
-      return;
+  // ------------------------------------------------------------ labels: anchors for the overlay
+  // The overlay lays out floor labels (labels.js); the scene tells it where
+  // each label's floor ring is, how far it is, and what the focus covers.
+  const anchors = ZONE_KEYS.map((key) => ({ key, world: new THREE.Vector3(...labelAnchor(key)) }));
+  const projected = new THREE.Vector3();
+  let frameKey = '';
+  const focusRect = (key, width, height) => {
+    const zone = ZONES[key]; if (!zone) return null;
+    const { x, z } = zone.desk; const y = key === 'chief' ? -0.45 : 0;
+    const xs = []; const ys = [];
+    // CHIEF's focus is the table and the Office Wall it faces.
+    const points = [];
+    for (const dx of [-1.1, 1.1]) for (const dz of [-0.9, 1.2]) for (const dy of [0, 1.45]) points.push([x + dx, y + dy, z + dz]);
+    if (key === 'chief') for (const dx of [-3.7, 3.7]) for (const dy of [1.2, 3.7]) points.push([dx, dy, -6.8]);
+    for (const [px, py, pz] of points) {
+      projected.set(px, py, pz).project(camera);
+      if (projected.z > 1) continue;
+      xs.push(((projected.x + 1) / 2) * width); ys.push(((1 - projected.y) / 2) * height);
     }
-    hover(event);
-  });
-  canvas.addEventListener('wheel', (event) => { event.preventDefault(); tween = null; view.distance = clamp(view.distance * (1 + Math.sign(event.deltaY) * 0.08), 9, 80); placeCamera(); wake(); }, { passive: false });
-  function onPointerUp(event) {
-    if (!drag) return;
-    const moved = drag.moved;
-    drag = null;
-    if (!moved && event.target === canvas) pick(event);
-  }
+    if (!xs.length) return null;
+    const rect = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    return rect.w > width * 0.96 ? null : rect;
+  };
+  const emitFrame = (force = false) => {
+    const width = container.clientWidth; const height = container.clientHeight;
+    const key = `${camera.matrixWorld.elements.map((value) => value.toFixed(3)).join(',')}|${width}x${height}`;
+    if (!force && key === frameKey) return;
+    frameKey = key;
+    camera.updateMatrixWorld();
+    const list = anchors.map(({ key: id, world }) => {
+      projected.copy(world).project(camera);
+      return { key: id, x: ((projected.x + 1) / 2) * width, y: ((1 - projected.y) / 2) * height, visible: projected.z < 1 && projected.z > -1, distance: world.distanceTo(camera.position) };
+    });
+    const focusKey = active.name === 'agent' || active.name === 'department' ? active.key : active.name === 'chief' ? 'chief' : null;
+    on.frame?.({ anchors: list, lodScale: lodScale(), focusKey, focusRect: active.name === 'agent' || active.name === 'chief' ? focusRect(focusKey, width, height) : null, width, height });
+  };
+
+  // ------------------------------------------------------------ picking
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
+  const pickables = [...furniture.workstations.values()].map((station) => station.hit);
   const hitAt = (event) => {
     const rect = canvas.getBoundingClientRect();
     pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(pointer, camera);
-    return raycaster.intersectObjects(pickables, false)[0]?.object || null;
+    const targets = active.name === 'handoffs' ? [...handoffs.group.children.flatMap((child) => (child.isGroup ? child.children : [child])).filter((mesh) => mesh.userData?.handoff), ...pickables] : pickables;
+    return raycaster.intersectObjects(targets, false)[0]?.object || null;
   };
-  let hovered = null;
-  const hover = (event) => {
+  let press = null;
+  canvas.addEventListener('pointerdown', (event) => { press = { x: event.clientX, y: event.clientY }; });
+  canvas.addEventListener('pointerup', (event) => {
+    if (!press || Math.hypot(event.clientX - press.x, event.clientY - press.y) > 6) { press = null; return; }
+    press = null;
     const object = hitAt(event);
-    canvas.style.cursor = object ? 'pointer' : 'grab';
-    const key = object?.userData.key || null;
-    if (key !== hovered) { if (hovered) labelFor.get(hovered)?.classList.remove('hover'); hovered = key; if (key) labelFor.get(key)?.classList.add('hover'); }
-  };
-  const pick = (event) => {
-    const object = hitAt(event);
-    if (!object) return;
-    if (object.userData.handoff) return on.handoff?.(object.userData.handoff);
-    if (object.userData.beacon) { location.hash = '#/attention'; return; }
-    if (object.userData.board && object.userData.key) {
-      const employee = current.employees.find((entry) => entry.key === object.userData.key);
-      if (employee?.artifact) return on.artifact?.(employee.artifact);
-    }
-    if (object.userData.key) { if (focused === object.userData.key) on.select?.(object.userData.key); else focus(object.userData.key); }
-  };
+    if (object?.userData?.handoff) on.handoff?.(object.userData.handoff);
+    else if (object?.userData?.key) on.select?.(object.userData.key);
+  });
+  canvas.addEventListener('pointermove', (event) => { if (event.buttons) return; canvas.style.cursor = hitAt(event) ? 'pointer' : 'default'; });
+  // Gentle zoom along the current view (the lens and elevation stay fixed).
+  let zoom = 1;
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    zoom = Math.max(0.7, Math.min(1.6, zoom * (1 + Math.sign(event.deltaY) * 0.06)));
+    const base = viewFor(active);
+    const offset = new THREE.Vector3(...base.position).sub(new THREE.Vector3(...base.target)).multiplyScalar(zoom);
+    shot = { ...base, position: new THREE.Vector3(...base.target).add(offset).toArray() };
+    move = null; placeCamera(shot); wake();
+  }, { passive: false });
 
   // ------------------------------------------------------------ loop
-  const born = performance.now();
-  let awake = true;
-  let lastFrame = 0;
+  let awake = true; let lastFrame = 0;
+  let lastInfo = { calls: 0, triangles: 0 };
+  const desksAnimating = () => [...desks.values()].some((desk) => desk.signal.ring === 'approval' || (desk.flareAt && performance.now() - desk.flareAt < 600));
   const frames = [];
-  let slowSince = 0;
-  let ambientOnly = false;
   function wake() { awake = true; }
-  const project = new THREE.Vector3();
-  const loop = () => {
-    if (disposed) return;
-    const now = performance.now();
-    if (document.hidden) return;
-    // Only ambient motion (breathing, a pulse): 30 fps is plenty.
-    if (now - lastFrame < 1000 / (ambientOnly ? Math.min(30, settings.fps) : settings.fps) - 1) return;
-    const delta = now - lastFrame; lastFrame = now;
-    const time = (now - born) / 1000;
-    let animating = false;
+  const loop = (now) => {
+    if (disposed || document.hidden || !onScreen) return;
+    const ambient = !reducedMotion;
+    const fps = ambient && !move && !lightTween && !idleOrbit ? Math.min(30, settings.fps) : settings.fps;
+    if (now - lastFrame < 1000 / fps - 1) return;
+    const delta = lastFrame ? now - lastFrame : 16; lastFrame = now;
     try {
-      if (tween) {
-        const t = Math.min(1, (now - tween.start) / tween.duration);
-        const e = t * t * t * (t * (t * 6 - 15) + 10);
-        view.target.lerpVectors(tween.from.target, tween.to.target, e);
-        view.azimuth = tween.from.azimuth + (tween.to.azimuth - tween.from.azimuth) * e;
-        view.polar = tween.from.polar + (tween.to.polar - tween.from.polar) * e;
-        view.distance = tween.from.distance + (tween.to.distance - tween.from.distance) * e + tween.rise * Math.sin(Math.PI * e);
-        placeCamera();
-        if (t >= 1) tween = null;
+      let animating = false;
+      if (move) {
+        const t = Math.min(1, (now - move.start) / move.duration);
+        const view = between(move.from, move.to, t);
+        placeCamera(view);
+        if (t >= 1) move = null;
         animating = true;
-      }
-      for (const workspace of workspaces.values()) {
-        const motion = motionFor(workspace.visual, { reducedMotion });
-        const glance = workspace.glance && now < workspace.glance.until ? workspace.glance.yaw : 0;
-        applyPose(workspace.figure, workspace.pose, { time, ambient: motion.ambient, task: motion.task, seed: workspace.seed, glance });
-        if (workspace.completedAt && now - workspace.completedAt > 6000) { workspace.indicator.visible = false; workspace.completedAt = 0; }
-        if (workspace.indicator.visible && !reducedMotion) {
-          const pulse = workspace.visual.indicator === 'attention' ? 1 + Math.sin(time * 2.4) * 0.12 : 1;
-          workspace.halo.scale.setScalar(pulse);
-          workspace.indicator.rotation.y = 0;
-          workspace.indicator.lookAt(camera.position);
-        }
-        if (workspace.lastDim !== workspace.dim) {
-          workspace.lastDim = workspace.dim;
-          setDim(workspace.group, workspace.dim);
-        }
-        if (motion.ambient) animating = true;
+      } else if (idleOrbit) {
+        placeCamera(orbit(idleOrbit.base, (now - idleOrbit.start) / 1000));
+        animating = true;
+      } else if (!reducedMotion && active.name === 'overview' && now - lastInput > CAMERA_STATES.idle.afterSeconds * 1000) {
+        idleOrbit = { base: shot, start: now };
+        on.view?.({ name: 'idle' });
       }
       if (lightTween) {
-        const t = Math.min(1, (now - lightTween.start) / TRANSITION_MS);
-        light = blendLighting(lightTween.from, lightTween.to, easeLight(t));
-        applyLighting(light);
-        if (t >= 1) lightTween = null;
+        const t = Math.min(1, (now - lightTween.start) / MODE_TRANSITION_MS);
+        const eased = t * t * (3 - 2 * t);
+        applyLighting(blendPreset(lightTween.from, lightTween.to.preset, eased));
+        if (t >= 1) { lighting = lightTween.to; lightTween = null; }
         animating = true;
       }
-      if (beacon.visible && !reducedMotion) { beaconHalo.scale.setScalar(1 + Math.sin(time * 2.2) * 0.15); beaconHalo.lookAt(camera.position); animating = true; }
-      for (const record of handoffs) {
-        if (!record.packet) continue;
-        record.t = Math.min(1, record.t + delta / 1900);
-        const e = 1 - Math.pow(1 - record.t, 3);
-        record.packet.position.copy(record.curve.getPoint(e));
-        if (record.t >= 1) { handoffGroup.remove(record.packet); record.packet = null; }
-        animating = true;
+      const cameraY = camera.position.y;
+      architecture.lowCeiling.visible = ceilingVisible(cameraY, OFFICE.ceiling);
+      architecture.highCeiling.visible = ceilingVisible(cameraY, OFFICE.atrium);
+      const close = ['department', 'agent'].includes(active.name) && !idleOrbit;
+      architecture.setHiddenColumns(close ? occluders(camera.position.toArray(), shot.target, COLUMNS, { halfAngle: Math.atan(Math.tan((camera.fov * Math.PI) / 360) * camera.aspect), keep: active.name === 'department' ? ZONES[active.key]?.bounds : null }) : []);
+      plants.tick(now / 1000);
+      if (crew.tick(delta / 1000, measurePeople())) animating = true;
+      if (life.tick(now, current)) animating = true;
+      // Passing clouds (ambient, day only).
+      if (!reducedMotion && sun.userData.base > 0.05) sun.intensity = sun.userData.base * cloudShade(now / 1000);
+      const flow = handoffs.tick(now);
+      if (flow.animating) animating = true;
+      for (const handoff of flow.arrivals) {
+        const desk = desks.get(handoff.toKey);
+        if (desk) {
+          desk.arrivalAt = now;
+          const from = ZONES[handoff.fromKey]?.desk; const to = ZONES[handoff.toKey]?.desk;
+          if (from && to) { const world = Math.atan2(-(from.x - to.x), -(from.z - to.z)); let turn = world - to.yaw; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); desk.glance = { yaw: Math.max(-0.7, Math.min(0.7, turn)), until: now + 3000 }; }
+        }
+        on.arrival?.(handoff);
       }
-      ambientOnly = !awake && !tween && !lightTween && !handoffs.some((record) => record.packet);
-      if (awake || animating) {
-        renderer.render(scene, camera);
-        placeLabels();
+      applyDesks(now);
+      furniture.syncChairs();
+      if (desksAnimating()) animating = true;
+      if (move || animating) refreshNear();
+      if (awake || animating || ambient) {
+        // Shadows: on demand, and at most 15 times a second while people or chairs move.
+        if (animating && now - shadowsAt > 66) renderer.shadowMap.needsUpdate = true;
+        // Night: no sun, no shadow pass (once the map exists; the samplers need a depth texture).
+        if (sun.intensity < 0.01 && sun.shadow.map) renderer.shadowMap.needsUpdate = false;
+        if (renderer.shadowMap.needsUpdate) shadowsAt = now;
+        renderer.info.reset();
+        if (composer) composer.render(); else renderer.render(scene, camera);
+        lastInfo = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
+        emitFrame();
       }
       awake = false;
-      frames.push(delta);
-      if (frames.length > 90) frames.shift();
-      watchPerformance(now);
-    } catch (error) { fail(error); }
-  };
-  // Labels follow their workspace; overlapping labels are nudged apart
-  // (nearer workspaces keep their place), so names never cover each other.
-  const placeLabels = () => {
-    const rect = canvas.getBoundingClientRect();
-    const placed = [];
-    const entries = [...workspaces].map(([key, workspace]) => {
-      // Overview: above the employee. Focus: under the desk, so the wall
-      // display (the real work) stays uncovered.
-      if (focused) project.set(0, 0.05, 1.9).applyMatrix4(workspace.group.matrixWorld);
-      else project.set(0, 2.45, 0.9).applyMatrix4(workspace.group.matrixWorld);
-      const depth = project.distanceTo(camera.position);
-      project.project(camera);
-      return { key, x: ((project.x + 1) / 2) * rect.width, y: ((1 - project.y) / 2) * rect.height, visible: project.z < 1, depth };
-    }).sort((a, b) => a.depth - b.depth);
-    for (const entry of entries) {
-      const button = labelFor.get(entry.key);
-      const width = button.offsetWidth || 110; const height = button.offsetHeight || 40;
-      let top = focused ? entry.y + 6 : entry.y - height;
-      for (let pass = 0; pass < 6; pass += 1) {
-        const clash = placed.find((box) => Math.abs(box.x - entry.x) < (box.width + width) / 2 + 4 && top < box.top + box.height + 3 && top + height > box.top - 3);
-        if (!clash) break;
-        top = clash.top - height - 4;
+      frames.push(delta); if (frames.length > 90) frames.shift();
+      if (!reducedMotion && options.watchdog !== false) {
+        const decision = watchdog.frame(now, delta, fps, document.hasFocus());
+        if (decision?.step) setQuality(decision.step);
+        else if (decision?.giveUp) on.slow?.(decision.fps);
       }
-      // A workspace outside the frame hides its label instead of piling up at the edge.
-      const onScreen = entry.visible && entry.x > -width / 2 && entry.x < rect.width + width / 2 && entry.y > -20 && entry.y < rect.height + 20;
-      if (!onScreen) { button.style.visibility = 'hidden'; continue; }
-      top = Math.max(controlsHeight() + 8, Math.min(rect.height - height - 10, top));
-      const left = Math.max(8, Math.min(rect.width - width - 8, entry.x - width / 2));
-      placed.push({ x: left + width / 2, top, width, height });
-      button.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
-      button.style.visibility = 'visible';
-      button.classList.toggle('focused', focused === entry.key);
-    }
-    if (!beaconButton.hidden) {
-      project.set(0, 2.0, 0).applyMatrix4(beacon.matrixWorld).project(camera);
-      beaconButton.style.transform = `translate(${Math.round(((project.x + 1) / 2) * rect.width + 14)}px, ${Math.round(((1 - project.y) / 2) * rect.height - 14)}px)`;
+    } catch (error) {
+      // One bad frame is survived; only repeated errors stop the 3D Office.
+      console.warn('3D Office frame error:', error?.message || error);
+      if (errors.record(performance.now())) fail(error);
     }
   };
-  // Frame-rate watchdog: step quality down, then give up gracefully.
-  const watchPerformance = (now) => {
-    if (frames.length < 60 || reducedMotion) return;
-    const fps = 1000 / (frames.reduce((sum, value) => sum + value, 0) / frames.length);
-    const floor = Math.min(22, settings.fps * 0.5);
-    if (fps >= floor) { slowSince = 0; return; }
-    if (!slowSince) { slowSince = now; return; }
-    if (now - slowSince < 4000) return;
-    slowSince = 0; frames.length = 0;
-    const next = ORDER[ORDER.indexOf(tier) + 1];
-    if (next) setQuality(next);
-    else on.slow?.(fps);
-  };
+
   function setQuality(next) {
-    tier = next; settings = QUALITY[next];
+    tier = next; settings = QUALITY[next]; watchdog.grace(performance.now(), 4000);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, settings.pixelRatio));
-    renderer.shadowMap.enabled = settings.shadows; sun.castShadow = settings.shadows;
-    resize(); on.quality?.(next);
+    sun.shadow.mapSize.set(settings.shadowSize, settings.shadowSize); sun.shadow.map?.dispose(); sun.shadow.map = null; renderer.shadowMap.needsUpdate = true;
+    buildComposer(); resize(); applyLighting(lighting.preset); on.quality?.(next);
   }
 
-  // ------------------------------------------------------------ resize / dispose
+  // ------------------------------------------------------------ input
+  const touch = () => { lastInput = performance.now(); if (idleOrbit) { idleOrbit = null; setView(active); } };
+  for (const type of ['pointerdown', 'wheel', 'keydown']) { window.addEventListener(type, touch, { passive: true }); cleanup.push(() => window.removeEventListener(type, touch)); }
+  const onKey = (event) => {
+    if (event.target.closest?.('input, textarea, select, [contenteditable="true"]') || document.querySelector('.sheet.open')) return;
+    if (event.key === 'Escape') { const back = stepBack(active); if (back.name !== active.name || back.key !== active.key) { event.preventDefault(); setView(back); } return; }
+    if (/^[0-8]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const key = zoneByNumber(Number(event.key));
+      if (key) { event.preventDefault(); setView(key === 'chief' ? { name: 'chief' } : { name: 'department', key }); }
+    }
+  };
+  window.addEventListener('keydown', onKey);
+  cleanup.push(() => window.removeEventListener('keydown', onKey));
+
+  // ------------------------------------------------------------ resize
   const resize = () => {
     const { clientWidth: width, clientHeight: height } = container;
     if (!width || !height) return;
     renderer.setSize(width, height, false);
-    camera.aspect = width / height; camera.updateProjectionMatrix();
-    const wasOverview = !focused && !tween && Math.abs(view.distance - overviewPreset.distance) < 0.01;
-    fitOverview();
-    if (wasOverview || !fittedOnce) { fittedOnce = true; Object.assign(view, { target: new THREE.Vector3(...overviewPreset.target), azimuth: overviewPreset.azimuth, polar: overviewPreset.polar, distance: overviewPreset.distance }); placeCamera(); }
+    watchdog.grace(performance.now());
+    composer?.setSize(width, height);
+    aspect = width / height; camera.aspect = aspect; camera.updateProjectionMatrix();
+    const fitted = overviewView({ aspect, insets: insets() });
+    overviewDistance = fitted.distance;
+    overviewFar = Math.max(...ZONE_KEYS.map((key) => { const [x, y, z] = labelAnchor(key); return Math.hypot(x - fitted.position[0], y - fitted.position[1], z - fitted.position[2]); }));
+    shot = viewFor(active);
+    if (!move) placeCamera(shot);
     wake();
+    if (typeof emitFrame === 'function') requestAnimationFrame(() => emitFrame(true));
   };
-  let fittedOnce = false;
-  // Escape returns to the overview (keyboard equivalent of "back").
-  const onKey = (event) => { if (event.key === 'Escape' && focused && !document.querySelector('.sheet-backdrop, dialog[open]')) overview(); };
-  container.addEventListener('keydown', onKey);
   const observer = new ResizeObserver(resize);
   observer.observe(container);
-  const onVisibility = () => { if (!document.hidden) { lastFrame = 0; wake(); } };
+  const onVisibility = () => { if (!document.hidden) { lastFrame = 0; watchdog.grace(performance.now()); wake(); } };
+  // Off-screen (scrolled away, a collapsed panel): no rendering, no judging.
+  let onScreen = true;
+  const visibility = new IntersectionObserver(([entry]) => {
+    const next = entry.isIntersecting;
+    if (next && !onScreen) { lastFrame = 0; watchdog.grace(performance.now()); wake(); }
+    onScreen = next;
+  });
+  visibility.observe(container);
   document.addEventListener('visibilitychange', onVisibility);
 
-  function fail(error) {
-    if (disposed) return;
-    on.error?.(error);
-  }
+  function fail(error) { if (!disposed) on.error?.(error); }
 
-  // ------------------------------------------------------------ public API
-  // Glances: a real, fresh handoff turns both employees toward each other
-  // for a few seconds, once per handoff. Nothing moves without one.
-  const glanced = new Set();
-  const startGlances = () => {
-    if (reducedMotion) return;
-    for (const handoff of current.handoffs) {
-      const id = `${handoff.id}@${handoff.at}`;
-      if (!handoff.fresh || glanced.has(id)) continue;
-      glanced.add(id);
-      const until = performance.now() + 5000;
-      const from = workspaces.get(handoff.fromKey); const to = workspaces.get(handoff.toKey);
-      if (from && to) { from.glance = { yaw: glanceYaw(handoff.fromKey, handoff.toKey), until }; to.glance = { yaw: glanceYaw(handoff.toKey, handoff.fromKey), until }; }
-    }
-  };
-  const update = (next) => {
-    const previous = current;
-    current = next;
-    startGlances();
-    drawSurfaces();
-    buildHandoffs();
-    drawLabels();
-    applyProjectDim();
-    followWork(previous, next);
-    wake();
-  };
-  // FOLLOW WORK: only major events move the camera, at most every 20 s.
-  let lastFollow = 0;
-  const followWork = (previous, next) => {
-    if (!follow || !previous || performance.now() - lastFollow < 20_000) return;
-    const before = new Map(previous.employees.map((employee) => [employee.key, employee.state]));
-    const major = next.employees.find((employee) => employee.state !== before.get(employee.key) && ['NEEDS FAHAD', 'COMPLETED'].includes(employee.state))
-      || next.employees.find((employee) => employee.state !== before.get(employee.key) && employee.active && before.get(employee.key) === 'AVAILABLE');
-    const fresh = next.handoffs.find((handoff) => handoff.fresh && !previous.handoffs.some((old) => old.id === handoff.id));
-    const key = major?.key || fresh?.toKey;
-    if (!key) return;
-    lastFollow = performance.now();
-    focus(key);
-  };
-
-  placeCamera(); resize();
-  update(state);
+  // ------------------------------------------------------------ start
+  applyLighting(lighting.preset);
+  resize();
+  placeCamera(shot);
+  refreshNear();
+  for (const screen of screens) drawScreen(screen, true);
+  applyDesks();
   renderer.setAnimationLoop(loop);
+  let textureSource = null;
+  const ready = (async () => {
+    const [day, night] = await Promise.all([loadEnvironment('day'), loadEnvironment('night')]);
+    environments.day = day || fallbackEnvironment(); environments.night = night || environments.day;
+    applyLighting(lighting.preset); wake();
+    on.progress?.(0.3);
+    const textures = await materials.load();
+    // Compile every program the scene needs now, off the critical frames where the browser can.
+    try {
+      if (renderer.extensions.has('KHR_parallel_shader_compile')) await renderer.compileAsync(scene, camera);
+      else renderer.compile(scene, camera);
+    } catch { /* compiled on first use instead */ }
+    renderer.shadowMap.needsUpdate = true; wake();
+    on.progress?.(1);
+    textureSource = textures;
+    watchdog.ready(performance.now());
+    return textures;
+  })().catch((error) => { fail(error); return null; });
 
   return {
-    update,
-    focus,
-    overview,
-    setProject(id) { selectedProject = id || null; drawSurfaces(true); buildHandoffs(); drawLabels(); applyProjectDim(); if (id) overview(); wake(); },
-    setFollow(value) { follow = Boolean(value); },
-    setTime,
-    time: () => timeName,
-    // Department view: frames one wing (Executive Atrium, Intelligence Wing…).
-    focusWing(id) { const preset = wingPreset(id); if (!preset) return; focused = null; ceiling.visible = false; labels.classList.remove('zoomed'); buildHandoffs(); moveTo(preset); on.focus?.(null); },
+    ready,
+    update(next) {
+      current = next;
+      bundles = handoffs.update(current.handoffs || []).bundles;
+      if (active.name === 'handoffs') handoffs.showHistory(current.handoffs || [], true);
+      for (const screen of screens) drawScreen(screen); applyDesks(); wake(); emitFrame(true);
+    },
+    relayout: () => emitFrame(true),
+    bundles: () => bundles,
+    setView, view: () => active, back() { setView(stepBack(active)); },
+    setLightMode, lightMode: () => lightMode, phase: () => lighting.phase,
+    setProject() { emitFrame(true); wake(); },
+    setRtl() { wake(); },
     stats() {
-      const fps = frames.length ? Math.round(1000 / (frames.reduce((sum, value) => sum + value, 0) / frames.length)) : null;
-      return { quality: tier, fps, drawCalls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures };
+      const typical = median(frames);
+      return { quality: tier, fps: typical ? Math.round(1000 / typical) : null, watch: watchdog.state(), textureSource, frameErrors: errors.count(), drawCalls: lastInfo.calls, triangles: lastInfo.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures, view: active.name, lightMode, phase: lighting.phase };
     },
     dispose() {
       disposed = true;
       renderer.setAnimationLoop(null);
-      observer.disconnect();
+      observer.disconnect(); visibility.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
-      container.removeEventListener('keydown', onKey);
-      window.removeEventListener('pointerup', onPointerUp);
-      for (const child of handoffGroup.children) child.geometry?.dispose();
-      for (const item of disposables) item.dispose?.();
-      renderer.dispose();
-      renderer.forceContextLoss?.();
-      canvas.remove(); labels.remove();
-      backdrop.style.removeProperty('--o3d-sky'); backdrop.style.removeProperty('--o3d-ground'); delete backdrop.dataset.light;
+      for (const step of cleanup) step();
+      architecture.dispose(); furniture.dispose(); plants.dispose(); life.dispose(); crew.dispose(); baked.dispose(); handoffs.dispose(); materials.dispose();
+      for (const screen of screens) { screen.texture.dispose(); screen.material.dispose(); }
+      for (const environment of new Set([environments.day, environments.night])) environment?.dispose?.();
+      pmrem.dispose(); composer?.dispose?.();
+      renderer.dispose(); if (!renderer.getContext().isContextLost()) renderer.forceContextLoss?.();
+      canvas.remove();
     },
   };
 }
-
-// Dimming for Project Mode: employees outside the project fade back.
-function setDim(group, value) {
-  group.traverse((node) => {
-    if (!node.isMesh || !node.material || node.material.visible === false) return;
-    const material = node.material;
-    if (!node.userData.dimMaterial) {
-      if (value === 1) return;
-      node.userData.original = material;
-      node.userData.dimMaterial = material.clone();
-      node.userData.dimMaterial.transparent = true;
-    }
-    if (value === 1) { node.material = node.userData.original; return; }
-    node.userData.dimMaterial.opacity = (node.userData.original.opacity ?? 1) * value;
-    node.material = node.userData.dimMaterial;
-  });
-}
-
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const stateWord = (value) => (String(value || '').charAt(0) + String(value || '').slice(1).toLowerCase()).replace(/\bfahad\b/, 'Fahad');
-const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));

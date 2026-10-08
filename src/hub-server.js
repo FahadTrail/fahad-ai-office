@@ -15,7 +15,7 @@ import { handleOfficeApi } from './hub-office.js';
 import { handleContinuityApi } from './hub-continuity.js';
 import { handleDeliverablesApi } from './hub-deliverables.js';
 import { rollExpiredBudgetPeriod } from './workspace-policy/supabase-store.js';
-import { readFileSync, readdirSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { extname } from 'node:path';
@@ -30,6 +30,8 @@ function loadUiAssets() {
   const assets = {};
   const walk = (dir, prefix) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      // The immersive Office's asset pack is streamed from disk (below), never held in memory.
+      if (entry.isDirectory() && `${prefix}${entry.name}` === 'office3d/assets') continue;
       if (entry.isDirectory()) { walk(new URL(`${entry.name}/`, dir), `${prefix}${entry.name}/`); continue; }
       const type = UI_TYPES[extname(entry.name)];
       if (!type) continue;
@@ -57,6 +59,49 @@ function sendAsset(request, response, asset, versioned) {
   return response.end(gzip ? asset.gzip : asset.body);
 }
 
+// The immersive Office's 3D assets (KTX2 textures, HDR environments, the
+// Basis transcoder, future GLB models) are streamed from disk under
+// /ui/office-assets/<path>: only files named in the build manifest are
+// served (no path ever reaches the file system unchecked), with an ETag, a
+// one-year immutable cache when ?v= matches the content hash, and Range
+// requests for large files. Nothing is buffered in memory.
+const OFFICE_ASSET_DIR = new URL('./hub-ui/office3d/assets/', import.meta.url);
+const OFFICE_ASSET_PREFIX = '/ui/office-assets/';
+export const OFFICE_ASSETS = (() => {
+  const manifest = new URL('manifest.json', OFFICE_ASSET_DIR);
+  if (!existsSync(manifest)) return Object.freeze({});
+  const files = JSON.parse(readFileSync(manifest, 'utf8')).files || {};
+  return Object.freeze(Object.fromEntries(Object.entries(files)
+    .filter(([name, file]) => /^[a-z0-9][a-z0-9_./-]*$/i.test(name) && !name.includes('..') && /^[0-9a-f]{16}$/.test(file.sha1) && Number.isInteger(file.bytes) && typeof file.type === 'string')
+    .map(([name, file]) => [name, Object.freeze({ etag: `"${file.sha1}"`, sha1: file.sha1, bytes: file.bytes, type: file.type })])));
+})();
+
+function sendOfficeAsset(request, response, requestUrl) {
+  let name;
+  try { name = decodeURIComponent(requestUrl.pathname.slice(OFFICE_ASSET_PREFIX.length)); } catch { return send(response, 404, 'Not found'); }
+  const asset = Object.hasOwn(OFFICE_ASSETS, name) ? OFFICE_ASSETS[name] : null;
+  if (!asset) return send(response, 404, 'Not found');
+  const headers = { 'content-type': asset.type, etag: asset.etag, 'accept-ranges': 'bytes', 'x-content-type-options': 'nosniff',
+    'cache-control': requestUrl.searchParams.get('v') === asset.sha1 ? 'public, max-age=31536000, immutable' : 'no-cache' };
+  if (request.headers['if-none-match'] === asset.etag) { response.writeHead(304, headers); return response.end(); }
+  let start = 0; let end = asset.bytes - 1; let status = 200;
+  const range = request.headers.range;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(String(range));
+    if (!match || (match[1] === '' && match[2] === '')) { response.writeHead(416, { 'content-range': `bytes */${asset.bytes}` }); return response.end(); }
+    if (match[1] === '') { start = Math.max(0, asset.bytes - Number(match[2])); } else { start = Number(match[1]); end = match[2] === '' ? end : Math.min(end, Number(match[2])); }
+    if (start > end || start >= asset.bytes) { response.writeHead(416, { 'content-range': `bytes */${asset.bytes}` }); return response.end(); }
+    status = 206; headers['content-range'] = `bytes ${start}-${end}/${asset.bytes}`;
+  }
+  headers['content-length'] = String(end - start + 1);
+  response.writeHead(status, headers);
+  if (request.method === 'HEAD') return response.end();
+  const stream = createReadStream(new URL(name, OFFICE_ASSET_DIR), { start, end });
+  stream.on('error', () => response.destroy());
+  response.on('close', () => stream.destroy());
+  return stream.pipe(response);
+}
+
 const DEFAULT_PORT = 2132;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_HISTORY_ROWS = 50;
@@ -82,6 +127,9 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
       }
       if (request.method === 'GET' && (requestUrl.pathname === '/classic' || requestUrl.pathname === '/classic/')) {
         return send(response, 200, HUB_HTML, 'text/html; charset=utf-8');
+      }
+      if ((request.method === 'GET' || request.method === 'HEAD') && requestUrl.pathname.startsWith(OFFICE_ASSET_PREFIX)) {
+        return sendOfficeAsset(request, response, requestUrl);
       }
       if (request.method === 'GET' && UI_ASSETS[requestUrl.pathname]) {
         return sendAsset(request, response, UI_ASSETS[requestUrl.pathname], requestUrl.searchParams.get('v') === UI_VERSION);

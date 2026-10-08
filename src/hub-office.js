@@ -56,7 +56,7 @@ export function officeState({ agents = [], jobs = [], tasks = [], sessions = [],
     if (!employee || !job || employee.executor === 'coding' && stageOf(task.brief) === null) continue;
     const brief = workflowOf(task.brief);
     if (brief.workflow === 'coding-agent') continue;
-    const assignment = { jobId: job.id, objective: job.title || job.goal, task: task.title, conversationId: job.conversation_id || null };
+    const assignment = { jobId: job.id, taskId: task.id, objective: job.title || job.goal, task: task.title, conversationId: job.conversation_id || null };
     const state = taskState(task, taskById, now);
     if (state === 'capacity' && ['running', 'planning'].includes(job.status)) {
       offer(employee.slug, { state: 'WAITING', detail: WAITING_MESSAGE, assignment: { ...assignment, resumesAt: task.not_before }, since: task.created_at });
@@ -80,7 +80,7 @@ export function officeState({ agents = [], jobs = [], tasks = [], sessions = [],
   const pending = new Map();
   for (const approval of approvals) if (approval.status === 'pending') pending.set(approval.session_id, [...(pending.get(approval.session_id) || []), approval]);
   for (const session of sessions) {
-    const assignment = { sessionId: session.id, objective: session.title, task: session.title, conversationId: session.conversation_id || null };
+    const assignment = { sessionId: session.id, sessionJobId: session.job_id || null, objective: session.title, task: session.title, conversationId: session.conversation_id || null };
     const need = ownerAction(session, pending.get(session.id) || []);
     if (need && ['approval', 'question'].includes(need.kind)) offer('coding-agent', { state: 'NEEDS FAHAD', detail: need.kind === 'approval' ? 'Waiting for your approval' : 'Has a question for you', assignment, since: session.updated_at });
     else if (session.status === 'blocked') offer('coding-agent', { state: 'BLOCKED', detail: 'Paused — needs you to continue', assignment, since: session.updated_at });
@@ -281,6 +281,65 @@ export function connectorUsers(id) {
   return ({ web_search: web, web_fetch: web, database: everyone, memory: everyone, telegram: ['CHIEF'] })[id] || coding;
 }
 
+// ------------------------------------------------------------------ Office redesign: queues, deliveries, usage
+// Read-only views over existing rows (no new tables): what each employee has
+// waiting, what was really delivered, and what the current task has used.
+
+// Assigned work not yet started, per employee slug (the "Queue n" display).
+export function employeeQueues({ agents = [], jobs = [], tasks = [], sessions = [], now = Date.now() }) {
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const jobById = new Map(jobs.map((job) => [job.id, job]));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const queues = new Map();
+  for (const task of tasks) {
+    const job = jobById.get(task.job_id);
+    const slug = agentById.get(task.agent_id)?.slug;
+    if (!slug || !job || !['running', 'planning'].includes(job.status)) continue;
+    if (['waiting', 'ready', 'capacity'].includes(taskState(task, taskById, now))) queues.set(slug, (queues.get(slug) || 0) + 1);
+  }
+  const queuedSessions = sessions.filter((session) => session.status === 'queued').length;
+  if (queuedSessions) queues.set('coding-agent', (queues.get('coding-agent') || 0) + queuedSessions);
+  return queues;
+}
+
+// Real deliveries: workflow tasks done and Coding Agent sessions completed.
+export function deliveriesView({ agents = [], jobs = [], tasks = [], completedSessions = [], since }) {
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const jobById = new Map(jobs.map((job) => [job.id, job]));
+  const from = Date.parse(since);
+  const done = tasks.filter((task) => task.status === 'done' && task.completed_at && Date.parse(task.completed_at) >= from && workflowOf(task.brief).workflow !== 'coding-agent')
+    .map((task) => ({ key: officeAgent(agentById.get(task.agent_id)?.slug)?.key || null, title: task.title, objective: jobById.get(task.job_id)?.title || null, jobId: task.job_id, at: task.completed_at }))
+    .filter((entry) => entry.key);
+  const shipped = completedSessions.filter((session) => session.completed_at && Date.parse(session.completed_at) >= from)
+    .map((session) => ({ key: 'coding', title: session.title, objective: session.title, sessionId: session.id, at: session.completed_at }));
+  return [...done, ...shipped].toSorted((a, b) => String(b.at).localeCompare(String(a.at)));
+}
+
+// What a task has used so far, from the model_attempts audit: the model of
+// the latest attempt, tokens and cost summed, and how long it has run.
+export function usageView(attempts = [], { startedAt = null, completedAt = null, now = Date.now() } = {}) {
+  if (!attempts.length && !startedAt) return null;
+  const ordered = attempts.toSorted((a, b) => String(a.started_at).localeCompare(String(b.started_at)));
+  const latest = ordered.at(-1) || null;
+  const sum = (field) => ordered.reduce((total, attempt) => total + Number(attempt[field] || 0), 0);
+  const begin = startedAt || ordered[0]?.started_at || null;
+  return {
+    model: latest?.model || null, provider: latest?.provider || null, attempts: ordered.length,
+    inputTokens: sum('input_tokens'), outputTokens: sum('output_tokens'), costUsd: Number(sum('cost_usd').toFixed(6)),
+    durationMs: begin ? Math.max(0, (completedAt ? Date.parse(completedAt) : now) - Date.parse(begin)) : null,
+  };
+}
+
+// The objective's pipeline: each workstream in order with its real state.
+export function pipelineView({ job, tasks = [], agents = [], now = Date.now() }) {
+  if (!job) return [];
+  const agentById = new Map(agents.map((agent) => [agent.id, agent]));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  return tasks.filter((task) => task.job_id === job.id).toSorted((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || String(a.created_at).localeCompare(String(b.created_at)))
+    .map((task) => ({ key: officeAgent(agentById.get(task.agent_id)?.slug)?.key || null, title: task.title, state: taskState(task, taskById, now) }))
+    .filter((step) => step.key);
+}
+
 // ------------------------------------------------------------------ handler
 
 // Tables added by a later migration: a missing table reads as empty so the
@@ -372,6 +431,9 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
       for (const artifact of extra.artifacts) if (!latestArtifact.has(artifact.agent_slug) || latestArtifact.get(artifact.agent_slug).created_at < artifact.created_at) latestArtifact.set(artifact.agent_slug, artifact);
       const workflowJobs = new Set(live.tasks.filter((task) => stageOf(task.brief) === 'synthesis').map((task) => task.job_id));
       const since = Date.now() - 24 * 3600_000;
+      const queues = employeeQueues(live);
+      const enabled = new Map(live.agents.map((agent) => [agent.slug, agent.is_active !== false]));
+      const completedSessions = await optionalRows(db.from('agent_sessions').select('id,title,completed_at').eq('workspace_id', workspaceId).eq('status', 'completed').gte('completed_at', new Date(since).toISOString()).limit(40));
       return sendJson(response, 200, {
         ok: true,
         agents: ACTIVE_AGENTS.map((entry) => {
@@ -381,6 +443,7 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
           return { slug: entry.slug, key: entry.key, label: entry.label, scope: entry.scope, deliverable: entry.deliverable,
             executor: entry.executor, directChat: entry.directChat, color: colors.get(entry.slug) || null, ...state,
             progress: job ? job.progress || 0 : null,
+            queue: queues.get(entry.slug) || 0, enabled: enabled.get(entry.slug) !== false,
             recentArtifact: artifact ? { id: artifact.id, type: artifact.type, title: artifact.title, at: artifact.created_at } : null };
         }),
         // team: the employees with a task in the objective (Office Project Mode).
@@ -397,6 +460,8 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
         handoffs: extra.handoffs.filter((handoff) => Date.parse(handoff.created_at) >= since)
           .map((handoff) => handoffView(handoff, { agentById, jobById, taskById, artifactsByTask })).filter((handoff) => handoff.fromKey && handoff.toKey && handoff.fromKey !== handoff.toKey),
         timeline: timelineView({ ...live, ...extra, limit: 30 }),
+        // Real deliveries of the last 24 h (the stat bar counts today's).
+        deliveries: deliveriesView({ ...live, completedSessions, since: new Date(since).toISOString() }).slice(0, 40),
         needsFahad: live.approvals.length + live.sessions.filter((session) => session.status === 'blocked' && session.error_code === 'HUMAN_INPUT_REQUIRED').length,
       }), true;
     }
@@ -415,6 +480,16 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
       const results = own.length ? await rows(db.from('results').select('task_id,summary,content,created_at,kind').in('task_id', own.map((task) => task.id))) : [];
       const jobById = new Map(live.jobs.map((job) => [job.id, job]));
       const handoffs = live.jobs.length ? await rows(db.from('handoffs').select('id,from_agent_id,to_agent_id,from_task_id,to_task_id,job_id,created_at').in('job_id', live.jobs.map((job) => job.id)).order('created_at', { ascending: false }).limit(80)) : [];
+      // The agent panel: usage of the current task, its objective's pipeline,
+      // the handoff chain and the last five deliveries.
+      const assignment = state?.assignment || null;
+      const currentTask = assignment?.taskId ? live.tasks.find((task) => task.id === assignment.taskId) : null;
+      const currentSession = assignment?.sessionId ? live.sessions.find((session) => session.id === assignment.sessionId) : null;
+      const usageAttempts = currentTask ? await optionalRows(db.from('model_attempts').select('provider,model,status,input_tokens,output_tokens,cost_usd,duration_ms,started_at').eq('task_id', currentTask.id).order('started_at', { ascending: true }).limit(200))
+        : currentSession?.job_id ? await optionalRows(db.from('model_attempts').select('provider,model,status,input_tokens,output_tokens,cost_usd,duration_ms,started_at').eq('job_id', currentSession.job_id).order('started_at', { ascending: true }).limit(400)) : [];
+      const usage = state?.state && state.state !== 'AVAILABLE' ? usageView(usageAttempts, { startedAt: currentTask?.started_at || currentSession?.created_at || null, completedAt: currentTask?.completed_at || currentSession?.completed_at || null }) : null;
+      const currentJob = assignment?.jobId ? live.jobs.find((job) => job.id === assignment.jobId) : null;
+      const pipeline = pipelineView({ job: currentJob, tasks: live.tasks, agents: live.agents });
       const conversations = employee.directChat && employee.executor === 'office'
         ? await rows(db.from('conversations').select('id,title,last_message_at').eq('project_id', workspaceId).eq('agent_slug', employee.slug).eq('archived', false).order('last_message_at', { ascending: false }).limit(10))
         : [];
@@ -442,6 +517,12 @@ export async function handleOfficeApi({ db, request, response, url, sendJson, en
           ...own.filter((task) => task.status === 'failed').slice(0, 3).map((task) => ({ kind: 'failed', text: `Could not finish ${task.title}`, jobId: task.job_id })),
         ],
         integrations: EMPLOYEE_CONNECTORS(employee),
+        usage, pipeline,
+        chain: currentJob ? handoffs.filter((handoff) => handoff.job_id === currentJob.id).toSorted((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+          .map((handoff) => handoffView(handoff, { agentById: new Map(live.agents.map((agent) => [agent.id, agent])), jobById, taskById: new Map(live.tasks.map((task) => [task.id, task])), artifactsByTask: new Map() }))
+          .filter((handoff) => handoff.fromKey && handoff.toKey && handoff.fromKey !== handoff.toKey).slice(-12) : [],
+        deliveries: own.filter((task) => task.status === 'done' && task.completed_at).toSorted((a, b) => String(b.completed_at).localeCompare(String(a.completed_at))).slice(0, 5)
+          .map((task) => ({ title: task.title, objective: jobById.get(task.job_id)?.title || null, jobId: task.job_id, at: task.completed_at })),
       }), true;
     }
 

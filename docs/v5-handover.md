@@ -1,3 +1,6 @@
+> **Superseded (2026-10-08).** The V5 immersive scene described here was replaced by the
+> approved "Daylight Atrium" redesign; see `docs/office-redesign.md`.
+
 # Handover: V5 / V5.1 immersive Office branch
 
 * **This file:** V5-specific state only.
@@ -33,15 +36,15 @@
 * one summary sentence on Employees, Needs Fahad, Tasks, Projects, Office,
   Artifacts, Integrations, Models and Chats (`src/hub-ui/summaries.js`);
 * image-based PBR lighting on the high and balanced tiers;
-* Character V2 (`src/hub-ui/office3d/characters.js`, `WARDROBE`);
+* Character V2 (`characters.js`, removed by the Office redesign, `WARDROBE`);
 * DAY / EVENING / NIGHT with smooth blending
-  (`src/hub-ui/office3d/lighting.js`; Office → View → Light);
+  (`lighting.js`, removed by the Office redesign; Office → View → Light);
 * architecture, fixtures and department identity
-  (`src/hub-ui/office3d/decor.js`); ceiling cutaway in close views;
+  (`decor.js`, removed by the Office redesign); ceiling cutaway in close views;
 * department views (Office → Area) and calmer camera framing and easing.
 
 * final polish pass (2026-09-28, second pass):
-  * procedural material detail (`src/hub-ui/office3d/textures.js`): oak
+  * procedural material detail (`textures.js`, removed by the Office redesign): oak
     planks, and a floor per wing (stone slabs, pale ash, walnut
     herringbone, warm concrete, dark resin); grain on wood and walnut,
     veining on stone, texture on felt and fabric. Drawn once from canvas; no
@@ -76,8 +79,9 @@ the high tier, as before).
 
 ## Tests
 
-`node --test`: 403 pass, 0 fail. New: `test/v51-visual.test.js`; extended:
-`test/hub-summaries.test.js`, `test/v5-immersive.test.js`.
+`node --test`: 403 pass, 0 fail. New: v51-visual.test.js; extended:
+`test/hub-summaries.test.js`, v5-immersive.test.js (both V5 design tests were
+removed by the Office redesign).
 
 ## Remaining visual work (in order)
 

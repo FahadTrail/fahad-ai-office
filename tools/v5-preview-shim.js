@@ -13,8 +13,8 @@
   const store = (() => { try { return window.localStorage; } catch { return null; } })();
   const pref = (key) => { try { return store?.getItem(key) || ''; } catch { return ''; } };
   const setPref = (key, value) => { try { if (value) store?.setItem(key, value); else store?.removeItem(key); } catch { /* private mode */ } };
-  // First visit: land on the Office in immersive mode (Fahad can switch).
-  if (!pref('hub-office-mode')) setPref('hub-office-mode', 'immersive');
+  // First visit: land on the 3D Office (Fahad can switch to the simplified Office in Settings).
+  if (!pref('hub-office-view')) setPref('hub-office-view', '3d');
   if (!location.hash || location.hash === '#/' || location.hash === '#') history.replaceState(null, '', '#/office');
 
   // Recorded times move with the clock (whole minutes), so "3 min ago" stays true to the scenario.
@@ -129,13 +129,13 @@
     setInterval(() => {
       const office = window.__fahadOffice3d;
       const stats = office?.stats?.();
-      const mode = office?.mode?.();
+      const mode = office?.renderer?.();
       let text;
       if (!location.hash.startsWith('#/office')) text = 'Open the Office to see the 3D view.';
-      else if (stats) text = `Immersive · quality ${stats.quality}${stats.fps ? ` · ${stats.fps} fps` : ''}`;
-      else if (mode?.render === 'light') text = /^Light Office/.test(mode.reason || '') ? mode.reason : `Light Office${mode.reason ? ` · ${mode.reason}` : ''}`;
-      else if (document.querySelector('#immersive:not([hidden])')) text = 'Immersive · loading…';
-      else text = pref('hub-office-mode') === 'light' ? 'Light Office (your choice)' : 'Light Office';
+      else if (stats) text = `3D · ${stats.lightMode} · quality ${stats.quality}${stats.fps ? ` · ${stats.fps} fps` : ''}`;
+      else if (mode?.render === 'simplified') text = `Simplified Office${mode.reason ? ` · ${mode.reason}` : ''}`;
+      else if (document.querySelector('#immersive:not([hidden])')) text = '3D · loading…';
+      else text = 'Simplified Office';
       if (render.textContent !== text) render.textContent = text;
     }, 1000);
   }

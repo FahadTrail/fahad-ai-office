@@ -3,7 +3,7 @@
 // stream) and every Office renderer — the light 2.5D floor and the immersive
 // 3D scene. Renderers never query anything themselves.
 //
-//   officePresentationState = { employees, projects, handoffs, artifacts, needsFahad, summary }
+//   officePresentationState = { employees, projects, handoffs, deliveries, artifacts, needsFahad, summary }
 //
 // Pure: no DOM, no network — tested in Node.
 
@@ -56,6 +56,7 @@ export function presentationState({ office = {}, artifacts = [], now = Date.now(
       detail: agent.detail || '', progress: busy && agent.progress != null ? agent.progress : null,
       resumesAt: agent.assignment?.resumesAt || null, deliverable: agent.deliverable || '', directChat: agent.directChat !== false,
       active: ACTIVE.has(state), needsFahad: state === 'NEEDS FAHAD',
+      queue: Number(agent.queue || 0), enabled: agent.enabled !== false,
       artifact: workspaceArtifact(key, artifacts),
       ...(key === 'coding' ? { coding: office.coding || null } : {}),
     };
@@ -71,8 +72,9 @@ export function presentationState({ office = {}, artifacts = [], now = Date.now(
     .filter((handoff) => byKey.has(handoff.fromKey) && byKey.has(handoff.toKey) && handoff.fromKey !== handoff.toKey)
     .map((handoff) => ({ ...handoff, fresh: now - Date.parse(handoff.at) < FRESH_MS }));
   const needsFahad = Number(office.needsFahad || 0) + employees.filter((employee) => employee.needsFahad && employee.key !== 'coding').length;
+  const deliveries = (Array.isArray(office.deliveries) ? office.deliveries : []).filter((delivery) => delivery && delivery.at && ROSTER.includes(delivery.key));
   return {
-    employees, projects, handoffs, needsFahad,
+    employees, projects, handoffs, needsFahad, deliveries,
     artifacts: Object.fromEntries(employees.filter((employee) => employee.artifact).map((employee) => [employee.key, employee.artifact])),
     summary: {
       working: employees.filter((employee) => employee.active).length,
@@ -87,30 +89,35 @@ export function presentationState({ office = {}, artifacts = [], now = Date.now(
 }
 
 // One sentence a screen reader (and Fahad) can use to understand the Office.
-export function describeOffice(state) {
+export function describeOffice(state, language = 'en') {
   const s = state.summary;
   const who = (predicate) => state.employees.filter(predicate).map((employee) => employee.label);
+  const ar = language === 'ar';
   const parts = [];
   const working = who((employee) => employee.active);
-  parts.push(working.length ? `${working.join(', ')} ${working.length === 1 ? 'is' : 'are'} working` : 'Nobody is working right now');
+  parts.push(working.length ? (ar ? `${working.join('، ')} ${working.length === 1 ? 'يشتغل' : 'يشتغلون'}` : `${working.join(', ')} ${working.length === 1 ? 'is' : 'are'} working`) : (ar ? 'ما أحد يشتغل الحين' : 'Nobody is working right now'));
   const waiting = who((employee) => ['WAITING', 'QUEUED'].includes(employee.state));
-  if (waiting.length) parts.push(`${waiting.join(', ')} waiting`);
+  if (waiting.length) parts.push(ar ? `${waiting.join('، ')} ينتظر` : `${waiting.join(', ')} waiting`);
   const done = who((employee) => employee.state === 'COMPLETED');
-  if (done.length) parts.push(`${done.join(', ')} just delivered`);
-  if (s.needsFahad) parts.push(`${s.needsFahad} ${s.needsFahad === 1 ? 'item needs' : 'items need'} you`);
-  return `${parts.join('; ')}.`;
+  if (done.length) parts.push(ar ? `${done.join('، ')} سلّم للتو` : `${done.join(', ')} just delivered`);
+  if (s.needsFahad) parts.push(ar ? `${s.needsFahad} ${s.needsFahad === 1 ? 'أمر ينتظرك' : 'أمور تنتظرك'}` : `${s.needsFahad} ${s.needsFahad === 1 ? 'item needs' : 'items need'} you`);
+  return `${parts.join(ar ? '؛ ' : '; ')}.`;
 }
 
-// AUTO / IMMERSIVE / LIGHT → what to render. The immersive Office is a beta:
-// AUTO keeps the light Office until the owner enables immersive for AUTO.
-export function officeMode({ preference = 'auto', capability = {}, autoImmersive = false } = {}) {
-  const capable = capability.webgl && !capability.weakGpu && !capability.small && !capability.coarse;
-  if (preference === 'light') return { render: 'light', reason: 'You chose the light Office.' };
-  if (preference === 'immersive') {
-    if (!capability.webgl) return { render: 'light', reason: 'This browser cannot draw 3D (WebGL unavailable).' };
-    if (capability.small) return { render: 'light', reason: 'The immersive Office needs a larger screen.' };
-    return { render: 'immersive', quality: capability.weakGpu || capability.coarse ? 'light' : capability.reducedMotion ? 'balanced' : capability.strong ? 'high' : 'balanced' };
-  }
-  if (autoImmersive && capable && !capability.reducedMotion) return { render: 'immersive', quality: capability.strong ? 'high' : 'balanced' };
-  return { render: 'light', reason: capable ? 'Light Office (the immersive Office is in beta).' : 'Light Office suits this device.' };
+// Which Office to draw (rendering capability — separate from the Light ·
+// Immersive · Auto lighting modes). The 3D Office is the Office; the
+// simplified Office is only for devices that cannot draw it, or by choice.
+//   preference: auto | 3d | simplified
+export function officeRenderer({ preference = 'auto', capability = {} } = {}) {
+  if (preference === 'simplified') return { render: 'simplified', reason: 'chosen' };
+  if (!capability.webgl) return { render: 'simplified', reason: 'webgl' };
+  // Phones and tablets get the simplified Office; a narrow window on a laptop
+  // or desktop (fine pointer, large screen) keeps the 3D Office down to the
+  // width its overlay needs.
+  if (capability.narrow) return { render: 'simplified', reason: 'small' };
+  if (capability.small && (capability.coarse || capability.handheld)) return { render: 'simplified', reason: 'small' };
+  if (preference !== '3d' && capability.coarse) return { render: 'simplified', reason: 'coarse' };
+  if (preference !== '3d' && capability.weakGpu) return { render: 'simplified', reason: 'weak' };
+  // Balanced by default (composer, bloom, MSAA); High is chosen in Settings.
+  return { render: '3d', quality: capability.weakGpu || capability.coarse ? 'light' : 'balanced' };
 }

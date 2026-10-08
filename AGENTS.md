@@ -69,6 +69,16 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
+## The Office redesign (2026-10-08, open PR, unmerged)
+
+The approved "Daylight Atrium" redesign of the Live Office is on branch `claude/the-office-redesign`. It is documented in `docs/office-redesign.md`.
+
+* It replaces the V5 immersive scene.
+* It adds only additive, read-only API fields and no migration.
+* QA runs through `tools/office-shots.mjs` (the ten views) and `tools/office-a11y.mjs`.
+
+It is **not merged and not deployed**. Do not merge or deploy without Fahad.
+
 ## V5.4 functional certification (2026-10-06, open PR, unmerged)
 
 The certification is on branch `v5.4-functional-certification`. The report is `docs/v5.4-certification.md`.

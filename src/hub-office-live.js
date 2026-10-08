@@ -101,7 +101,7 @@ export function handoffView(handoff, { agentById, jobById, taskById, artifactsBy
   const fromTask = taskById.get(handoff.from_task_id);
   const artifact = (artifactsByTask.get(handoff.from_task_id) || []).at(-1) || null;
   const status = !toTask ? 'unknown' : toTask.status === 'done' ? 'delivered' : toTask.status === 'running' ? 'in progress'
-    : toTask.status === 'failed' ? 'failed' : toTask.not_before && Date.parse(toTask.not_before) > now ? 'waiting for capacity' : 'queued';
+    : toTask.status === 'failed' ? 'failed' : toTask.status === 'blocked' ? 'blocked' : toTask.not_before && Date.parse(toTask.not_before) > now ? 'waiting for capacity' : 'queued';
   return {
     id: handoff.id || `${handoff.from_task_id}>${handoff.to_task_id}`,
     from: label(from), fromKey: key(from), to: label(to), toKey: key(to),

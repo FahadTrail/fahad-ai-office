@@ -9,8 +9,8 @@ import { createHubServer } from '../src/hub-server.js';
 import { memoryPostgrest } from '../testing/fixtures/memory-postgrest.js';
 import { previewTables } from '../testing/fixtures/hub-preview-data.js';
 
-export function startPreview({ port = 4173, now = Date.now() } = {}) {
-  const db = memoryPostgrest(previewTables(now), { rpc: { model_usage_summary: () => ({ data: [], error: null }) } });
+export function startPreview({ port = 4173, now = Date.now(), moment = 'work' } = {}) {
+  const db = memoryPostgrest(previewTables(now, { moment }), { rpc: { model_usage_summary: () => ({ data: [], error: null }) } });
   const store = {
     createJob: async ({ title, goal, projectId, conversationId }) => {
       const job = { id: crypto.randomUUID(), title, goal, project_id: projectId, conversation_id: conversationId || null, status: 'planning', progress: 0, created_at: new Date().toISOString() };
@@ -23,6 +23,6 @@ export function startPreview({ port = 4173, now = Date.now() } = {}) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { url } = await startPreview({ port: Number(process.argv[2] || 4173) });
+  const { url } = await startPreview({ port: Number(process.argv[2] || 4173), moment: process.argv[3] || 'work' });
   console.log(`Hub preview (fictional data): ${url}`);
 }

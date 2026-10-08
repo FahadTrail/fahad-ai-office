@@ -1,0 +1,243 @@
+{
+  "about": "Immersive Office assets, streamed from disk by the Hub (/ui/office-assets/). Built by tools/build-office-assets.mjs.",
+  "files": {
+    "basis/basis_transcoder.js": {
+      "sha1": "25247a30572a094b",
+      "bytes": 57529,
+      "type": "text/javascript; charset=utf-8",
+      "license": "Apache-2.0",
+      "source": "three r0.186.1 examples/jsm/libs/basis (Binomial Basis Universal transcoder)"
+    },
+    "basis/basis_transcoder.wasm": {
+      "sha1": "cdc7dfe8937893ab",
+      "bytes": 527333,
+      "type": "application/wasm",
+      "license": "Apache-2.0",
+      "source": "three r0.186.1 examples/jsm/libs/basis (Binomial Basis Universal transcoder)"
+    },
+    "env/day.exr": {
+      "sha1": "3b701b6250c9358f",
+      "bytes": 100399,
+      "type": "image/x-exr",
+      "license": "CC0-1.0",
+      "source": "Poly Haven HDRI \"lebombo\" (apartment), 512×256 EXR via @pmndrs/assets 1.7.0"
+    },
+    "env/night.exr": {
+      "sha1": "3077c3d0d9057620",
+      "bytes": 191590,
+      "type": "image/x-exr",
+      "license": "CC0-1.0",
+      "source": "Poly Haven HDRI (hall), 512×256 EXR via @pmndrs/assets 1.7.0"
+    },
+    "materials/bronze-albedo.ktx2": {
+      "sha1": "a3a060a9583047f1",
+      "bytes": 19200,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/bronze-normal.ktx2": {
+      "sha1": "58aa51e24a392f20",
+      "bytes": 128018,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/bronze-orm.ktx2": {
+      "sha1": "7bc92161722d8c40",
+      "bytes": 16587,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/felt-albedo.ktx2": {
+      "sha1": "9f3ab0021f08f49a",
+      "bytes": 8158,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/felt-normal.ktx2": {
+      "sha1": "fb5978c66f65d45c",
+      "bytes": 339114,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/felt-orm.ktx2": {
+      "sha1": "aee53f9aecab5b0f",
+      "bytes": 965,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/leather-albedo.ktx2": {
+      "sha1": "f2cb47b6e99ea9c4",
+      "bytes": 21325,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/leather-normal.ktx2": {
+      "sha1": "0ee7af2ce86f4982",
+      "bytes": 341102,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/leather-orm.ktx2": {
+      "sha1": "b80a74161ccbf22e",
+      "bytes": 39367,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/linen-albedo.ktx2": {
+      "sha1": "da5445fd0bb8ba9a",
+      "bytes": 46852,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/linen-normal.ktx2": {
+      "sha1": "9738063bc9e695bc",
+      "bytes": 137390,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/linen-orm.ktx2": {
+      "sha1": "68c14d2379285ee1",
+      "bytes": 14216,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/microcement-albedo.ktx2": {
+      "sha1": "d3e36f61f8309097",
+      "bytes": 28368,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/microcement-normal.ktx2": {
+      "sha1": "9c5156c23da371a2",
+      "bytes": 119611,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/microcement-orm.ktx2": {
+      "sha1": "e326633f18d43a91",
+      "bytes": 9611,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/oak-albedo.ktx2": {
+      "sha1": "e667ac9cbfb9b896",
+      "bytes": 336537,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/oak-normal.ktx2": {
+      "sha1": "8108260bfacc0d08",
+      "bytes": 625018,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/oak-orm.ktx2": {
+      "sha1": "9f061c7f02f9322c",
+      "bytes": 125643,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/slat-albedo.ktx2": {
+      "sha1": "ce3a7a30202eae4e",
+      "bytes": 26274,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/slat-normal.ktx2": {
+      "sha1": "c37005fdeb0c67fb",
+      "bytes": 186561,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/slat-orm.ktx2": {
+      "sha1": "ff1b74914c084b83",
+      "bytes": 965,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/travertine-albedo.ktx2": {
+      "sha1": "5a03c29aaa7e46a6",
+      "bytes": 251117,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/travertine-normal.ktx2": {
+      "sha1": "078e31479f4a595c",
+      "bytes": 758963,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/travertine-orm.ktx2": {
+      "sha1": "d052ef82b2222606",
+      "bytes": 435686,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/walnut-albedo.ktx2": {
+      "sha1": "19ba67d3160a7168",
+      "bytes": 81095,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/walnut-normal.ktx2": {
+      "sha1": "00ae128710a00674",
+      "bytes": 228638,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/walnut-orm.ktx2": {
+      "sha1": "771e809aaeb1f06b",
+      "bytes": 76449,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/wool-albedo.ktx2": {
+      "sha1": "5d09cea4240a628a",
+      "bytes": 44859,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/wool-normal.ktx2": {
+      "sha1": "c40f09a250fe6b22",
+      "bytes": 274633,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    },
+    "materials/wool-orm.ktx2": {
+      "sha1": "314da97f3c7f4c98",
+      "bytes": 4953,
+      "type": "image/ktx2",
+      "license": "Original work (procedural, src/hub-ui/office3d/texgen.js)",
+      "source": "tools/build-office-assets.mjs"
+    }
+  }
+}
