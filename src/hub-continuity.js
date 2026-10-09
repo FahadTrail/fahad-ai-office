@@ -4,6 +4,7 @@ import { CodexContinuityAdapter } from './continuity/adapters/codex.js';
 import { ClaudeCodeContinuityAdapter } from './continuity/adapters/claude-code.js';
 import { OpenCodeContinuityAdapter } from './continuity/adapters/opencode.js';
 import { GeminiCliContinuityAdapter } from './continuity/adapters/gemini-cli.js';
+import { workerLiveStatus } from './coding-agent/presence.js';
 
 const ACTIONS = new Set(['START_SESSION', 'PAUSE_SESSION', 'RESUME_SESSION', 'FORCE_CHECKPOINT', 'REQUEST_HANDOFF', 'COMPLETE_SESSION', 'ABORT_SESSION', 'DISABLE_WORKER', 'ENABLE_WORKER']);
 const PREPARED_ADAPTERS = new Map([
@@ -22,7 +23,7 @@ const PREPARED_ADAPTERS = new Map([
 //   MANUAL_ONLY             a tool Fahad uses by hand; never handed work automatically
 //   EXPERIMENTAL            no executable adapter in this build (future)
 // `quota` is only claimed when the worker reported a usage snapshot.
-export function workerTruth(worker, { supervisorOn = false } = {}) {
+export function workerTruth(worker, { supervisorOn = false, activity = null, now = Date.now() } = {}) {
   // The native Office Coding Agent runs as its own service and takes the
   // Office's development workstreams directly; it does not need Continuity.
   const native = worker.kind === 'native';
@@ -34,8 +35,10 @@ export function workerTruth(worker, { supervisorOn = false } = {}) {
       : !worker.enabled ? 'DISABLED'
         : verified && (native || supervisorOn) ? 'ACTIVE' : 'CONFIGURED_UNAVAILABLE';
   const usage = worker.metrics?.latestUsage || null;
+  // Measured live status (the native worker reports presence; others only when they do).
+  const live = workerLiveStatus({ enabled: worker.enabled, lastSeenAt: worker.lastSeenAt || null, running: activity?.running || 0, blocked: activity?.blocked || 0, now });
   return {
-    class: workerClass,
+    class: workerClass, status: live.status, statusDetail: live.detail,
     canExecuteNow: workerClass === 'ACTIVE',
     authenticated: native ? 'not needed (runs on the Office model pool)' : authenticated ? 'yes' : 'no',
     enabled: Boolean(worker.enabled),
@@ -50,7 +53,7 @@ export function workerTruth(worker, { supervisorOn = false } = {}) {
   };
 }
 
-function publicState(state, { readiness = new Map(), adapters = new Map(), supervisorOn = false } = {}) {
+function publicState(state, { readiness = new Map(), adapters = new Map(), supervisorOn = false, nativeActivity = null } = {}) {
   const checkpointsBySession = new Map(state.checkpoints.map((checkpoint) => [checkpoint.session_id, checkpoint]));
   const usageByWorker = new Map();
   for (const snapshot of state.usage) if (!usageByWorker.has(snapshot.worker_key)) usageByWorker.set(snapshot.worker_key, snapshot);
@@ -87,7 +90,7 @@ function publicState(state, { readiness = new Map(), adapters = new Map(), super
         availability: ready.ok === true ? 'OPERATIONAL' : ready.reason || 'NOT_CONFIGURED',
         ownerAction: ready.ok ? null : actual.ownerAction || ready.reason || 'Configure and verify this worker.',
         health, healthBasis: health_basis, lastSeenAt: last_seen_at, lastError: last_error, metrics: workerMetrics(key) };
-    }).map((worker) => ({ ...worker, truth: workerTruth(worker, { supervisorOn }) })),
+    }).map((worker) => ({ ...worker, truth: workerTruth(worker, { supervisorOn, activity: worker.kind === 'native' ? nativeActivity : null }) })),
     sessions: state.sessions.map(({ id, worker_key, project_id, repository, branch, worktree, objective, status, started_at, heartbeat_at, ended_at, task_tokens, tokens_basis, exit_reason }) => ({ id, workerKey: worker_key, projectId: project_id, repository, branch, worktree, objective, status, startedAt: started_at, heartbeatAt: heartbeat_at, endedAt: ended_at, taskTokens: task_tokens, tokensBasis: tokens_basis, exitReason: exit_reason })),
     leases: state.leases.map(({ id, repository, branch, worktree, worker_key, session_id, status, started_at, heartbeat_at, expires_at, checkpoint_id }) => ({ id, repository, branch, worktree, workerKey: worker_key, sessionId: session_id, status, startedAt: started_at, heartbeatAt: heartbeat_at, expiresAt: expires_at, checkpointId: checkpoint_id })),
     checkpoints: state.checkpoints.map(({ id, session_id, sequence, last_commit, status, next_exact_action, created_at }) => ({ id, sessionId: session_id, sequence, lastCommit: last_commit, status, nextExactAction: next_exact_action, createdAt: created_at })),
@@ -108,7 +111,15 @@ export async function handleContinuityApi({ db, supervisor = null, ownerAuthoriz
       try { return [worker.key, await (adapter.authReadiness?.() || adapter.available())]; }
       catch { return [worker.key, { ok: false, authState: 'OWNER_ACTION_REQUIRED', reason: 'READINESS_UNAVAILABLE' }]; }
     })));
-    const state = publicState(snapshot, { readiness, adapters, supervisorOn: Boolean(supervisor?.started) });
+    // The native worker's live status counts its real Coding Agent sessions.
+    const nativeActivity = await (async () => {
+      try {
+        const { data, error } = await db.from('agent_sessions').select('status').in('status', ['running', 'blocked', 'awaiting_approval']);
+        if (error) return null;
+        return { running: (data || []).filter((row) => row.status === 'running').length, blocked: (data || []).filter((row) => row.status !== 'running').length };
+      } catch { return null; }
+    })();
+    const state = publicState(snapshot, { readiness, adapters, supervisorOn: Boolean(supervisor?.started), nativeActivity });
     return sendJson(response, 200, { ok: true, enabled: Boolean(supervisor?.started), ...state }), true;
   }
   if (request.method === 'POST' && url.pathname === '/api/continuity/actions') {

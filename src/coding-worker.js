@@ -17,6 +17,7 @@ import { SupabaseToolBrokerStore } from './tool-broker/supabase-store.js';
 import { CodingWorker, createCodingRuntime } from './coding-agent/runtime.js';
 import { codeFingerprint } from './build-info.js';
 import { supabaseCheckEvent, supabaseSelfCheck } from './coding-agent/supabase-check.js';
+import { startPresence } from './coding-agent/presence.js';
 
 const log = (...parts) => console.log(`[${new Date().toISOString()}] [coding-worker]`, ...parts);
 
@@ -99,6 +100,8 @@ async function main() {
     },
   }).then((report) => log(`Supabase tools self-check: ${report.ok ? 'OK' : `not verified (${report.error_code || 'failed'})`}`))
     .catch((error) => log('WARN supabase self-check failed:', error?.code || 'error'));
+  // Presence in the worker registry (coding_workers.office), every minute.
+  startPresence({ db, key: 'office', log });
   const worker = new CodingWorker({
     runtime, sessionStore, log,
     onHeartbeat: (state) => writeFileSync('/tmp/fahad-coding-worker-health.json', JSON.stringify({ ...state, pid: process.pid, updatedAt: Date.now() })),

@@ -9,7 +9,8 @@ import {
   QWEN_MODEL,
   ZHIPU_MODEL,
 } from './config.js';
-import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi, readDeployedVersion } from './hub-coding.js';
+import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi } from './hub-coding.js';
+import { runtimeVersion } from './ops/runtime-started.js';
 import { handleWorkspaceApi } from './hub-workspace.js';
 import { handleOfficeApi } from './hub-office.js';
 import { handleContinuityApi } from './hub-continuity.js';
@@ -120,7 +121,7 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
       const requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
       if (request.method === 'OPTIONS') return send(response, 204, '');
       if (request.method === 'GET' && requestUrl.pathname === '/healthz') {
-        return sendJson(response, 200, { ok: true, service: 'fahad-ai-hub', version: readDeployedVersion(), now: new Date().toISOString() });
+        return sendJson(response, 200, { ok: true, service: 'fahad-ai-hub', version: runtimeVersion(), now: new Date().toISOString() });
       }
       if (request.method === 'GET' && (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html')) {
         return send(response, 200, WORKSPACE_HTML, 'text/html; charset=utf-8');

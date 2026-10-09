@@ -121,13 +121,13 @@ test('a monthly budget whose period ended rolls over once and is re-read', async
 test('each runtime start records its version so production is observable without /healthz', async () => {
   const { runtimeStartedEvent, recordRuntimeStart } = await import('../src/ops/runtime-started.js');
   const event = runtimeStartedEvent({ version: 'bbc5956c15d3', fingerprint: 'bd99390db5bf1fd2', pid: 42, startedAt: '2026-10-05T20:09:24.000Z' });
-  assert.deepEqual(event.payload, { kind: 'runtime_started', version: 'bbc5956c15d3', codeFingerprint: 'bd99390db5bf1fd2', pid: 42, startedAt: '2026-10-05T20:09:24.000Z' });
+  assert.deepEqual(event.payload, { kind: 'runtime_started', version: 'bbc5956c15d3', codeFingerprint: 'bd99390db5bf1fd2', pid: 42, startedAt: '2026-10-05T20:09:24.000Z', versionConfirmed: true });
   assert.equal(event.type, 'activity');
   const inserted = [];
-  assert.equal(await recordRuntimeStart({ from: () => ({ insert: async (row) => { inserted.push(row); return { error: null }; } }) }, () => {}, { version: 'abc', fingerprint: 'f', pid: 1 }), true);
+  assert.equal(await recordRuntimeStart({ from: () => ({ insert: async (row) => { inserted.push(row); return { error: null }; } }) }, () => {}, { fingerprint: 'f', pid: 1, path: '/nonexistent/deployed-sha', waitMs: 0 }), true);
   assert.equal(inserted[0].payload.kind, 'runtime_started');
   const logs = [];
-  assert.equal(await recordRuntimeStart({ from: () => ({ insert: async () => { throw new Error('offline'); } }) }, (...parts) => logs.push(parts.join(' ')), { version: null, fingerprint: null, pid: 1 }), false, 'a failed write never throws');
+  assert.equal(await recordRuntimeStart({ from: () => ({ insert: async () => { throw new Error('offline'); } }) }, (...parts) => logs.push(parts.join(' ')), { fingerprint: null, pid: 1, path: '/nonexistent/deployed-sha', waitMs: 0 }), false, 'a failed write never throws');
   assert.match(logs[0], /runtime start not recorded/);
   const { readFileSync } = await import('node:fs');
   const index = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');

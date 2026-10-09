@@ -14,6 +14,7 @@ import { freeQuotaStatus } from './model-gateway/agentic/free-quota.js';
 import { getOpenRouterCatalog } from './model-gateway/agentic/openrouter-catalog.js';
 import { providerCatalogSnapshot } from './model-gateway/agentic/provider-catalogs.js';
 import { QualificationStore, evidenceRequiredGaps, qualificationValid, qualificationGaps } from './model-gateway/agentic/qualification.js';
+import { runtimeVersion } from './ops/runtime-started.js';
 import { PROVIDER_FACTS, PROVIDER_FACTS_CHECKED, blockerLabel, blockerReason } from './model-gateway/agentic/provider-facts.js';
 import { ACCOUNT_BLOCKERS } from './model-gateway/agentic/provider-state.js';
 import { OFFICE_ROLES } from './office-agents/roles.js';
@@ -475,7 +476,7 @@ export async function platformOverview({ db, env = process.env, now = () => Date
     approvals,
     systemHealth: {
       hub: 'ok',
-      version: readDeployedVersion(),
+      version: runtimeVersion(),
       lastAgentActivityAt: lastEvent?.created_at || null,
       lastCanary: lastCanary ? { status: lastCanary.status, requestedAt: lastCanary.requested_at, completedAt: lastCanary.completed_at } : null,
       database: 'ok',

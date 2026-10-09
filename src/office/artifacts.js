@@ -95,9 +95,10 @@ export const ARTIFACT_TYPES = Object.freeze({
     },
   },
   financial_model: {
-    hint: '{"type":"financial_model","title":"Launch model","currency":"AED","months":12,"items":[{"category":"Build","item":"MVP development","one_time":30000,"monthly":0,"month":1,"basis":"ESTIMATED","note":"…"},{"category":"Hosting","item":"Servers","one_time":0,"monthly":400,"month":1,"basis":"KNOWN","note":"…"}],"revenue":{"price_monthly":49,"starting_customers":0,"new_customers":[5,5,10,10,15,15,20,20,20,20,20,20],"churn_rate":0.05,"trial_months":0,"basis":"ASSUMPTION"},"variable_cost_per_customer":3,"claims":{"year_revenue":0,"year_costs":0,"net":0,"break_even_month":null}}',
+    hint: '{"type":"financial_model","title":"Launch model","currency":"AED","months":12,"items":[{"category":"Build","item":"MVP development","one_time":30000,"monthly":0,"month":1,"basis":"ESTIMATED","note":"…"},{"category":"Hosting","item":"Servers","one_time":0,"monthly":400,"month":1,"basis":"KNOWN","note":"…"},{"category":"Team time","item":"Weekly review","one_time":0,"weekly":250,"month":1,"basis":"ESTIMATED","note":"use annual or weekly for yearly/weekly amounts — never pre-divide into a rounded monthly figure"}],"revenue":{"price_monthly":49,"starting_customers":0,"new_customers":[5,5,10,10,15,15,20,20,20,20,20,20],"churn_rate":0.05,"trial_months":0,"basis":"ASSUMPTION"},"variable_cost_per_customer":3,"claims":{"year_revenue":0,"year_costs":0,"net":0,"break_even_month":null}}',
     clean: (raw) => {
       const items = list(raw.items).map((item) => ({ category: text(item?.category, 60), item: text(item?.item, 120), one_time: num(item?.one_time), monthly: num(item?.monthly),
+        ...(num(item?.annual) !== null ? { annual: num(item.annual) } : {}), ...(num(item?.weekly) !== null ? { weekly: num(item.weekly) } : {}),
         ...(num(item?.month) ? { month: Math.round(num(item.month)) } : {}),
         basis: oneOf(item?.basis, ['KNOWN', 'ESTIMATED', 'ASSUMPTION'], 'ESTIMATED'), note: text(item?.note, 240) })).filter((item) => item.item);
       if (!items.length) return null;
