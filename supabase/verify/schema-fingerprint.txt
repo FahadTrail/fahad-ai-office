@@ -1080,6 +1080,8 @@ index|ec62132b698406cb86217b41ade1c9c0|public CREATE INDEX agent_sessions_queue_
 index|f1edfbe2cc80b20ea2c2232bc19d578b|public CREATE INDEX idx_tasks_agent ON public.tasks USING btree (agent_id)
 index|f791eb950a74f0e9a5dfeee104ee5fae|public CREATE INDEX tool_executions_open_idx ON public.tool_executions USING btree (status, started_at) WHERE (status = 'running'::text)
 index|f8f766db67da90d3ee5372e8ca0bccc3|public CREATE INDEX agent_events_session_idx ON public.agent_events USING btree (session_id, id)
+index|6c94ef91e4605016353f62eca40b351b|public CREATE INDEX jobs_project_current_idx ON public.jobs USING btree (project_id, created_at DESC) WHERE (status = ANY (ARRAY['planning'::text, 'running'::te
+index|77b762281fac142b13ac0256283bf500|public CREATE INDEX jobs_project_history_idx ON public.jobs USING btree (project_id, completed_at DESC, created_at DESC) WHERE (status = ANY (ARRAY['completed':
 policy|011cda4c782aea155c3a0e7898816442|public.handoffs owner_only_handoffs ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
 policy|09c5ff129b2856b67dded62f70187e32|public.projects owner_only_projects ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
 policy|0b444f462ec0bb5dc514d8f820bdda7b|public.runs owner_only_runs ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
