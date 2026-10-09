@@ -166,6 +166,16 @@ export function qualificationGaps(route, job, qualifications, now = Date.now()) 
   return gaps;
 }
 
+// An evidence-gated fallback (capabilities.js EVIDENCE_FALLBACK_JOBS) needs
+// every skill of the job PASSED in a valid, qualified record — an untested
+// skill is not evidence. Paid routes meet the documented floor without it.
+export function evidenceRequiredGaps(route, job, qualifications, now = Date.now()) {
+  if (!job?.evidenceRequired || route.billingClass === 'paid') return [];
+  const record = qualifications?.get(route.id);
+  if (!qualificationValid(record, now) || record.status !== 'qualified') return ['EVIDENCE_REQUIRED'];
+  return (JOB_SKILLS[job.baseJob] || []).every((skill) => record.skills?.[skill] === true) ? [] : ['EVIDENCE_REQUIRED'];
+}
+
 // Evidence-corrected capabilities. Planning scores are hand-set estimates;
 // a valid, passed qualification is measured evidence. A passed skill may
 // raise its score by ONE level, never above 4; a failed skill caps it at 2.
@@ -240,8 +250,13 @@ export class QualificationStore {
         // Newest first: a later error never hides an earlier valid result.
         if (!map.has(result.routeId) && result.status !== 'error') map.set(result.routeId, result);
         // The newest error of a route with no newer valid result drives the
-        // qualifier's back-off (a dead route is not re-probed every cycle).
-        if (result.status === 'error' && !map.has(result.routeId) && !errors.has(result.routeId)) errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
+        // qualifier's back-off (a dead route is not re-probed every cycle);
+        // `count` is how many errors in a row it has had since its last pass.
+        if (result.status === 'error' && !map.has(result.routeId)) {
+          const known = errors.get(result.routeId);
+          if (known) known.count += 1;
+          else errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt, count: 1 });
+        }
       }
     }
     map.errors = errors;
@@ -271,7 +286,7 @@ export class MemoryQualificationStore {
     const [map, errors] = kind === 'coding_qualification' ? [this.coding, this.codingErrors] : [this.map, this.errors];
     for (const result of results) {
       if (result.status !== 'error') { map.set(result.routeId, result); errors.delete(result.routeId); }
-      else errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt });
+      else errors.set(result.routeId, { errorCode: result.errorCode || null, testedAt: result.testedAt, count: (errors.get(result.routeId)?.count || 0) + 1 });
     }
   }
 }
@@ -281,12 +296,23 @@ export class MemoryQualificationStore {
 // access) is re-tested after a day; a transient failure (429, 5xx, network)
 // after an hour. Before this, dead routes were re-probed every 20 minutes
 // (production 2026-09-29: ~74 HTTP 404 calls/day each for two Gemini ids).
-export const QUALIFICATION_BACKOFF_MS = Object.freeze({ permanent: 24 * 3600_000, transient: 3600_000 });
+//
+// The back-off grows with consecutive failures (2026-10-09 audit: two Gemini
+// 2.5 ids answered 404 every day for 10 days, and never-working OpenRouter
+// `:free` routes were probed several times a day on the shared daily
+// allowance): permanent errors 1 → 2 → 4 → 7 days; transient errors move from
+// hourly to daily after RETIRE_AFTER failures in a row. One pass resets it.
+export const QUALIFICATION_BACKOFF_MS = Object.freeze({ permanent: 24 * 3600_000, transient: 3600_000, max: 7 * 24 * 3600_000 });
+export const RETIRE_AFTER = 6;
 const PERMANENT_ERROR = /^HTTP_(400|401|403|404|405|410|422)$|NOT_FOUND|UNSUITABLE|INVALID_REQUEST|AUTH|NO_CREDITS|NOT_ACTIVATED/i;
+export function qualificationBackoffMs(error) {
+  const count = Math.max(1, Number(error?.count || 1));
+  if (PERMANENT_ERROR.test(String(error?.errorCode || ''))) return Math.min(QUALIFICATION_BACKOFF_MS.max, QUALIFICATION_BACKOFF_MS.permanent * 2 ** Math.min(count - 1, 3));
+  return count >= RETIRE_AFTER ? QUALIFICATION_BACKOFF_MS.permanent : QUALIFICATION_BACKOFF_MS.transient;
+}
 export function qualificationBackoffUntil(error, now = Date.now()) {
   if (!error?.testedAt) return null;
-  const wait = PERMANENT_ERROR.test(String(error.errorCode || '')) ? QUALIFICATION_BACKOFF_MS.permanent : QUALIFICATION_BACKOFF_MS.transient;
-  const until = Date.parse(error.testedAt) + wait;
+  const until = Date.parse(error.testedAt) + qualificationBackoffMs(error);
   return until > now ? new Date(until).toISOString() : null;
 }
 

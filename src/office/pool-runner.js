@@ -226,14 +226,16 @@ export class OfficeModelRunner {
         });
       } catch (error) {
         // Before waiting: a low-risk job may drop one capability level
-        // (formatting, content, classification). Never legal, security,
-        // finance, synthesis or CHIEF/AUDIT orchestration.
+        // (formatting, content, classification), and CHIEF's synthesis may
+        // move to a free route that PASSED every synthesis skill in its
+        // qualification. Never legal, security, finance or orchestration.
         const relaxed = ['NO_ELIGIBLE_PROVIDER', 'ALL_PROVIDERS_UNAVAILABLE'].includes(error.code) && !relaxedFrom ? relaxedJob(job) : null;
         if (relaxed) {
           relaxedFrom = job;
           job = relaxed.name;
-          escalations.push({ from: `job:${relaxedFrom}`, code: 'LOWER_TIER_FALLBACK', checkpoint: checkpointSequence });
-          await (hooks.onEscalation || (async () => {}))({ fromRoute: `job:${relaxedFrom}`, reason: 'LOWER_TIER_FALLBACK', checkpointSequence });
+          const reason = relaxed.evidenceRequired ? 'QUALIFIED_FALLBACK' : 'LOWER_TIER_FALLBACK';
+          escalations.push({ from: `job:${relaxedFrom}`, code: reason, checkpoint: checkpointSequence });
+          await (hooks.onEscalation || (async () => {}))({ fromRoute: `job:${relaxedFrom}`, reason, checkpointSequence });
           continue;
         }
         lastEvaluation = error.evaluations || null;
