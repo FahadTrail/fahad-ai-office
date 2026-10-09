@@ -67,3 +67,13 @@ test('PRODUCTION REGRESSION: a costs-only model may truthfully state revenue 0 a
   assert.equal(validateFinance(model({ year_costs: 13000, year_revenue: 5000 })).state, FINANCE_STATES.INCONSISTENT);
   assert.equal(validateFinance(model({ year_costs: 13000, net: -9000 })).state, FINANCE_STATES.INCONSISTENT);
 });
+
+test('PRODUCTION REGRESSION: "AED 250 × 52 = AED 13,000" states 13,000, not 250', () => {
+  const output = `## Summary\n- Weekly cost: 5 × 0.5 h × AED 100 = **AED 250**\n- Yearly cost: AED 250 × 52 = **AED 13,000** (KNOWN)\n\n${block({ type: 'financial_model', title: 'Check-in', currency: 'AED', items: [{ item: 'Check-in', weekly: 250, basis: 'KNOWN' }], claims: { year_costs: 13000, year_revenue: 0, net: -13000 } })}`;
+  const validation = validateFinance(output);
+  assert.equal(validation.state, FINANCE_STATES.VERIFIED, JSON.stringify(validation.issues));
+  // A wrong result after "=" is still caught.
+  const wrong = validateFinance(output.replace('**AED 13,000** (KNOWN)', '**AED 12,000** (KNOWN)'));
+  assert.equal(wrong.state, FINANCE_STATES.INCONSISTENT);
+  assert.match(wrong.issues[0].detail, /12,000/);
+});
