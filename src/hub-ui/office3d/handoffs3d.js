@@ -154,13 +154,26 @@ export function createHandoffs({ reducedMotion = false } = {}) {
     return routes;
   };
 
+  // A handoff chosen in the Handoff Center: its real route lit steadily until
+  // another is chosen or the view clears it. No route record, no light.
+  let highlighted = null;
+  const highlight = (handoff = null) => {
+    if (highlighted) { group.remove(highlighted); highlighted.geometry.dispose(); highlighted.material.dispose(); highlighted = null; }
+    const path = handoff ? routePath(handoff.fromKey, handoff.toKey) : null;
+    if (!path) return false;
+    const made = material(); made.uniforms.uHead.value = 1e4; made.uniforms.uFade.value = 0; made.uniforms.uEmber.value = 1; made.uniforms.uIntensity.value = Math.max(intensity, 1.1);
+    highlighted = new THREE.Mesh(stripGeometry(path, 0.56, floorHeight, 0.009), made); highlighted.renderOrder = 6; highlighted.userData = { handoff };
+    group.add(highlighted);
+    return true;
+  };
+
   return {
-    group, update, tick, showHistory,
+    group, update, tick, showHistory, highlight, highlighted: () => highlighted?.userData.handoff || null,
     // Day 0.6, night 1.4 (the bloom does the rest).
     setNight(level) { intensity = PULSE.emissiveDay + (PULSE.emissiveNight - PULSE.emissiveDay) * level; },
     active: () => pulses.size > 0 || holds.size > 0,
     routes: (handoffs) => handoffs.map((handoff) => routePath(handoff.fromKey, handoff.toKey)).filter(Boolean),
-    dispose() { for (const pulse of pulses.values()) { pulse.mesh.geometry.dispose(); pulse.material.dispose(); } ringGeometry.dispose(); ringMaterial.dispose(); holdMaterial.dispose(); showHistory([], false); },
+    dispose() { for (const pulse of pulses.values()) { pulse.mesh.geometry.dispose(); pulse.material.dispose(); } ringGeometry.dispose(); ringMaterial.dispose(); holdMaterial.dispose(); showHistory([], false); highlight(null); },
   };
 }
 

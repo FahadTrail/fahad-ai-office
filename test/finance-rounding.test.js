@@ -59,3 +59,11 @@ test('integer models keep their exact schedules (no regression)', () => {
   assert.equal(calc.net, Math.round((calc.year_revenue - calc.year_costs) * 100) / 100);
   assert.equal(calc.schedule.cumulative.at(-1), calc.net);
 });
+
+test('PRODUCTION REGRESSION: a costs-only model may truthfully state revenue 0 and net = −costs', () => {
+  const model = (claims) => `## Summary\nAED 13,000 a year.\n\n${block({ type: 'financial_model', title: 'Check-in', currency: 'AED', items: [{ item: 'Check-in', weekly: 250 }], claims })}`;
+  assert.equal(validateFinance(model({ year_costs: 13000, year_revenue: 0, net: -13000 })).state, FINANCE_STATES.VERIFIED);
+  // A non-zero revenue, or a wrong net, is still caught.
+  assert.equal(validateFinance(model({ year_costs: 13000, year_revenue: 5000 })).state, FINANCE_STATES.INCONSISTENT);
+  assert.equal(validateFinance(model({ year_costs: 13000, net: -9000 })).state, FINANCE_STATES.INCONSISTENT);
+});

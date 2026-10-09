@@ -260,7 +260,10 @@ export function validateFinance(markdown) {
       }
       continue;
     }
-    const expected = calculated[field];
+    // A costs-only model has, by definition, no revenue: "revenue 0" and
+    // "net = −costs" are true statements of it, not unsupported claims.
+    const costsOnly = !hasRevenue ? { year_revenue: 0, net: round2(-calculated.year_costs) } : {};
+    const expected = calculated[field] ?? costsOnly[field];
     const stated = finite(value);
     if (expected === undefined || expected === null) {
       issues.push(issue('CLAIM_UNSUPPORTED', `${spec.label} is stated (${value}) but cannot be reproduced from the model's inputs.`, { field, actual: stated }));

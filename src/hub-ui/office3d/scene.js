@@ -601,6 +601,8 @@ export function mountOffice3D(container, options = {}) {
     setView, view: () => active, back() { setView(stepBack(active)); },
     setLightMode, lightMode: () => lightMode, phase: () => lighting.phase,
     setProject() { emitFrame(true); wake(); },
+    // The Handoff Center lights one real route (null clears it).
+    highlightHandoff(handoff) { const lit = handoffs.highlight(handoff || null); wake(); return lit; },
     setRtl() { wake(); },
     stats() {
       const typical = median(frames);
