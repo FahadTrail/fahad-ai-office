@@ -14,6 +14,7 @@ import { runtimeVersion } from './ops/runtime-started.js';
 import { handleWorkspaceApi } from './hub-workspace.js';
 import { handleOfficeApi } from './hub-office.js';
 import { handleOperationsApi } from './hub-office-ops.js';
+import { handlePlatformApi } from './hub-platform.js';
 import { handleContinuityApi } from './hub-continuity.js';
 import { handleDeliverablesApi } from './hub-deliverables.js';
 import { rollExpiredBudgetPeriod } from './workspace-policy/supabase-store.js';
@@ -157,6 +158,7 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
       if (await handleCodingApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
       if (await handleWorkspaceApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null, store })) return;
       if (await handleDeliverablesApi({ db, request, response, url: requestUrl, sendJson, readJson, actor: authEnabled ? ownerEmail : null })) return;
+      if (await handlePlatformApi({ db, request, response, url: requestUrl, sendJson })) return;
       if (await handleOperationsApi({ db, request, response, url: requestUrl, sendJson })) return;
       if (await handleOfficeApi({ db, request, response, url: requestUrl, sendJson })) return;
 

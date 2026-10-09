@@ -10,6 +10,7 @@
 //
 // Pure: no I/O. handleOperationsApi() reads the rows and calls it.
 
+import { isTestWork } from './domain/classification.js';
 import { OFFICE_AGENTS, officeAgent, parseOutput } from './office/agents.js';
 
 export const OPS_STATES = Object.freeze(['AVAILABLE', 'ASSIGNED', 'WORKING', 'REVIEWING', 'WAITING', 'BLOCKED', 'NEEDS FAHAD', 'COMPLETED', 'FAILED']);
@@ -19,8 +20,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 // Historical test / demo / certification objectives never become the default
 // operational view (they stay findable by id). Active work is always shown.
-const TEST_OBJECTIVE = /\b(test(?:ing)?|smoke|canary|probe|drill|benchmark|certification|demo|acceptance|burn[- ]?in|load test|qa check|v2 check|safe to delete)\b|\[(?:drill|test)[^\]]*\]/i;
-export const isTestObjective = (job) => TEST_OBJECTIVE.test(`${job?.title || ''} ${String(job?.goal || '').slice(0, 300)}`);
+// Authoritative registry ids and the historical title pattern. Active work
+// still surfaces; this only recognises test work.
+export const isTestObjective = (job) => isTestWork(job);
 
 const briefOf = (task) => { try { return JSON.parse(task?.brief || '{}') || {}; } catch { return {}; } };
 const stageOf = (task) => briefOf(task).stage || null;
