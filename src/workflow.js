@@ -190,6 +190,16 @@ export class OfficeWorkflow {
           until: capacity.until, maxWaits: CAPACITY_LIMITS.maxWaits,
           info: { ...capacity.info, stage: brief?.stage || null, ...(checkpoint ? { checkpoint: fitCheckpoint(checkpoint) } : {}) },
         });
+        if (deferred?.waiting) {
+          // The database records "<agent> is waiting…"; this says why and what happens next.
+          try {
+            await this.store.emit({
+              jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id,
+              type: 'activity', level: 'warning', message: `Waiting: ${capacity.info.detail}`,
+              payload: { kind: 'capacity_wait_detail', ...capacity.info.summary },
+            });
+          } catch { /* the wait itself is already recorded */ }
+        }
         if (deferred?.waiting || deferred?.ignored) return { ok: false, waiting: Boolean(deferred.waiting), until: deferred.until || capacity.until };
         error = Object.assign(new Error(`Waited ${deferred?.wait_count ?? CAPACITY_LIMITS.maxWaits} times for free model capacity; none recovered. Blocker: ${capacity.info.routes.map((route) => `${route.id} ${route.reasons.join('+')}`).slice(0, 4).join('; ')}`), { code: 'CAPACITY_WAIT_EXHAUSTED' });
       } else if (capacity?.kind === 'blocked') {
@@ -955,7 +965,9 @@ export class OfficeWorkflow {
         onEscalation: (change) => this.store.emit({
           jobId: task.job_id, taskId: task.task_id, runId: task.run_id, agentId: task.agent_id,
           type: 'activity', required: true, level: 'warning',
-          message: `Escalated: ${change.fromRoute} could not complete this ${job} step (${change.reason}); checkpoint ${change.checkpointSequence} saved, choosing the next suitable model.`,
+          message: change.reason === 'QUALIFIED_FALLBACK'
+            ? `Every model that meets the full ${job} floor is busy; continuing on a free model that passed every ${job} skill in its qualification instead of waiting (checkpoint ${change.checkpointSequence}).`
+            : `Escalated: ${change.fromRoute} could not complete this ${job} step (${change.reason}); checkpoint ${change.checkpointSequence} saved, choosing the next suitable model.`,
           payload: { kind: 'model_escalation', job, from_route: change.fromRoute, reason: change.reason, checkpoint: change.checkpointSequence },
         }),
       },

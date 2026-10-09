@@ -13,15 +13,15 @@ import { isCoolingDown } from './provider-state.js';
 import { baseJobName, capabilityGaps, jobFit, jobProfile, languageFit, languageGaps, requiredContext } from './capabilities.js';
 import { capacityPool, poolCooldowns } from './capacity-pools.js';
 import { assertFreeRouteHonest, FREE_ROUTE_INCIDENTS } from './free-guard.js';
-import { evidenceCapabilities, qualificationGaps, evidenceScore } from './qualification.js';
+import { evidenceCapabilities, evidenceRequiredGaps, qualificationGaps, evidenceScore } from './qualification.js';
 import { allowsDataClass, requiredDataClass } from './pool-registry.js';
 import { codingTierGaps } from './coding-qualification.js';
 
 export { assertFreeRouteHonest, sameModelFamily, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 
 const CODING_JOBS = new Set(['coding', 'qa_security']);
-const DEAD_ROUTE_MIN_ATTEMPTS = 20;
-const LOW_SUCCESS_RATE = 0.2;
+export const DEAD_ROUTE_MIN_ATTEMPTS = 20;
+export const LOW_SUCCESS_RATE = 0.2;
 // High-value work that may use scarce free pools first (see order()).
 export const HIGH_VALUE_JOBS = new Set(['synthesis', 'finance', 'finance_critical', 'qa_security', 'coding', 'research']);
 const KEY_WIDE_BLOCKERS = /_(CREDENTIAL_INVALID|ACCOUNT_NOT_ACTIVATED|ACCOUNT_OVERDUE|PERMISSION_MISSING|REGION_NOT_SUPPORTED)$/;
@@ -116,6 +116,7 @@ export class AgentTurnGateway {
       // Evidence before claims: a free model's own qualification results can
       // rule it out of a job, and critical jobs need a passed qualification.
       reasons.push(...qualificationGaps(route, job, qualifications, now));
+      reasons.push(...evidenceRequiredGaps(route, profile, qualifications, now));
       // Coding tiers (Capacity V2, Part 12): with qualification evidence, a
       // free route takes coding work only with a coding-suite grade that
       // matches the job size (small / medium / large / critical).

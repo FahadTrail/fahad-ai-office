@@ -7,7 +7,7 @@ import { createModelPool, modelPoolDefinitions } from '../src/model-gateway/agen
 import { capacityPool, poolSummary } from '../src/model-gateway/agentic/capacity-pools.js';
 import { allowsDataClass, DATA_CLASSES, poolFacts, publishedTokenAllowance, requiredDataClass, routeDataClass } from '../src/model-gateway/agentic/pool-registry.js';
 import { CONTRACT_FIELDS, contractViolations, routeContract, routeLifecycle } from '../src/model-gateway/agentic/provider-contract.js';
-import { MemoryQualificationStore, qualificationBackoffUntil, qualificationCandidates, qualificationGaps, QUALIFICATION_SUITE_VERSION } from '../src/model-gateway/agentic/qualification.js';
+import { MemoryQualificationStore, QualificationStore, qualificationBackoffUntil, qualificationCandidates, qualificationGaps, QUALIFICATION_SUITE_VERSION, RETIRE_AFTER } from '../src/model-gateway/agentic/qualification.js';
 import { createCodingRuntime } from '../src/coding-agent/runtime.js';
 import { AgentTurnGateway } from '../src/model-gateway/agentic/turn-gateway.js';
 import { MemoryProviderStateStore } from '../src/model-gateway/agentic/provider-state.js';
@@ -353,4 +353,31 @@ test('a hint-less per-minute 429 is not retried at once on the same route; the n
   assert.deepEqual(calls, ['gemini:gemma', 'zhipu:glm'], 'one call to the limited route, then the other pool');
   const state = (await gateway.stateStore.snapshot()).get('gemini:gemma');
   assert.ok(Date.parse(state.cooldownUntil) - Date.now() <= 65_000, 'rests for one window');
+});
+
+test('qualification back-off grows for routes that never work: 1 → 2 → 4 → 7 days; never-answering rate-limited routes go daily', async () => {
+  const now = Date.parse('2026-10-09T12:00:00Z');
+  const hoursAgo = (hours) => new Date(now - hours * 3600_000).toISOString();
+  const dead = (count, hours) => qualificationBackoffUntil({ errorCode: 'HTTP_404', testedAt: hoursAgo(hours), count }, now);
+  assert.equal(dead(1, 25), null, 'one refusal: a day');
+  assert.ok(dead(2, 25) && !dead(2, 49), 'two in a row: two days');
+  assert.ok(dead(3, 49) && !dead(3, 97), 'three: four days');
+  assert.ok(dead(10, 7 * 24 - 1) && !dead(10, 7 * 24 + 1), 'capped at a week');
+  const limited = (count, hours) => qualificationBackoffUntil({ errorCode: 'HTTP_429', testedAt: hoursAgo(hours), count }, now);
+  assert.equal(limited(RETIRE_AFTER - 1, 2), null, 'a busy route is retried hourly');
+  assert.ok(limited(RETIRE_AFTER, 2), 'a route that never answers is retried daily');
+  // The production store counts consecutive errors since the last pass.
+  const row = (results, minutesAgo) => ({ report: { kind: 'qualification', results }, completed_at: new Date(now - minutesAgo * 60_000).toISOString() });
+  const rows = [
+    row([{ routeId: 'gemini:dead', status: 'error', errorCode: 'HTTP_404', testedAt: hoursAgo(1) }], 60),
+    row([{ routeId: 'gemini:dead', status: 'error', errorCode: 'HTTP_404', testedAt: hoursAgo(30) }], 1800),
+    row([{ routeId: 'gemini:dead', status: 'error', errorCode: 'HTTP_404', testedAt: hoursAgo(60) }], 3600),
+    row([{ routeId: 'groq:ok', status: 'error', errorCode: 'HTTP_429', testedAt: hoursAgo(2) }], 120),
+    row([{ routeId: 'groq:ok', status: 'qualified', suiteVersion: QUALIFICATION_SUITE_VERSION, testedAt: hoursAgo(5), skills: {} }], 300),
+    row([{ routeId: 'groq:ok', status: 'error', errorCode: 'HTTP_429', testedAt: hoursAgo(9) }], 540),
+  ];
+  const query = { select: () => query, eq: () => query, gte: () => query, order: () => query, limit: async () => ({ data: rows, error: null }) };
+  const snapshot = await new QualificationStore({ from: () => query }, { now: () => now }).snapshot();
+  assert.equal(snapshot.errors.get('gemini:dead').count, 3);
+  assert.equal(snapshot.errors.get('groq:ok').count, 1, 'errors before the last pass are not part of the streak');
 });

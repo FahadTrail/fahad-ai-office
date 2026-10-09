@@ -264,6 +264,9 @@ export function simpleModelStatus(route) {
   const status = String(route.status || '');
   if (status.startsWith('BLOCKED')) return { status: 'ACCOUNT ACTION REQUIRED', reason: route.accountBlocker?.text || route.accountBlocker?.label || status.replace(/^BLOCKED — /, '') };
   if (status === 'RATE LIMITED' || status === 'COOLDOWN') return { status: 'COOLDOWN', reason: route.cooldownUntil ? `Rests until ${route.cooldownUntil}` : 'Resting after a provider limit' };
+  // Never shown as available when it has never answered: the router skips it too.
+  if (route.reliability?.status === 'NEVER_ANSWERED') return { status: 'UNAVAILABLE', reason: `Never answered (${route.reliability.attempts} failed attempts, 0 successes); re-tested with a growing back-off` };
+  if (route.reliability?.status === 'LOW_SUCCESS') return { status: 'UNAVAILABLE', reason: `Rarely answers (${route.reliability.successes} of ${route.reliability.attempts}); used only after it recovers` };
   if (status === 'LIVE' || status.startsWith('CONFIGURED')) return { status: 'AVAILABLE', reason: status === 'LIVE' ? 'Verified with a real call' : 'Configured; not yet verified by a live call' };
   if (status === 'NOT CONFIGURED') return { status: 'UNAVAILABLE', reason: 'No credential configured' };
   if (status === 'RETIRED') return { status: 'UNAVAILABLE', reason: 'Retired by the provider' };
@@ -278,7 +281,7 @@ export function modelsView(snapshot) {
       id: route.id, provider: route.provider, model: route.model, status: simple.status, reason: simple.reason, detail: route.status,
       billing: route.billingClass === 'PAID' ? 'Paid' : route.billingClass === 'PROMO' ? 'Trial credits' : 'Free',
       health: route.health, cooldownUntil: route.cooldownUntil || null, order: route.routingRank || null,
-      roles: route.suitableJobs || [], coding: route.codingSuitability || null, privateCode: route.privateCode || null,
+      roles: route.suitableJobs || [], fallbackRoles: route.fallbackJobs || [], coding: route.codingSuitability || null, privateCode: route.privateCode || null,
     };
   });
   const rank = { AVAILABLE: 0, COOLDOWN: 1, 'ACCOUNT ACTION REQUIRED': 2, UNAVAILABLE: 3 };
@@ -349,8 +352,9 @@ export function workflowSummary(steps = []) {
 export function chatStage(job, steps = [], now = Date.now()) {
   if (job.status === 'planning' || !steps.length) return 'Thinking';
   // A step waiting for free model capacity resumes by itself.
-  if (!steps.some((step) => step.status === 'running') && steps.some((step) => step.status === 'queued' && step.not_before && Date.parse(step.not_before) > now)) {
-    return 'Waiting for free model capacity — will resume automatically';
+  const waiting = !steps.some((step) => step.status === 'running') && steps.find((step) => step.status === 'queued' && step.not_before && Date.parse(step.not_before) > now);
+  if (waiting) {
+    return waiting.wait_info?.detail ? `Waiting: ${waiting.wait_info.detail}` : 'Waiting for free model capacity — will resume automatically';
   }
   const flow = workflowSummary(steps);
   if (flow) {
@@ -443,7 +447,7 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         const jobs = await rows(db.from('jobs').select('id,title,goal,status,progress,final_summary,cost_usd,tokens_used,created_at,completed_at')
           .eq('conversation_id', id).order('created_at', { ascending: true }).limit(200));
         const jobIds = jobs.map((job) => job.id);
-        const stepRows = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,sequence,brief,depends_on,not_before').in('job_id', jobIds).order('sequence')) : [];
+        const stepRows = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,sequence,brief,depends_on,not_before,wait_info').in('job_id', jobIds).order('sequence')) : [];
         const agentRows = stepRows.length ? await rows(db.from('agents').select('id,slug')) : [];
         const slugById = new Map(agentRows.map((agent) => [agent.id, agent.slug]));
         for (const step of stepRows) step.agent_slug = slugById.get(step.agent_id) || null;

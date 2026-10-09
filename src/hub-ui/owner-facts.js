@@ -107,3 +107,17 @@ export function capacitySentence(summary, language = 'en') {
   if (exhausted) parts.push(`${exhausted} used up`);
   return `${parts.join('; ')}.`;
 }
+
+// The project new objectives go to unless Fahad picks another one. A
+// remembered project is reused only while it is active and real: an archived,
+// test, demo or certification project never becomes the default again
+// (2026-10-09: "CERTIFICATION V5.4 (test, safe to delete)" lived next to the
+// real project). Fahad can still select any project explicitly.
+const TEST_PROJECT = /\b(test|tests|testing|demo|certification|sandbox|staging|safe to delete)\b/i;
+export const defaultableProject = (workspace) => Boolean(workspace) && workspace.status !== 'archived' && !TEST_PROJECT.test(String(workspace.name || ''));
+export function defaultProject(workspaces = [], savedId = null) {
+  const saved = workspaces.find((workspace) => workspace.id === savedId);
+  if (defaultableProject(saved)) return saved;
+  return workspaces.find((workspace) => workspace.name === 'Fahad AI Office' && workspace.status !== 'archived')
+    || workspaces.find(defaultableProject) || workspaces[0] || null;
+}

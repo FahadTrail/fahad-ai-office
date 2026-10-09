@@ -163,11 +163,23 @@ export const JOB_PROFILES = Object.freeze({
 });
 
 // Low-risk jobs that may drop one capability level when every normal route
-// is unavailable (instead of waiting). Legal, security, finance, synthesis
-// and orchestration (CHIEF and AUDIT) are never relaxed.
+// is unavailable (instead of waiting). Legal, security, finance and
+// orchestration (CHIEF and AUDIT) are never relaxed.
 export const TOLERANT_JOBS = Object.freeze(new Set(['content', 'branding', 'seo', 'classification']));
+// CHIEF's final synthesis has an evidence-gated fallback instead: when every
+// route that meets its documented floor is unavailable, a free route one
+// writing level below the floor may take it ONLY with a valid, fully passed
+// qualification for every synthesis skill (reasoning, writing, instruction).
+// Without that evidence the step still waits. Production 2026-10-09: CHIEF
+// waited while Groq gpt-oss-120b (7/7 skills passed) was healthy.
+export const EVIDENCE_FALLBACK_JOBS = Object.freeze({ synthesis: Object.freeze({ reasoning: 4, writing: 3 }) });
 export function relaxedJob(job) {
   const name = typeof job === 'string' ? job : null;
+  if (name && EVIDENCE_FALLBACK_JOBS[name]) {
+    const base = JOB_PROFILES[name];
+    return Object.freeze({ ...base, name: `${name}:relaxed`, baseJob: name, label: `${base.label} (qualified fallback)`,
+      min: EVIDENCE_FALLBACK_JOBS[name], evidenceRequired: true });
+  }
   if (!name || !TOLERANT_JOBS.has(name)) return null;
   const base = JOB_PROFILES[name];
   return Object.freeze({ ...base, name: `${name}:relaxed`, baseJob: name, label: `${base.label} (lower tier)`,

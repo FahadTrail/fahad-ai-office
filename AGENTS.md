@@ -69,15 +69,26 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## The Office redesign (2026-10-08, open PR, unmerged)
+## Routing & worker truthfulness audit (2026-10-09, open PR, unmerged)
 
-The approved "Daylight Atrium" redesign of the Live Office is on branch `claude/the-office-redesign`. It is documented in `docs/office-redesign.md`.
+The work is on branch `claude/quirky-shannon-ba3f6e`. The report is `docs/routing-audit-2026-10-09.md`.
+
+* CHIEF synthesis now has a qualified-evidence free fallback.
+* Dead routes get a qualification back-off.
+* Wait messages are actionable.
+* Workers are shown by class.
+* The Hub never defaults to a test or archived project.
+* The migration `20261009090000_close_cancelled_session_runs.sql` is **not applied**.
+
+Do not merge, deploy or apply it without Fahad.
+
+## The Office redesign (2026-10-08, merged as #115, deployed)
+
+The approved "Daylight Atrium" redesign of the Live Office was merged as #115 (`c339c90`) and deployed. It is documented in `docs/office-redesign.md`.
 
 * It replaces the V5 immersive scene.
 * It adds only additive, read-only API fields and no migration.
 * QA runs through `tools/office-shots.mjs` (the ten views) and `tools/office-a11y.mjs`.
-
-It is **not merged and not deployed**. Do not merge or deploy without Fahad.
 
 ## V5.4 functional certification (2026-10-06, open PR, unmerged)
 

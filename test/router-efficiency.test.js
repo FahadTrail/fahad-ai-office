@@ -9,7 +9,7 @@ import { createModelPool } from '../src/model-gateway/agentic/model-pool.js';
 import { setProviderCatalog } from '../src/model-gateway/agentic/provider-catalogs.js';
 import { capacityPool, poolSummary } from '../src/model-gateway/agentic/capacity-pools.js';
 import { financeJob, relaxedJob, requiredContext } from '../src/model-gateway/agentic/capabilities.js';
-import { evidenceCapabilities, QUALIFICATION_SUITE_VERSION } from '../src/model-gateway/agentic/qualification.js';
+import { evidenceCapabilities, evidenceRequiredGaps, QUALIFICATION_SUITE_VERSION } from '../src/model-gateway/agentic/qualification.js';
 import { modelUsage } from '../src/model-gateway/agentic/usage-telemetry.js';
 import { capacityDecision } from '../src/office/capacity.js';
 import { stepJob, stepWebTools } from '../src/office/routing-hints.js';
@@ -221,7 +221,11 @@ test('Q. owner-facing TOTAL MODEL USAGE reconciles successful, failed, cached an
 
 test('lower-tier fallback only for low-risk jobs; scarce pools go last for low-value work', async () => {
   assert.equal(relaxedJob('content').min.writing, 2);
-  for (const job of ['finance', 'finance_critical', 'synthesis', 'orchestration', 'research', 'coding', 'qa_security']) assert.equal(relaxedJob(job), null, job);
+  for (const job of ['finance', 'finance_critical', 'orchestration', 'research', 'coding', 'qa_security']) assert.equal(relaxedJob(job), null, job);
+  // Synthesis only has the evidence-gated fallback (one writing level, passed skills required).
+  assert.deepEqual(relaxedJob('synthesis').min, { reasoning: 4, writing: 3 });
+  assert.equal(relaxedJob('synthesis').evidenceRequired, true);
+  assert.equal(relaxedJob('synthesis').strictEvidence, true, 'qualification still never raises a score');
   const gateway = new AgentTurnGateway({ pool: productionPool(), stateStore: new MemoryProviderStateStore({ now: () => NOW }), now: () => NOW });
   const content = gateway.order(await gateway.evaluate({ requiresPrivateData: false, job: 'content', estimatedInputTokens: 2000, maxOutputTokens: 2000, allowPaid: false, qualifications: PRODUCTION_QUALIFICATIONS }), { job: 'content', qualifications: PRODUCTION_QUALIFICATIONS });
   const scarceIndex = content.findIndex((route) => capacityPool(route).scarce);
@@ -278,4 +282,46 @@ test('SANAD REPLAY: OpenRouter pool and Gemini Flash exhausted — FINANCE conti
   assert.ok(!/openrouter|gemini-flash-latest/.test(result.route.id), `continued on ${result.route.id}`);
   assert.ok(!served.some((url) => url.includes('openrouter')), 'the exhausted OpenRouter pool was not probed');
   assert.ok(!served.some((url) => url.includes('gemini-flash-latest')), 'the exhausted Gemini Flash quota was not probed');
+});
+
+test('CHIEF REPLAY 2026-10-09: both full-floor synthesis routes cooling down — CHIEF continues on a qualified free route instead of waiting', async () => {
+  const pool = productionPool();
+  const store = new MemoryProviderStateStore({ now: () => NOW });
+  // The state production had at 08:40 UTC: Gemini Flash (transient) and
+  // Nemotron Ultra (network) cooling down; Groq, Nemotron Super healthy.
+  store.rows.set('gemini:gemini-flash-latest', { health: 'unavailable', cooldownUntil: new Date(NOW + 60_000).toISOString(), consecutiveFailures: 2, lastErrorCode: 'PROVIDER_TRANSIENT' });
+  store.rows.set('openrouter:nvidia/nemotron-3-ultra-550b-a55b:free', { health: 'unavailable', cooldownUntil: new Date(NOW + 15 * 60_000).toISOString(), consecutiveFailures: 5, lastErrorCode: 'PROVIDER_NETWORK' });
+  const gateway = new AgentTurnGateway({ pool, stateStore: store, now: () => NOW });
+  const routing = { requiresPrivateData: false, allowPaid: false, estimatedInputTokens: 5000, maxOutputTokens: 6000, qualifications: PRODUCTION_QUALIFICATIONS };
+  // The documented floor: nothing eligible right now (this is what waited).
+  const strict = await gateway.evaluate({ ...routing, job: 'synthesis' });
+  assert.deepEqual(strict.filter((entry) => entry.eligible).map((entry) => entry.route.id), []);
+  // Excluded ONLY by the static writing score: Groq's 8K tokens-per-minute
+  // limit is not read as a context window, and the 32K planning floor yields
+  // to the real request size.
+  assert.equal(eligibility(strict)['groq:openai/gpt-oss-120b'], 'CAPABILITY_WRITING_BELOW_4');
+  // The evidence-gated fallback: routes that passed every synthesis skill.
+  const fallback = gateway.order(await gateway.evaluate({ ...routing, job: 'synthesis:relaxed' }), { job: 'synthesis:relaxed', qualifications: PRODUCTION_QUALIFICATIONS });
+  const ids = fallback.map((route) => route.id);
+  assert.ok(ids.includes('groq:openai/gpt-oss-120b'), ids.join(','));
+  assert.ok(ids.includes('openrouter:nvidia/nemotron-3-super-120b-a12b:free'), ids.join(','));
+  assert.ok(!ids.includes('gemini:gemini-flash-lite-latest'), 'reasoning 3 stays below the synthesis floor');
+  assert.ok(fallback.every((route) => route.billingClass !== 'paid'), 'free-only stays free-only');
+  // Arabic answers still need an Arabic-capable writer.
+  const arabic = (await gateway.evaluate({ ...routing, job: 'synthesis:relaxed', language: 'ar' })).filter((entry) => entry.eligible).map((entry) => entry.route.id);
+  assert.ok(!arabic.includes('groq:qwen/qwen3.8-27b'), 'Qwen 3.8 (Arabic 2) never writes the Arabic synthesis');
+});
+
+test('the synthesis fallback needs evidence: an untested or partly failed route keeps waiting', async () => {
+  const pool = productionPool();
+  const groq = pool.find((route) => route.id === 'groq:openai/gpt-oss-120b');
+  const job = relaxedJob('synthesis');
+  assert.deepEqual(evidenceRequiredGaps(groq, job, new Map(), NOW), ['EVIDENCE_REQUIRED'], 'no qualification, no fallback');
+  assert.deepEqual(evidenceRequiredGaps(groq, job, new Map([[groq.id, qualified({ writing: undefined })]]), NOW), ['EVIDENCE_REQUIRED'], 'an untested skill is not evidence');
+  assert.deepEqual(evidenceRequiredGaps(groq, job, new Map([[groq.id, { ...qualified(), status: 'partial' }]]), NOW), ['EVIDENCE_REQUIRED']);
+  assert.deepEqual(evidenceRequiredGaps(groq, job, PRODUCTION_QUALIFICATIONS, NOW), []);
+  assert.deepEqual(evidenceRequiredGaps(groq, 'synthesis', new Map(), NOW), [], 'the full floor never needs it');
+  const gateway = new AgentTurnGateway({ pool, stateStore: new MemoryProviderStateStore({ now: () => NOW }), now: () => NOW });
+  const none = await gateway.evaluate({ requiresPrivateData: false, allowPaid: false, job: 'synthesis:relaxed', estimatedInputTokens: 5000, maxOutputTokens: 6000, qualifications: new Map() });
+  assert.match(eligibility(none)['groq:openai/gpt-oss-120b'], /EVIDENCE_REQUIRED/);
 });

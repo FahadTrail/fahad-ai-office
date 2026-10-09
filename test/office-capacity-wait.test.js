@@ -201,3 +201,61 @@ test('free-only mode: when free capacity is exhausted a healthy paid route is ne
   assert.equal(task.status, 'queued');
   assert.deepEqual(task.wait_info.routes.map((entry) => entry.id), ['gemini:gemini-flash-latest'], 'waits only for the free route');
 });
+
+test('CHIEF synthesis: when every full-floor route is cooling down it continues on a qualified free route (and still waits without evidence)', async () => {
+  const { MemoryQualificationStore, QUALIFICATION_SUITE_VERSION } = await import('../src/model-gateway/agentic/qualification.js');
+  const answered = [];
+  const client = (id, model) => ({ async turn() { answered.push(id); return { message: { role: 'assistant', content: [{ type: 'text', text: '## Summary\nFinal answer.' }] }, usage: { inputTokens: 100, outputTokens: 50, costUsd: 0 }, stopReason: 'end', model, durationMs: 1 }; } });
+  const make = async (qualified) => {
+    const stateStore = new MemoryProviderStateStore({ now: () => START });
+    // The only route that meets the documented floor (writing 4) is cooling down.
+    stateStore.rows.set('gemini:gemini-flash-latest', { provider: 'gemini', model: 'gemini-flash-latest', billingClass: 'free', health: 'unavailable', cooldownUntil: new Date(START + 5 * MINUTE).toISOString(), consecutiveFailures: 2, lastErrorCode: 'PROVIDER_TRANSIENT' });
+    const qualificationStore = new MemoryQualificationStore();
+    const skills = { instruction: true, structured: true, reasoning: true, coding: true, writing: true, reading: true, tools: true };
+    if (qualified) await qualificationStore.save([{ routeId: 'groq:openai/gpt-oss-120b', status: 'qualified', suiteVersion: QUALIFICATION_SUITE_VERSION, testedAt: new Date(START - 3600_000).toISOString(), skills }]);
+    await qualificationStore.save([{ routeId: 'gemini:gemini-flash-latest', status: 'qualified', suiteVersion: QUALIFICATION_SUITE_VERSION, testedAt: new Date(START - 3600_000).toISOString(), skills }]);
+    return new OfficeModelRunner({
+      stateStore, qualificationStore, now: () => START, sleepFn: async () => {},
+      poolFactory: () => [route('gemini:gemini-flash-latest', client('gemini', 'gemini-flash-latest')), route('groq:openai/gpt-oss-120b', client('groq', 'openai/gpt-oss-120b'), { qualityTier: 3 })],
+    });
+  };
+  const escalations = [];
+  const runner = await make(true);
+  const result = await runner.run({ job: 'synthesis', systemPrompt: 'CHIEF', prompt: 'Synthesise.', allowPaid: false, hooks: { onEscalation: async (change) => escalations.push(change.reason) } });
+  assert.deepEqual(answered, ['groq'], 'answered by the qualified route, not after a wait');
+  assert.deepEqual(escalations, ['QUALIFIED_FALLBACK']);
+  // Without evidence for the alternate route, the step waits as before.
+  const unqualified = await make(false);
+  const error = await unqualified.run({ job: 'synthesis', systemPrompt: 'CHIEF', prompt: 'Synthesise.', allowPaid: false }).then(() => null, (failure) => failure);
+  assert.ok(error, 'no route may answer');
+  assert.equal(capacityDecision(error, { now: START }).kind, 'wait');
+});
+
+test('the wait says why: routes cooling down, alternates excluded by policy, paid fallback status, next retry', () => {
+  const now = Date.parse('2026-10-09T08:40:00Z');
+  const error = { code: 'ALL_PROVIDERS_UNAVAILABLE', evaluations: [
+    { id: 'gemini:gemini-flash-latest', billingClass: 'free', reasons: ['COOLDOWN_UNAVAILABLE'], cooldownUntil: '2026-10-09T08:41:15Z' },
+    { id: 'openrouter:nvidia/nemotron-3-ultra-550b-a55b:free', billingClass: 'free', reasons: ['COOLDOWN_UNAVAILABLE'], cooldownUntil: '2026-10-09T08:55:37Z' },
+    { id: 'groq:openai/gpt-oss-120b', billingClass: 'free', reasons: ['CAPABILITY_WRITING_BELOW_4'] },
+    { id: 'gemini:gemini-flash-lite-latest', billingClass: 'free', reasons: ['CAPABILITY_REASONING_BELOW_4', 'CAPABILITY_WRITING_BELOW_4'] },
+    { id: 'gemini:gemini-2.5-flash', billingClass: 'free', reasons: ['NEVER_SUCCEEDED'] },
+    { id: 'deepseek:deepseek-flash', billingClass: 'paid', reasons: ['PAID_ROUTE_NOT_ALLOWED'] },
+  ] };
+  const decision = capacityDecision(error, { now });
+  assert.equal(decision.kind, 'wait');
+  const detail = decision.info.detail;
+  assert.match(detail, /gemini gemini-flash-latest until 12:41/, detail);
+  assert.match(detail, /3 other free routes excluded \(2 capability, 1 never answers\)/, detail);
+  assert.match(detail, /paid fallback: not allowed for this request \(free-only\)/, detail);
+  assert.match(detail, /next automatic retry 12:41/, detail);
+  assert.deepEqual(decision.info.summary.excluded, { capability: 2, 'never answers': 1 });
+  // Shown to the owner instead of the vague sentence.
+  const states = officeState({
+    agents: [{ id: 'a1', slug: 'research-strategy' }],
+    jobs: [{ id: 'j1', status: 'running', title: 'X' }],
+    tasks: [{ id: 't1', job_id: 'j1', agent_id: 'a1', title: 'Market research', status: 'queued', depends_on: [], brief: '{"stage":"specialist"}', created_at: new Date(now).toISOString(),
+      not_before: '2026-10-09T08:41:15Z', wait_info: decision.info }],
+    now,
+  });
+  assert.match(states.get('research-strategy').detail, /^Waiting: .*paid fallback: not allowed/);
+});

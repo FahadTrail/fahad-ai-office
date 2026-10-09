@@ -59,7 +59,7 @@ export function officeState({ agents = [], jobs = [], tasks = [], sessions = [],
     const assignment = { jobId: job.id, taskId: task.id, objective: job.title || job.goal, task: task.title, conversationId: job.conversation_id || null };
     const state = taskState(task, taskById, now);
     if (state === 'capacity' && ['running', 'planning'].includes(job.status)) {
-      offer(employee.slug, { state: 'WAITING', detail: WAITING_MESSAGE, assignment: { ...assignment, resumesAt: task.not_before }, since: task.created_at });
+      offer(employee.slug, { state: 'WAITING', detail: task.wait_info?.detail ? `Waiting: ${task.wait_info.detail}` : WAITING_MESSAGE, assignment: { ...assignment, resumesAt: task.not_before }, since: task.created_at });
     } else if (state === 'working') {
       const stage = brief.stage;
       const visible = stage === 'chief_plan' ? 'THINKING' : ['synthesis', 'chief_review'].includes(stage) ? 'REVIEWING' : 'WORKING';

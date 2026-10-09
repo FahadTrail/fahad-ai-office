@@ -34,7 +34,7 @@ function taskEntries(task, { agent, job, byId }) {
   if (task.status === 'done' && task.completed_at) out.push({ ...base, at: task.completed_at, kind: 'delivered', status: 'done', text: `${who} delivered ${task.title}` });
   if (task.status === 'failed') out.push({ ...base, at: task.completed_at || task.started_at || task.created_at, kind: 'failed', status: 'failed', text: `${who} could not finish ${task.title}` });
   if (task.status === 'queued' && task.not_before && task.wait_count) {
-    out.push({ ...base, at: task.wait_info?.deferred_at || task.started_at || task.created_at, kind: 'capacity', status: 'waiting', text: `${who}: ${WAITING_MESSAGE}`, resumesAt: task.not_before });
+    out.push({ ...base, at: task.wait_info?.deferred_at || task.started_at || task.created_at, kind: 'capacity', status: 'waiting', text: `${who}: ${task.wait_info?.detail ? `waiting — ${task.wait_info.detail}` : WAITING_MESSAGE}`, resumesAt: task.not_before });
   }
   void byId;
   return out;

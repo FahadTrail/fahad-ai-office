@@ -53,7 +53,7 @@ test('Hub API lists workspaces and creates a workspace-scoped job', async () => 
   const address = server.address();
   const base = `http://127.0.0.1:${address.port}`;
   const workspaces = await fetch(`${base}/api/workspaces`).then((response) => response.json());
-  assert.deepEqual(workspaces.workspaces, [{ id: workspaceId, name: 'Fahad AI Office' }]);
+  assert.deepEqual(workspaces.workspaces, [{ id: workspaceId, name: 'Fahad AI Office', status: 'active' }]);
   const created = await fetch(`${base}/api/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ workspaceId, goal: 'Build the Hub MVP' }) }).then((response) => response.json());
   assert.equal(created.job.workspaceId, workspaceId);
   assert.equal(jobs[0].projectId, workspaceId);
@@ -230,7 +230,7 @@ test('OTP verification cannot replace the service-role project session', async (
   const cookie = verified.headers.get('set-cookie').split(';')[0];
   const response = await fetch(`${base}/api/workspaces`, { headers: { cookie } });
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).workspaces, [{ id: workspaceId, name: 'Fahad AI Office' }]);
+  assert.deepEqual((await response.json()).workspaces, [{ id: workspaceId, name: 'Fahad AI Office', status: 'active' }]);
   await new Promise((resolve) => server.close(resolve));
 });
 
