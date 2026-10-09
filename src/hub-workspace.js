@@ -7,6 +7,7 @@
 import { SESSION_FIELDS, modelPoolSnapshot, publicSession, publicEvent } from './hub-coding.js';
 import { ACTIVE_AGENTS, NICKNAMES } from './office/agents.js';
 import { officeAgent } from './office/agents.js';
+import { isTestObjective } from './hub-office-ops.js';
 
 // Structured memory (see the final-roster migration's project_memory check).
 export const MEMORY_KINDS = Object.freeze(['fact', 'decision', 'preference', 'constraint', 'product_decision', 'technical_decision',
@@ -649,7 +650,8 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
       ]);
       // A major completion is a multi-employee objective (it has a synthesis step).
       const synthesized = completedJobs.length ? new Set((await rows(db.from('tasks').select('job_id,brief').in('job_id', completedJobs.map((job) => job.id)))).filter((task) => /"stage":"synthesis"/.test(task.brief || '')).map((task) => task.job_id)) : new Set();
-      const items = attentionFrom({ sessions, approvals, failedJobs, artifacts, completedObjectives: completedJobs.filter((job) => synthesized.has(job.id)) });
+      const real = (job) => !isTestObjective(job);
+      const items = attentionFrom({ sessions, approvals, failedJobs: failedJobs.filter(real), artifacts, completedObjectives: completedJobs.filter((job) => synthesized.has(job.id) && real(job)) });
       return sendJson(response, 200, { ok: true, items, counts: { action: items.filter((item) => item.priority !== PRIORITY.INFO).length, urgent: items.filter((item) => item.priority === PRIORITY.URGENT).length, total: items.length } }), true;
     }
 

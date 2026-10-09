@@ -8,6 +8,12 @@ import { ARTIFACT_TYPES } from './office/artifacts.js';
 import { WAITING_MESSAGE } from './office/capacity.js';
 import { ownerAction, approvalCard } from './hub-workspace.js';
 import { OfficeStream, handoffView, timelineView } from './hub-office-live.js';
+import { isTestObjective } from './hub-office-ops.js';
+
+// Historical test / demo / certification objectives stay in storage as audit
+// evidence but never appear in the normal Office views; active work always does.
+const OPEN_JOB = new Set(['planning', 'running', 'review', 'waiting_approval']);
+export const officeVisible = (job) => OPEN_JOB.has(job.status) || !isTestObjective(job);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL_SESSION = new Set(['completed', 'failed', 'cancelled']);
@@ -363,15 +369,17 @@ function uuid(value, name) {
 
 async function workspaceActivity(db, workspaceId, sinceMs) {
   const since = new Date(Date.now() - sinceMs).toISOString();
-  const [agents, jobs, sessions, approvals] = await Promise.all([
+  let [agents, jobs, sessions, approvals] = await Promise.all([
     rows(db.from('agents').select('id,slug,name,accent_color,is_active')),
     rows(db.from('jobs').select('id,title,goal,status,progress,conversation_id,created_at,completed_at').eq('project_id', workspaceId).gte('created_at', since).order('created_at', { ascending: false }).limit(60)),
     rows(db.from('agent_sessions').select('id,job_id,title,status,phase,error_code,blocker,result,conversation_id,created_at,updated_at,completed_at').eq('workspace_id', workspaceId).order('updated_at', { ascending: false }).limit(20)),
     rows(db.from('agent_approvals').select('id,session_id,tool_name,action,risk,summary,arguments_preview,status,requested_at').eq('workspace_id', workspaceId).eq('status', 'pending')),
   ]);
+  const hiddenJobIds = new Set(jobs.filter((job) => !officeVisible(job)).map((job) => job.id));
+  jobs = jobs.filter((job) => !hiddenJobIds.has(job.id));
   const jobIds = jobs.map((job) => job.id);
   const tasks = jobIds.length ? await rows(db.from('tasks').select('id,job_id,agent_id,title,status,brief,depends_on,sequence,started_at,completed_at,created_at,not_before,wait_count,wait_info').in('job_id', jobIds)) : [];
-  return { agents, jobs, tasks, sessions: sessions.filter((session) => !TERMINAL_SESSION.has(session.status) || (session.completed_at && Date.now() - Date.parse(session.completed_at) < RECENT_MS)), approvals };
+  return { agents, jobs, tasks, hiddenJobIds, sessions: sessions.filter((session) => (!session.job_id || !hiddenJobIds.has(session.job_id)) && (!TERMINAL_SESSION.has(session.status) || (session.completed_at && Date.now() - Date.parse(session.completed_at) < RECENT_MS))), approvals };
 }
 
 // Handoffs and artifacts of the same window, for the timeline and handoffs.
@@ -382,7 +390,7 @@ async function liveExtras(db, workspaceId, live, sinceMs) {
     jobIds.length ? rows(db.from('handoffs').select('id,from_agent_id,to_agent_id,from_task_id,to_task_id,job_id,created_at').in('job_id', jobIds).order('created_at', { ascending: false }).limit(80)) : [],
     optionalRows(db.from('artifacts').select('id,job_id,task_id,agent_slug,type,title,created_at').eq('project_id', workspaceId).gte('created_at', since).order('created_at', { ascending: false }).limit(80)),
   ]);
-  return { handoffs, artifacts };
+  return { handoffs, artifacts: artifacts.filter((artifact) => !artifact.job_id || !live.hiddenJobIds?.has(artifact.job_id)) };
 }
 
 const streams = new WeakMap();

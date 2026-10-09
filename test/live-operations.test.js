@@ -287,3 +287,20 @@ test('PRODUCTION REGRESSION: an attempt outcome keeps its real start time', () =
   assert.match(source, /status: 'succeeded', usage: result\.usage, requestId: result\.requestId, durationMs: result\.durationMs, startedAt: new Date\(startedAt\)\.toISOString\(\) \}/);
   assert.match(source, /status: 'failed', usage: error\.usage \|\| null, startedAt: new Date\(startedAt\)\.toISOString\(\)/);
 });
+
+test('historical test objectives never appear in the normal Office views; active work always does', async () => {
+  const { officeVisible, handleOfficeApi } = await import('../src/hub-office.js');
+  assert.equal(officeVisible({ title: 'V5 production smoke: reply NOTED', status: 'completed' }), false);
+  assert.equal(officeVisible({ title: 'Continuity Phase N live drill (Office leg)', status: 'cancelled' }), false);
+  assert.equal(officeVisible({ title: 'PRODUCTION ACCEPTANCE TEST', status: 'running' }), true, 'running work is genuine activity');
+  assert.equal(officeVisible({ title: 'Qahwa Run — launch plan', status: 'completed' }), true);
+  const now = Date.now();
+  const tables = previewTables(now);
+  tables.jobs.push({ id: 'b0000000-0000-4000-8000-0000000000aa', project_id: PREVIEW_WORKSPACE, title: 'Office test 7 — smoke', goal: 'smoke', status: 'completed', progress: 100, created_at: new Date(now - 3600_000).toISOString(), completed_at: new Date(now - 3000_000).toISOString() });
+  const db = memoryPostgrest(tables);
+  let body = null;
+  await handleOfficeApi({ db, request: { method: 'GET' }, response: {}, url: new URL(`http://x/api/office?workspaceId=${PREVIEW_WORKSPACE}`), sendJson: (_, code, payload) => { body = payload; } });
+  assert.ok(body.ok);
+  assert.equal(body.timeline.some((entry) => entry.jobId === 'b0000000-0000-4000-8000-0000000000aa'), false, 'not in the timeline');
+  assert.ok(body.timeline.some((entry) => /Qahwa Run/.test(entry.objective || '')), 'real work still is');
+});
