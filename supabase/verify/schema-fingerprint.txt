@@ -925,12 +925,12 @@ function|1770ba0455197b7af99127f0c88e4661|private.is_owner() md5=0aea3466243e350
 function|1776797e78ed506f729ea5cbb011fa2b|public.create_coding_session(p_workspace uuid, p_title text, p_objective text, p_repository text, p_base_branch text, p_budget_usd numeric, p_config jsonb, p_cr
 function|1f8f61edc42757d9ae90770e50719d87|private.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) md5=5efc8a1a3c3926a495155a7c4f497b95
 function|2300f1c17f90377775c8128b332178cd|public.create_task(p_job uuid, p_agent_slug text, p_title text, p_brief text, p_sequence integer, p_depends_on uuid[], p_max_attempts integer) md5=cde1db2ce0ae1
+function|2a65f482d84cf108f5eb9ffd67aaad0b|public.request_agent_session_cancel(p_session uuid) md5=c11b5a536255329c80c21fa5ac5ab695
 function|2e1057dc862ddfc6a7aa098e5d3caa42|public.renew_agent_session_lease(p_session uuid, p_token uuid, p_lease_seconds integer) md5=94409818ea2241f4f5232c722e969b26
 function|3e5861969d8d882a7ab85c1187d0632c|public.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) md5=9e2c
 function|448ab425004043a67ba674a095d96f19|public.reply_agent_session(p_session uuid, p_message text, p_created_by text) md5=06dbfd31a5a102d9d2f47d793e2b1288
 function|49de72aa32906263566601a516df77fb|public.heartbeat_coding_lease(p_lease uuid, p_token uuid, p_lease_seconds integer) md5=2052ed76d6265ea110a18fb939b24bec
 function|4beaa33fb75df0f6d9691236b069a72f|public.finish_agent_session(p_session uuid, p_token uuid, p_status text, p_result jsonb, p_blocker text, p_error_code text) md5=8bd7dfc0f3a9812979a37f00ef3ae640
-function|4f862778a4046031ed7da20ea28dccaf|public.request_agent_session_cancel(p_session uuid) md5=64ae64690186fd4b7aff2763458bdee1
 function|538ae5626f359a32bb7cd1eda9f3bd90|public.assert_workspace_execution_context(p_workspace uuid, p_job uuid, p_task uuid, p_run uuid) md5=76883ccfa400f22b561bdb50a17f2d1f
 function|53ecf9efd95051393091250b05af26d3|public.claim_next_task(p_agent_slug text) md5=69ebe747e6f5841e3b0fe001485f0148
 function|5507b0a3cf48bfdb2e41d1e4ccd7f858|public.consume_agent_owner_inputs(p_session uuid, p_token uuid) md5=1b4c73848094f7a6544024e3bc63b0b1

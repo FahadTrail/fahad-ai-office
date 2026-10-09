@@ -224,9 +224,9 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
 }
 
 export async function listWorkspaces(db) {
-  const { data, error } = await db.from('projects').select('id,name').order('name');
+  const { data, error } = await db.from('projects').select('id,name,status').order('name');
   if (error) throw new Error(`Could not load workspaces: ${error.message}`);
-  return (data || []).map((workspace) => ({ id: workspace.id, name: workspace.name }));
+  return (data || []).map((workspace) => ({ id: workspace.id, name: workspace.name, status: workspace.status || 'active' }));
 }
 
 export async function listJobs(db, workspaceId, limit = 30) {

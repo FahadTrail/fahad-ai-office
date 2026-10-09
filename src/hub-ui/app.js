@@ -1,7 +1,7 @@
 // Fahad AI Office — Workspace V2 client. No framework: hash routes render
 // views from the Hub's JSON API; polling keeps running work live.
 import { attentionSummary, chatsSummary, employeesSummary, integrationsSummary, modelsSummary, projectsSummary, tasksSummary } from './summaries.js';
-import { capacitySentence, countLabel, healthFacts, knownNumber, latestResults, ownerWorkCounts, progressWidth, projectFacts } from './owner-facts.js';
+import { capacitySentence, countLabel, defaultProject, healthFacts, knownNumber, latestResults, ownerWorkCounts, progressWidth, projectFacts } from './owner-facts.js';
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 import { loginErrorMessage } from './auth.js';
 import { ARTIFACT_LABELS, renderArtifact, splitArtifacts } from './artifacts.js';
@@ -182,7 +182,7 @@ async function boot() {
   $('#app').classList.remove('hidden');
   let saved = null;
   try { saved = localStorage.getItem('hub-workspace-id'); } catch {}
-  const preferred = state.workspaces.find((workspace) => workspace.id === saved) || state.workspaces.find((workspace) => workspace.name === 'Fahad AI Office') || state.workspaces[0];
+  const preferred = defaultProject(state.workspaces, saved);
   state.workspaceId = preferred?.id || null;
   const select = $('#projectSelect');
   select.innerHTML = state.workspaces.map((workspace) => `<option value="${esc(workspace.id)}">${esc(workspace.name)}</option>`).join('');

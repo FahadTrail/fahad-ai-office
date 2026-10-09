@@ -50,3 +50,17 @@ test('the Workers page groups by class, ACTIVE first, and answers the five quest
   for (const question of ['Can execute now', 'Authenticated', 'Enabled', 'Real quota', 'Automatic handoff from the Office']) assert.ok(html.includes(question), question);
   assert.doesNotMatch(html, /data-worker-action/, 'no enable buttons while the Supervisor is off');
 });
+
+test('new objectives go to the real project: archived or test projects never become the default again', async () => {
+  const { defaultProject } = await import('../src/hub-ui/owner-facts.js');
+  const real = { id: 'r', name: 'Fahad AI Office', status: 'active' };
+  const cert = { id: 'c', name: 'CERTIFICATION V5.4 (test, safe to delete)', status: 'active' };
+  const archived = { id: 'a', name: 'Old client', status: 'archived' };
+  const client = { id: 'k', name: 'Qahwa Run', status: 'active' };
+  assert.equal(defaultProject([cert, real], 'c').id, 'r', 'a remembered test project is not reused');
+  assert.equal(defaultProject([archived, real], 'a').id, 'r', 'a remembered archived project is not reused');
+  assert.equal(defaultProject([cert, real], 'deleted-id').id, 'r', 'a deleted project falls back to the real one');
+  assert.equal(defaultProject([real, client], 'k').id, 'k', 'an explicitly chosen real project is kept');
+  assert.equal(defaultProject([cert, client], null).id, 'k', 'without the Office project, the first real project');
+  assert.equal(defaultProject([], null), null);
+});
