@@ -145,10 +145,7 @@ async function drawContinuity(ctx, body, projectId) {
       ${data.enabled && pending ? `<div class="row continuity-actions"><button class="btn btn-sm" type="button" data-continuity-action="RESUME_SESSION" data-session="${esc(pending.id)}">Resume</button></div>` : ''}
     </section>
     <section class="cc-card"><h2 class="cc-h2">Worker timeline</h2><ol class="continuity-timeline">${data.sessions.length ? data.sessions.map((session) => `<li><span class="continuity-node" aria-hidden="true"></span><div class="grow"><strong>${esc(data.workers.find((worker) => worker.key === session.workerKey)?.displayName || session.workerKey)}</strong><div class="small muted" dir="auto">${esc(session.objective)}</div></div><div class="continuity-time"><span class="state-chip" data-state="${session.status === 'COMPLETED' ? 'COMPLETED' : ['FAILED', 'ABNORMAL_EXIT'].includes(session.status) ? 'BLOCKED' : 'WAITING'}">${esc(session.status)}</span><span class="xs faint">${esc(when(session.startedAt))}</span><span class="xs">${number(session.taskTokens)} ${basis(session.tokensBasis)}</span></div></li>`).join('') : '<li class="muted small">No worker sessions yet.</li>'}</ol></section>
-    <section class="cc-card"><h2 class="cc-h2">Workers</h2><div class="continuity-workers">${data.workers.map((worker) => { const m = worker.metrics || {}; const u = m.latestUsage || {}; return `<article class="continuity-worker"><div class="spread"><div><strong>${esc(worker.displayName)}</strong><div class="xs faint">${esc(worker.kind)} · ${esc(worker.quotaSource)} · ${esc(worker.executionMode || 'DISABLED')}</div></div><span class="state-chip" data-state="${worker.enabled && worker.health === 'healthy' ? 'COMPLETED' : worker.enabled ? 'WAITING' : 'BLOCKED'}">${worker.enabled ? esc(worker.health || 'unknown') : 'disabled'}</span></div>
-        <p class="xs muted">Auth: ${esc(worker.authState || 'NOT_CONFIGURED')} · Availability: ${esc(worker.availability || 'NOT_CONFIGURED')}${worker.ownerAction ? ` · Owner action: ${esc(worker.ownerAction)}` : ''}</p>
-        <dl><div><dt>Task tokens</dt><dd>${number(u.taskTokens)} ${basis(u.basis)}</dd></div><div><dt>Lifetime tokens</dt><dd>${number(m.lifetimeTokens)} ${basis(m.tokensBasis)}</dd></div><div><dt>Completed / failed</dt><dd>${number(m.completed)} / ${number(m.failed)} ${basis(m.countsBasis)}</dd></div><div><dt>Success</dt><dd>${pct(m.successRatePct)} ${basis(m.successBasis)}</dd></div><div><dt>Average latency</dt><dd>${elapsed(m.averageLatencyMs)} ${basis(m.latencyBasis)}</dd></div><div><dt>Handoffs</dt><dd>${number(m.handoffs)} ${basis(m.countsBasis)}</dd></div><div><dt>Quota used</dt><dd>${pct(highestPct(u.sessionPct, u.weeklyPct))} ${basis(u.basis)}</dd></div><div><dt>Reset</dt><dd>${u.resetAt ? esc(when(u.resetAt)) : 'UNKNOWN'} ${basis(u.basis)}</dd></div></dl>
-        ${data.enabled && (worker.enabled || worker.executionMode === 'EXECUTABLE') ? `<button class="btn btn-ghost btn-sm" type="button" data-worker-action="${worker.enabled ? 'DISABLE_WORKER' : 'ENABLE_WORKER'}" data-worker="${esc(worker.key)}">${worker.enabled ? 'Disable' : 'Enable'}</button>` : ''}</article>`; }).join('')}</div></section>`;
+    <section class="cc-card"><h2 class="cc-h2">Workers</h2><p class="small muted">Only ACTIVE workers can take work now. The others are listed so you can see exactly what is missing.</p>${workerGroups(data, { esc, number, basis, pct, elapsed, highestPct, when })}</section>`;
   body.querySelectorAll('[data-continuity-action]').forEach((button) => { button.onclick = async () => {
     button.disabled = true;
     if (button.dataset.continuityAction === 'ABORT_SESSION' && !(await ctx.confirmDialog('Abort this Continuity session?', 'The worker will stop safely and a final checkpoint will be preserved.'))) {
@@ -326,4 +323,26 @@ async function drawMap(ctx, body, center) {
   };
   if (window.innerWidth > 900) { requestAnimationFrame(link); window.addEventListener('resize', link); ctx.onLeave(() => window.removeEventListener('resize', link)); }
   map.querySelectorAll('[data-slug]').forEach((element) => { if (element.dataset.slug) element.onclick = () => ctx.openEmployee(element.dataset.slug); });
+}
+
+// Workers grouped by what they really are (hub-continuity.js workerTruth):
+// ACTIVE first; every card answers the five owner questions in plain words.
+const WORKER_CLASSES = Object.freeze([
+  ['ACTIVE', 'Active — can take work now', 'COMPLETED'],
+  ['CONFIGURED_UNAVAILABLE', 'Configured, not available', 'WAITING'],
+  ['DISABLED', 'Disabled adapters', 'BLOCKED'],
+  ['MANUAL_ONLY', 'Manual-only tools', 'BLOCKED'],
+  ['EXPERIMENTAL', 'Experimental / future', 'BLOCKED'],
+]);
+export function workerGroups(data, fmt) {
+  const { esc } = fmt;
+  const groups = WORKER_CLASSES.map(([key, title, tone]) => [key, title, tone, (data.workers || []).filter((worker) => (worker.truth?.class || 'EXPERIMENTAL') === key)]).filter(([, , , workers]) => workers.length);
+  return groups.map(([key, title, tone, workers]) => `<div class="worker-group" data-class="${key}"><h3 class="cc-label">${esc(title)} · ${workers.length}</h3><div class="continuity-workers">${workers.map((worker) => {
+    const truth = worker.truth || {}; const m = worker.metrics || {}; const u = m.latestUsage || {};
+    const answers = [['Can execute now', truth.canExecuteNow ? 'yes' : 'no'], ['Authenticated', truth.authenticated || 'no'], ['Enabled', truth.enabled ? 'yes' : 'no'], ['Real quota', truth.realQuota || 'unknown'], ['Automatic handoff from the Office', truth.automaticHandoff || 'no']];
+    return `<article class="continuity-worker" data-class="${key}"><div class="spread"><div><strong>${esc(worker.displayName)}</strong><div class="xs faint">${esc(worker.kind)} · ${esc(worker.quotaSource || '')}</div></div><span class="state-chip" data-state="${tone}">${esc(key.replace('_', ' ').toLowerCase())}</span></div>
+      ${truth.why ? `<p class="xs muted">${esc(truth.why)}${worker.ownerAction && key === 'CONFIGURED_UNAVAILABLE' ? ` Owner action: ${esc(worker.ownerAction)}` : ''}</p>` : ''}
+      <dl>${answers.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}${key === 'ACTIVE' || key === 'CONFIGURED_UNAVAILABLE' ? `<div><dt>Task tokens</dt><dd>${fmt.number(u.taskTokens)} ${fmt.basis(u.basis)}</dd></div><div><dt>Lifetime tokens</dt><dd>${fmt.number(m.lifetimeTokens)} ${fmt.basis(m.tokensBasis)}</dd></div><div><dt>Completed / failed</dt><dd>${fmt.number(m.completed)} / ${fmt.number(m.failed)} ${fmt.basis(m.countsBasis)}</dd></div><div><dt>Success</dt><dd>${fmt.pct(m.successRatePct)} ${fmt.basis(m.successBasis)}</dd></div><div><dt>Average latency</dt><dd>${fmt.elapsed(m.averageLatencyMs)} ${fmt.basis(m.latencyBasis)}</dd></div><div><dt>Handoffs</dt><dd>${fmt.number(m.handoffs)} ${fmt.basis(m.countsBasis)}</dd></div><div><dt>Quota used</dt><dd>${fmt.pct(fmt.highestPct(u.sessionPct, u.weeklyPct))} ${fmt.basis(u.basis)}</dd></div><div><dt>Reset</dt><dd>${u.resetAt ? esc(fmt.when(u.resetAt)) : 'UNKNOWN'} ${fmt.basis(u.basis)}</dd></div>` : ''}</dl>
+      ${data.enabled && (worker.enabled || worker.executionMode === 'EXECUTABLE') ? `<button class="btn btn-ghost btn-sm" type="button" data-worker-action="${worker.enabled ? 'DISABLE_WORKER' : 'ENABLE_WORKER'}" data-worker="${esc(worker.key)}">${worker.enabled ? 'Disable' : 'Enable'}</button>` : ''}</article>`;
+  }).join('')}</div></div>`).join('');
 }

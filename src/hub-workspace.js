@@ -264,6 +264,9 @@ export function simpleModelStatus(route) {
   const status = String(route.status || '');
   if (status.startsWith('BLOCKED')) return { status: 'ACCOUNT ACTION REQUIRED', reason: route.accountBlocker?.text || route.accountBlocker?.label || status.replace(/^BLOCKED — /, '') };
   if (status === 'RATE LIMITED' || status === 'COOLDOWN') return { status: 'COOLDOWN', reason: route.cooldownUntil ? `Rests until ${route.cooldownUntil}` : 'Resting after a provider limit' };
+  // Never shown as available when it has never answered: the router skips it too.
+  if (route.reliability?.status === 'NEVER_ANSWERED') return { status: 'UNAVAILABLE', reason: `Never answered (${route.reliability.attempts} failed attempts, 0 successes); re-tested with a growing back-off` };
+  if (route.reliability?.status === 'LOW_SUCCESS') return { status: 'UNAVAILABLE', reason: `Rarely answers (${route.reliability.successes} of ${route.reliability.attempts}); used only after it recovers` };
   if (status === 'LIVE' || status.startsWith('CONFIGURED')) return { status: 'AVAILABLE', reason: status === 'LIVE' ? 'Verified with a real call' : 'Configured; not yet verified by a live call' };
   if (status === 'NOT CONFIGURED') return { status: 'UNAVAILABLE', reason: 'No credential configured' };
   if (status === 'RETIRED') return { status: 'UNAVAILABLE', reason: 'Retired by the provider' };
@@ -278,7 +281,7 @@ export function modelsView(snapshot) {
       id: route.id, provider: route.provider, model: route.model, status: simple.status, reason: simple.reason, detail: route.status,
       billing: route.billingClass === 'PAID' ? 'Paid' : route.billingClass === 'PROMO' ? 'Trial credits' : 'Free',
       health: route.health, cooldownUntil: route.cooldownUntil || null, order: route.routingRank || null,
-      roles: route.suitableJobs || [], coding: route.codingSuitability || null, privateCode: route.privateCode || null,
+      roles: route.suitableJobs || [], fallbackRoles: route.fallbackJobs || [], coding: route.codingSuitability || null, privateCode: route.privateCode || null,
     };
   });
   const rank = { AVAILABLE: 0, COOLDOWN: 1, 'ACCOUNT ACTION REQUIRED': 2, UNAVAILABLE: 3 };

@@ -13,7 +13,44 @@ const PREPARED_ADAPTERS = new Map([
   ['gemini-cli', new GeminiCliContinuityAdapter()],
 ]);
 
-function publicState(state, { readiness = new Map(), adapters = new Map() } = {}) {
+// What a worker really is, for the owner (2026-10-09 audit: seven disabled or
+// unconfigured adapters were listed next to the one real worker as if they
+// were employees). Each worker gets one class and plain answers:
+//   ACTIVE                  enabled, executable and verified — Office can hand it work
+//   CONFIGURED_UNAVAILABLE  enabled, but not verified/authenticated or the Supervisor is off
+//   DISABLED                an adapter exists but is switched off
+//   MANUAL_ONLY             a tool Fahad uses by hand; never handed work automatically
+//   EXPERIMENTAL            no executable adapter in this build (future)
+// `quota` is only claimed when the worker reported a usage snapshot.
+export function workerTruth(worker, { supervisorOn = false } = {}) {
+  // The native Office Coding Agent runs as its own service and takes the
+  // Office's development workstreams directly; it does not need Continuity.
+  const native = worker.kind === 'native';
+  const executable = native || worker.executionMode === 'EXECUTABLE';
+  const authenticated = worker.authState === 'AUTHENTICATED' || worker.availability === 'OPERATIONAL';
+  const verified = native || worker.availability === 'OPERATIONAL';
+  const workerClass = worker.executionMode === 'MANUAL_ONLY' || worker.kind === 'manual' ? 'MANUAL_ONLY'
+    : !executable ? 'EXPERIMENTAL'
+      : !worker.enabled ? 'DISABLED'
+        : verified && (native || supervisorOn) ? 'ACTIVE' : 'CONFIGURED_UNAVAILABLE';
+  const usage = worker.metrics?.latestUsage || null;
+  return {
+    class: workerClass,
+    canExecuteNow: workerClass === 'ACTIVE',
+    authenticated: native ? 'not needed (runs on the Office model pool)' : authenticated ? 'yes' : 'no',
+    enabled: Boolean(worker.enabled),
+    realQuota: usage ? `reported ${usage.takenAt ? String(usage.takenAt).slice(0, 10) : ''}`.trim() : native ? 'Office model pool' : 'unknown — never reported',
+    automaticHandoff: workerClass !== 'ACTIVE' ? 'no' : native ? 'yes — Office development workstreams' : 'yes — Continuity handoffs',
+    why: workerClass === 'ACTIVE' ? null
+      : workerClass === 'MANUAL_ONLY' ? 'Used by hand only.'
+        : workerClass === 'EXPERIMENTAL' ? 'No executable adapter in this build.'
+          : workerClass === 'DISABLED' ? 'Switched off.'
+            : !supervisorOn && !native ? 'Continuity Supervisor is off.'
+              : !authenticated ? 'Not authenticated on the server.' : 'Not verified yet.',
+  };
+}
+
+function publicState(state, { readiness = new Map(), adapters = new Map(), supervisorOn = false } = {}) {
   const checkpointsBySession = new Map(state.checkpoints.map((checkpoint) => [checkpoint.session_id, checkpoint]));
   const usageByWorker = new Map();
   for (const snapshot of state.usage) if (!usageByWorker.has(snapshot.worker_key)) usageByWorker.set(snapshot.worker_key, snapshot);
@@ -50,7 +87,7 @@ function publicState(state, { readiness = new Map(), adapters = new Map() } = {}
         availability: ready.ok === true ? 'OPERATIONAL' : ready.reason || 'NOT_CONFIGURED',
         ownerAction: ready.ok ? null : actual.ownerAction || ready.reason || 'Configure and verify this worker.',
         health, healthBasis: health_basis, lastSeenAt: last_seen_at, lastError: last_error, metrics: workerMetrics(key) };
-    }),
+    }).map((worker) => ({ ...worker, truth: workerTruth(worker, { supervisorOn }) })),
     sessions: state.sessions.map(({ id, worker_key, project_id, repository, branch, worktree, objective, status, started_at, heartbeat_at, ended_at, task_tokens, tokens_basis, exit_reason }) => ({ id, workerKey: worker_key, projectId: project_id, repository, branch, worktree, objective, status, startedAt: started_at, heartbeatAt: heartbeat_at, endedAt: ended_at, taskTokens: task_tokens, tokensBasis: tokens_basis, exitReason: exit_reason })),
     leases: state.leases.map(({ id, repository, branch, worktree, worker_key, session_id, status, started_at, heartbeat_at, expires_at, checkpoint_id }) => ({ id, repository, branch, worktree, workerKey: worker_key, sessionId: session_id, status, startedAt: started_at, heartbeatAt: heartbeat_at, expiresAt: expires_at, checkpointId: checkpoint_id })),
     checkpoints: state.checkpoints.map(({ id, session_id, sequence, last_commit, status, next_exact_action, created_at }) => ({ id, sessionId: session_id, sequence, lastCommit: last_commit, status, nextExactAction: next_exact_action, createdAt: created_at })),
@@ -71,7 +108,7 @@ export async function handleContinuityApi({ db, supervisor = null, ownerAuthoriz
       try { return [worker.key, await (adapter.authReadiness?.() || adapter.available())]; }
       catch { return [worker.key, { ok: false, authState: 'OWNER_ACTION_REQUIRED', reason: 'READINESS_UNAVAILABLE' }]; }
     })));
-    const state = publicState(snapshot, { readiness, adapters });
+    const state = publicState(snapshot, { readiness, adapters, supervisorOn: Boolean(supervisor?.started) });
     return sendJson(response, 200, { ok: true, enabled: Boolean(supervisor?.started), ...state }), true;
   }
   if (request.method === 'POST' && url.pathname === '/api/continuity/actions') {

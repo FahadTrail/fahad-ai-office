@@ -20,8 +20,8 @@ import { codingTierGaps } from './coding-qualification.js';
 export { assertFreeRouteHonest, sameModelFamily, FREE_ROUTE_INCIDENTS } from './free-guard.js';
 
 const CODING_JOBS = new Set(['coding', 'qa_security']);
-const DEAD_ROUTE_MIN_ATTEMPTS = 20;
-const LOW_SUCCESS_RATE = 0.2;
+export const DEAD_ROUTE_MIN_ATTEMPTS = 20;
+export const LOW_SUCCESS_RATE = 0.2;
 // High-value work that may use scarce free pools first (see order()).
 export const HIGH_VALUE_JOBS = new Set(['synthesis', 'finance', 'finance_critical', 'qa_security', 'coding', 'research']);
 const KEY_WIDE_BLOCKERS = /_(CREDENTIAL_INVALID|ACCOUNT_NOT_ACTIVATED|ACCOUNT_OVERDUE|PERMISSION_MISSING|REGION_NOT_SUPPORTED)$/;

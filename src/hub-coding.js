@@ -6,14 +6,14 @@
 
 import { readFileSync } from 'node:fs';
 import { createModelPool } from './model-gateway/agentic/model-pool.js';
-import { AgentTurnGateway } from './model-gateway/agentic/turn-gateway.js';
+import { AgentTurnGateway, DEAD_ROUTE_MIN_ATTEMPTS, LOW_SUCCESS_RATE } from './model-gateway/agentic/turn-gateway.js';
 import { exhaustedRoutes, normalizeRouting, resolveRouting, SupabaseRoutingPolicyStore } from './model-gateway/agentic/routing-policy.js';
 import { authorizedRoutes } from './coding-agent/runtime.js';
-import { JOB_PROFILES, capabilityGaps } from './model-gateway/agentic/capabilities.js';
+import { JOB_PROFILES, capabilityGaps, relaxedJob } from './model-gateway/agentic/capabilities.js';
 import { freeQuotaStatus } from './model-gateway/agentic/free-quota.js';
 import { getOpenRouterCatalog } from './model-gateway/agentic/openrouter-catalog.js';
 import { providerCatalogSnapshot } from './model-gateway/agentic/provider-catalogs.js';
-import { QualificationStore, qualificationValid, qualificationGaps } from './model-gateway/agentic/qualification.js';
+import { QualificationStore, evidenceRequiredGaps, qualificationValid, qualificationGaps } from './model-gateway/agentic/qualification.js';
 import { PROVIDER_FACTS, PROVIDER_FACTS_CHECKED, blockerLabel, blockerReason } from './model-gateway/agentic/provider-facts.js';
 import { ACCOUNT_BLOCKERS } from './model-gateway/agentic/provider-state.js';
 import { OFFICE_ROLES } from './office-agents/roles.js';
@@ -291,6 +291,17 @@ export async function modelPoolSnapshot({ db, env = process.env, now = () => Dat
           : route.privacyApproved ? 'SUITABLE FOR PRIVATE CODE' : 'PUBLIC CODE ONLY — PRIVACY REVIEW PENDING',
       capabilities: route.capabilities,
       suitableJobs: Object.keys(JOB_PROFILES).filter((job) => capabilityGaps(route.capabilities, job).length === 0),
+      // Work it may take only when every full-floor route is busy (CHIEF synthesis, with passed qualification).
+      fallbackJobs: Object.keys(JOB_PROFILES).filter((job) => capabilityGaps(route.capabilities, job).length && relaxedJob(job)?.evidenceRequired
+        && !capabilityGaps(route.capabilities, relaxedJob(job)).length && !evidenceRequiredGaps(route, relaxedJob(job), qualifications, now()).length),
+      // The router's own evidence: a free route that never answered (or rarely does) is not used.
+      reliability: (() => {
+        if (route.billingClass === 'paid' || !row) return null;
+        const successes = Number(row.requests_total || 0); const attempts = successes + Number(row.failures_total || 0);
+        if (successes === 0 && attempts >= DEAD_ROUTE_MIN_ATTEMPTS) return { status: 'NEVER_ANSWERED', attempts };
+        if (attempts >= DEAD_ROUTE_MIN_ATTEMPTS && successes / attempts < LOW_SUCCESS_RATE) return { status: 'LOW_SUCCESS', attempts, successes };
+        return null;
+      })(),
       freeQuota,
       qualification,
       officeJobs,
