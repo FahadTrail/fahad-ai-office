@@ -300,7 +300,9 @@ export class AgentTurnGateway {
           assertFreeRouteHonest(route, result);
           await settle(reservation, result.usage.costUsd || 0);
           await this.stateStore.recordSuccess(route, result);
-          const record = { id: attemptId, route, attempt, status: 'succeeded', usage: result.usage, requestId: result.requestId, durationMs: result.durationMs };
+          // startedAt travels with the outcome: recorders upsert by id, and an
+          // outcome without it overwrote the real start with the end time.
+          const record = { id: attemptId, route, attempt, status: 'succeeded', usage: result.usage, requestId: result.requestId, durationMs: result.durationMs, startedAt: new Date(startedAt).toISOString() };
           attempts.push(record);
           await onAttempt(record);
           return { ...result, route, attempts, switched: switching };
@@ -325,7 +327,7 @@ export class AgentTurnGateway {
             await onIncident({ route, kind: error.type, costUsd: incurredUsd, reportedModel: caught?.reportedModel || null, attemptId });
           }
           if (!error.injected) await this.stateStore.recordFailure(route, error);
-          const record = { id: attemptId, route, attempt, status: 'failed', usage: error.usage || null,
+          const record = { id: attemptId, route, attempt, status: 'failed', usage: error.usage || null, startedAt: new Date(startedAt).toISOString(), durationMs: Math.max(0, this.now() - startedAt),
             error: { code: error.code, failureClass: error.failureClass, status: error.status || null, ...(error.reason ? { reason: error.reason } : {}), ...(error.injected ? { injected: true } : {}) } };
           attempts.push(record);
           await onAttempt(record);

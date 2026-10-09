@@ -6,8 +6,9 @@
 //   deterministic calculation → validated artifact → AUDIT → CHIEF synthesis
 //
 // A financial_model artifact carries:
-//   items    — cost lines: one_time (in `month`, default 1) and monthly (from
-//              `month` on), each labelled KNOWN / ESTIMATED / ASSUMPTION
+//   items    — cost lines: one_time (in `month`, default 1) and recurring
+//              costs from `month` on — monthly, annual (a yearly amount) or
+//              weekly (52 weeks a year) — each KNOWN / ESTIMATED / ASSUMPTION
 //   revenue  — optional: either a subscription model
 //                {price_monthly, starting_customers, new_customers (number or
 //                 list per month), churn_rate (0–1 per month), trial_months}
@@ -28,6 +29,23 @@ const BLOCK = /```artifact\s*\n([\s\S]*?)```/g;
 const MONEY_FIGURE = /(?:AED|USD|US\$|\$|€|£|درهم)\s*~?\s*\d|\d[\d,.]*\s*(?:k|m|mn)?\s*(?:AED|USD|dirhams?|درهم)\b/i;
 const MAX_MONTHS = 36;
 const round2 = (value) => Math.round(value * 100) / 100;
+const WEEKS_PER_MONTH = 52 / 12;
+
+// Financial rounding that keeps totals authoritative: the total is the exact
+// sum rounded once to cents, and the monthly values are rounded so they add
+// up to exactly that total (largest remainder). Rounding each month first and
+// then summing turned AED 13,000 a year into 12 × 1,083.33 = 12,999.96.
+export function allocateCents(values) {
+  const exact = values.map((value) => Number(value) || 0);
+  const cents = exact.map((value) => value * 100);
+  const target = Math.round(cents.reduce((total, value) => total + value, 0));
+  const floors = cents.map((value) => Math.floor(value + 1e-7));
+  let remaining = target - floors.reduce((total, value) => total + value, 0);
+  const order = cents.map((value, index) => [value - floors[index], index]).sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+  for (let step = 0; remaining > 0 && order.length; step += 1, remaining -= 1) floors[order[step % order.length][1]] += 1;
+  for (let step = order.length - 1; remaining < 0 && order.length; step -= 1, remaining += 1) floors[order[(step + order.length) % order.length][1]] -= 1;
+  return floors.map((value) => value / 100);
+}
 const finite = (value) => (value === null || value === undefined || value === '' ? null : Number.isFinite(Number(value)) ? Number(value) : parseAmount(value));
 
 // "AED 43,071", "~229k", "1.2M", "12.5%" → number (percent stays as written).
@@ -68,7 +86,9 @@ export function calculateFinance(data = {}) {
   for (const item of items) {
     const start = Math.min(months, Math.max(1, Math.round(finite(item.month) || 1)));
     if (finite(item.one_time)) oneTime[start - 1] += finite(item.one_time);
-    if (finite(item.monthly)) for (let month = start; month <= months; month += 1) fixed[month - 1] += finite(item.monthly);
+    // Recurring: monthly, or a yearly / weekly amount spread exactly (no early rounding).
+    const recurring = (finite(item.monthly) || 0) + (finite(item.annual) || 0) / 12 + (finite(item.weekly) || 0) * WEEKS_PER_MONTH;
+    if (recurring) for (let month = start; month <= months; month += 1) fixed[month - 1] += recurring;
   }
   const customers = Array(months).fill(0);
   const paying = Array(months).fill(0);
@@ -94,8 +114,10 @@ export function calculateFinance(data = {}) {
     for (let index = 0; index < months; index += 1) paying[index] = index - trial >= 0 ? customers[index - trial] : 0;
     for (let index = 0; index < months; index += 1) revenue[index] = round2(paying[index] * price);
   }
-  const variableCosts = customers.map((count) => round2(count * variable));
-  const costs = oneTime.map((value, index) => round2(value + fixed[index] + variableCosts[index]));
+  // Exact values first; each schedule is rounded once so its months add up to its total.
+  const variableExact = customers.map((count) => count * variable);
+  const variableCosts = allocateCents(variableExact);
+  const costs = allocateCents(oneTime.map((value, index) => value + fixed[index] + variableExact[index]));
   const net = revenue.map((value, index) => round2(value - costs[index]));
   const startingCash = finite(data.starting_cash);
   const cumulative = [];
@@ -112,9 +134,10 @@ export function calculateFinance(data = {}) {
   const price = finite(revenueInput?.price_monthly);
   const contribution = price !== null ? round2(price - variable) : null;
   const lastFixed = fixed[months - 1];
+  const fixedSchedule = allocateCents(fixed);
   const calculated = {
     months, model, currency: String(data.currency || '').slice(0, 8) || 'USD',
-    total_one_time: sum(oneTime), total_fixed: sum(fixed), total_variable: sum(variableCosts),
+    total_one_time: sum(oneTime), total_fixed: sum(fixedSchedule), total_variable: sum(variableCosts),
     year_costs: sum(costs), monthly_run_rate: round2(lastFixed + variableCosts[months - 1]),
     ...(hasRevenue ? {
       year_revenue: totalRevenue, net: round2(totalRevenue - sum(costs)),
@@ -127,7 +150,7 @@ export function calculateFinance(data = {}) {
       break_even_customers: contribution && contribution > 0 ? Math.ceil(lastFixed / contribution) : null,
     } : {}),
     ...(startingCash !== null ? { starting_cash: startingCash, ending_cash: round2(startingCash + (cumulative[months - 1] || 0)), runway_months: runway(startingCash, net) } : {}),
-    schedule: { revenue, costs, net, cumulative, ...(model === 'subscription' ? { customers, paying } : {}), one_time: oneTime, fixed, variable: variableCosts },
+    schedule: { revenue, costs, net, cumulative, ...(model === 'subscription' ? { customers, paying } : {}), one_time: allocateCents(oneTime), fixed: fixedSchedule, variable: variableCosts },
   };
   if (hasRevenue && !data.__core) calculated.sensitivity = sensitivities(data);
   return calculated;
@@ -237,7 +260,10 @@ export function validateFinance(markdown) {
       }
       continue;
     }
-    const expected = calculated[field];
+    // A costs-only model has, by definition, no revenue: "revenue 0" and
+    // "net = −costs" are true statements of it, not unsupported claims.
+    const costsOnly = !hasRevenue ? { year_revenue: 0, net: round2(-calculated.year_costs) } : {};
+    const expected = calculated[field] ?? costsOnly[field];
     const stated = finite(value);
     if (expected === undefined || expected === null) {
       issues.push(issue('CLAIM_UNSUPPORTED', `${spec.label} is stated (${value}) but cannot be reproduced from the model's inputs.`, { field, actual: stated }));

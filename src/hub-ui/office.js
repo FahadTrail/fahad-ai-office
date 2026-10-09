@@ -12,6 +12,7 @@
 import { roleMark, stationArt } from './characters.js?v=__UI_VERSION__';
 import { describeOffice, officeRenderer, presentationState, visualState } from './office-presentation.js?v=__UI_VERSION__';
 import { copyFor, departmentName, formatCost, formatDuration, formatTokens, stateLabel } from './office-copy.js?v=__UI_VERSION__';
+import { mountOperations, opsCopy, renderObjectiveStrip, renderOperations } from './office-ops.js?v=__UI_VERSION__';
 
 const FLOOR = [
   ['research', 'product', 'coding'],
@@ -84,6 +85,7 @@ export async function renderOffice(ctx) {
       </div>
       <div class="ov-menu" id="ovDepartments" hidden role="menu" aria-label="${esc(t.departments)}"></div>
       <div class="ov-banner" id="ovBanner" hidden role="status"></div>
+      <div class="ov-objective-wrap" id="ovObjective"></div>
       <div class="ov ov-bottom" id="ovBottom">
         <dl class="ov-stats" id="ovStats" aria-live="polite"></dl>
         <div class="ov-toasts" id="ovToasts" aria-live="polite"></div>
@@ -92,6 +94,7 @@ export async function renderOffice(ctx) {
       <section class="ov-sheet" id="ovSheet" hidden aria-labelledby="ovSheetTitle"></section>
       <p class="sr-only" aria-live="polite" id="o3dSummary"></p>
     </section>
+    <section class="ops" id="ops" aria-labelledby="opsTitle"></section>
     <div class="office-body">
       <section class="scene" id="scene" aria-label="Office floor"><div class="floor" id="floor"><svg class="handoff-layer" id="handoffLayer" role="group" aria-label="Handoffs between employees"></svg><div class="stations" id="stations"></div></div>
         <div class="scene-legend" aria-hidden="true"><span><i class="lg lg-working"></i>Working</span><span><i class="lg lg-waiting"></i>Waiting</span><span><i class="lg lg-needs"></i>Needs you</span><span><i class="lg lg-done"></i>Just delivered</span><span><i class="lg lg-handoff"></i>Handoff</span></div>
@@ -136,6 +139,46 @@ export async function renderOffice(ctx) {
   const fromLabels = new Map(); // key → { from, until }
   const presentation = () => presentationState({ office: data, artifacts });
 
+  // ------------------------------------------------------------ Live Operations (connected to the 3D Office)
+  const on3d = () => renderer.render === '3d' && Boolean(immersive);
+  const scrollToStage = () => { const box = $('#immersive'); if (box && !box.hidden) box.scrollIntoView({ behavior: ctx.reducedMotion() ? 'auto' : 'smooth', block: 'nearest' }); };
+  const employeeSlug = (key) => data?.agents?.find((entry) => entry.key === key)?.slug || null;
+  let selectedHandoff = null;
+  const showHandoff = (handoff, { fromFloor = false } = {}) => {
+    if (!handoff) return;
+    const view = ops.data()?.view;
+    const detail = { ...handoff, objective: handoff.objective || view?.objective.title || null, task: handoff.task || handoff.toTask?.title || null, jobId: handoff.jobId || view?.objective.id || null };
+    if (on3d()) {
+      if (!fromFloor) scrollToStage();
+      if (viewState.name !== 'handoffs') go({ name: 'handoffs' });
+      immersive.highlightHandoff?.(detail);
+      selectedHandoff = detail; toggleSheet('handoff');
+    } else {
+      $('#handoffLayer')?.querySelectorAll('.handoff').forEach((element) => element.classList.toggle('is-highlight', element.dataset.pair === `${detail.fromKey}>${detail.toKey}`));
+      openHandoff(ctx, detail);
+    }
+  };
+  const ops = mountOperations($('#ops'), ctx, { language, hooks: {
+    focusAgent: (key) => { if (!key) return; if (on3d()) { scrollToStage(); openPanel(key); } else if (employeeSlug(key)) openEmployee(ctx, employeeSlug(key)); },
+    focusChief: () => { if (on3d()) { scrollToStage(); go({ name: 'chief' }); openPanel('chief', { camera: false }); } else if (employeeSlug('chief')) openEmployee(ctx, employeeSlug('chief')); },
+    focusDeliverable: (item) => { if (!item) return; if (on3d()) { scrollToStage(); openPanel(item.agentKey); } else if (employeeSlug(item.agentKey)) openEmployee(ctx, employeeSlug(item.agentKey)); },
+    showHandoff: (handoff) => showHandoff(handoff),
+    onData: (next) => {
+      const strip = $('#ovObjective');
+      if (!strip) return;
+      strip.innerHTML = renderObjectiveStrip({ data: next, language, esc });
+      strip.querySelector('[data-open-ops]')?.addEventListener('click', () => $('#ops')?.scrollIntoView({ behavior: ctx.reducedMotion() ? 'auto' : 'smooth', block: 'start' }));
+      if (panelKey === 'chief') refreshChiefCommand();
+    },
+  } });
+  const refreshChiefCommand = () => {
+    const holder = panel.querySelector('.ov-chief-command');
+    if (!holder || !ops.data()?.view) return;
+    holder.innerHTML = renderOperations({ data: ops.data(), language, esc, only: 'chief' });
+    holder.querySelectorAll('[data-focus-agent]').forEach((button) => { button.onclick = () => openPanel(button.dataset.focusAgent); });
+    holder.querySelectorAll('[data-focus-chief]').forEach((button) => { button.onclick = () => $('#ops')?.scrollIntoView({ behavior: ctx.reducedMotion() ? 'auto' : 'smooth', block: 'start' }); });
+  };
+
   // Read-only hooks for visual and performance QA (tools/office-shots.mjs).
   window.__fahadOffice3d = {
     stats: () => immersive?.stats() || null, renderer: () => renderer,
@@ -144,6 +187,7 @@ export async function renderOffice(ctx) {
   };
 
   const load = async () => {
+    ops.refresh().catch(() => {});
     const [next, library] = await Promise.all([
       api(`/api/office${q({ workspaceId: ws() })}`),
       renderer.render === '3d' ? api(`/api/artifacts${q({ workspaceId: ws(), limit: 60 })}`).catch(() => ({ artifacts })) : Promise.resolve({ artifacts }),
@@ -226,8 +270,8 @@ export async function renderOffice(ctx) {
           on: {
             progress: (share) => { if (share < 1) progress(share < 0.35 ? t.loadingBuild : t.loadingMaterials, share); else { progress(t.ready, 1); $('#o3dLoading').hidden = true; } },
             select: (key) => openPanel(key),
-            handoff: (handoff) => openHandoff(ctx, handoff),
-            view: (next) => { viewState = next; markViews(); },
+            handoff: (handoff) => showHandoff(handoff, { fromFloor: true }),
+            view: (next) => { viewState = next; markViews(); syncFilter(); },
             phase: (phase) => { stage.dataset.phase = phase; },
             frame: (frame) => placeLabels(frame),
             arrival: (handoff) => { fromLabels.set(handoff.toKey, { from: handoff.fromKey, until: performance.now() + 3000 }); },
@@ -334,7 +378,14 @@ export async function renderOffice(ctx) {
     view.querySelectorAll('.ov-view').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.view === name)));
     $('#ovSummaryBtn').setAttribute('aria-pressed', String(sheetKind === 'summary'));
   };
-  const go = (request) => { if (request.name !== 'agent' && panelKey) closePanel({ camera: false }); if (request.name !== 'handoffs' && sheetKind === 'handoffs') toggleSheet(null); immersive?.setView(request); viewState = request; markViews(); };
+  const go = (request) => {
+    if (request.name !== 'agent' && panelKey) closePanel({ camera: false });
+    if (request.name !== 'handoffs' && sheetKind === 'handoffs') toggleSheet(null);
+    if (request.name !== 'handoffs') immersive?.highlightHandoff?.(null);
+    immersive?.setView(request); viewState = request; markViews(); syncFilter();
+  };
+  // A department in view filters the operations to that employee (CHIEF stays).
+  const syncFilter = () => ops.setFilter(viewState.name === 'department' || viewState.name === 'agent' ? viewState.key : null);
   const closeMenu = () => { $('#ovDepartments').hidden = true; view.querySelector('.ov-view[data-view="departments"]').setAttribute('aria-expanded', 'false'); };
   view.querySelectorAll('.ov-view').forEach((button) => {
     button.onclick = () => {
@@ -444,6 +495,7 @@ export async function renderOffice(ctx) {
       if (panelKey !== key) return;
       panel.querySelector('.ov-panel-body').outerHTML = panelBody(employee, detail);
       bindPanel(detail);
+      if (key === 'chief') refreshChiefCommand();
     } catch (error) {
       if (panelKey === key) panel.querySelector('.ov-panel-body').innerHTML = `<p class="ov-error">${esc(error.message)}</p>`;
     }
@@ -469,6 +521,7 @@ export async function renderOffice(ctx) {
       : employee.key === 'chief' ? `<a class="ov-btn ov-btn-primary" href="#/chief">${esc(t.askChief)}</a>`
         : detail.agent?.directChat ? `<a class="ov-btn ov-btn-primary" href="#/talk/${esc(employee.slug)}">${esc(t.message)}</a>` : '';
     return `<div class="ov-panel-body">
+      ${employee.key === 'chief' && ops.data()?.view ? '<div class="ov-chief-command"></div>' : ''}
       <section><h3>${esc(t.currentTask)}</h3>${assignment ? `<p class="ov-task" dir="auto">${esc(assignment.task || assignment.objective || '')}</p>${assignment.objective && assignment.objective !== assignment.task ? `<p class="ov-muted" dir="auto">${esc(assignment.objective)}</p>` : ''}` : `<p class="ov-muted">${esc(t.noTask)}</p>`}</section>
       <dl class="ov-facts">
         <div><dt>${esc(t.model)}</dt><dd dir="ltr">${esc(usage?.model ? `${usage.model}` : t.unavailable)}</dd></div>
@@ -484,7 +537,7 @@ export async function renderOffice(ctx) {
   const bindPanel = (detail) => {
     panel.querySelectorAll('[data-close]').forEach((button) => { button.onclick = () => closePanel(); });
     panel.querySelector('[data-workspace]')?.addEventListener('click', () => { const employee = previous?.employees.find((entry) => entry.key === panelKey); if (employee) openEmployee(ctx, employee.slug); });
-    if (detail) panel.querySelectorAll('[data-chain]').forEach((button) => { button.onclick = () => openHandoff(ctx, detail.chain[Number(button.dataset.chain)]); });
+    if (detail) panel.querySelectorAll('[data-chain]').forEach((button) => { button.onclick = () => showHandoff(detail.chain[Number(button.dataset.chain)], { fromFloor: true }); });
   };
 
   // ------------------------------------------------------------ sheets: handoffs history, executive summary
@@ -499,10 +552,23 @@ export async function renderOffice(ctx) {
   };
   const drawSheet = (kind, state) => {
     if (!state) return;
-    if (kind === 'handoffs') {
+    if (kind === 'handoff' && selectedHandoff) {
+      const h = selectedHandoff;
+      const statusTone = h.status === 'delivered' ? 'done' : ['failed', 'blocked'].includes(h.status) ? 'attention' : 'working';
+      sheet.innerHTML = `<header class="ov-panel-head"><div><span class="ov-kicker">${esc(t.handoffs)}</span><h2 id="ovSheetTitle">${esc(t.handedOver(departmentName(h.fromKey, language), departmentName(h.toKey, language)))}</h2>
+        <span class="ov-chip" data-tone="${statusTone}"><span class="ov-dot" data-tone="${statusTone}" aria-hidden="true"></span>${esc(opsCopy(language).handoffStatus[h.status] || h.status || '')}</span></div><button type="button" class="ov-icon" data-close aria-label="${esc(t.close)}">✕</button></header>
+        <dl class="ov-facts"><div><dt>${esc(t.from)}</dt><dd><bdi>${esc(h.from)}</bdi></dd></div><div><dt>→</dt><dd><bdi>${esc(h.to)}</bdi></dd></div></dl>
+        ${h.what ? `<section><h3>${esc(language === 'ar' ? 'ما تم تسليمه' : 'Handed over')}</h3><p class="ov-lede" dir="auto">${esc(h.what)}</p></section>` : ''}
+        ${h.fromTask?.title ? `<p class="ov-muted" dir="auto">${esc(language === 'ar' ? 'من مهمة' : 'From task')}: ${esc(h.fromTask.title)}</p>` : ''}
+        ${h.task ? `<p class="ov-muted" dir="auto">${esc(language === 'ar' ? 'إلى مهمة' : 'To task')}: ${esc(h.task)}</p>` : ''}
+        ${h.result ? `<section><h3>${esc(language === 'ar' ? 'النتيجة' : 'Result')}</h3><p class="ov-lede" dir="auto">${esc(h.result)}</p></section>` : ''}
+        <p class="ov-muted"><time datetime="${esc(h.at)}">${esc(when(h.at))}</time></p>
+        <div class="ov-actions">${h.toKey ? `<button type="button" class="ov-btn" data-agent="${esc(h.toKey)}">${esc(departmentName(h.toKey, language))}</button>` : ''}${h.jobId ? `<a class="ov-btn" href="#/workflow/${esc(h.jobId)}">${esc(t.openObjective)}</a>` : ''}</div>`;
+      sheet.querySelectorAll('[data-agent]').forEach((button) => { button.onclick = () => openPanel(button.dataset.agent); });
+    } else if (kind === 'handoffs') {
       sheet.innerHTML = `<header class="ov-panel-head"><h2 id="ovSheetTitle">${esc(t.handoffList)}</h2><button type="button" class="ov-icon" data-close aria-label="${esc(t.close)}">✕</button></header>
         ${state.handoffs.length ? `<ol class="ov-chain">${state.handoffs.slice(0, 30).map((handoff, index) => `<li><button type="button" class="ov-link" data-index="${index}"><span class="ov-dot" data-tone="${handoff.status === 'blocked' || handoff.status === 'failed' ? 'attention' : handoff.fresh ? 'working' : 'neutral'}" aria-hidden="true"></span><span class="grow"><strong>${esc(t.handedOver(departmentName(handoff.fromKey, language), departmentName(handoff.toKey, language)))}</strong><span class="ov-muted" dir="auto">${esc(handoff.task || handoff.objective || '')}</span></span><time class="ov-muted">${esc(when(handoff.at))}</time></button></li>`).join('')}</ol>` : `<p class="ov-muted">${esc(t.noHandoffs)}</p>`}`;
-      sheet.querySelectorAll('[data-index]').forEach((button) => { button.onclick = () => openHandoff(ctx, state.handoffs[Number(button.dataset.index)]); });
+      sheet.querySelectorAll('[data-index]').forEach((button) => { button.onclick = () => showHandoff(state.handoffs[Number(button.dataset.index)], { fromFloor: true }); });
     } else {
       const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
       const today = (state.deliveries || []).filter((delivery) => Date.parse(delivery.at) >= midnight.getTime());
@@ -514,7 +580,7 @@ export async function renderOffice(ctx) {
         <section><h3>${esc(t.latestDeliveries)}</h3>${today.length ? `<ol class="ov-deliveries">${today.slice(0, 5).map((delivery) => `<li><span dir="auto"><strong>${esc(departmentName(delivery.key, language))}</strong> · ${esc(delivery.title)}</span><time class="ov-muted">${esc(when(delivery.at))}</time></li>`).join('')}</ol>` : `<p class="ov-muted">${esc(t.noDeliveries)}</p>`}</section>
         <section><h3>${esc(t.handoffsToday)}</h3><p class="num">${state.handoffs.filter((handoff) => Date.parse(handoff.at) >= midnight.getTime()).length}</p></section>`;
     }
-    sheet.querySelectorAll('[data-close]').forEach((button) => { button.onclick = () => { toggleSheet(null); if (kind === 'handoffs') go({ name: 'overview' }); }; });
+    sheet.querySelectorAll('[data-close]').forEach((button) => { button.onclick = () => { toggleSheet(null); if (kind === 'handoffs' || kind === 'handoff') { selectedHandoff = null; immersive?.highlightHandoff?.(null); go({ name: 'overview' }); } }; });
   };
 
   // Escape closes the innermost layer first; the scene steps the camera back.
@@ -631,7 +697,7 @@ export async function renderOffice(ctx) {
       const key = `${handoff.id}@${handoff.at}`;
       const travel = fresh && !seenHandoffs.has(key) && !reduced;
       seenHandoffs.add(key);
-      return `<g class="handoff ${fresh ? 'handoff-fresh' : ''}" data-index="${index}" tabindex="0" role="button" aria-label="${esc(`${handoff.from} to ${handoff.to}: ${handoff.task || 'handoff'}`)}">
+      return `<g class="handoff ${fresh ? 'handoff-fresh' : ''}" data-index="${index}" data-pair="${esc(`${handoff.fromKey}>${handoff.toKey}`)}" tabindex="0" role="button" aria-label="${esc(`${handoff.from} to ${handoff.to}: ${handoff.task || 'handoff'}`)}">
         <path class="handoff-hit" d="${path}"/><path class="handoff-line" d="${path}"/>
         ${travel ? `<circle class="handoff-packet" r="5"><animateMotion dur="1.8s" fill="freeze" path="${path}" keyTimes="0;1" keySplines=".2 .8 .2 1" calcMode="spline"/></circle>` : ''}</g>`;
     }).join('');

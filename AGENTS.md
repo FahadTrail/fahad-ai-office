@@ -69,18 +69,33 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## Routing & worker truthfulness audit (2026-10-09, open PR, unmerged)
+## Live Operations (2026-10-09)
 
-The work is on branch `claude/quirky-shannon-ba3f6e`. The report is `docs/routing-audit-2026-10-09.md`.
+Live Operations is the command layer of the Office. It is documented in `docs/live-operations.md`.
+* API: `/api/operations`, in `src/hub-office-ops.js`.
+* UI: `src/hub-ui/office-ops.js`.
+* It shows, from real rows only:
+  * CHIEF's command and delegation tree;
+  * agent cards;
+  * Now working;
+  * the pipeline;
+  * revision rounds;
+  * the handoff center (which lights the 3D route);
+  * the timeline;
+  * deliverables, with FINAL SYNTHESIS shown separately;
+  * Needs Fahad;
+  * capacity waits.
+* Historical test objectives are hidden from the Office views (`officeVisible`).
 
-* CHIEF synthesis now has a qualified-evidence free fallback.
-* Dead routes get a qualification back-off.
-* Wait messages are actionable.
-* Workers are shown by class.
-* The Hub never defaults to a test or archived project.
-* The migration `20261009090000_close_cancelled_session_runs.sql` is **not applied**.
+Fixes shipped with it:
+* exact Finance totals;
+* truthful runtime version;
+* native Coding worker presence;
+* attempt start times.
 
-Do not merge, deploy or apply it without Fahad.
+The production test-data audit is in `docs/cleanup/2026-10-09-test-data-cleanup.md`. The bulk delete was **not run**: it was blocked by the safety policy and needs Fahad.
+
+The routing and worker truthfulness audit (#116, `docs/routing-audit-2026-10-09.md`) is merged and deployed. Its migration `20261009090000` is applied.
 
 ## The Office redesign (2026-10-08, merged as #115, deployed)
 

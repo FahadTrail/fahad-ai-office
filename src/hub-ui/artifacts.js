@@ -66,14 +66,16 @@ function chart(data) {
 // FINANCE: every total is the sum of the listed lines (traceable), every
 // line keeps its basis, and the sensitivity line is plain arithmetic on the
 // ESTIMATED and ASSUMPTION lines — labelled as derived, never as a forecast.
+// A recurring line's monthly equivalent: monthly, a yearly amount / 12, or a weekly amount × 52 / 12.
+const perMonthOf = (item) => (n(item.monthly) || 0) + (n(item.annual) || 0) / 12 + (n(item.weekly) || 0) * 52 / 12;
 function financial(data) {
   const items = arr(data.items);
   const currency = String(data.currency || '');
   const oneTime = items.reduce((sum, item) => sum + (n(item.one_time) || 0), 0);
-  const monthly = items.reduce((sum, item) => sum + (n(item.monthly) || 0), 0);
+  const monthly = items.reduce((sum, item) => sum + perMonthOf(item), 0);
   const annual = oneTime + monthly * 12;
   const basisKind = { KNOWN: 'ok', ESTIMATED: 'warn', ASSUMPTION: 'muted' };
-  const firstYear = (item) => (n(item.one_time) || 0) + (n(item.monthly) || 0) * 12;
+  const firstYear = (item) => (n(item.one_time) || 0) + perMonthOf(item) * 12;
   const byBasis = ['KNOWN', 'ESTIMATED', 'ASSUMPTION'].map((basis) => [basis, items.filter((item) => (item.basis || 'ESTIMATED') === basis).reduce((sum, item) => sum + firstYear(item), 0)]);
   const categories = [...items.reduce((map, item) => map.set(item.category || 'Other', (map.get(item.category || 'Other') || 0) + firstYear(item)), new Map())].sort((x, y) => y[1] - x[1]);
   const top = Math.max(1, ...categories.map(([, value]) => value));
@@ -91,7 +93,7 @@ function financial(data) {
     ${annual > 0 ? `<div class="fin-basis" role="img" aria-label="First-year cost by basis">${byBasis.filter(([, value]) => value > 0).map(([basis, value]) => `<span class="fb-${basis.toLowerCase()}" style="flex:${value}" title="${esc(basis)}: ${esc(fmt(value, currency))}"></span>`).join('')}</div>
       <div class="fin-basis-legend">${byBasis.map(([basis, value]) => `<span><i class="fb-${basis.toLowerCase()}"></i>${esc(basis)} <span class="num">${esc(fmt(value, currency))}</span></span>`).join('')}</div>` : ''}
     ${categories.length > 1 ? `<div class="fin-cats">${categories.map(([name, value]) => `<div class="fin-cat"><span dir="auto">${esc(name)}</span><span class="fin-bar"><i style="width:${Math.max(2, (value / top) * 100).toFixed(1)}%"></i></span><span class="num">${esc(fmt(value, currency))}</span></div>`).join('')}</div>` : ''}
-    ${table(['Category', 'Item', 'One-time', 'Monthly', 'First year', 'Basis', 'Note'], items.map((item) => [esc(item.category), esc(item.item), esc(fmt(n(item.one_time))), esc(fmt(n(item.monthly))), esc(fmt(firstYear(item))), tag(item.basis || 'ESTIMATED', basisKind[item.basis] || 'warn'), esc(item.note)]))}
+    ${table(['Category', 'Item', 'One-time', 'Monthly', 'First year', 'Basis', 'Note'], items.map((item) => [esc(item.category), esc(item.item), esc(fmt(n(item.one_time))), esc(fmt(perMonthOf(item) || n(item.monthly))), esc(fmt(firstYear(item))), tag(item.basis || 'ESTIMATED', basisKind[item.basis] || 'warn'), esc(item.note)]))}
     ${uncertain > 0 ? `<div class="fin-sens small">Sensitivity (derived): if the ESTIMATED and ASSUMPTION lines are 20% higher, the first year is <strong class="num">${esc(fmt(annual + uncertain * 0.2, currency))}</strong>; 20% lower, <strong class="num">${esc(fmt(annual - uncertain * 0.2, currency))}</strong>.</div>` : ''}
     ${arr(data.validation?.issues, 8).length ? `<ul class="fin-issues small">${arr(data.validation.issues, 8).map((entry) => `<li dir="auto">${esc(entry.detail)}</li>`).join('')}</ul>` : ''}
     <div class="xs faint">${calc ? 'Revenue, costs, net and break-even are calculated by code from the assumptions. ' : ''}Totals are sums of the lines above. KNOWN = sourced · ESTIMATED = reasoned estimate · ASSUMPTION = to confirm.</div>`;
@@ -232,7 +234,7 @@ export function artifactPreview(artifact) {
     case 'moodboard': return `<div class="pv-swatches">${arr(data.palette, 6).filter((swatch) => HEX.test(swatch?.hex)).map((swatch) => `<span style="background:${swatch.hex}"></span>`).join('')}</div>${arr(data.typography, 2).map((font) => line(font.family)).join('')}`;
     case 'financial_model': {
       const items = arr(data.items);
-      const monthly = items.reduce((sum, item) => sum + (n(item.monthly) || 0), 0);
+      const monthly = items.reduce((sum, item) => sum + perMonthOf(item), 0);
       const oneTime = items.reduce((sum, item) => sum + (n(item.one_time) || 0), 0);
       return `<div class="pv-kpis"><span><b class="num">${esc(fmt(oneTime))}</b> setup</span><span><b class="num">${esc(fmt(monthly))}</b> / month</span></div>${line(`${items.length} lines · ${data.currency || ''}`)}`;
     }

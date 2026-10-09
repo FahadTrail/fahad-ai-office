@@ -12,6 +12,7 @@
 import { officeAgent, parseOutput } from './office/agents.js';
 import { artifactView } from './hub-office.js';
 import { ownerAction, taskNow } from './hub-workspace.js';
+import { officeVisible } from './hub-office.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KEY_RE = /^(task|session|artifact):([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
@@ -431,7 +432,8 @@ export async function loadBoard(db, workspaceId, now = Date.now(), { before = nu
   const project = await one(db.from('projects').select('id,name,description,default_repository').eq('id', workspaceId).maybeSingle());
   if (!project) return null;
   const page = await pageJobs(db, workspaceId, { before, since });
-  const jobs = page.jobs;
+  // Historical test objectives are evidence, not deliverables (paging keeps the raw cursor).
+  const jobs = page.jobs.filter(officeVisible);
   const jobIds = jobs.map((job) => job.id);
   const oldest = jobs.at(-1) || null;
   // Rows without an objective (structured outputs, older CODING sessions)

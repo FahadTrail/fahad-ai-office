@@ -57,7 +57,30 @@ export function previewTables(now = Date.now(), { moment = 'work' } = {}) {
     for (const entry of tables.handoffs) entry.created_at = ago(390);
     tables.agent_approvals = []; Object.assign(tables.agent_sessions[0], { status: 'completed', phase: 'done', completed_at: ago(370) });
   }
+  withEventLog(tables);
   return tables;
+}
+
+// The event log a real objective writes (job created, plan, assigned, started,
+// completed, handoffs), derived from the fixture's own fictional rows so the
+// Live Operations timeline has what production has. Preview only.
+function withEventLog(tables) {
+  let id = 100; // below the ids tests append (the stream watermark is the newest id)
+  const add = (row) => tables.events.push({ id: (id += 1), level: 'info', payload: {}, ...row });
+  const stage = (task) => { try { return JSON.parse(task.brief || '{}').stage; } catch { return null; } };
+  for (const job of tables.jobs) {
+    add({ job_id: job.id, task_id: null, type: 'job_created', message: 'Fahad request accepted.', created_at: job.created_at });
+    const own = tables.tasks.filter((task) => task.job_id === job.id);
+    const plan = own.find((task) => stage(task) === 'chief_plan');
+    if (plan?.completed_at) add({ job_id: job.id, task_id: plan.id, type: 'plan_created', message: 'Chief dispatched the workstreams.', payload: { kind: 'workflow_planned', workstreams: own.filter((task) => ['specialist', 'launch_dev'].includes(stage(task))).map((task) => ({ id: task.id })) }, created_at: plan.completed_at });
+    for (const task of own) {
+      add({ job_id: job.id, task_id: task.id, type: 'agent_assigned', message: `Assigned: ${task.title}`, created_at: task.created_at });
+      if (task.started_at) add({ job_id: job.id, task_id: task.id, type: 'agent_started', message: `Started: ${task.title}`, payload: { attempt: 1 }, created_at: task.started_at });
+      if (task.status === 'done' && task.completed_at) add({ job_id: job.id, task_id: task.id, type: 'task_completed', message: `Completed: ${task.title}`, created_at: task.completed_at });
+    }
+    for (const handoff of tables.handoffs.filter((entry) => entry.job_id === job.id)) add({ job_id: job.id, task_id: handoff.to_task_id, type: 'handoff', message: 'Handed off.', payload: { from_task: handoff.from_task_id, to_task: handoff.to_task_id }, created_at: handoff.created_at });
+    if (job.status === 'completed' && job.completed_at) add({ job_id: job.id, task_id: null, type: 'job_completed', message: 'Job completed.', created_at: job.completed_at });
+  }
 }
 
 function baseTables(now) {
