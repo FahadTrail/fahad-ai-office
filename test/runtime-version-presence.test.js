@@ -38,7 +38,9 @@ test('PRODUCTION REGRESSION: the runtime waits for the deploy to write the new c
   const inserted = [];
   const db = { from: () => ({ insert: async (row) => { inserted.push(row); return { error: null }; }, select: () => { throw new Error('no history'); } }) };
   let polls = 0;
-  const sleep = async () => { polls += 1; if (polls === 2) writeFileSync(path, `${NEW}\n`); };
+  // The deploy writes the file after the container is up (production: 18 s later). Its mtime is set
+  // explicitly: some filesystems store whole seconds, which could round a fresh write below the start.
+  const sleep = async () => { polls += 1; if (polls === 2) { writeFileSync(path, `${NEW}\n`); utimesSync(path, new Date(startedAt + 18_000), new Date(startedAt + 18_000)); } };
   assert.equal(await recordRuntimeStart(db, () => {}, { fingerprint: 'fp', pid: 7, path, processStartedAt: startedAt, waitMs: 60_000, sleep }), true);
   assert.equal(inserted.length, 1, 'one event, after the version is known');
   assert.equal(inserted[0].payload.version, NEW.slice(0, 12));
