@@ -54,6 +54,47 @@ npm run coding-worker      # run the Coding Agent worker (needs Supabase + keys)
 Tests that need container root (isolated sandbox) skip elsewhere; CI runs them
 inside the built runtime image as root.
 
+## Cursor Cloud specific instructions
+
+Cloud Agent setup installs dependencies with `npm ci --no-audit --no-fund` and
+adds PostgreSQL 16 server binaries plus ripgrep. Node 22 is already on the
+base image. The suite and the Hub preview are started when needed; nothing
+has to be running on boot.
+
+* `node --test` is the full offline suite. It needs no credentials and no
+  network. Two isolated-sandbox tests skip unless the process is container
+  root; CI runs those inside the runtime image.
+* `npm run db:replay` uses the PostgreSQL 16 binaries at
+  `/usr/lib/postgresql/16/bin` and creates its own throwaway cluster. The
+  schema fingerprint test inside `node --test` uses the same replay.
+* Local Hub without Supabase or model keys: `node tools/hub-preview.mjs`
+  serves fictional data at `http://127.0.0.1:4173/`. Sending a chat there
+  runs the real Hub handlers against an in-memory store.
+* `npm run canary:agentic`, production migration apply, and deploy stay
+  owner-gated and need live credentials. Leave Hermes untouched.
+* Core and Coding Continuity are closed and production-complete. Preserve them.
+  V5 Product Experience is the current phase, but do not start or broaden V5
+  work unless Fahad gives an explicit implementation objective.
+* The visible Office agents are exactly **CHIEF, RESEARCH, CREATIVE, PRODUCT,
+  FINANCE, CODING, AUDIT, SOCIAL, LEGAL**. Agents are durable product roles;
+  models/providers are replaceable execution engines. Keep routing free-first.
+* Never put secrets in source, commits, prompts, logs, screenshots, artifacts,
+  PR descriptions or test output. Never request or use production Supabase
+  service-role keys, provider keys, deploy credentials, VPS/root credentials or
+  production `.env` files. If a future test genuinely needs a value, use only a
+  minimum non-production/test secret supplied through Cursor's Secrets UI.
+* One coding agent writes to a branch at a time. Before continuing handed-over
+  work, inspect the named branch, linked PR, latest remote SHA, CI state and the
+  previous agent's checkpoint. Continue from that SHA without reset, rebase,
+  history rewriting or force-push unless Fahad explicitly approves it.
+* Commit small coherent checkpoints and push them frequently. Before yielding,
+  leave the branch, PR, latest SHA, test results, changed files, current state,
+  next action and blockers.
+* Work through a non-default branch and PR; never push directly to `main`.
+  Never merge, deploy to production, run production migrations, enable a
+  production flag or change production secrets without Fahad's explicit owner
+  approval.
+
 ## Rules for changes
 
 * Work on a branch, open a PR, keep CI green. Merging to `main` deploys
