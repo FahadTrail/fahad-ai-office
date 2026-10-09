@@ -42,7 +42,7 @@ const EN = {
   },
   types: { report: 'report', table: 'table', flow: 'flow', timeline: 'timeline', kanban: 'board', evidence: 'evidence', financial_model: 'financial model', chart: 'chart', checklist: 'checklist', moodboard: 'moodboard', audit_report: 'audit report', risk_matrix: 'risk matrix', compliance_matrix: 'compliance matrix', calendar: 'calendar' },
   capacityWait: 'Waiting for free model capacity — resumes automatically',
-  reasons: { network: 'network error', transient: 'temporary error', 'rate limited': 'rate limit', timeout: 'timeout' },
+  reasons: { network: 'network error', transient: 'temporary error', 'rate limited': 'rate limit', 'rate limit': 'rate limit', quota: 'quota used up', timeout: 'timeout' },
 };
 
 const AR = {
@@ -79,7 +79,7 @@ const AR = {
   },
   types: { report: 'تقرير', table: 'جدول', flow: 'مسار', timeline: 'خط زمني', kanban: 'لوحة مهام', evidence: 'أدلة', financial_model: 'نموذج مالي', chart: 'رسم بياني', checklist: 'قائمة تحقق', moodboard: 'لوحة إلهام', audit_report: 'تقرير تدقيق', risk_matrix: 'مصفوفة مخاطر', compliance_matrix: 'مصفوفة امتثال', calendar: 'تقويم' },
   capacityWait: 'ينتظر سعة النماذج المجانية — يكمل تلقائيًا',
-  reasons: { network: 'خطأ شبكة', transient: 'خطأ مؤقت', 'rate limited': 'حد الاستخدام', timeout: 'انتهت المهلة' },
+  reasons: { network: 'خطأ شبكة', transient: 'خطأ مؤقت', 'rate limited': 'حد الاستخدام', 'rate limit': 'حد الاستخدام', quota: 'نفدت الحصة', timeout: 'انتهت المهلة' },
 };
 
 export function opsCopy(language) { return language === 'en' ? EN : AR; }

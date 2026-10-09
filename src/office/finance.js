@@ -622,9 +622,18 @@ export function proseClaims(prose) {
   ];
   for (const [kind, label, pattern] of patterns) {
     for (const match of body.matchAll(pattern)) {
-      const value = parseAmount(match[1]);
+      let raw = match[1];
+      // An arithmetic statement — "Yearly cost: AED 250 × 52 = AED 13,000" —
+      // states its result after "=": the first amount is only a factor.
+      const line = body.slice(match.index + match[0].length).split(/\n/)[0].slice(0, 160);
+      if (/^\s*[×x*÷/+]\s*\d/i.test(line)) {
+        const result = line.slice(line.lastIndexOf('=') + 1).match(new RegExp(MONEY));
+        if (!line.includes('=') || !result) continue;
+        raw = result[1];
+      }
+      const value = parseAmount(raw);
       if (value === null || Math.abs(value) < 100) continue;
-      claims.push({ kind, label, value, raw: match[1].trim(), quote: quote(body, match.index) });
+      claims.push({ kind, label, value, raw: raw.trim(), quote: quote(body, match.index) });
     }
   }
   return claims;
