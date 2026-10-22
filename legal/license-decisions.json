@@ -47,6 +47,15 @@
       "reviewed": "2026-10-08"
     },
     {
+      "package": "font:JetBrains Mono",
+      "match": "^font:JetBrains Mono$",
+      "license": "OFL-1.1",
+      "decision": "APPROVED",
+      "conditions": "Self-hosted web font (src/hub-ui/fonts/jetbrains-mono-latin-var.woff2, Latin subset, variable weight, from @fontsource-variable/jetbrains-mono 5.1.1) used for numbers, dates and technical values in the Hub. Same OFL conditions as Inter.",
+      "source": "https://github.com/JetBrains/JetBrainsMono/blob/master/OFL.txt",
+      "reviewed": "2026-10-22"
+    },
+    {
       "package": "asset:Poly Haven HDRIs",
       "match": "^asset:Poly Haven HDRIs$",
       "license": "CC0-1.0",

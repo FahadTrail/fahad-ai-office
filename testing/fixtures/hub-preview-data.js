@@ -57,8 +57,47 @@ export function previewTables(now = Date.now(), { moment = 'work' } = {}) {
     for (const entry of tables.handoffs) entry.created_at = ago(390);
     tables.agent_approvals = []; Object.assign(tables.agent_sessions[0], { status: 'completed', phase: 'done', completed_at: ago(370) });
   }
+  if (moment === 'history') withHistory(tables, now);
   withEventLog(tables);
   return tables;
+}
+
+// 'history': the 'work' afternoon plus the edge cases the redesign must draw
+// truthfully — a failed job, a cancelled job, a long Arabic title with a long
+// report and table, and a job CHIEF has only just started planning. Preview
+// only; never written to a real database.
+function withHistory(tables, now) {
+  const ago = (minutes) => new Date(now - minutes * 60_000).toISOString();
+  const J = (n) => uuid('b0000000', n);
+  const T = (n) => uuid('d0000000', n);
+  const longTitle = 'خطة تسويق شاملة لإطلاق تطبيق قهوة رن في دبي تشمل المحتوى والإعلانات المدفوعة والشراكات مع المقاهي المستقلة والمؤثرين المحليين';
+  tables.jobs.push(
+    { id: J(4), project_id: PREVIEW_WORKSPACE, conversation_id: null, title: 'تحليل المنافسين في الرياض', goal: 'قارن أهم خمسة تطبيقات قهوة في الرياض من حيث السعر والتوصيل.', status: 'failed', progress: 40, cost_usd: 0.0011, priority: 'normal', created_at: ago(3000), completed_at: ago(2950) },
+    { id: J(5), project_id: PREVIEW_WORKSPACE, conversation_id: null, title: 'Draft the investor update', goal: 'Draft a short monthly investor update for Qahwa Run.', status: 'cancelled', progress: 10, cost_usd: 0, priority: 'normal', created_at: ago(4300), completed_at: ago(4290) },
+    { id: J(6), project_id: PREVIEW_WORKSPACE, conversation_id: null, title: longTitle, goal: longTitle, status: 'completed', progress: 100, cost_usd: 0.0034, priority: 'normal', created_at: ago(5800), completed_at: ago(5700) },
+    { id: J(7), project_id: PREVIEW_WORKSPACE, conversation_id: null, title: 'ملخص مؤشرات الأداء الأسبوعي', goal: 'اجمع مؤشرات الأداء لهذا الأسبوع في صفحة واحدة.', status: 'planning', progress: 0, cost_usd: 0, priority: 'normal', created_at: ago(1) },
+  );
+  tables.tasks.push(
+    { id: T(40), job_id: J(4), agent_id: agentId('chief-of-staff'), title: 'Chief planning', status: 'done', brief: brief('chief_plan'), depends_on: [], sequence: 10, created_at: ago(3000), started_at: ago(3000), completed_at: ago(2999) },
+    { id: T(41), job_id: J(4), agent_id: agentId('research-strategy'), title: 'مقارنة أسعار التطبيقات', status: 'failed', brief: brief('specialist', { agent: 'research' }), depends_on: [T(40)], sequence: 100, created_at: ago(2999), started_at: ago(2990), completed_at: ago(2950), wait_info: { detail: 'The web search provider returned no results for two attempts.' } },
+    { id: T(42), job_id: J(4), agent_id: agentId('chief-of-staff'), title: 'Chief synthesis', status: 'queued', brief: brief('synthesis'), depends_on: [T(41)], sequence: 900, created_at: ago(2999) },
+    { id: T(50), job_id: J(5), agent_id: agentId('chief-of-staff'), title: 'Chief planning', status: 'done', brief: brief('chief_plan'), depends_on: [], sequence: 10, created_at: ago(4300), started_at: ago(4300), completed_at: ago(4299) },
+    { id: T(51), job_id: J(5), agent_id: agentId('business-finance'), title: 'Monthly numbers for the update', status: 'queued', brief: brief('specialist', { agent: 'finance' }), depends_on: [T(50)], sequence: 100, created_at: ago(4299) },
+    { id: T(60), job_id: J(6), agent_id: agentId('chief-of-staff'), title: 'Chief planning', status: 'done', brief: brief('chief_plan'), depends_on: [], sequence: 10, created_at: ago(5800), started_at: ago(5800), completed_at: ago(5799) },
+    { id: T(61), job_id: J(6), agent_id: agentId('content-media'), title: 'خطة المحتوى لأول شهر', status: 'done', brief: brief('specialist', { agent: 'social' }), depends_on: [T(60)], sequence: 100, created_at: ago(5799), started_at: ago(5790), completed_at: ago(5740) },
+    { id: T(62), job_id: J(6), agent_id: agentId('business-finance'), title: 'ميزانية الإعلانات المدفوعة', status: 'done', brief: brief('specialist', { agent: 'finance' }), depends_on: [T(60)], sequence: 110, created_at: ago(5799), started_at: ago(5790), completed_at: ago(5735) },
+    { id: T(63), job_id: J(6), agent_id: agentId('chief-of-staff'), title: 'Chief synthesis', status: 'done', brief: brief('synthesis'), depends_on: [T(61), T(62)], sequence: 900, created_at: ago(5799), started_at: ago(5710), completed_at: ago(5700) },
+    { id: T(70), job_id: J(7), agent_id: agentId('chief-of-staff'), title: 'Chief planning', status: 'running', brief: brief('chief_plan'), depends_on: [], sequence: 10, created_at: ago(1), started_at: ago(1) },
+  );
+  const report = ['## الملخص التنفيذي', 'الإطلاق ممكن خلال ستة أسابيع بميزانية إعلانات شهرية تقديرية **AED 6,500** (ESTIMATED). المحتوى يبدأ قبل الإطلاق بأسبوعين، والشراكات مع خمسة مقاهٍ مستقلة في Business Bay هي الأساس.', '',
+    '## الخطة', '1. أسبوعان من المحتوى التشويقي على Instagram وTikTok.', '2. إطلاق تجريبي مع خمسة مقاهٍ شريكة.', '3. حملة مدفوعة صغيرة بعد قياس أول أسبوع.', '',
+    '## الميزانية الشهرية', '| البند | الشهري (AED) | الأساس |', '|---|---|---|', '| إعلانات Instagram | 3,500 | ESTIMATED |', '| إعلانات TikTok | 2,000 | ESTIMATED |', '| تصوير المحتوى | 1,000 | ASSUMPTION |', '',
+    '## المخاطر', '- تكلفة الاستحواذ قد ترتفع في رمضان.', '- اعتماد كبير على عدد قليل من المقاهي.', '', '## الخطوات التالية', '- FINANCE يؤكد رسوم البطاقات.', '- SOCIAL يجهّز أول عشرة منشورات.'].join('\n');
+  tables.results.push(
+    { id: uuid('f0000000', 40), job_id: J(6), task_id: T(61), kind: 'specialist', summary: 'Content plan for month one.', created_at: ago(5740), content: '## Summary\nأربعة أعمدة محتوى: الطقوس اليومية، المقاهي الشريكة، العروض، وخلف الكواليس.\n\n## Work\n- 3 منشورات أسبوعيًا على Instagram\n- 4 مقاطع قصيرة على TikTok\n\n## Handoff\nFINANCE يحتاج عدد المنشورات المدفوعة.\n\n## Decisions for Fahad\nNone' },
+    { id: uuid('f0000000', 41), job_id: J(6), task_id: T(62), kind: 'specialist', summary: 'Paid media ≈ AED 5,500 per month.', created_at: ago(5735), content: '## Summary\nالإعلانات المدفوعة ≈ AED 5,500 شهريًا (ESTIMATED).\n\n## Work\n| القناة | الشهري |\n|---|---|\n| Instagram | 3,500 |\n| TikTok | 2,000 |' },
+    { id: uuid('f0000000', 42), job_id: J(6), task_id: T(63), kind: 'final', summary: 'Marketing plan ready.', created_at: ago(5700), content: report },
+  );
 }
 
 // The event log a real objective writes (job created, plan, assigned, started,
