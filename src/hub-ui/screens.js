@@ -5,12 +5,12 @@
 //   /api/work/current, /api/work/history, /api/work/objectives/:id  (work platform contract)
 //   /api/workflows/:id   task graph, employee outputs, final synthesis, handoffs
 //   /api/conversations   CHIEF submission and Reply & Continue (multi-turn)
-//   /api/attention, /api/office, /api/tasks   owner attention, employee state, coding sessions
+//   /api/attention, /api/office, /api/work/sessions   owner attention, employee state, open coding sessions
 // Nothing here writes workflow state except the existing conversation
 // endpoints the old Hub already used. Unknown stays unknown.
 
 import {
-  ROSTER, arabicCount, deliveryProgress, employeeColor, employeeCopy, employeeState, employeeTabs, fractionWidth, greeting,
+  ROSTER, arabicCount, codingSessionState, createRefresher, deliveryProgress, fractionLabel, objectiveSignature, employeeColor, employeeCopy, employeeState, employeeTabs, fractionWidth, greeting,
   isTerminal, jobStatus, nodeStateLabel, numericDate, outputTypes, phaseWords, archiveFilter,
 } from './office-model.js';
 
@@ -122,21 +122,31 @@ export async function renderOfficeHome(ctx) {
   };
   try { const draft = sessionStorage.getItem('hub-office-draft'); if (draft) { goal.value = draft; sessionStorage.removeItem('hub-office-draft'); grow(); } } catch {}
 
-  let sequence = 0;
+  // Workflow graphs are cached per objective and refetched only when that
+  // objective's summary changed, at most four at a time.
+  const graphs = new Map();
+  const fetchGraphs = async (objectives) => {
+    const stale = objectives.filter((objective) => graphs.get(objective.id)?.signature !== objectiveSignature(objective));
+    for (let index = 0; index < stale.length; index += 4) {
+      await Promise.all(stale.slice(index, index + 4).map(async (objective) => {
+        try { graphs.set(objective.id, { signature: objectiveSignature(objective), graph: await ctx.api(`/api/workflows/${objective.id}`) }); }
+        catch { graphs.delete(objective.id); }
+      }));
+    }
+    for (const id of graphs.keys()) if (!objectives.some((objective) => objective.id === id)) graphs.delete(id);
+  };
   const load = async () => {
-    const mine = ++sequence;
-    const [current, attention, office, tasks] = await Promise.allSettled([
+    const [current, attention, office, sessions] = await Promise.allSettled([
       ctx.api(`/api/work/current${ctx.q({ workspaceId: ctx.ws() })}`),
       ctx.api(`/api/attention${ctx.q({ workspaceId: ctx.ws() })}`),
       ctx.api(`/api/office${ctx.q({ workspaceId: ctx.ws() })}`),
-      ctx.api(`/api/tasks${ctx.q({ workspaceId: ctx.ws() })}`),
+      ctx.api(`/api/work/sessions${ctx.q({ workspaceId: ctx.ws(), scope: 'current' })}`),
     ]);
-    const objectives = current.status === 'fulfilled' ? [...current.value.needsOwner, ...current.value.active, ...current.value.waiting, ...current.value.activeTests] : [];
-    const graphs = await Promise.allSettled(objectives.slice(0, 12).map((objective) => ctx.api(`/api/workflows/${objective.id}`)));
-    if (mine !== sequence || !ctx.isCurrent()) return;
-    const graphById = new Map(objectives.slice(0, 12).map((objective, index) => [objective.id, graphs[index].status === 'fulfilled' ? graphs[index].value : null]));
+    const objectives = current.status === 'fulfilled' ? [...current.value.needsOwner, ...current.value.active, ...current.value.waiting, ...current.value.activeTests].slice(0, 12) : [];
+    await fetchGraphs(objectives);
+    if (!ctx.isCurrent()) return;
     paintAttention(attention);
-    paintActive(current, objectives, graphById, tasks);
+    paintActive(current, objectives, attention, sessions);
     paintTeam(office);
   };
 
@@ -146,8 +156,10 @@ export async function renderOfficeHome(ctx) {
     if (result.status !== 'fulfilled') { slot.innerHTML = ''; return; }
     const count = Number(result.value.counts?.action || 0);
     if (!count) { slot.innerHTML = ''; return; }
-    const phrase = ar ? arabicCount(count, ['طلب واحد بانتظار القرار', 'طلبان بانتظار القرار', 'طلبات بانتظار القرار', 'طلبًا بانتظار القرار']) : `${count} request${count === 1 ? '' : 's'} waiting for your decision`;
-    slot.innerHTML = `<a class="attention-notice" href="#/settings/approvals">${ICON.alert}<span class="grow"><strong>${t('تحتاج موافقتك', 'Needs your approval')}</strong><span> — ${ctx.esc(phrase)}</span></span><span class="notice-go" aria-hidden="true">${ICON.back}</span></a>`;
+    // The same count as the Approvals page: approvals, questions, paused or
+    // failed work and legal or security decisions, so not "approvals" alone.
+    const phrase = ar ? arabicCount(count, ['أمر واحد يحتاج قرارك', 'أمران يحتاجان قرارك', 'أمور تحتاج قرارك', 'أمرًا يحتاج قرارك']) : `${count} item${count === 1 ? '' : 's'} need${count === 1 ? 's' : ''} your decision`;
+    slot.innerHTML = `<a class="attention-notice" href="#/settings/approvals">${ICON.alert}<span class="grow"><strong>${t('بانتظارك', 'Waiting for you')}</strong><span> — ${ctx.esc(phrase)}</span></span><span class="notice-go" aria-hidden="true">${ICON.back}</span></a>`;
   };
 
   const progressBlock = (progress) => {
@@ -156,22 +168,23 @@ export async function renderOfficeHome(ctx) {
       const phase = progress ? phaseWords(progress.phase, lang(ctx)) : '';
       return phase ? `<span class="job-phase">${ctx.esc(phase)}</span>` : '';
     }
-    const label = ar ? `${progress.delivered} من ${progress.total} سلّموا` : `${progress.delivered} of ${progress.total} delivered`;
-    const extra = progress.phase === 'awaiting_synthesis' || progress.phase === 'synthesizing' ? ` · ${phaseWords(progress.phase, lang(ctx))}` : progress.failed ? ` · ${ar ? `${progress.failed} تعثّر` : `${progress.failed} failed`}` : '';
+    const label = fractionLabel(progress, lang(ctx));
+    const extra = ['awaiting_synthesis', 'synthesizing', 'revising'].includes(progress.phase) ? ` · ${phaseWords(progress.phase, lang(ctx))}` : progress.failed ? ` · ${ar ? `${progress.failed} تعثّر` : `${progress.failed} failed`}` : '';
     return `<span class="job-progress"><span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.delivered}" aria-label="${ctx.esc(label)}"><span style="width:${width}%"></span></span><span class="num fraction" dir="ltr">${progress.delivered}/${progress.total}</span><span class="sr-only">${ctx.esc(label)}</span>${extra ? `<span class="job-phase">${ctx.esc(extra.replace(/^ · /, ''))}</span>` : ''}</span>`;
   };
 
-  const paintActive = (current, objectives, graphById, tasks) => {
+  const paintActive = (current, objectives, attention, sessions) => {
     const slot = ctx.view.querySelector('#activeSlot');
     if (!slot) return;
     if (current.status !== 'fulfilled') {
       slot.innerHTML = `<div class="state-card">${ctx.errorBlock(current.reason?.message, ctx.esc)}<button class="btn btn-sm" type="button" data-retry>${t('إعادة المحاولة', 'Try again')}</button></div>`;
-      slot.querySelector('[data-retry]').onclick = () => { slot.innerHTML = skeleton(2); load(); };
+      slot.querySelector('[data-retry]').onclick = () => { slot.innerHTML = skeleton(2); refresher.trigger(); };
       return;
     }
-    const coding = tasks.status === 'fulfilled' ? tasks.value.tasks.filter((task) => ['running', 'attention'].includes(task.group) && !objectives.some((objective) => objective.id === task.jobId)) : [];
+    const ownerItems = attention.status === 'fulfilled' ? attention.value.items || [] : [];
+    const coding = sessions.status === 'fulfilled' ? sessions.value.sessions.filter((session) => !session.jobId) : [];
     const cards = objectives.map((objective) => {
-      const graph = graphById.get(objective.id);
+      const graph = graphs.get(objective.id)?.graph || null;
       const progress = graph ? deliveryProgress(graph.nodes, { final: graph.final, jobStatus: graph.job.status }) : null;
       const people = graph ? [...new Map(graph.nodes.filter((node) => node.kind !== 'plan' && node.kind !== 'synthesis' && node.agentSlug).map((node) => [node.agentSlug, { slug: node.agentSlug, label: node.agentLabel }])).values()]
         : (objective.orchestration?.participants || []);
@@ -185,12 +198,12 @@ export async function renderOfficeHome(ctx) {
           ${needs ? `<span class="attention-chip">${ICON.alert}${t('يحتاجك', 'Needs you')}</span>` : ''}${test ? `<span class="tag">${t('اختبار', 'Test')}</span>` : ''}</div>
       </a>`;
     });
-    for (const task of coding) {
-      const needs = task.group === 'attention';
-      cards.push(`<a class="job-card material" href="#/task/${ctx.esc(task.id)}">
-        <div class="job-card-top"><h3 dir="auto">${ctx.esc(task.title)}</h3>${statusPill(ctx, { status: needs ? 'blocked' : 'running', lifecycle: needs ? 'NEEDS_OWNER' : 'ACTIVE' })}</div>
-        <p class="job-desc" dir="auto">${ctx.esc(task.now || task.summary || t('مهمة برمجية', 'Coding task'))}</p>
-        <div class="job-card-foot">${avatars(ctx, [{ slug: 'coding-agent', label: 'CODING' }])}<span class="job-phase">${t('مهمة برمجية', 'Coding session')}</span>${needs ? `<span class="attention-chip">${ICON.alert}${t('يحتاجك', 'Needs you')}</span>` : ''}</div>
+    for (const session of coding) {
+      const state = codingSessionState(session, ownerItems, lang(ctx));
+      cards.push(`<a class="job-card material" href="#/task/${ctx.esc(session.id)}">
+        <div class="job-card-top"><h3 dir="auto">${ctx.esc(session.title)}</h3>${statusPill(ctx, state.status)}</div>
+        <p class="job-desc">${t('مهمة برمجية', 'Coding session')}${state.phase ? ` · ${ctx.esc(state.phase)}` : ''}</p>
+        <div class="job-card-foot">${avatars(ctx, [{ slug: 'coding-agent', label: 'CODING' }])}${state.needs ? `<span class="attention-chip">${ICON.alert}${t('يحتاجك', 'Needs you')}</span>` : ''}</div>
       </a>`);
     }
     slot.innerHTML = cards.length ? `<div class="job-grid">${cards.join('')}</div>`
@@ -217,12 +230,22 @@ export async function renderOfficeHome(ctx) {
     slot.querySelectorAll('[data-employee]').forEach((button) => { button.onclick = () => ctx.openEmployee(button.dataset.employee); });
   };
 
-  ctx.onLiveChange(() => load().catch(() => {}), (connected) => {
+  const refresher = createRefresher(load, { hidden: () => document.hidden, connectedEvery: 120_000, disconnectedEvery: 30_000 });
+  watchVisibility(ctx, refresher);
+  ctx.onLiveChange(() => refresher.trigger(), (connected) => {
+    refresher.setConnected(connected);
     const element = ctx.view.querySelector('#liveState');
     if (element) element.innerHTML = connected ? `<span class="live-dot" aria-hidden="true"></span>${t('مباشر', 'Live')}` : `<span class="live-dot is-off" aria-hidden="true"></span>${t('يتحدّث كل 30 ثانية', 'Refreshing every 30s')}`;
   });
-  ctx.every(30_000, () => load().catch(() => {}));
-  await load();
+  ctx.every(10_000, () => refresher.tick());
+  await refresher.trigger();
+}
+
+// A hidden tab does not poll; it catches up once when shown again.
+function watchVisibility(ctx, refresher) {
+  const onVisible = () => { if (!document.hidden) refresher.visible(); };
+  document.addEventListener('visibilitychange', onVisible);
+  ctx.onLeave(() => { document.removeEventListener('visibilitychange', onVisible); refresher.stop(); });
 }
 
 // ===================================================================== Job detail
@@ -285,7 +308,7 @@ export async function renderJobDetail(ctx, id) {
         <div><dt>${t('أُنشئت', 'Created')}</dt><dd>${isoDate(ctx, job.createdAt) || '—'}</dd></div>
         ${job.completedAt ? `<div><dt>${status.key === 'completed' ? t('اكتملت', 'Completed') : t('انتهت', 'Ended')}</dt><dd>${isoDate(ctx, job.completedAt)}</dd></div>` : ''}
         <div><dt>${t('الفريق', 'Team')}</dt><dd>${tabs.length ? avatars(ctx, tabs.map((tab) => ({ slug: tab.slug, label: tab.label })), 9) : `<span class="muted">${t('CHIEF فقط', 'CHIEF only')}</span>`}</dd></div>
-        <div><dt>${t('التسليم', 'Delivery')}</dt><dd>${progress.fraction ? `<span class="num" dir="ltr">${progress.delivered}/${progress.total}</span>` : `<span class="muted">${ctx.esc(phaseWords(progress.phase, lang(ctx)) || '—')}</span>`}</dd></div>
+        <div><dt>${t('التكليفات المُسلّمة', 'Assignments delivered')}</dt><dd>${progress.fraction ? `<span class="num" dir="ltr" title="${ctx.esc(fractionLabel(progress, lang(ctx)))}">${progress.delivered}/${progress.total}</span>` : `<span class="muted">${ctx.esc(phaseWords(progress.phase, lang(ctx)) || '—')}</span>`}</dd></div>
       </dl>`;
     paintSynthesis({ workflow, objective, progress, direct, message });
     paintTeam(workflow, tabs);
@@ -311,7 +334,7 @@ export async function renderJobDetail(ctx, id) {
     } else if (!isTerminal(job.status)) {
       const width = fractionWidth(progress);
       body = `<div class="synthesis-wait"><span class="wait-mark" aria-hidden="true">${ICON.clock}</span><div><p>${t('الفريق يعمل على المهمة. سيجمع CHIEF النتائج في تقرير نهائي بعد اكتمال المخرجات المطلوبة.', 'The team is working on this. CHIEF will consolidate the results into a final report once the required deliverables are in.')}</p>
-        <p class="muted small">${ctx.esc(phaseWords(progress.phase, lang(ctx)))}${progress.fraction ? ` · <span class="num" dir="ltr">${progress.delivered}/${progress.total}</span> ${t('سلّموا', 'delivered')}` : ''}</p>
+        <p class="muted small">${ctx.esc(phaseWords(progress.phase, lang(ctx)))}${progress.fraction ? ` · ${ctx.esc(fractionLabel(progress, lang(ctx)))}` : ''}</p>
         ${width != null ? `<span class="bar bar-lg" aria-hidden="true"><span style="width:${width}%"></span></span>` : ''}</div></div>`;
     } else if (job.status === 'failed') {
       const reason = objective?.nextAction?.basis === 'RECORDED' ? objective.nextAction.text : null;
@@ -442,7 +465,7 @@ export async function renderJobDetail(ctx, id) {
     const stop = slot.querySelector('#stopJob');
     if (stop) stop.onclick = async () => {
       if (!(await ctx.confirmDialog(t('إيقاف هذه المهمة؟', 'Stop this job?'), t('يتوقف العمل الجاري في هذه المحادثة. ما تم إنجازه يبقى محفوظًا.', 'Running work in this conversation stops. Work already done is kept.')))) return;
-      try { await ctx.api(`/api/conversations/${conversationId}/stop`, { method: 'POST' }); ctx.toast(t('تم الإيقاف', 'Stopped')); signature = ''; await load(); } catch (failure) { ctx.toast(failure.message); }
+      try { await ctx.api(`/api/conversations/${conversationId}/stop`, { method: 'POST' }); ctx.toast(t('تم الإيقاف', 'Stopped')); signature = ''; await refresher.trigger(); } catch (failure) { ctx.toast(failure.message); }
     };
   };
 
@@ -480,17 +503,25 @@ export async function renderJobDetail(ctx, id) {
     if (slot && ctx.isCurrent()) slot.innerHTML = technicalHtml(ui.technical);
   };
 
-  let status;
-  try {
-    status = await load();
-  } catch (failure) {
+  // While the job is open: live changes refresh it, the safety poll is 30 s
+  // with a live stream and 8 s without one, and nothing loads while hidden.
+  // Once the job is terminal the page stops refreshing.
+  let failed = null;
+  const refresher = createRefresher(async () => {
+    try {
+      const current = await load();
+      if (isTerminal(current)) refresher.stop();
+    } catch (failure) { failed = failure; }
+  }, { hidden: () => document.hidden, connectedEvery: 30_000, disconnectedEvery: 8_000 });
+  await refresher.trigger();
+  if (failed) {
+    const failure = failed;
     ctx.view.innerHTML = `<div class="pg job-page"><a class="back-link" href="${origin}">${ICON.back}<span>${origin === '#/archive' ? t('الأرشيف', 'Archive') : t('المكتب', 'Office')}</span></a><div class="state-card">${ctx.errorBlock(failure.message, ctx.esc)}</div></div>`;
     return;
   }
-  if (!isTerminal(status)) {
-    ctx.onLiveChange(() => load().catch(() => {}));
-    ctx.every(5000, () => load().catch(() => {}));
-  }
+  watchVisibility(ctx, refresher);
+  ctx.onLiveChange(() => refresher.trigger(), (connected) => refresher.setConnected(connected));
+  ctx.every(4000, () => refresher.tick());
 }
 
 // ===================================================================== Archive

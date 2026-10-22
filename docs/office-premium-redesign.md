@@ -17,8 +17,10 @@ Settings sections: Team (`renderEmployees`), Approvals (`renderAttention`), Mode
 
 Presentation rules are pure and unit-tested in `src/hub-ui/office-model.js` (`test/premium-redesign.test.js`):
 
-* Job status: the derived lifecycle wins; an unknown stored status is shown as-is.
-* Progress: delivered units / assigned units from the real task graph. A unit is one employee workstream or development task. An open revision is not delivered. Skipped counts as delivered. With no units there is no bar, only a phase.
+* Job status: the derived lifecycle wins; an unknown stored status is shown as-is. A stored `blocked` alone reads متوقف (Blocked), not "Needs your decision": the backend classifies it as `WAITING` unless a real approval or question exists (`src/domain/lifecycle.js`). Only `NEEDS_OWNER` or `waiting_approval` reads بانتظار قرارك.
+* Progress: X/Y is delivered assignments out of assigned assignments, and the label says "assignments" (تكليفات). A unit is one workstream or development task, so an employee with two assignments counts twice.
+* Revisions: each revision depends on the task it revises (`src/workflow.js` `requestRevisions`), so it replaces that one assignment's state. An open revision is "in revision", a failed one is failed, and a finished one is delivered. A revision without that link is attached only when the employee has exactly one assignment; otherwise it is left out and counted as `untrackedRevisions`. Skipped tasks count as delivered. With no units there is no bar, only a phase. The synthesis stage is done only when every synthesis task is done, so a revision round's final synthesis is still pending.
+* Coding sessions outside an objective (from `/api/work/sessions?scope=current`) are "needs you" only for a real approval or question. A plain `blocked` session may be a capacity wait, so it reads متوقف.
 * Employee state from `/api/office`: idle is متاح. CHIEF active is ينسّق, others يعمل. A recent delivery is سلّم.
 
 Design tokens: `src/hub-ui/app.css` holds the new palette for light and dark, the employee colours (`--emp-*`, UI-only, keyed by slug) and the materials. Every existing page picks the palette up through the same variable names. The shell and screen styles are in `src/hub-ui/premium.css`. JetBrains Mono is self-hosted (OFL-1.1; decision added to `legal/license-decisions.json`). Icons are inline Lucide paths (ISC).
@@ -33,8 +35,8 @@ Design tokens: `src/hub-ui/app.css` holds the new palette for light and dark, th
 | Delegation, handoffs, revisions, consults | `#/workflow/:id` | Job Detail tabs + تفاصيل التنفيذ | Same `/api/workflows/:id` | Browser flow, screenshots |
 | CHIEF final synthesis | Workflow page | Highlighted card; copy and `.md` download | Same `final` result | Unit test, screenshots |
 | Employee deliverables and artifacts | Workflow outputs | Per-employee tabs, type chips, inline artifacts (`renderArtifact`) | Same | Screenshots |
-| Live updates | `/api/stream` + polling | Same stream; 30 s safety poll on Office, 5 s on open jobs | Same | Live indicator in screenshots |
-| Needs Fahad | Sidebar count, `#/attention` | Office notice, top-bar pill, Settings › Approvals | Same approve/reject RPC | Browser flow; axe |
+| Live updates | `/api/stream` + polling | Same stream, one load at a time, no polling while the tab is hidden. Safety poll every 2 min with a live stream, otherwise every 30 s (Office) or 8 s (open job); none once a job is terminal | Same | Request counts below |
+| Needs Fahad | Sidebar count, `#/attention` | Office notice ("بانتظارك — N أمور تحتاج قرارك", the same count as the Approvals page), top-bar pill, Settings › Approvals | Same approve/reject RPC | Browser flow; axe |
 | Coding Agent | `#/code`, `#/tasks`, `#/task/:id` | Same pages; Settings › Coding workers; coding sessions on Office | Same | Legacy screenshots |
 | Models, providers, budget, capacity | `#/models`, Settings | Settings › Models & providers, Health & logs | Same | Screenshots |
 | Tool permissions and integrations | `#/integrations` | Settings › Tools & permissions | Same | Screenshots |
@@ -50,8 +52,19 @@ Old hashes redirect to their new home: `#/attention`, `#/models`, `#/employees`,
 
 ## Verification
 
-* `node --test`: 777 tests, 776 pass. One failure, `test/platform-foundation.test.js:52`, also fails on `main` at `e09e23d`. It is date-dependent and not in the UI.
-* `test/premium-redesign.test.js` (new, 14 tests): presentation rules, shell structure, API usage and write paths, token-only CSS, and the preview's real handlers.
+* `node --test`: 784 tests, 783 pass. The one failure, `test/platform-foundation.test.js` line 52, fails identically on `main` at `e09e23d`: same assertion (`currentId` is `null`, expected the completed job), checked in a separate worktree. The cause is the test's fixture time, 2026-10-09 12:00 UTC. `objectiveIndex()` in `src/hub-office-ops.js` measures its 7-day "recent" window from the real clock, so the test has failed for every run since 2026-10-16. It is not UI code and is not changed here.
+* Request load on the Office (preview, live stream connected), measured against the first push of this branch:
+  * Initial load: 12 → 8 requests.
+  * 45 s idle: 6 → 0.
+  * After one task completes: one refresh, and only that job's `/api/workflows/:id`; the card moves 3/8 → 4/8.
+  * The top bar refresh is 1 request (was 5), debounced to once per second of stream events.
+  * Workflow graphs are refetched only when an objective's summary changes, at most 4 at a time.
+* `test/premium-redesign.test.js` (new, 21 tests) covers:
+  * presentation rules, `blocked` vs owner attention, coding-session attention;
+  * assignments, revisions and failed revisions;
+  * the refresh scheduler (single flight, coalescing, hidden tab, live vs disconnected polling, stop) and the graph signature;
+  * shell structure, API usage and write paths;
+  * token-only CSS and the preview's real handlers.
 * Browser flows on the local preview (`tools/hub-preview.mjs`, fictional data, real handlers): 18 of 18 checks pass with no page errors.
 * axe-core 4.10.2 (WCAG 2.1 A/AA): 0 violations across 9 views × light/dark × desktop/mobile.
 * Screenshots: `node tools/redesign-shots.mjs <dir> --edge` gives the 16 required shots plus 32 edge-case shots, with no console errors and no horizontal overflow. The contact sheets are in `docs/office-premium-redesign/`.
@@ -66,4 +79,5 @@ Not verified: anything against production data or live providers. No billable ru
 * Archive date and employee filters apply to the rows already loaded. The summary line says so when more pages exist. The history API has no date or employee parameter.
 * Archive rows show the goal as the outcome line. The executive history tier has no result summary.
 * Some descriptive text from the backend (coding `now`, failure reasons, next action) is English in the Arabic UI. It is shown as recorded, not translated.
-* Office progress loads `/api/workflows/:id` per active objective, capped at 12. That is fine for today's volume; a batch endpoint would be a backend change.
+* Office progress loads `/api/workflows/:id` per active objective, capped at 12, cached, and refetched only on change. A batch endpoint would be a backend change.
+* The Office notice and the top-bar count use the Approvals page's count (`/api/attention` `counts.action`). That count comes from `ownerAction()` in `src/hub-workspace.js`, which treats every `blocked` coding session as owner action, capacity waits included. The Office cards use the capacity-aware rule above; the count itself is a backend rule and is unchanged.

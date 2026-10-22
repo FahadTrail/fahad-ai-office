@@ -68,11 +68,15 @@ export function employeeState(agent = {}, language = 'ar') {
 // --------------------------------------------------------------- objectives
 // Status for a job: the derived lifecycle (/api/work) wins when present;
 // the stored status is the fallback. Unknown statuses stay visible as-is.
+// A stored "blocked" alone is not owner attention: the backend classifies it
+// as WAITING unless a real approval or question exists (domain/lifecycle.js),
+// so only NEEDS_OWNER or waiting_approval reads "Needs your decision".
 const JOB_STATUS = Object.freeze({
   planning: ['يخطط', 'Planning', 'live'],
   running: ['قيد العمل', 'In progress', 'live'],
   review: ['قيد المراجعة', 'In review', 'live'],
   waiting: ['بانتظار', 'Waiting', 'wait'],
+  blocked: ['متوقف', 'Blocked', 'wait'],
   needs: ['بانتظار قرارك', 'Needs your decision', 'alert'],
   completed: ['مكتملة', 'Completed', 'done'],
   failed: ['فشلت', 'Failed', 'error'],
@@ -86,7 +90,7 @@ export function jobStatus({ status, lifecycle } = {}, language = 'ar') {
   else if (lifecycle === 'FAILED') key = 'failed';
   else if (lifecycle === 'CANCELLED') key = 'cancelled';
   else if (status === 'waiting_approval') key = 'needs';
-  else if (status === 'blocked') key = 'needs';
+  else if (status === 'blocked') key = 'blocked';
   else if (JOB_STATUS[status]) key = status;
   else if (lifecycle === 'ACTIVE') key = 'running';
   if (!key) return { key: 'unknown', label: String(status || (language === 'en' ? 'Unknown' : 'غير معروف')), tone: 'muted', terminal: false };
@@ -98,20 +102,40 @@ export function isTerminal(status) {
 }
 
 // Delivery progress from the real task graph (/api/workflows/:id nodes).
-// A unit is one employee assignment (workstream or development). A revision
-// that is still open makes its employee's unit "in revision", not delivered.
+// A unit is one assignment (a workstream or development task), so an
+// employee with two assignments counts twice and X/Y reads "assignments",
+// never "employees". A revision replaces the state of the assignment it
+// revises: the workflow makes every revision depend on its original task
+// (workflow.js requestRevisions), so the link is the revision's dependsOn.
+// Open revision → in revision; failed revision → failed; done → delivered.
 // Skipped tasks report state "done" upstream and count as delivered.
 const UNIT_KINDS = new Set(['workstream', 'development']);
+const FAILED_STATES = new Set(['failed', 'blocked']);
 export function deliveryProgress(nodes = [], { final = null, jobStatus: status = null } = {}) {
   const units = nodes.filter((node) => UNIT_KINDS.has(node.kind) && !node.revision);
   const revisions = nodes.filter((node) => UNIT_KINDS.has(node.kind) && node.revision);
   const plan = nodes.filter((node) => node.kind === 'plan');
   const synthesis = nodes.filter((node) => node.kind === 'synthesis');
-  const openRevision = (unit) => revisions.some((revision) => revision.agentSlug === unit.agentSlug && revision.state !== 'done' && revision.state !== 'failed');
-  const counts = { total: units.length, delivered: 0, working: 0, waiting: 0, capacity: 0, failed: 0, blocked: 0, revising: 0 };
+  const byId = new Map(units.filter((unit) => unit.id).map((unit) => [unit.id, unit]));
+  const revisionOf = new Map();
+  let untracked = 0;
+  for (const revision of revisions) {
+    let target = byId.get((revision.dependsOn || []).find((id) => byId.has(id)));
+    // Rows without the dependency link: attach only when the employee has
+    // exactly one assignment, otherwise the revision cannot be placed.
+    if (!target) {
+      const same = units.filter((unit) => unit.agentSlug && unit.agentSlug === revision.agentSlug);
+      target = same.length === 1 ? same[0] : null;
+    }
+    if (target) revisionOf.set(target, revision); // nodes arrive in sequence order: the latest revision wins
+    else untracked += 1;
+  }
+  const counts = { total: units.length, delivered: 0, working: 0, waiting: 0, capacity: 0, failed: 0, blocked: 0, revising: 0, untrackedRevisions: untracked };
   for (const unit of units) {
-    if (openRevision(unit)) counts.revising += 1;
-    else if (unit.state === 'done') counts.delivered += 1;
+    const revision = revisionOf.get(unit);
+    if (revision && FAILED_STATES.has(revision.state)) counts.failed += 1;
+    else if (revision && revision.state !== 'done') counts.revising += 1;
+    else if (revision || unit.state === 'done') counts.delivered += 1;
     else if (unit.state === 'working') counts.working += 1;
     else if (unit.state === 'capacity') counts.capacity += 1;
     else if (unit.state === 'failed') counts.failed += 1;
@@ -119,22 +143,30 @@ export function deliveryProgress(nodes = [], { final = null, jobStatus: status =
     else counts.waiting += 1;
   }
   const synthesisState = synthesis.some((node) => node.state === 'working') ? 'working'
-    : synthesis.some((node) => node.state === 'done') ? 'done'
+    : synthesis.length && synthesis.every((node) => node.state === 'done') ? 'done'
       : synthesis.length ? 'pending' : 'none';
   let phase;
   if (final) phase = 'done';
   else if (TERMINAL_STATUSES.includes(status)) phase = status;
   else if (!units.length) phase = plan.some((node) => node.state === 'done') || status === 'running' ? 'chief' : 'planning';
   else if (synthesisState === 'working') phase = 'synthesizing';
+  else if (counts.revising) phase = 'revising';
   else if (counts.delivered === counts.total) phase = 'awaiting_synthesis';
   else phase = 'delivering';
   return { ...counts, fraction: units.length > 0, synthesis: synthesisState, phase };
+}
+
+// "3/8" always means delivered assignments out of assigned assignments.
+export function fractionLabel(progress, language = 'ar') {
+  if (!progress?.fraction) return '';
+  return language === 'en' ? `${progress.delivered} of ${progress.total} assignments delivered` : `سُلّم ${progress.delivered} من ${progress.total} تكليفات`;
 }
 
 const PHASE_WORDS = Object.freeze({
   planning: ['CHIEF يخطط للمهمة ويحدد الفريق', 'CHIEF is planning and choosing the team'],
   chief: ['CHIEF يعمل على المهمة مباشرة', 'CHIEF is handling this directly'],
   delivering: ['الفريق يعمل على المخرجات', 'The team is working on the deliverables'],
+  revising: ['الفريق يعدّل بطلب من CHIEF', 'The team is revising at CHIEF’s request'],
   awaiting_synthesis: ['سلّم الفريق، وCHIEF على وشك جمع النتائج', 'The team delivered; CHIEF is about to consolidate'],
   synthesizing: ['CHIEF يجمع النتائج في تقرير نهائي', 'CHIEF is consolidating the final report'],
   done: ['اكتمل التقرير النهائي', 'The final report is ready'],
@@ -237,4 +269,63 @@ const OUTPUT_TYPE = Object.freeze({
 export function outputTypes(artifacts = []) {
   const types = [...new Set(artifacts.map((artifact) => OUTPUT_TYPE[artifact.type] || String(artifact.type || 'OTHER').replace(/_/g, ' ').toUpperCase()))];
   return types.length ? types : ['REPORT'];
+}
+
+// --------------------------------------------------------------- refresh
+// One refresh at a time: a trigger during a running load queues exactly one
+// follow-up instead of a parallel request. Nothing loads while the tab is
+// hidden; the first visible moment catches up once. The safety poll is slow
+// while the live stream is connected and faster only when it is not.
+export function createRefresher(run, { hidden = () => false, now = () => Date.now(), connectedEvery = 120_000, disconnectedEvery = 30_000 } = {}) {
+  let inflight = null;
+  let again = false;
+  let connected = false;
+  let stale = false;
+  let last = 0;
+  let stopped = false;
+  const trigger = () => {
+    if (stopped) return Promise.resolve();
+    if (hidden()) { stale = true; return Promise.resolve(); }
+    if (inflight) { again = true; return inflight; }
+    inflight = Promise.resolve().then(run).catch(() => {}).finally(() => {
+      last = now();
+      inflight = null;
+      if (again) { again = false; trigger(); }
+    });
+    return inflight;
+  };
+  return {
+    trigger,
+    tick: () => (now() - last >= (connected ? connectedEvery : disconnectedEvery) ? trigger() : Promise.resolve()),
+    setConnected: (value) => { connected = Boolean(value); },
+    visible: () => { if (!stale) return Promise.resolve(); stale = false; return trigger(); },
+    stop: () => { stopped = true; },
+  };
+}
+
+// What a workflow graph can change for an Office card. The task graph is
+// refetched only for an objective whose summary moved (status, lifecycle,
+// counts, steps, current assignments, revision round or final result).
+export function objectiveSignature(objective = {}) {
+  const orchestration = objective.orchestration || {};
+  return JSON.stringify([
+    objective.status, objective.lifecycle, objective.counts || null, objective.finalDeliverableId || null, orchestration.revisionRound || 0,
+    (orchestration.steps || []).map((step) => step.state),
+    (orchestration.currentAssignments || []).map((row) => [row.taskId, row.posture]),
+  ]);
+}
+
+// Coding session cards outside an objective: only a real approval or
+// question is "needs you". A plain blocked session may be a capacity wait.
+const CODING_PHASE = Object.freeze({
+  understand: ['يفهم المهمة', 'Understanding'], plan: ['يخطط', 'Planning'], implement: ['يعدّل الكود', 'Editing code'], test: ['يشغّل الاختبارات', 'Running tests'],
+  debug: ['يصلح الأخطاء', 'Debugging'], review: ['يراجع', 'Reviewing'], publish: ['يفتح طلب الدمج', 'Opening the pull request'], ci: ['ينتظر CI', 'Waiting for CI'],
+  deploy: ['ينشر', 'Deploying'], verify: ['يتحقق', 'Verifying'], report: ['يكتب التقرير', 'Writing the report'],
+});
+export function codingSessionState(session = {}, attentionItems = [], language = 'ar') {
+  const owner = attentionItems.find((item) => item.taskId === session.id && (item.kind === 'approval' || item.kind === 'question'));
+  const needs = Boolean(owner) || session.status === 'awaiting_approval';
+  const row = needs ? { lifecycle: 'NEEDS_OWNER' } : session.status === 'blocked' ? { status: 'blocked' } : session.status === 'queued' ? { lifecycle: 'WAITING' } : { status: 'running' };
+  const phase = CODING_PHASE[session.phase];
+  return { needs, status: row, phase: phase ? phase[language === 'en' ? 1 : 0] : null };
 }

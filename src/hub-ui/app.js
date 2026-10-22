@@ -220,36 +220,24 @@ function switchProject(id) {
   else location.hash = '#/';
 }
 function closeMenu() { const more = $('#navMore'); if (more) more.open = false; }
-async function refreshSidebar() {
-  if (!ws()) return;
-  try {
-    const [{ conversations }, attention, taskData, office, jobData] = await Promise.all([
-      api(`/api/conversations${q({ workspaceId: ws() })}`),
-      api(`/api/attention${q({ workspaceId: ws() })}`),
-      api(`/api/tasks${q({ workspaceId: ws() })}`).catch(() => null),
-      api(`/api/office${q({ workspaceId: ws() })}`).catch(() => null),
-      api(`/api/jobs${q({ workspaceId: ws() })}`).catch(() => null),
-    ]);
-    const working = office ? office.agents.filter((agent) => ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state)).length : null;
-    $('#workingCount').textContent = working ?? '';
-    $('#workingCount').classList.toggle('hidden', !working);
-    state.conversations = conversations;
+// The top bar shows one live number: what needs Fahad (the Approvals page's
+// count). One request, one at a time; a call during a load queues one more.
+let navLoad = null;
+let navAgain = false;
+function refreshSidebar() {
+  if (!ws()) return Promise.resolve();
+  if (navLoad) { navAgain = true; return navLoad; }
+  navLoad = api(`/api/attention${q({ workspaceId: ws() })}`).then((attention) => {
     state.attention = attention.counts;
     const count = $('#attentionCount');
     count.textContent = attention.counts.action;
     count.classList.toggle('hidden', !attention.counts.action);
     $('#topAttention').classList.toggle('hidden', !attention.counts.action);
-    const running = $('#runningCount');
-    if (!taskData || !jobData) {
-      running.textContent = '';
-      running.classList.add('hidden');
-    } else {
-      const counts = ownerWorkCounts({ jobs: jobData.jobs, tasks: taskData.tasks, agents: office?.agents || [] });
-      running.textContent = counts.running;
-      running.dataset.ownerRunning = String(counts.running);
-      running.classList.toggle('hidden', !counts.running);
-    }
-  } catch {}
+  }).catch(() => {}).finally(() => {
+    navLoad = null;
+    if (navAgain) { navAgain = false; refreshSidebar(); }
+  });
+  return navLoad;
 }
 // Primary destinations: المكتب, الأرشيف and Settings. Every other page
 // belongs to one of them for the active indicator, and to its own entry in
@@ -351,7 +339,7 @@ function screenContext() {
   const navigation = state.navigation;
   return {
     api, esc, q, ws, view, when, setTitle, toast, every, markdown, errorBlock, humanError, confirmDialog, refreshSidebar, switchProject,
-    language: state.language, workspaces: () => state.workspaces, isCurrent: () => state.navigation === navigation,
+    language: state.language, workspaces: () => state.workspaces, isCurrent: () => state.navigation === navigation, onLeave: (fn) => state.leave.push(fn),
     onLiveChange: (fn, onLive) => onLiveChange(fn, onLive), openEmployee: (slug) => openEmployee(slug), rerender: route,
   };
 }
@@ -713,7 +701,8 @@ function connectLive() {
   live.source = source;
   const setLive = (value) => { live.connected = value; live.liveListeners.forEach((fn) => fn(value)); };
   source.addEventListener('ready', () => setLive(true));
-  source.addEventListener('change', () => { live.listeners.forEach((fn) => fn()); refreshSidebar(); });
+  // A burst of row changes refreshes the top-bar count once.
+  source.addEventListener('change', () => { live.listeners.forEach((fn) => fn()); clearTimeout(live.navTimer); live.navTimer = setTimeout(refreshSidebar, 1000); });
   source.onerror = () => setLive(false);
 }
 function onLiveChange(fn, onLive) {

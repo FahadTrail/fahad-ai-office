@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  ROSTER, arabicCount, archiveFilter, deliveryProgress, employeeColor, employeeState, employeeTabs, fractionWidth, greeting, jobStatus, numericDate, outputTypes,
+  ROSTER, arabicCount, archiveFilter, codingSessionState, createRefresher, deliveryProgress, fractionLabel, objectiveSignature, employeeColor, employeeState, employeeTabs, fractionWidth, greeting, jobStatus, numericDate, outputTypes,
 } from '../src/hub-ui/office-model.js';
 import { startPreview } from '../tools/hub-preview.mjs';
 
@@ -132,7 +132,7 @@ test('the shell has the four-screen navigation and keeps every legacy destinatio
 
 test('the screens use the existing APIs and write only through the existing conversation endpoints', () => {
   const screens = read('screens.js');
-  for (const endpoint of ['/api/work/current', '/api/work/history', '/api/work/objectives/', '/api/workflows/', '/api/attention', '/api/office', '/api/tasks', "'/api/conversations'", '/messages', '/stop']) assert.ok(screens.includes(endpoint), endpoint);
+  for (const endpoint of ['/api/work/current', '/api/work/history', '/api/work/objectives/', '/api/workflows/', '/api/attention', '/api/office', '/api/work/sessions', "'/api/conversations'", '/messages', '/stop']) assert.ok(screens.includes(endpoint), endpoint);
   const writes = [...screens.matchAll(/method: '(POST|PATCH|PUT|DELETE)'/g)].length;
   assert.equal(writes, 3, 'submit, Reply & Continue and Stop only');
   assert.doesNotMatch(screens, /Math\.random|demo|sample|placeholder result|fake/i);
@@ -167,4 +167,107 @@ test('preview: history and job detail come from the real handlers over fictional
   } finally {
     server.close();
   }
+});
+
+test('a stored blocked status is not owner attention; only NEEDS_OWNER or waiting_approval is', () => {
+  const blocked = jobStatus({ status: 'blocked' });
+  assert.equal(blocked.key, 'blocked');
+  assert.equal(blocked.label, 'متوقف');
+  assert.notEqual(blocked.tone, 'alert');
+  assert.equal(jobStatus({ status: 'blocked', lifecycle: 'WAITING' }).key, 'waiting', 'the backend lifecycle for a plain blocked job');
+  assert.equal(jobStatus({ status: 'blocked', lifecycle: 'NEEDS_OWNER' }).key, 'needs', 'a real approval or question');
+  assert.equal(jobStatus({ status: 'waiting_approval' }).key, 'needs');
+});
+
+test('coding sessions need Fahad only for a real approval or question, never for a plain or capacity block', () => {
+  const capacity = codingSessionState({ id: 's1', status: 'blocked', phase: 'test' }, [{ kind: 'blocked', taskId: 's1' }]);
+  assert.equal(capacity.needs, false);
+  assert.equal(jobStatus(capacity.status).key, 'blocked');
+  assert.equal(capacity.phase, 'يشغّل الاختبارات');
+  assert.equal(codingSessionState({ id: 's2', status: 'blocked' }, [{ kind: 'question', taskId: 's2' }]).needs, true);
+  assert.equal(codingSessionState({ id: 's3', status: 'awaiting_approval' }, []).needs, true);
+  assert.equal(codingSessionState({ id: 's4', status: 'running' }, [{ kind: 'approval', taskId: 'other' }]).needs, false);
+  assert.equal(jobStatus(codingSessionState({ id: 's5', status: 'queued' }, []).status).key, 'waiting');
+});
+
+test('several assignments for one employee count separately; a revision changes only the assignment it revises', () => {
+  const nodes = [
+    { id: 'p1', kind: 'workstream', state: 'done', agentSlug: 'product-tech', dependsOn: [] },
+    { id: 'p2', kind: 'workstream', state: 'done', agentSlug: 'product-tech', dependsOn: [] },
+    { id: 'f1', kind: 'workstream', state: 'done', agentSlug: 'business-finance', dependsOn: [] },
+    { id: 's1', kind: 'synthesis', state: 'done', dependsOn: ['p1', 'p2', 'f1'] },
+    { id: 'r1', kind: 'workstream', state: 'working', agentSlug: 'product-tech', revision: true, dependsOn: ['p2', 's1'] },
+    { id: 's2', kind: 'synthesis', state: 'waiting', dependsOn: ['p1', 'r1', 'f1'] },
+  ];
+  const progress = deliveryProgress(nodes, { jobStatus: 'running' });
+  assert.deepEqual([progress.total, progress.delivered, progress.revising, progress.failed], [3, 2, 1, 0]);
+  assert.equal(progress.phase, 'revising', 'round one is done but the final synthesis is not');
+  assert.equal(progress.synthesis, 'pending');
+  assert.equal(fractionLabel(progress), 'سُلّم 2 من 3 تكليفات');
+  assert.equal(fractionLabel(progress, 'en'), '2 of 3 assignments delivered');
+  assert.equal(fractionLabel(deliveryProgress([{ kind: 'plan', state: 'working' }])), '', 'no units, no fraction label');
+});
+
+test('a failed revision is failed, a finished revision is delivered, an unplaceable revision is not guessed', () => {
+  const base = [{ id: 'p1', kind: 'workstream', state: 'done', agentSlug: 'product-tech', dependsOn: [] }, { id: 'p2', kind: 'workstream', state: 'done', agentSlug: 'product-tech', dependsOn: [] }];
+  const failed = deliveryProgress([...base, { id: 'r1', kind: 'workstream', state: 'failed', agentSlug: 'product-tech', revision: true, dependsOn: ['p1'] }], { jobStatus: 'running' });
+  assert.deepEqual([failed.delivered, failed.failed, failed.revising], [1, 1, 0]);
+  const done = deliveryProgress([...base, { id: 'r1', kind: 'workstream', state: 'done', agentSlug: 'product-tech', revision: true, dependsOn: ['p1'] }], { jobStatus: 'running' });
+  assert.deepEqual([done.delivered, done.total], [2, 2]);
+  const ambiguous = deliveryProgress([...base, { id: 'r1', kind: 'workstream', state: 'working', agentSlug: 'product-tech', revision: true }], { jobStatus: 'running' });
+  assert.deepEqual([ambiguous.delivered, ambiguous.revising, ambiguous.untrackedRevisions], [2, 0, 1]);
+  const single = deliveryProgress([base[0], { id: 'r1', kind: 'workstream', state: 'working', agentSlug: 'product-tech', revision: true }], { jobStatus: 'running' });
+  assert.equal(single.revising, 1, 'without a link, a single assignment for that employee is unambiguous');
+});
+
+test('the refresher runs one load at a time, coalesces triggers, pauses while hidden and polls slowly when live', async () => {
+  let clock = 0;
+  let hidden = false;
+  let runs = 0;
+  let release;
+  const refresher = createRefresher(() => { runs += 1; return new Promise((resolve) => { release = resolve; }); }, { hidden: () => hidden, now: () => clock, connectedEvery: 120, disconnectedEvery: 30 });
+  const first = refresher.trigger();
+  refresher.trigger(); refresher.trigger();
+  await Promise.resolve();
+  assert.equal(runs, 1, 'no parallel load');
+  release(); await first; await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(runs, 2, 'three triggers during one load cause exactly one follow-up');
+  release(); await new Promise((resolve) => setImmediate(resolve));
+  refresher.setConnected(true);
+  clock = 60; await refresher.tick();
+  assert.equal(runs, 2, 'live stream: no poll before the slow interval');
+  refresher.setConnected(false);
+  const polled = refresher.tick(); await new Promise((resolve) => setImmediate(resolve)); release(); await polled;
+  assert.equal(runs, 3, 'disconnected: polls after the short interval');
+  hidden = true; clock = 1000;
+  await refresher.trigger(); await refresher.tick();
+  assert.equal(runs, 3, 'nothing loads while hidden');
+  hidden = false;
+  const caughtUp = refresher.visible(); await new Promise((resolve) => setImmediate(resolve)); release(); await caughtUp;
+  assert.equal(runs, 4, 'one catch-up when visible again');
+  await refresher.visible();
+  assert.equal(runs, 4, 'no second catch-up');
+  refresher.stop(); clock = 99_999;
+  await refresher.trigger(); await refresher.tick();
+  assert.equal(runs, 4, 'a stopped refresher never loads');
+});
+
+test('a workflow graph is refetched only when its objective summary changed', () => {
+  const objective = { status: 'running', lifecycle: 'ACTIVE', counts: { executing: 1 }, orchestration: { steps: [{ id: 'deliver', state: 'current' }], currentAssignments: [{ taskId: 't1', posture: 'executing' }] } };
+  assert.equal(objectiveSignature(objective), objectiveSignature(structuredClone(objective)));
+  assert.notEqual(objectiveSignature(objective), objectiveSignature({ ...objective, orchestration: { ...objective.orchestration, currentAssignments: [{ taskId: 't2', posture: 'executing' }] } }), 'a task finished and another started');
+  assert.notEqual(objectiveSignature(objective), objectiveSignature({ ...objective, finalDeliverableId: 'r9' }), 'the final report arrived');
+});
+
+test('the Office loads open sessions, caches graphs and keeps the top bar to one request', () => {
+  const screens = read('screens.js');
+  assert.ok(screens.includes("/api/work/sessions${ctx.q({ workspaceId: ctx.ws(), scope: 'current' })}"));
+  assert.doesNotMatch(screens, /\/api\/tasks/, 'no full coding-session list on every Office refresh');
+  assert.match(screens, /objectiveSignature\(objective\)/);
+  assert.match(screens, /index \+= 4/, 'at most four workflow fetches at a time');
+  assert.match(screens, /visibilitychange/);
+  const app = read('app.js');
+  const nav = app.slice(app.indexOf('function refreshSidebar()'), app.indexOf('// Primary destinations'));
+  assert.equal((nav.match(/api\(/g) || []).length, 1, 'the top bar refresh is one request');
+  assert.match(app, /live\.navTimer = setTimeout\(refreshSidebar, 1000\)/, 'stream bursts are debounced');
 });
