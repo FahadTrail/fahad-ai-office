@@ -4,15 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<title>Fahad AI Office</title>
+<title>مكتب فهد · AI Office</title>
 <link rel="preload" href="./ui/fonts/inter-latin-var.woff2?v=__UI_VERSION__" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="./ui/fonts/plex-arabic-500.woff2?v=__UI_VERSION__" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="./ui/app.css?v=__UI_VERSION__">
+<link rel="stylesheet" href="./ui/premium.css?v=__UI_VERSION__">
 </head>
 <body>
 <div id="login" class="login hidden" role="dialog" aria-labelledby="loginTitle">
   <form id="loginForm" class="login-card" autocomplete="on">
-    <div class="brand-mark" aria-hidden="true">F</div>
-    <h1 id="loginTitle">Fahad AI Office</h1>
+    <div class="brand-mark" aria-hidden="true">ف</div>
+    <h1 id="loginTitle">مكتب فهد <span class="brand-sub" dir="ltr">AI Office</span></h1>
     <p class="muted" id="loginHint">Sign in with a one-time code sent to your email.</p>
     <label class="field-label" for="loginEmail">Email</label>
     <input id="loginEmail" class="input" type="email" autocomplete="email" required>
@@ -26,48 +28,48 @@
 </div>
 
 <div id="app" class="app hidden">
-  <aside id="sidebar" class="sidebar" aria-label="Navigation">
-    <div class="sidebar-top">
-      <a class="brand" href="#/">
-        <span class="brand-mark" aria-hidden="true">F</span>
-        <span class="brand-name">Fahad AI Office</span>
+  <header class="topnav" id="topnav">
+    <div class="topnav-inner">
+      <a class="brand" href="#/" aria-label="مكتب فهد — AI Office">
+        <span class="brand-mark" aria-hidden="true">ف</span>
+        <span class="brand-text"><strong>مكتب فهد</strong><small dir="ltr">AI Office</small></span>
       </a>
-      <button id="sidebarClose" class="icon-btn only-mobile" aria-label="Close menu">✕</button>
+      <div class="primary-nav" role="navigation" aria-label="Primary" id="primaryNav">
+        <a class="pnav" href="#/" data-nav="home"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span data-i18n="office">المكتب</span></a>
+        <a class="pnav" href="#/archive" data-nav="archive"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg><span data-i18n="archive">الأرشيف</span></a>
+        <a class="pnav pnav-settings" href="#/settings" data-nav="settings-tab"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg><span data-i18n="settings">الإعدادات</span></a>
+      </div>
+      <div class="topnav-actions">
+        <a href="#/settings/approvals" class="attention-pill hidden" id="topAttention"><span class="attention-dot" aria-hidden="true"></span><span id="attentionCount"></span><span class="sr-only" data-i18n="needsYou">يحتاجك</span></a>
+        <button type="button" class="nav-icon" id="searchOpen" aria-label="Search the Office (Ctrl K)"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
+        <details class="more-menu" id="navMore">
+          <summary class="nav-icon" aria-label="All sections"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></summary>
+          <div class="more-panel">
+            <label class="more-label" for="projectSelect" data-i18n="currentProject">المشروع الحالي</label>
+            <select id="projectSelect" class="input input-sm project-select"></select>
+            <nav class="nav">
+              <a class="nav-item" href="#/chief" id="newChat" data-nav="chief"><span data-i18n="askChief">＋ اسأل CHIEF</span></a>
+              <a class="nav-item" href="#/" data-nav="home"><span data-i18n="office">المكتب</span></a>
+              <a class="nav-item" href="#/projects" data-nav="projects"><span data-i18n="projects">المشاريع</span></a>
+              <a class="nav-item" href="#/deliverables" data-nav="deliverables"><span data-i18n="deliverables">المخرجات</span></a>
+              <a class="nav-item" href="#/work" data-nav="work"><span data-i18n="work">العمل</span></a>
+              <a class="nav-item" href="#/chats" data-nav="chats"><span data-i18n="chats">المحادثات</span></a>
+              <a class="nav-item" href="#/artifacts" data-nav="artifacts"><span data-i18n="artifacts">الملفات</span></a>
+              <a class="nav-item" href="#/office" data-nav="office"><span data-i18n="liveOffice">المكتب المباشر</span></a>
+              <a class="nav-item" href="#/employees" data-nav="employees"><span data-i18n="team">الفريق</span></a>
+              <a class="nav-item" href="#/attention" data-nav="attention"><span data-i18n="approvals">الموافقات</span></a>
+              <a class="nav-item" href="#/models" data-nav="models"><span data-i18n="models">النماذج والمزوّدين</span></a>
+              <a class="nav-item" href="#/continuity" data-nav="continuity"><span data-i18n="continuity">الاستمرارية</span></a>
+              <a class="nav-item" href="#/integrations" data-nav="integrations"><span data-i18n="integrations">الأدوات والصلاحيات</span></a>
+              <a class="nav-item" href="#/settings" data-nav="settings"><span data-i18n="settings">الإعدادات</span></a>
+            </nav>
+          </div>
+        </details>
+        <a class="nav-icon nav-gear" href="#/settings" data-nav="settings-gear" aria-label="Settings"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></a>
+      </div>
     </div>
-    <label class="sr-only" for="projectSelect" data-i18n="currentProject">المشروع الحالي</label>
-    <select id="projectSelect" class="input input-sm project-select"></select>
-    <a href="#/chief" class="btn btn-primary btn-block new-chat" id="newChat" data-i18n="askChief">＋ اسأل CHIEF</a>
-    <button type="button" class="search-trigger" id="searchOpen" aria-label="Search the Office (Ctrl K)"><span data-i18n="search">بحث</span><kbd dir="ltr">⌘K</kbd></button>
-    <nav class="nav">
-      <div class="nav-group" data-i18n="workspace">مساحة العمل</div>
-      <a class="nav-item" href="#/" data-nav="home"><span class="nav-ico">⌂</span><span data-i18n="home">الرئيسية</span></a>
-      <a class="nav-item" href="#/projects" data-nav="projects"><span class="nav-ico">▣</span><span data-i18n="projects">المشاريع</span></a>
-      <a class="nav-item" href="#/deliverables" data-nav="deliverables"><span class="nav-ico">◧</span><span data-i18n="deliverables">المخرجات</span></a>
-      <a class="nav-item" href="#/employees" data-nav="employees"><span class="nav-ico">☷</span><span data-i18n="team">الفريق</span><span id="workingCount" class="count hidden"></span></a>
-      <a class="nav-item" href="#/work" data-nav="work"><span class="nav-ico">✓</span><span data-i18n="work">العمل</span><span id="runningCount" class="count hidden"></span></a>
-      <a class="nav-item" href="#/attention" data-nav="attention"><span class="nav-ico">●</span><span data-i18n="approvals">الموافقات</span><span id="attentionCount" class="count count-alert hidden"></span></a>
-      <a class="nav-item" href="#/continuity" data-nav="continuity"><span class="nav-ico">↻</span><span data-i18n="continuity">الاستمرارية</span></a>
-      <div class="nav-group" data-i18n="platform">المنصة</div>
-      <a class="nav-item" href="#/models" data-nav="models"><span class="nav-ico">◎</span><span data-i18n="models">السعة والتكلفة</span></a>
-      <a class="nav-item" href="#/settings" data-nav="settings"><span class="nav-ico">⚙︎</span><span data-i18n="settings">الإعدادات</span></a>
-      <details class="nav-more" id="navMore">
-        <summary class="nav-item"><span class="nav-ico">⋯</span><span data-i18n="more">المزيد</span></summary>
-        <a class="nav-item" href="#/office" data-nav="office"><span class="nav-ico">◉</span><span data-i18n="liveOffice">المكتب المباشر</span></a>
-        <a class="nav-item" href="#/chats" data-nav="chats"><span class="nav-ico">◇</span><span data-i18n="chats">المحادثات</span></a>
-        <a class="nav-item" href="#/integrations" data-nav="integrations"><span class="nav-ico">⇄</span><span data-i18n="integrations">الربط</span></a>
-      </details>
-      <div id="recentChats" class="recent-chats hidden" aria-hidden="true"></div>
-    </nav>
-  </aside>
-  <div id="scrim" class="scrim hidden"></div>
-  <main class="main">
-    <header class="topbar only-mobile">
-      <button id="menuButton" class="icon-btn" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">☰</button>
-      <span id="topTitle" class="topbar-title">Fahad AI Office</span>
-      <a href="#/attention" class="icon-btn attention-dot hidden" id="topAttention" aria-label="Needs attention">●</a>
-    </header>
-    <div id="view" class="view" tabindex="-1"></div>
-  </main>
+  </header>
+  <main id="view" class="view" tabindex="-1"></main>
 </div>
 <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 <script src="./ui/app.js?v=__UI_VERSION__" type="module"></script>

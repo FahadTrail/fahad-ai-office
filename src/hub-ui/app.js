@@ -6,18 +6,19 @@ import { escapeHtml as esc, renderMarkdown } from './markdown.js';
 import { loginErrorMessage } from './auth.js';
 import { ARTIFACT_LABELS, renderArtifact, splitArtifacts } from './artifacts.js';
 import { errorBlock, humanError } from './humanize.js';
+import { renderArchive as renderArchiveScreen, renderJobDetail, renderOfficeHome } from './screens.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const COPY = {
   ar: {
-    askChief: '＋ اسأل CHIEF', workspace: 'مساحة العمل', home: 'الرئيسية', projects: 'المشاريع', team: 'الفريق', work: 'العمل', approvals: 'الموافقات',
-    continuity: 'الاستمرارية', platform: 'المنصة', models: 'السعة والتكلفة', deliverables: 'المخرجات', settings: 'الإعدادات', more: 'المزيد',
-    liveOffice: 'المكتب المباشر', chats: 'المحادثات', integrations: 'الربط', search: 'بحث', currentProject: 'المشروع الحالي',
+    askChief: '＋ اسأل CHIEF', workspace: 'مساحة العمل', home: 'الرئيسية', office: 'المكتب', archive: 'الأرشيف', projects: 'المشاريع', team: 'الفريق', work: 'العمل', approvals: 'الموافقات',
+    continuity: 'الاستمرارية', platform: 'المنصة', models: 'النماذج والمزوّدين', deliverables: 'المخرجات', settings: 'الإعدادات', more: 'المزيد', artifacts: 'الملفات',
+    liveOffice: 'المكتب المباشر', chats: 'المحادثات', integrations: 'الأدوات والصلاحيات', search: 'بحث', currentProject: 'المشروع الحالي', needsYou: 'يحتاجك',
   },
   en: {
-    askChief: '＋ Ask CHIEF', workspace: 'Workspace', home: 'Home', projects: 'Projects', team: 'Team', work: 'Work', approvals: 'Approvals',
-    continuity: 'Continuity', platform: 'Platform', models: 'Capacity & cost', deliverables: 'Deliverables', settings: 'Settings', more: 'More',
-    liveOffice: 'Live Office', chats: 'Chats', integrations: 'Integrations', search: 'Search', currentProject: 'Current project',
+    askChief: '＋ Ask CHIEF', workspace: 'Workspace', home: 'Home', office: 'Office', archive: 'Archive', projects: 'Projects', team: 'Team', work: 'Work', approvals: 'Approvals',
+    continuity: 'Continuity', platform: 'Platform', models: 'Models & providers', deliverables: 'Deliverables', settings: 'Settings', more: 'More', artifacts: 'Files',
+    liveOffice: 'Live Office', chats: 'Chats', integrations: 'Tools & permissions', search: 'Search', currentProject: 'Current project', needsYou: 'Needs you',
   },
 };
 function savedLanguage() { try { return localStorage.getItem('hub-language') || 'ar'; } catch { return 'ar'; } }
@@ -32,7 +33,10 @@ function applyTheme(theme) {
   if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
 }
 try { applyTheme(localStorage.getItem('hub-theme')); } catch {}
-const view = $('#view');
+// The view root. A Settings section renders its panel by pointing `view` at
+// the panel until the next navigation resets it (route()).
+const viewRoot = $('#view');
+let view = viewRoot;
 const MEMORY_KINDS = [['fact', 'Fact'], ['decision', 'Decision'], ['preference', 'Preference'], ['constraint', 'Constraint'], ['product_decision', 'Product decision'], ['technical_decision', 'Technical decision'], ['brand_decision', 'Brand decision'], ['legal_requirement', 'Legal requirement'], ['financial_assumption', 'Financial assumption']];
 const state = { workspaceId: null, workspaces: [], conversations: [], timers: [], leave: [], attention: { action: 0, total: 0 }, sidebarTimer: null, signedOut: false, language: applyLanguage() };
 
@@ -97,7 +101,7 @@ function agentStateLabel(name) {
 const pill = (status, label) => `<span class="pill ${esc(status)}">${esc(label || statusLabel(status))}</span>`;
 function every(ms, fn) { const id = setInterval(fn, ms); state.timers.push(id); return id; }
 function clearTimers() { state.timers.forEach(clearInterval); state.timers = []; const leave = state.leave; state.leave = []; leave.forEach((fn) => { try { fn(); } catch {} }); }
-function setTitle(text) { document.title = text ? `${text} · Fahad AI Office` : 'Fahad AI Office'; $('#topTitle').textContent = text || 'Fahad AI Office'; }
+function setTitle(text) { document.title = text ? `${text} · مكتب فهد` : 'مكتب فهد · AI Office'; }
 function autosize(textarea) { textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`; }
 function markdown(text) {
   const html = splitArtifacts(text).map((part) => (part.artifact ? renderArtifact(part.artifact) : renderMarkdown(part.text))).join('');
@@ -187,28 +191,13 @@ async function boot() {
   const select = $('#projectSelect');
   select.innerHTML = state.workspaces.map((workspace) => `<option value="${esc(workspace.id)}">${esc(workspace.name)}</option>`).join('');
   if (state.workspaceId) select.value = state.workspaceId;
-  select.onchange = () => {
-    state.workspaceId = select.value;
-    try { localStorage.setItem('hub-workspace-id', select.value); } catch {}
-    refreshSidebar();
-    connectLive();
-    if (!location.hash || location.hash === '#/' || location.hash === '#/home') route();
-    else location.hash = '#/';
-  };
-  $('#menuButton').onclick = () => toggleSidebar(true);
-  $('#sidebarClose').onclick = () => toggleSidebar(false, { restoreFocus: true });
-  $('#scrim').onclick = () => toggleSidebar(false, { restoreFocus: true });
-  window.matchMedia('(max-width: 900px)').addEventListener('change', () => toggleSidebar(false));
-  document.addEventListener('keydown', (event) => {
-    if (!$('#sidebar').classList.contains('open') || !window.matchMedia('(max-width: 900px)').matches) return;
-    if (event.key === 'Escape') { event.preventDefault(); toggleSidebar(false, { restoreFocus: true }); return; }
-    if (event.key !== 'Tab') return;
-    const focusable = [...$('#sidebar').querySelectorAll('a, button, select, input, summary')]
-      .filter((element) => !element.disabled && element.getClientRects().length);
-    if (!focusable.length) return;
-    if (event.shiftKey && document.activeElement === focusable[0]) { event.preventDefault(); focusable.at(-1).focus(); }
-    else if (!event.shiftKey && document.activeElement === focusable.at(-1)) { event.preventDefault(); focusable[0].focus(); }
-  });
+  select.onchange = () => switchProject(select.value);
+  // The "all sections" menu: closes on Escape, on an outside click and on navigation.
+  const more = $('#navMore');
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && more.open) { more.open = false; more.querySelector('summary').focus(); } });
+  document.addEventListener('click', (event) => { if (more.open && !more.contains(event.target)) more.open = false; });
+  // Scroll edge: the translucent bar only gains its fade once content is beneath it.
+  viewRoot.addEventListener('scroll', () => $('#topnav').classList.toggle('is-scrolled', viewRoot.scrollTop > 4), { passive: true });
   window.addEventListener('hashchange', route);
   $('#searchOpen').onclick = openSearch;
   document.addEventListener('keydown', (event) => {
@@ -220,59 +209,49 @@ async function boot() {
   state.sidebarTimer = setInterval(refreshSidebar, 60_000);
   route();
 }
-function toggleSidebar(open, { restoreFocus = false } = {}) {
-  const mobile = window.matchMedia('(max-width: 900px)').matches;
-  const shown = mobile && open;
-  const sidebar = $('#sidebar');
-  sidebar.classList.toggle('open', shown);
-  sidebar.inert = mobile && !shown;
-  if (mobile && !shown) sidebar.setAttribute('aria-hidden', 'true');
-  else sidebar.removeAttribute('aria-hidden');
-  $('#scrim').classList.toggle('hidden', !shown);
-  $('#menuButton').setAttribute('aria-expanded', String(shown));
-  $('#menuButton').setAttribute('aria-label', shown ? 'Close menu' : 'Open menu');
-  if (shown) $('#sidebarClose').focus();
-  else if (restoreFocus) $('#menuButton').focus();
+function switchProject(id) {
+  if (!id || !state.workspaces.some((workspace) => workspace.id === id)) return;
+  state.workspaceId = id;
+  $('#projectSelect').value = id;
+  try { localStorage.setItem('hub-workspace-id', id); } catch {}
+  refreshSidebar();
+  connectLive();
+  if (!location.hash || location.hash === '#/' || location.hash === '#/home') route();
+  else location.hash = '#/';
 }
-async function refreshSidebar() {
-  if (!ws()) return;
-  try {
-    const [{ conversations }, attention, taskData, office, jobData] = await Promise.all([
-      api(`/api/conversations${q({ workspaceId: ws() })}`),
-      api(`/api/attention${q({ workspaceId: ws() })}`),
-      api(`/api/tasks${q({ workspaceId: ws() })}`).catch(() => null),
-      api(`/api/office${q({ workspaceId: ws() })}`).catch(() => null),
-      api(`/api/jobs${q({ workspaceId: ws() })}`).catch(() => null),
-    ]);
-    const working = office ? office.agents.filter((agent) => ['THINKING', 'WORKING', 'TESTING', 'REVIEWING'].includes(agent.state)).length : null;
-    $('#workingCount').textContent = working ?? '';
-    $('#workingCount').classList.toggle('hidden', !working);
-    state.conversations = conversations;
+function closeMenu() { const more = $('#navMore'); if (more) more.open = false; }
+// The top bar shows one live number: what needs Fahad (the Approvals page's
+// count). One request, one at a time; a call during a load queues one more.
+let navLoad = null;
+let navAgain = false;
+function refreshSidebar() {
+  if (!ws()) return Promise.resolve();
+  if (navLoad) { navAgain = true; return navLoad; }
+  navLoad = api(`/api/attention${q({ workspaceId: ws() })}`).then((attention) => {
     state.attention = attention.counts;
-    const current = location.hash.match(/^#\/chat\/([\w-]+)/)?.[1];
-    $('#recentChats').innerHTML = conversations.slice(0, 8).map((conversation) =>
-      `<a href="#/chat/${esc(conversation.id)}" class="${conversation.id === current ? 'active' : ''}" title="${esc(conversation.title)}" dir="auto">${esc(conversation.title)}</a>`).join('');
     const count = $('#attentionCount');
     count.textContent = attention.counts.action;
     count.classList.toggle('hidden', !attention.counts.action);
     $('#topAttention').classList.toggle('hidden', !attention.counts.action);
-    const running = $('#runningCount');
-    if (!taskData || !jobData) {
-      running.textContent = '';
-      running.classList.add('hidden');
-    } else {
-      const counts = ownerWorkCounts({ jobs: jobData.jobs, tasks: taskData.tasks, agents: office?.agents || [] });
-      running.textContent = counts.running;
-      running.dataset.ownerRunning = String(counts.running);
-      running.classList.toggle('hidden', !counts.running);
-    }
-  } catch {}
+  }).catch(() => {}).finally(() => {
+    navLoad = null;
+    if (navAgain) { navAgain = false; refreshSidebar(); }
+  });
+  return navLoad;
 }
-function markNav(key) {
-  document.querySelectorAll('.nav-item, .nav-sub').forEach((item) => item.classList.toggle('active', item.dataset.nav === key));
-  // Deeper pages live under "More": open it when one of them is shown.
-  const more = document.getElementById('navMore');
-  if (more && more.querySelector(`[data-nav="${key}"]`)) more.open = true;
+// Primary destinations: المكتب, الأرشيف and Settings. Every other page
+// belongs to one of them for the active indicator, and to its own entry in
+// the "all sections" menu.
+const PRIMARY_OF = { '': 'home', home: 'home', chief: 'home', chat: 'home', chats: 'home', job: 'home', workflow: 'home', work: 'home', 'new-work': 'home', task: 'home', code: 'home', office: 'home', agent: 'home', talk: 'home', projects: 'home', project: 'home', deliverables: 'home', artifacts: 'home', archive: 'archive' };
+function markNav(key, section = key) {
+  const primary = PRIMARY_OF[section] ?? 'settings';
+  document.querySelectorAll('.pnav, .nav-gear').forEach((item) => {
+    const target = item.dataset.nav.replace(/^settings-(tab|gear)$/, 'settings');
+    const on = target === primary;
+    item.classList.toggle('active', on);
+    if (on) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.nav === key));
 }
 
 // ------------------------------------------------------------------ search
@@ -327,86 +306,46 @@ function openSearch() {
 async function route() {
   const navigation = state.navigation = (state.navigation || 0) + 1;
   clearTimers();
-  toggleSidebar(false);
+  closeMenu();
+  view = viewRoot;
   const hash = location.hash || '#/';
   const [, section = '', id = '', sub = ''] = hash.match(/^#\/([\w-]*)\/?([\w-]*)\/?([\w-]*)/) || [];
+  // Settings sections own the administrative pages; their old hashes stay
+  // valid and open the same section (deep links keep working).
   const routes = {
-    '': renderHome, home: renderHome, chief: () => renderChat(null), chat: () => renderChat(id), chats: renderChats, work: renderWork, 'new-work': renderNewWork, job: () => renderOwnerJob(id),
-    tasks: () => renderTasks(id || 'running'), task: () => renderTask(id), code: renderNewTask, attention: renderAttention,
-    projects: renderProjects, project: () => renderProject(id, sub), deliverables: () => renderProject(ws(), 'deliverables'), continuity: renderContinuity, models: renderModels, settings: renderSettings,
-    office: renderOffice, agent: async () => { await renderOffice(); await openEmployee(id); }, workflow: () => renderWorkflow(id), talk: () => renderChat(null, id),
-    artifacts: () => renderArtifacts(id), employees: renderEmployees, integrations: renderIntegrations,
+    '': renderHome, home: renderHome, chief: () => renderChat(null), chat: () => renderChat(id), chats: renderChats, work: renderWork, 'new-work': renderNewWork, job: () => renderJob(id),
+    archive: renderArchive,
+    tasks: () => renderSettingsSection('coding', id || 'running'), task: () => renderTask(id), code: renderNewTask, attention: () => renderSettingsSection('approvals'),
+    projects: renderProjects, project: () => renderProject(id, sub), deliverables: () => renderProject(ws(), 'deliverables'), continuity: renderContinuity, models: () => renderSettingsSection('models'), settings: () => renderSettingsSection(id, sub),
+    office: renderOffice, agent: async () => { await renderOffice(); await openEmployee(id); }, workflow: () => renderJob(id), talk: () => renderChat(null, id),
+    artifacts: () => renderArtifacts(id), employees: () => renderSettingsSection('team'), integrations: () => renderSettingsSection('tools'),
   };
   markNav(section === 'project' && sub === 'deliverables' ? 'deliverables'
-    : { '': 'home', home: 'home', chief: 'home', chat: 'chats', task: 'work', tasks: 'work', code: 'work', project: 'projects', agent: 'employees', workflow: 'work', talk: 'employees', artifacts: 'deliverables' }[section] ?? section);
-  document.querySelectorAll('#recentChats a').forEach((link) => link.classList.toggle('active', link.getAttribute('href') === `#/chat/${id}`));
+    : { '': 'home', home: 'home', chat: 'chats', task: 'work', tasks: 'work', code: 'work', project: 'projects', agent: 'employees', workflow: 'work', job: 'work', talk: 'employees' }[section] ?? section, section);
+  viewRoot.scrollTop = 0;
   try {
     await (routes[section] || routes[''])();
   } catch (error) {
     if (navigation !== state.navigation) return;
     view.innerHTML = `<div class="page">${errorBlock(error.message, esc)}</div>`;
   }
-  if (navigation === state.navigation) view.focus({ preventScroll: true });
+  if (navigation === state.navigation) viewRoot.focus({ preventScroll: true });
 }
 
-// ------------------------------------------------------------------ V5 owner home
-async function renderHome() {
+// ------------------------------------------------------------------ premium screens
+// المكتب, تفاصيل المهمة and الأرشيف live in screens.js; they get the same
+// helpers every other view uses (owner-gated api, escaping, live stream).
+function screenContext() {
   const navigation = state.navigation;
-  const ar = state.language === 'ar';
-  setTitle(ar ? 'الرئيسية' : 'Home');
-  view.innerHTML = `<div class="page page-wide owner-home"><div class="owner-loading"><div class="drawer-loading"></div><p class="muted">${ar ? 'نجمع حالة المكتب الحقيقية…' : 'Loading the live Office state…'}</p></div></div>`;
-  const [center, attention, office, capacity, platform, workTasks, jobData, healthz] = await Promise.all([
-    api(`/api/command-center${q({ workspaceId: ws() })}`),
-    api(`/api/attention${q({ workspaceId: ws() })}`),
-    api(`/api/office${q({ workspaceId: ws() })}`),
-    api('/api/capacity').catch(() => null),
-    api(`/api/platform${q({ workspaceId: ws() })}`).catch(() => null),
-    api(`/api/tasks${q({ workspaceId: ws() })}`),
-    api(`/api/jobs${q({ workspaceId: ws() })}`),
-    fetch('./healthz').then((response) => (response.ok ? response.json() : null)).catch(() => null),
-  ]);
-  if (navigation !== state.navigation) return;
-  const counts = ownerWorkCounts({ jobs: jobData.jobs, tasks: workTasks.tasks, agents: office.agents || [] });
-  const active = jobData.jobs.filter((job) => !['completed', 'failed', 'cancelled'].includes(job.status));
-  const codingNow = workTasks.tasks.filter((task) => ['running', 'attention'].includes(task.group));
-  const needs = (attention.items || []).filter((item) => item.priority !== 'INFO');
-  const waiting = (office.agents || []).filter((agent) => ['WAITING', 'NEEDS FAHAD', 'BLOCKED'].includes(agent.state));
-  const health = healthFacts({ health: healthz, platform });
-  const healthWord = { healthy: ar ? 'سليمة' : 'Healthy', unhealthy: ar ? 'فيها خلل' : 'Check failed', unknown: ar ? 'غير مؤكدة' : 'Unknown', unavailable: ar ? 'غير متاحة' : 'Unavailable' }[health.state];
-  const freeState = capacity?.summary?.freeCapacityNow || 'unknown';
-  const paid = capacity?.capacity?.paidFallback || {};
-  const monthCost = capacity?.capacity?.costUsd?.month;
-  const latest = latestResults({ attention: (attention.items || []).filter((item) => item.priority === 'INFO'), jobs: jobData.jobs, tasks: workTasks.tasks });
-  const objectiveNote = counts.employeesOnObjectives ? (ar ? `${counts.employeesOnObjectives} من الفريق على نفس الأهداف` : `${counts.employeesOnObjectives} on these objectives`) : (ar ? 'ما في فريق شغال عليها' : 'No one is working on them yet');
-  const linkFor = (item) => item.taskId ? `#/task/${esc(item.taskId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : `#/chat/${esc(item.conversationId || '')}`;
-  const metric = (label, value, note, tone = '', extra = '') => `<div class="owner-metric ${tone}"><span>${label}</span><strong class="num" dir="ltr" ${extra}>${value}</strong><small>${note}</small></div>`;
-  const empty = (text, action = '') => `<div class="owner-empty"><span aria-hidden="true">✓</span><p>${text}</p>${action}</div>`;
-  view.innerHTML = `<div class="page page-wide owner-home">
-    <header class="owner-hero"><div><span class="owner-kicker">FAHAD AI OFFICE</span><h1>${ar ? 'هلا فهد، هذا مكتبك اليوم' : 'Your Office, at a glance'}</h1><p>${ar ? 'كل المهم قدامك: الشغل الجاري، اللي ينتظر قرارك، السعة، والنتائج.' : 'Running work, owner decisions, capacity and results — in one place.'}</p></div>
-      <div class="owner-actions"><a class="btn btn-primary btn-lg" href="#/chief">${ar ? 'اسأل CHIEF' : 'Ask CHIEF'}</a><a class="btn btn-lg" href="#/projects">${ar ? 'افتح المشاريع' : 'Open projects'}</a></div></header>
-    <section class="owner-metrics" aria-label="${ar ? 'ملخص المكتب' : 'Office summary'}">
-      ${metric(ar ? 'أهداف شغالة' : 'Active objectives', counts.objectives, objectiveNote, counts.objectives ? 'tone-live' : '', 'data-owner-objectives')}
-      ${metric(ar ? 'ينتظر' : 'Waiting', waiting.length, ar ? 'سعة أو مدخلات' : 'Capacity or input', waiting.length ? 'tone-warn' : '')}
-      ${metric(ar ? 'يحتاج قرارك' : 'Needs your attention', needs.length, needs.length ? (ar ? 'موافقات أو أسئلة أو عوائق' : 'Approvals, questions or blockers') : (ar ? 'ما عليك شي' : 'All clear'), needs.length ? 'tone-alert' : '')}
-      ${metric(ar ? 'الخدمة والبيانات' : 'Hub & database', healthWord, ar ? 'حالة الحاويات في تفاصيل المنصة' : 'Container status requires platform checks', health.state === 'healthy' ? 'tone-good' : 'tone-warn', 'data-owner-health')}
-    </section>
-    <div class="owner-grid">
-      <section class="owner-card owner-span-2"><div class="owner-card-head"><div><span class="owner-label">${ar ? 'المشروع الحالي' : 'Active project'}</span><h2 dir="auto">${esc(center.project?.name || state.workspaces.find((item) => item.id === ws())?.name || '')}</h2></div><span class="row"><a href="#/deliverables">${ar ? 'المخرجات' : 'Deliverables'}</a><a href="#/project/${esc(ws())}">${ar ? 'افتح مركز المشروع' : 'Open project center'}</a></span></div>
-        ${center.project?.description ? `<p class="owner-objective" dir="auto">${esc(center.project.description)}</p>` : `<p class="muted">${ar ? 'أضف هدف وسياق المشروع عشان CHIEF يشتغل بدقة.' : 'Add the objective and context so CHIEF can work precisely.'}</p>`}
-        ${active.length ? `<div class="owner-live-list">${active.slice(0, 4).map((job) => `<a href="#/job/${esc(job.id)}"><span class="live-pulse"></span><span class="grow" dir="auto"><strong>${esc(job.title)}</strong><small dir="ltr">${percentText(job.progress)} ${ar ? 'مكتمل' : 'complete'}</small></span><span class="progress"><span style="width:${progressWidth(job.progress)}%"></span></span></a>`).join('')}</div>` : empty(ar ? 'ما في هدف شغال الحين.' : 'No objective is running right now.', `<a class="btn btn-sm" href="#/chief">${ar ? 'ابدأ مع CHIEF' : 'Start with CHIEF'}</a>`)}</section>
-      <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'CODING الحين' : 'CODING now'}</h2><a href="#/code">${ar ? 'مهمة جديدة' : 'New task'}</a></div>${codingNow.length ? codingNow.slice(0, 4).map((task) => `<a class="owner-row" href="#/task/${esc(task.id)}"><span class="grow" dir="auto"><strong>${esc(task.title)}</strong><small dir="auto">${esc(ownerPhrase(task.now || task.summary || ''))}</small></span></a>`).join('') : `<p class="muted">${ar ? 'ما في مهمة برمجية شغالة في هذا المشروع.' : 'No coding task is active in this project.'}</p>`}</section>
-      <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'يحتاجك' : 'Needs you'}</h2><a href="#/attention">${ar ? 'الكل' : 'View all'}</a></div>
-        ${needs.length ? needs.slice(0, 4).map((item) => `<a class="owner-row" href="${linkFor(item)}"><span class="owner-risk">${esc(categoryLabel(item.category || item.kind))}</span><span class="grow" dir="auto"><strong>${esc(item.title)}</strong><small dir="auto">${esc(ownerPhrase(item.detail || ''))}</small></span></a>`).join('') : empty(ar ? 'الأمور طيبة، ما في قرار ينتظرك.' : 'All clear. No decision is waiting for you.')}</section>
-      <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'آخر النتائج' : 'Latest results'}</h2><a href="#/artifacts">${ar ? 'الملفات' : 'Files'}</a></div>
-        ${latest.length ? latest.map((item) => `<a class="owner-row" data-latest-result href="${esc(item.href)}"><span class="owner-done">✓</span><span class="grow" dir="auto"><strong>${esc(item.title)}</strong><small>${esc(item.detail || '')}</small></span><time>${when(item.at)}</time></a>`).join('') : empty(ar ? 'النتائج المكتملة بتظهر هني.' : 'Completed results will appear here.')}</section>
-      <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'السعة والتكلفة' : 'Capacity & cost'}</h2><a href="#/models">${ar ? 'التفاصيل' : 'Details'}</a></div>
-        <div class="capacity-state ${freeState === 'available' ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div><strong>${freeState === 'available' ? (ar ? 'السعة المجانية متاحة' : 'Free capacity available') : freeState === 'unknown' ? (ar ? 'حالة السعة غير متاحة' : 'Capacity unavailable') : (ar ? 'السعة المجانية محدودة' : 'Free capacity limited')}</strong><small dir="auto">${esc(capacitySentence(capacity?.summary, state.language) || (ar ? (capacity ? 'تفاصيل السعة غير مكتملة.' : 'بيانات السعة غير متاحة') : (capacity?.headline || 'Capacity data unavailable')))}</small></div></div>
-        <dl class="owner-cost"><div><dt>${ar ? 'المكتب — اليوم' : 'Office — today'}</dt><dd dir="ltr">${moneyText(capacity?.capacity?.costUsd?.today)}</dd></div><div><dt>${ar ? 'المكتب — الشهر' : 'Office — month'}</dt><dd dir="ltr">${moneyText(monthCost)}</dd></div><div><dt>${ar ? 'المدفوع — المكتب' : 'Office paid fallback'}</dt><dd>${capacity ? (paid.route ? `<bdi dir="ltr">${moneyText(paid.remainingUsd)}</bdi> ${ar ? 'متبقي' : 'remaining'}` : (ar ? 'غير مفعّل' : 'Not active')) : unavailableText()}</dd></div></dl></section>
-      <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'الفريق الحين' : 'Team now'}</h2><a href="#/employees">${ar ? 'الفريق' : 'Team'}</a></div>
-        <div class="owner-team">${(office.agents || []).map((agent) => `<a href="#/agent/${esc(agent.slug)}" title="${esc(agent.detail || '')}"><span class="team-dot st-dot-${esc(String(agent.state || 'available').toLowerCase().replace(/\s+/g, '-'))}"></span><strong>${esc(agent.label)}</strong><small>${esc(agentStateLabel(agent.state))}</small></a>`).join('')}</div></section>
-    </div></div>`;
-  onLiveChange(() => { if (['#/', '#/home'].includes(location.hash || '#/')) route(); });
+  return {
+    api, esc, q, ws, view, when, setTitle, toast, every, markdown, errorBlock, humanError, confirmDialog, refreshSidebar, switchProject,
+    language: state.language, workspaces: () => state.workspaces, isCurrent: () => state.navigation === navigation, onLeave: (fn) => state.leave.push(fn),
+    onLiveChange: (fn, onLive) => onLiveChange(fn, onLive), openEmployee: (slug) => openEmployee(slug), rerender: route,
+  };
 }
+async function renderHome() { return renderOfficeHome(screenContext()); }
+async function renderJob(id) { return renderJobDetail(screenContext(), id); }
+async function renderArchive() { return renderArchiveScreen(screenContext()); }
 
 // ------------------------------------------------------------------ chat
 const SUGGESTIONS = [
@@ -654,25 +593,6 @@ async function renderNewWork() {
   };
 }
 
-async function renderOwnerJob(id) {
-  const navigation = state.navigation;
-  const ar = state.language === 'ar';
-  let last = '';
-  const load = async () => {
-    const { snapshot } = await api(`/api/jobs/${id}`);
-    if (navigation !== state.navigation) return snapshot.job.status;
-    if (last === JSON.stringify(snapshot)) return snapshot.job.status;
-    last = JSON.stringify(snapshot);
-    const { job, tasks, workspace } = snapshot;
-    const results = tasks.map((task) => task.result).filter(Boolean);
-    setTitle(job.title);
-    view.innerHTML = `<div class="page stack"><header class="page-head"><div><span class="owner-kicker" dir="auto">${esc(workspace?.name || '')}</span><h1 dir="auto">${esc(job.title)}</h1><p dir="auto">${esc(job.goal)}</p></div><span class="pill">${ownerStage(job.status)}</span></header><section class="owner-card"><h2>${ar ? 'التقدم' : 'Progress'}</h2>${tasks.length ? tasks.map((task) => `<div class="owner-row"><span class="grow" dir="auto"><strong>${esc(task.title)}</strong><small>${ownerStage(task.status)}</small></span>${task.progress == null ? '' : `<span>${Number(task.progress)}%</span>`}</div>`).join('') : `<p class="muted">${ar ? 'وصل الطلب. ينتظر CHIEF والسعة المتاحة.' : 'Request received. Waiting for CHIEF and available capacity.'}</p>`}</section><section class="owner-card"><h2>${ar ? 'النتيجة' : 'Result'}</h2>${job.final_summary ? markdown(job.final_summary) : results?.length ? results.map((result) => markdown(result.content || result.summary || '')).join('') : `<p class="muted">${ar ? 'النتيجة بتظهر هني بعد اكتمال الشغل.' : 'The result appears here when work completes.'}</p>`}</section><div class="row"><a class="btn" href="#/work">${ar ? 'كل الأعمال' : 'All work'}</a><a class="btn" href="#/attention">${ar ? 'الموافقات' : 'Approvals'}</a><a class="btn" href="#/project/${esc(workspace?.id || ws())}">${ar ? 'المشروع' : 'Project'}</a></div></div>`;
-    return job.status;
-  };
-  const status = await load();
-  if (!['completed', 'failed', 'cancelled'].includes(status)) every(6000, () => load().catch((error) => toast(error.message)));
-}
-
 async function renderWork() {
   const navigation = state.navigation;
   const ar = state.language === 'ar';
@@ -781,7 +701,8 @@ function connectLive() {
   live.source = source;
   const setLive = (value) => { live.connected = value; live.liveListeners.forEach((fn) => fn(value)); };
   source.addEventListener('ready', () => setLive(true));
-  source.addEventListener('change', () => { live.listeners.forEach((fn) => fn()); refreshSidebar(); });
+  // A burst of row changes refreshes the top-bar count once.
+  source.addEventListener('change', () => { live.listeners.forEach((fn) => fn()); clearTimeout(live.navTimer); live.navTimer = setTimeout(refreshSidebar, 1000); });
   source.onerror = () => setLive(false);
 }
 function onLiveChange(fn, onLive) {
@@ -807,50 +728,6 @@ async function renderEmployees() {
       <div class="agent-output"><span>${ar ? 'آخر نتيجة' : 'Recent output'}</span><strong dir="auto">${esc(agent.recentArtifact?.title || (ar ? 'ما في نتيجة حديثة' : 'No recent output'))}</strong></div>
       <div class="row">${agent.directChat ? `<span class="tag">${ar ? 'محادثة مباشرة' : 'Direct chat'}</span>` : ''}${agent.executor === 'coding' ? `<span class="tag">${ar ? 'مهام برمجية' : 'Engineering tasks'}</span>` : ''}${agent.executor === 'chief' ? `<span class="tag">${ar ? 'ينسق الفريق' : 'Orchestrates'}</span>` : ''}</div></a>`).join('')}</div></div>`;
   view.querySelectorAll('[data-employee]').forEach((card) => { card.onclick = (event) => { event.preventDefault(); openEmployee(card.dataset.employee); }; });
-}
-
-const NODE_WORD = { done: ['تم', 'Done'], working: ['يشتغل', 'Working'], waiting: ['ينتظر', 'Waiting'], ready: ['يبدأ', 'Starting'], failed: ['فشل', 'Failed'], blocked: ['متوقف', 'Blocked'], capacity: ['ينتظر السعة المجانية، وبيكمل تلقائي', 'Waiting for free model capacity — will resume automatically'] };
-const nodeWord = (value) => (NODE_WORD[value] ? NODE_WORD[value][state.language === 'ar' ? 0 : 1] : value);
-async function renderWorkflow(jobId) {
-  let signature = '';
-  const load = async () => {
-    const data = await api(`/api/workflows/${jobId}`);
-    const next = JSON.stringify(data);
-    if (next === signature) return data.job.status;
-    signature = next;
-    setTitle(data.job.title);
-    const byId = new Map(data.nodes.map((node) => [node.id, node]));
-    const streams = data.nodes.filter((node) => node.kind !== 'plan' && node.kind !== 'synthesis');
-    const plan = data.nodes.find((node) => node.kind === 'plan');
-    const syntheses = data.nodes.filter((node) => node.kind === 'synthesis');
-    const needs = (node) => node.dependsOn.map((id) => byId.get(id)).filter((dep) => dep && dep.kind !== 'plan' && dep.kind !== 'synthesis').map((dep) => dep.agentLabel);
-    const nodeRow = (node) => `<div class="flow-node st-${esc(node.state)}"><span class="flow-icon">${FLOW_ICON[node.state] || '○'}</span>
-      <div class="grow"><div><strong>${esc(node.agentLabel)}</strong> — ${esc(node.title)}${node.revision ? ' <span class="pill st-waiting">revision</span>' : ''}</div>
-      <div class="xs faint">${esc(nodeWord(node.state))}${needs(node).length ? ` · ${state.language === 'ar' ? 'بعد' : 'after'} ${esc([...new Set(needs(node))].join(', '))}` : ''}${node.completedAt ? ` · ${when(node.completedAt)}` : ''}${node.state === 'capacity' && node.resumesAt ? ` · ${state.language === 'ar' ? 'إعادة' : 'retry'} ${esc(new Date(node.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}` : ''}</div>
-      ${node.codingTask ? `<a class="xs" href="#/task/${esc(node.codingTask.id)}">Coding Agent task: ${esc(STATUS_WORDS[node.codingTask.status] || node.codingTask.status)} · ${esc(stageWord(node.codingTask.phase))}</a>` : ''}
-      ${node.output?.summary ? `<div class="small" dir="auto">${esc(node.output.summary)}</div>` : ''}</div></div>`;
-    view.innerHTML = `<div class="page stack">
-      <div class="page-head"><div><div class="row">${pill(data.job.status === 'completed' ? 'completed' : data.job.status === 'failed' ? 'failed' : 'running', ownerStage(data.job.status))}<span class="small muted" dir="ltr">${percentText(data.job.progress)} · ${moneyText(data.job.costUsd)}</span>${data.job.conversationId ? `<a class="small" href="#/chat/${esc(data.job.conversationId)}">${state.language === 'ar' ? 'افتح المحادثة' : 'Open chat'}</a>` : ''}</div>
-        <h1 dir="auto">${esc(data.job.title)}</h1><p dir="auto">${esc(data.job.objective)}</p></div></div>
-      <div class="card"><h2 class="card-title">Workflow</h2>
-        <div class="flow-node st-done"><span class="flow-icon">✓</span><div class="grow"><strong>Fahad</strong> — gave the objective</div></div>
-        ${plan ? nodeRow({ ...plan, agentLabel: 'CHIEF', title: 'Split the objective into workstreams' }) : ''}
-        <div class="flow-branch">${streams.map(nodeRow).join('') || '<div class="muted small">No workstreams (CHIEF answered alone).</div>'}</div>
-        ${syntheses.map((node) => nodeRow({ ...node, title: node.title === 'Chief final synthesis' ? 'Final synthesis after revisions' : 'Consolidate the team’s work' })).join('')}
-        <div class="flow-node st-${data.final ? 'done' : 'waiting'}"><span class="flow-icon">${data.final ? '✓' : '○'}</span><div class="grow"><strong>Fahad</strong> — ${data.final ? 'received the result' : 'will receive the result'}</div></div>
-        ${data.participants.length ? `<div class="xs faint" style="margin-top:var(--s-2)">Team: ${esc(data.participants.map((entry) => entry.label).join(', '))}</div>` : ''}</div>
-      ${data.decisions.length ? `<div class="owner-card"><h2>Decisions for Fahad</h2>${data.decisions.map((decision) => `<div class="owner-item"><div class="small muted">${esc(decision.from)}</div>${markdown(decision.text)}</div>`).join('')}</div>` : ''}
-      ${data.final ? `<div class="card"><h2 class="card-title">Final result — CHIEF</h2>${markdown(data.final.content)}</div>` : ''}
-      ${data.artifacts?.some((artifact) => artifact.agent !== 'chief') ? `<div class="card"><h2 class="card-title">Team artifacts</h2>${data.artifacts.filter((artifact) => artifact.agent !== 'chief').map(renderArtifact).join('')}</div>` : ''}
-      ${data.consults?.length ? `<details class="disclosure"><summary>Internal consults (${data.consults.length})</summary><div class="disclosure-body">${data.consults.map((entry) => entry.consults.map((consult) => `<div class="small"><strong>${esc(entry.from)}</strong> asked <strong>${esc(consult.to)}</strong>: <span dir="auto">${esc(consult.question)}</span></div>`).join('')).join('')}</div></details>` : ''}
-      <div class="card"><h2 class="card-title">Outputs</h2>${data.nodes.filter((node) => node.output).map((node) => `<details class="disclosure"><summary>${esc(node.agentLabel)} — ${esc(node.title)}</summary><div class="disclosure-body">${markdown(node.output.content)}</div></details>`).join('') || '<div class="muted small">Outputs appear here as each employee delivers.</div>'}</div>
-      ${data.handoffs.length ? `<details class="disclosure"><summary>Handoffs (${data.handoffs.length})</summary><div class="disclosure-body">${data.handoffs.map((handoff) => `<div class="small">${esc(handoff.from)} → ${esc(handoff.to)} <span class="faint">${when(handoff.at)}</span></div>`).join('')}</div></details>` : ''}
-      ${data.revisions.length ? `<details class="disclosure"><summary>Revisions requested by CHIEF (${data.revisions.length})</summary><div class="disclosure-body">${data.revisions.map((revision) => `<div class="small">${esc(revision.workstream)}: ${esc(revision.instruction)}</div>`).join('')}</div></details>` : ''}
-    </div>`;
-    return data.job.status;
-  };
-  const status = await load();
-  if (!['completed', 'failed', 'cancelled'].includes(status)) every(3000, () => load().catch(() => {}));
 }
 
 // ------------------------------------------------------------------ attention
@@ -896,7 +773,7 @@ async function renderAttention() {
     } });
   };
   await draw();
-  onLiveChange(() => { if (location.hash === '#/attention') draw().catch(() => {}); });
+  onLiveChange(() => { if (navigation === state.navigation) draw().catch(() => {}); });
 }
 
 async function renderProjects() {
@@ -1013,10 +890,54 @@ async function renderModels() {
 }
 
 // ------------------------------------------------------------------ settings
-async function renderSettings() {
+// ------------------------------------------------------------------ settings
+// One section at a time; each section is an existing page rendered into the
+// panel, so every control, permission check and live refresh is unchanged.
+const SETTINGS_ICON = (path) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
+const SETTINGS_SECTIONS = [
+  { key: 'team', ar: 'الفريق', en: 'Team', icon: SETTINGS_ICON('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'), render: () => renderEmployees() },
+  { key: 'approvals', ar: 'الموافقات', en: 'Approvals', icon: SETTINGS_ICON('<path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/>'), render: () => renderAttention() },
+  { key: 'models', ar: 'النماذج والمزوّدين', en: 'Models & providers', icon: SETTINGS_ICON('<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/>'), render: () => renderModels() },
+  { key: 'coding', ar: 'عمّال البرمجة', en: 'Coding workers', icon: SETTINGS_ICON('<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>'), render: (sub) => renderCodingPanel(sub) },
+  { key: 'tools', ar: 'الأدوات والصلاحيات', en: 'Tools & permissions', icon: SETTINGS_ICON('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/>'), render: () => renderIntegrations() },
+  { key: 'health', ar: 'الصحة والسجلات', en: 'Health & logs', icon: SETTINGS_ICON('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'), render: () => renderHealthPanel() },
+  { key: 'appearance', ar: 'اللغة والمظهر', en: 'Language & appearance', icon: SETTINGS_ICON('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>'), render: () => renderAppearancePanel() },
+];
+async function renderSettingsSection(key = '', sub = '') {
+  const ar = state.language === 'ar';
+  const section = SETTINGS_SECTIONS.find((item) => item.key === key) || SETTINGS_SECTIONS[0];
+  viewRoot.innerHTML = `<div class="pg settings-page"><div class="settings-layout">
+    <nav class="settings-nav" aria-label="${ar ? 'أقسام الإعدادات' : 'Settings sections'}"><p class="eyebrow settings-eyebrow">${ar ? 'الإعدادات' : 'Settings'}</p>
+      <ul>${SETTINGS_SECTIONS.map((item) => `<li><a href="#/settings/${item.key}" class="settings-link ${item.key === section.key ? 'active' : ''}" ${item.key === section.key ? 'aria-current="page"' : ''}>${item.icon}<span>${ar ? item.ar : item.en}</span>${item.key === 'approvals' && state.attention?.action ? `<span class="count count-alert">${esc(state.attention.action)}</span>` : ''}</a></li>`).join('')}</ul></nav>
+    <section class="settings-panel" id="settingsPanel" aria-label="${esc(ar ? section.ar : section.en)}"></section></div></div>`;
+  view = $('#settingsPanel');
+  await section.render(sub);
+  setTitle(`${ar ? section.ar : section.en} · ${ar ? 'الإعدادات' : 'Settings'}`);
+}
+
+// Coding workers: the Coding Agent's sessions (existing tabs and actions)
+// plus the execution-worker board. Workers are never Office employees.
+async function renderCodingPanel(sub) {
   const navigation = state.navigation;
   const ar = state.language === 'ar';
-  setTitle(ar ? 'الإعدادات والمنصة' : 'Settings & platform');
+  await renderTasks(['running', 'attention', 'completed', 'failed', 'cancelled'].includes(sub) ? sub : 'running');
+  const data = await api('/api/work/workers').catch(() => null);
+  if (navigation !== state.navigation) return;
+  const page = view.querySelector('.page');
+  if (!page) return;
+  const yes = (value) => (value === true ? (ar ? 'نعم' : 'Yes') : value === false ? (ar ? 'لا' : 'No') : (ar ? 'غير معروف' : 'Unknown'));
+  const card = document.createElement('section');
+  card.className = 'owner-card workers-card';
+  card.innerHTML = `<div class="owner-card-head"><h2>${ar ? 'عمّال التنفيذ' : 'Execution workers'}</h2><span class="row"><a href="#/code">${ar ? 'مهمة برمجية جديدة' : 'New coding task'}</a><a href="#/continuity">${ar ? 'الاستمرارية' : 'Continuity'}</a></span></div>
+    <p class="small muted">${ar ? 'محركات تنفيذ للمهام البرمجية، وليست موظفين في المكتب. الحالة كما يبلّغ عنها الخادم.' : 'Execution engines for coding work — not Office employees. States are as the server reports them.'}</p>
+    ${data?.workers?.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>${ar ? 'العامل' : 'Worker'}</th><th>${ar ? 'الحالة' : 'State'}</th><th>${ar ? 'مفعّل' : 'Enabled'}</th><th>${ar ? 'قابل للتنفيذ' : 'Executable'}</th><th>${ar ? 'ملاحظة' : 'Note'}</th></tr></thead><tbody>${data.workers.map((worker) => `<tr><td dir="ltr">${esc(worker.displayName)}</td><td class="mono">${esc(worker.operational)}</td><td>${yes(worker.enabled)}</td><td>${yes(worker.executable)}</td><td class="small muted" dir="ltr">${esc(worker.summary || '')}</td></tr>`).join('')}</tbody></table></div>` : `<p class="small muted">${ar ? 'بيانات العمّال غير متاحة.' : 'Worker data is unavailable.'}</p>`}`;
+  page.append(card);
+}
+
+async function renderHealthPanel() {
+  const navigation = state.navigation;
+  const ar = state.language === 'ar';
+  setTitle(ar ? 'الصحة والسجلات' : 'Health & logs');
   const [health, platform, models, continuity, capabilities] = await Promise.all([
     fetch('./healthz').then((response) => response.json()).catch(() => null),
     api(`/api/platform${q({ workspaceId: ws() })}`).catch(() => null),
@@ -1036,20 +957,31 @@ async function renderSettings() {
   const facts = healthFacts({ health, platform });
   const healthWord = (key) => ({ healthy: ar ? 'سليم' : 'Healthy', unhealthy: ar ? 'فيه خلل' : 'Check failed', unknown: ar ? 'غير مؤكد' : 'Unknown', unavailable: ar ? 'غير متاح' : 'Unavailable' }[key] || (ar ? 'غير متاح' : 'Unavailable'));
   const runtimeOk = facts.state === 'healthy';
-  view.innerHTML = `<div class="page page-wide stack settings-v5"><div class="page-head"><div><h1>${ar ? 'الإعدادات والمنصة' : 'Settings & platform'}</h1><p class="page-summary">${ar ? 'إعدادات المالك وحالة المنصة بكلام واضح. الأسرار ما تنعرض أبدًا.' : 'Owner preferences and platform readiness in plain language. Secrets are never displayed.'}</p></div></div>
+  view.innerHTML = `<div class="page page-wide stack settings-v5"><div class="page-head"><div><h1>${ar ? 'الصحة والسجلات' : 'Health & logs'}</h1><p class="page-summary">${ar ? 'حالة المنصة بكلام واضح. الأسرار ما تنعرض أبدًا.' : 'Platform readiness in plain language. Secrets are never displayed.'}</p></div></div>
     <section class="platform-health ${runtimeOk ? 'is-good' : 'is-warn'}"><span class="capacity-orb"></span><div class="grow"><span>${ar ? 'حالة المنصة' : 'Platform health'}</span><h2>${runtimeOk ? (ar ? 'الخدمة وقاعدة البيانات سليمة' : 'Hub and database are healthy') : facts.state === 'unhealthy' ? (ar ? 'فحص الخدمة أو البيانات فشل' : 'A Hub or database check failed') : (ar ? 'بعض الفحوصات غير متاحة' : 'Some checks are unavailable')}</h2><p>${ar ? 'هذه حالة الخدمة والبيانات. حالة حاويات التشغيل تحتاج فحص نشر منفصل؛ جاهزية Continuity تظهر أدناه.' : 'These checks cover the Hub and database. Container health requires separate deployment verification; Continuity readiness is shown below.'}</p></div><a class="btn" href="#/continuity">${ar ? 'الاستمرارية' : 'Continuity'}</a></section>
-    <div class="settings-grid"><section class="card"><h2 class="card-title">${ar ? 'اللغة' : 'Language'}</h2><div class="chips" id="languageChips"><button class="chip ${state.language === 'ar' ? 'active' : ''}" data-language="ar">العربية</button><button class="chip ${state.language === 'en' ? 'active' : ''}" data-language="en">English</button></div><p class="small muted">${ar ? 'العربية هي الافتراضية، وكل المحتوى المختلط يدعم اتجاهه الطبيعي.' : 'Arabic is the default; mixed Arabic/English content keeps its natural direction.'}</p></section>
-      <section class="card"><h2 class="card-title">${ar ? 'المظهر' : 'Appearance'}</h2><div class="chips" id="themeChips">${[['auto', ar ? 'النظام' : 'System'], ['dark', ar ? 'داكن' : 'Dark'], ['light', ar ? 'فاتح' : 'Light']].map(([value, label]) => `<button class="chip" data-theme-choice="${value}">${label}</button>`).join('')}</div></section>
-      <section class="card"><h2 class="card-title">${ar ? 'الحساب' : 'Account'}</h2><p class="small muted">${ar ? 'الدخول خاص بالمالك ولا يوجد تسجيل عام.' : 'Owner-only access. Public signup is disabled.'}</p><button class="btn" id="logout">${ar ? 'تسجيل خروج' : 'Sign out'}</button></section>
-      <section class="card"><h2 class="card-title">${ar ? 'المكتب المرئي' : 'Office view'}</h2><p class="small muted">${ar ? 'المكتب ثلاثي الأبعاد هو العرض الأساسي على الكمبيوتر. الأجهزة الصغيرة واللمسية تستخدم المكتب المبسّط تلقائيًا. نهار وغامر وتلقائي تغيّر الإضاءة فقط.' : 'The 3D Office is the Office on desktops. Small and touch devices use the simplified Office automatically. Light, Immersive and Auto change only the lighting.'}</p><label class="check"><input type="checkbox" id="simplifiedOffice"> <span>${ar ? 'استخدم المكتب المبسّط دائمًا' : 'Always use the simplified Office'}</span></label><label class="small muted" for="officeQuality">${ar ? 'الجودة' : 'Quality'}</label><select class="input input-sm" id="officeQuality"><option value="">${ar ? 'تلقائي' : 'Automatic'}</option><option value="high">High</option><option value="balanced">Balanced</option><option value="lean">Lean</option><option value="light">Light</option></select></section></div>
-    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'جاهزية التشغيل' : 'Readiness'}</h2><a href="#/integrations">${ar ? 'كل أدوات الربط' : 'All integrations'}</a></div><div class="readiness-grid"><div><span>Hub</span><strong data-owner-health="${facts.hub}">${healthWord(facts.hub)}</strong></div><div><span>${ar ? 'قاعدة البيانات' : 'Database'}</span><strong>${healthWord(facts.database)}</strong></div><div><span>${ar ? 'الأدوات الجاهزة' : 'Ready tools'}</span><strong>${countText(capReady)}</strong></div><div><span>${ar ? 'الموافقات المنتظرة' : 'Pending approvals'}</span><strong>${platform?.approvals?.length ?? '—'}</strong></div><div><span>${ar ? 'Continuity Supervisor' : 'Continuity Supervisor'}</span><strong>${continuity ? (continuity.enabled ? (ar ? 'شغال' : 'On') : (ar ? 'متوقف' : 'Off')) : (ar ? 'غير متاح' : 'Unavailable')}</strong></div><div><span>${ar ? 'العامل النشط' : 'Active worker'}</span><strong>${esc(continuity?.workers?.find((worker) => worker.enabled)?.displayName || (ar ? 'ما في عامل Continuity مفعّل' : 'No enabled Continuity worker'))}</strong></div></div></section>
+    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'جاهزية التشغيل' : 'Readiness'}</h2><a href="#/settings/tools">${ar ? 'كل أدوات الربط' : 'All integrations'}</a></div><div class="readiness-grid"><div><span>Hub</span><strong data-owner-health="${facts.hub}">${healthWord(facts.hub)}</strong></div><div><span>${ar ? 'قاعدة البيانات' : 'Database'}</span><strong>${healthWord(facts.database)}</strong></div><div><span>${ar ? 'الأدوات الجاهزة' : 'Ready tools'}</span><strong>${countText(capReady)}</strong></div><div><span>${ar ? 'الموافقات المنتظرة' : 'Pending approvals'}</span><strong>${platform?.approvals?.length ?? '—'}</strong></div><div><span>${ar ? 'Continuity Supervisor' : 'Continuity Supervisor'}</span><strong>${continuity ? (continuity.enabled ? (ar ? 'شغال' : 'On') : (ar ? 'متوقف' : 'Off')) : (ar ? 'غير متاح' : 'Unavailable')}</strong></div><div><span>${ar ? 'العامل النشط' : 'Active worker'}</span><strong>${esc(continuity?.workers?.find((worker) => worker.enabled)?.displayName || (ar ? 'ما في عامل Continuity مفعّل' : 'No enabled Continuity worker'))}</strong></div></div></section>
+    <section class="owner-card"><div class="owner-card-head"><h2>${ar ? 'السجلات والعمليات' : 'Logs and operations'}</h2></div><div class="link-grid">
+      <a class="link-tile" href="#/office"><strong>${ar ? 'العمليات المباشرة' : 'Live Operations'}</strong><small>${ar ? 'شجرة CHIEF، التسليمات، الخط الزمني، انتظار السعة' : 'CHIEF tree, handoffs, timeline, capacity waits'}</small></a>
+      <a class="link-tile" href="#/continuity"><strong>${ar ? 'الاستمرارية ونقاط الحفظ' : 'Continuity & checkpoints'}</strong><small>${ar ? 'الجلسات، نقاط الحفظ، التسليم بين العمّال' : 'Sessions, checkpoints, worker handoffs'}</small></a>
+      <a class="link-tile" href="#/work"><strong>${ar ? 'كل العمل' : 'All work'}</strong><small>${ar ? 'الأهداف ومهام البرمجة وآخر الأعمال' : 'Objectives, coding tasks and recent work'}</small></a>
+      <a class="link-tile" href="#/settings/models"><strong>${ar ? 'السعة والتكلفة' : 'Capacity & cost'}</strong><small>${ar ? 'المزوّدين، الحصص، الميزانية' : 'Providers, quotas, budget'}</small></a></div></section>
     <details class="disclosure"><summary>${ar ? 'حالة المزودين والمفاتيح' : 'Provider and key status'}</summary><div class="disclosure-body"><p class="small muted">${ar ? 'تظهر الحالة فقط؛ لا تظهر قيمة أي مفتاح.' : 'Only presence/readiness is shown. Secret values are never returned.'}</p><div class="provider-grid">${[...providers.values()].map((item) => { const [tone, label] = providerStatus(item); return `<div class="provider-safe"><strong>${esc(item.provider)}</strong><span class="pill ${tone}">${label}</span></div>`; }).join('') || `<p>${ar ? 'لا توجد بيانات مزودين.' : 'No provider data.'}</p>`}</div></div></details>
     <details class="disclosure"><summary>${ar ? 'تفاصيل تقنية متقدمة' : 'Advanced technical details'}</summary><div class="disclosure-body"><dl class="kv"><div><dt>Version</dt><dd class="mono">${esc(String(health?.version || platform?.systemHealth?.version || '—').slice(0, 12))}</dd></div><div><dt>${ar ? 'آخر نشاط للعامل' : 'Last worker activity'}</dt><dd>${platform?.systemHealth?.lastAgentActivityAt ? when(platform.systemHealth.lastAgentActivityAt) : '—'}</dd></div><div><dt>${ar ? 'آخر فحص مزودين' : 'Last provider canary'}</dt><dd>${esc(platform?.systemHealth?.lastCanary?.status || '—')}</dd></div><div><dt>${ar ? 'محركات متاحة' : 'Live engines'}</dt><dd>${platform?.modelPool?.live ?? '—'} / ${platform?.modelPool?.total ?? '—'}</dd></div></dl><p class="small muted">${ar ? 'معلومات تشخيصية فقط، بدون JSON خام أو أسرار.' : 'Diagnostic summary only, with no raw JSON or secrets.'}</p></div></details></div>`;
+}
+
+async function renderAppearancePanel() {
+  const ar = state.language === 'ar';
+  setTitle(ar ? 'اللغة والمظهر' : 'Language & appearance');
+  view.innerHTML = `<div class="page page-wide stack settings-v5"><div class="page-head"><div><h1>${ar ? 'اللغة والمظهر' : 'Language & appearance'}</h1><p class="page-summary">${ar ? 'تُحفظ اختياراتك على هذا الجهاز وتبقى بعد إعادة التحميل.' : 'Your choices are saved on this device and survive reloads.'}</p></div></div>
+    <div class="settings-grid"><section class="card"><h2 class="card-title">${ar ? 'اللغة' : 'Language'}</h2><div class="segmented" role="radiogroup" aria-label="${ar ? 'اللغة' : 'Language'}" id="languageChips"><button type="button" role="radio" class="chip ${state.language === 'ar' ? 'active' : ''}" aria-checked="${state.language === 'ar'}" data-language="ar">العربية</button><button type="button" role="radio" class="chip ${state.language === 'en' ? 'active' : ''}" aria-checked="${state.language === 'en'}" data-language="en">English</button></div><p class="small muted">${ar ? 'العربية هي الافتراضية، وكل المحتوى المختلط يدعم اتجاهه الطبيعي.' : 'Arabic is the default; mixed Arabic/English content keeps its natural direction.'}</p></section>
+      <section class="card"><h2 class="card-title">${ar ? 'المظهر' : 'Appearance'}</h2><div class="segmented" role="radiogroup" aria-label="${ar ? 'المظهر' : 'Appearance'}" id="themeChips">${[['auto', ar ? 'تلقائي' : 'Automatic'], ['light', ar ? 'فاتح' : 'Light'], ['dark', ar ? 'داكن' : 'Dark']].map(([value, label]) => `<button type="button" role="radio" class="chip" data-theme-choice="${value}">${label}</button>`).join('')}</div><p class="small muted">${ar ? 'التلقائي يتبع إعداد جهازك.' : 'Automatic follows your device setting.'}</p></section>
+      <section class="card"><h2 class="card-title">${ar ? 'الحساب' : 'Account'}</h2><p class="small muted">${ar ? 'الدخول خاص بالمالك ولا يوجد تسجيل عام.' : 'Owner-only access. Public signup is disabled.'}</p><button class="btn" id="logout">${ar ? 'تسجيل خروج' : 'Sign out'}</button></section>
+      <section class="card"><h2 class="card-title">${ar ? 'المكتب المرئي' : 'Office view'}</h2><p class="small muted">${ar ? 'المكتب ثلاثي الأبعاد متاح من «كل الأقسام ← المكتب المباشر». الأجهزة الصغيرة واللمسية تستخدم المكتب المبسّط تلقائيًا. نهار وغامر وتلقائي تغيّر الإضاءة فقط.' : 'The 3D Office is under “All sections → Live Office”. Small and touch devices use the simplified Office automatically. Light, Immersive and Auto change only the lighting.'}</p><label class="check"><input type="checkbox" id="simplifiedOffice"> <span>${ar ? 'استخدم المكتب المبسّط دائمًا' : 'Always use the simplified Office'}</span></label><label class="small muted" for="officeQuality">${ar ? 'الجودة' : 'Quality'}</label><select class="input input-sm" id="officeQuality"><option value="">${ar ? 'تلقائي' : 'Automatic'}</option><option value="high">High</option><option value="balanced">Balanced</option><option value="lean">Lean</option><option value="light">Light</option></select></section></div></div>`;
   let current = 'auto';
   try { current = localStorage.getItem('hub-theme') || 'auto'; } catch {}
-  const mark = () => document.querySelectorAll('[data-theme-choice]').forEach((chip) => chip.classList.toggle('active', chip.dataset.themeChoice === current));
+  const mark = () => document.querySelectorAll('[data-theme-choice]').forEach((chip) => { const on = chip.dataset.themeChoice === current; chip.classList.toggle('active', on); chip.setAttribute('aria-checked', String(on)); });
   mark();
-  bind(view, { '[data-theme-choice]': (_, element) => { current = element.dataset.themeChoice; try { localStorage.setItem('hub-theme', current); } catch {} applyTheme(current); mark(); } });
+  bind(view, { '[data-theme-choice]': (_, element) => { current = element.dataset.themeChoice; try { if (current === 'auto') localStorage.removeItem('hub-theme'); else localStorage.setItem('hub-theme', current); } catch {} applyTheme(current); mark(); } });
   bind(view, { '[data-language]': (_, element) => { const language = element.dataset.language === 'en' ? 'en' : 'ar'; try { localStorage.setItem('hub-language', language); } catch {} state.language = applyLanguage(language); route(); } });
   const pref = (key) => { try { return localStorage.getItem(key) || ''; } catch { return ''; } };
   const setPref = (key, value) => { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch {} };

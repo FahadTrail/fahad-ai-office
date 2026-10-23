@@ -69,6 +69,17 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
+## Office premium redesign V2.0 (2026-10-22, open PR, unmerged)
+
+Frontend-only redesign on branch `feat/office-premium-redesign`. Documented in `docs/office-premium-redesign.md`.
+* Four screens: المكتب (`#/`), Job Detail (`#/job/:id`), الأرشيف (`#/archive`) and الإعدادات (`#/settings/:section`). The code is in `src/hub-ui/screens.js` and `app.js`.
+* Styles are in `src/hub-ui/premium.css`. The tokens in `app.css` are rethemed.
+* Presentation rules are in `src/hub-ui/office-model.js` and tested.
+* Old hashes still work and open their new home. Other pages are in the ⋯ menu.
+* No backend, schema or runtime change.
+* Visual QA: `node tools/redesign-shots.mjs <dir> --edge`.
+* Do not merge or deploy without Fahad.
+
 ## Live Operations (2026-10-09)
 
 Live Operations is the command layer of the Office. It is documented in `docs/live-operations.md`.
