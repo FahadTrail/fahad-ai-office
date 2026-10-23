@@ -1,4 +1,4 @@
-/* Fahad AI Office — premium redesign V2.0: shell, materials and the primary
+/* Fahad AI Office — premium redesign V2.1: shell, materials and the primary
    screens (المكتب, تفاصيل المهمة, الأرشيف, الإعدادات).
    Colours come only from the tokens in app.css. Motion is restrained:
    press feedback ~100ms, state changes 150–250ms ease-out, no bounce, and
@@ -84,10 +84,11 @@ body { background: var(--bg); }
 
 /* ---------------------------------------------------------------- materials */
 .material {
-  background: var(--material); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+  background: var(--material-solid);
   border: 1px solid var(--border); box-shadow: inset 0 1px 0 var(--hairline), var(--shadow-soft);
 }
-/* No glass on glass: a material inside a material is solid. */
+/* Content is deliberately solid. Glass is reserved for navigation and
+   overlays (top bar, mobile tab bar, sheets and dialogs). */
 .material .material { background: var(--material-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
 
 /* ---------------------------------------------------------------- press & hover */
@@ -242,6 +243,75 @@ body { background: var(--bg); }
 .job-facts dt { color: var(--text-faint); font-size: var(--fs-xs); font-weight: 600; }
 .job-facts dd { display: flex; align-items: center; min-height: 28px; margin: 2px 0 0; font-weight: 600; }
 
+/* The living execution journey is derived only from /api/workflows and the
+   operational objective contract. It is bounded to 24 map nodes in JS. */
+.journey { margin-bottom: var(--s-8); padding: var(--s-5); border-radius: var(--r-xl); overflow: hidden; }
+.journey-head, .map-head, .insight-head, .emp-panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-3); }
+.journey-head h2, .map-head h3, .insight-head h3 { margin: 0; }
+.journey-head h2 { margin-top: 2px; font-size: var(--fs-xl); font-weight: 650; }
+.map-head { margin: var(--s-6) 0 var(--s-3); align-items: flex-end; }
+.map-head h3, .insight-head h3 { font-size: var(--fs-sm); font-weight: 650; }
+.map-head p { margin: 4px 0 0; color: var(--text-muted); font-size: var(--fs-xs); }
+.event-cue { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--text-muted); font-size: var(--fs-xs); font-weight: 600; }
+.metric-chip { display: inline-flex; align-items: baseline; gap: 5px; min-height: 28px; padding: 4px 10px; border-radius: var(--r-full); background: var(--surface-2); color: var(--text-muted); font-size: 11.5px; white-space: nowrap; }
+.metric-chip b { color: var(--text); font-size: 12px; }
+
+.stage-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(118px, 1fr); gap: 0; margin: var(--s-5) 0 0; padding: 0; overflow-x: auto; list-style: none; scrollbar-width: thin; }
+.stage-stop { position: relative; display: flex; align-items: center; gap: var(--s-2); min-height: 52px; padding: var(--s-2) var(--s-3); color: var(--text-faint); }
+.stage-stop::after { content: ""; position: absolute; inset-inline: calc(50% + 18px) calc(-50% + 18px); top: 25px; height: 1px; background: var(--border-strong); z-index: 0; }
+.stage-stop:last-child::after { display: none; }
+.stage-index { position: relative; z-index: 1; display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--surface-3); border: 1px solid var(--border); color: var(--text-muted); font-size: 11px; }
+.stage-stop > span:last-child { position: relative; z-index: 1; display: grid; gap: 1px; min-width: 0; background: var(--material-solid); padding-inline: 2px; }
+.stage-stop strong { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.stage-stop small { color: var(--text-faint); font-size: 10.5px; }
+.stage-stop.is-done .stage-index { background: var(--success-soft); border-color: transparent; color: var(--success); }
+.stage-stop.is-done strong { color: var(--text); }
+.stage-stop.is-current .stage-index { background: var(--accent-fill); border-color: transparent; color: var(--on-accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.stage-stop.is-current strong { color: var(--accent); }
+.stage-stop.is-skipped { opacity: .55; }
+.stage-empty { margin-top: var(--s-4); padding: var(--s-3); border-radius: var(--r-md); background: var(--surface-2); }
+
+.workflow-map-scroll { max-width: 100%; overflow: auto hidden; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); outline: none; overscroll-behavior-inline: contain; }
+.workflow-map-scroll:focus-visible { box-shadow: var(--focus); }
+.workflow-map { position: relative; width: var(--map-w); min-width: 100%; height: var(--map-h); direction: ltr; }
+.workflow-map svg { position: absolute; inset: 0; overflow: visible; }
+.map-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.map-edge.is-live { stroke: var(--accent); stroke-dasharray: 5 7; animation: edge-flow 1.8s linear infinite; }
+@keyframes edge-flow { to { stroke-dashoffset: -24; } }
+.map-node { position: absolute; inset: var(--map-y) auto auto var(--map-x); display: grid; gap: 5px; width: 196px; height: 76px; padding: 10px 12px; overflow: hidden; border: 1px solid var(--border); border-inline-start: 3px solid var(--emp, var(--emp-neutral)); border-radius: var(--r-md); background: var(--material-solid); color: var(--text); font: inherit; text-align: start; box-shadow: var(--shadow-1); }
+button.map-node { cursor: pointer; }
+.map-node-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.map-node-top .emp-dot { background: var(--emp, var(--emp-neutral)); }
+.map-agent { color: var(--text-faint); font-family: var(--mono); font-size: 9.5px; font-weight: 650; letter-spacing: .03em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-node .tag { margin-inline-start: auto; min-height: 16px; padding: 0 5px; font-size: 9px; }
+.map-node strong { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.map-node small { color: var(--text-faint); font-size: 10.5px; }
+.map-node.st-done { opacity: .82; }
+.map-node.st-failed, .map-node.st-blocked { border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.map-node.is-live { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-1); animation: node-breathe 2.4s var(--ease-in-out) infinite; }
+@keyframes node-breathe { 50% { box-shadow: 0 0 0 6px var(--accent-soft), var(--shadow-1); } }
+.map-limit { margin: var(--s-2) 0 0; }
+
+.insight-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); margin-top: var(--s-4); }
+.insight-card { min-width: 0; padding: var(--s-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.status-chart { margin-top: var(--s-4); }
+.status-stack { display: flex; height: 9px; overflow: hidden; border-radius: var(--r-full); background: var(--surface-3); }
+.status-stack .seg { display: block; min-width: 3px; }
+.seg-done { background: var(--success); } .seg-working { background: var(--accent); } .seg-waiting { background: var(--text-faint); } .seg-capacity { background: var(--info); } .seg-failed { background: var(--danger); }
+.chart-legend { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-3); margin-top: var(--s-3); color: var(--text-muted); font-size: 11.5px; }
+.chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.chart-legend i { width: 7px; height: 7px; border-radius: 50%; }
+.chart-legend b { color: var(--text); }
+.workload-chart { display: grid; gap: var(--s-2); margin-top: var(--s-3); }
+.workload-row { display: grid; grid-template-columns: 74px minmax(50px, 1fr) 32px; align-items: center; gap: var(--s-2); width: 100%; min-height: 28px; padding: 0; border: 0; background: transparent; color: var(--text-muted); font: inherit; text-align: start; cursor: pointer; }
+.workload-name { overflow: hidden; font-family: var(--mono); font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.workload-bar { height: 5px; overflow: hidden; border-radius: var(--r-full); background: var(--surface-3); }
+.workload-bar i { display: block; height: 100%; border-radius: inherit; background: var(--emp, var(--accent)); }
+.workload-row .num { text-align: end; font-size: 10.5px; }
+.chart-empty { display: grid; gap: 3px; margin-top: var(--s-3); padding: var(--s-4); border-radius: var(--r-md); background: var(--surface-2); }
+.chart-empty strong { font-size: var(--fs-sm); }
+.chart-empty span { color: var(--text-muted); font-size: var(--fs-xs); }
+
 .synthesis { position: relative; padding: var(--s-6); border-radius: var(--r-xl); overflow: hidden; }
 .synthesis.is-final { border-color: color-mix(in srgb, var(--gold) 30%, var(--border)); }
 .synthesis.is-final::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; background: linear-gradient(90deg, transparent, var(--gold), transparent); opacity: .7; }
@@ -269,6 +339,8 @@ body { background: var(--bg); }
 .tab-live { width: 7px; height: 7px; border-radius: 50%; background: var(--st-working); }
 .emp-panel { padding: var(--s-2) var(--s-5); border-radius: var(--r-xl); }
 .emp-panel:focus-visible { box-shadow: var(--focus); }
+.emp-panel-head { padding: var(--s-3) 0; border-bottom: 1px solid var(--border); }
+.emp-panel-head > div { display: inline-flex; align-items: center; gap: var(--s-2); }
 .node-card { padding: var(--s-4) 0; }
 .node-card + .node-card { border-top: 1px solid var(--border); }
 .assignment p { margin: var(--s-1) 0 0; overflow-wrap: anywhere; }
@@ -379,6 +451,17 @@ body { background: var(--bg); }
 .brand-sub { color: var(--text-faint); font-size: .6em; font-weight: 550; }
 .toast { border-radius: var(--r-full); box-shadow: var(--shadow-2); z-index: var(--z-toast); }
 
+/* Contextual owner decisions use native dialog semantics and preserve the
+   existing approval endpoints. This is one of the few deliberate overlays. */
+.app-dialog { width: min(460px, calc(100vw - 32px)); max-width: none; padding: 0; overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--r-2xl); background: var(--nav-material); color: var(--text); box-shadow: var(--shadow-3); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); }
+.app-dialog::backdrop { background: var(--scrim); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.app-dialog-form { display: grid; gap: var(--s-3); padding: var(--s-6); }
+.dialog-kicker { color: var(--accent); font-size: var(--fs-xs); font-weight: 700; }
+.dialog-title { margin: 0; font-size: var(--fs-xl); font-weight: 650; }
+.dialog-body { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.7; }
+.dialog-input { width: 100%; margin-top: var(--s-1); }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-2); }
+
 /* ---------------------------------------------------------------- responsive */
 @media (max-width: 900px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); gap: var(--s-4); }
@@ -413,6 +496,12 @@ body { background: var(--bg); }
   .command-bar { flex-wrap: nowrap; }
   .command-options > summary { padding: 0 var(--s-2); }
   .synthesis { padding: var(--s-5) var(--s-4); }
+  .journey { padding: var(--s-4); }
+  .journey-head { align-items: flex-start; }
+  .event-cue { flex-basis: 100%; }
+  .stage-rail { grid-auto-columns: minmax(112px, 132px); }
+  .insight-grid { grid-template-columns: minmax(0, 1fr); }
+  .map-head { align-items: flex-start; }
   .emp-panel { padding: var(--s-1) var(--s-4); }
   .job-facts { gap: var(--s-3) var(--s-6); }
   .archive-row { flex-direction: column; align-items: stretch; gap: var(--s-2); }
@@ -437,10 +526,15 @@ body { background: var(--bg); }
   .btn:active:not(:disabled), .pnav:active, .nav-icon:active, .job-card:active, .emp-card:active, .archive-row:active, .emp-tab:active, .segmented button:active, .settings-link:active, .back-link:active, .attention-notice:active, .link-tile:active, .chip:active { transform: none; }
   .more-panel { animation: none; }
   .skeleton span { animation: none; }
+  .map-edge.is-live, .map-node.is-live { animation: none; }
 }
 @media (prefers-reduced-transparency: reduce) {
   .topnav::before, .primary-nav { background: var(--bg-elevated); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .material { background: var(--material-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .app-dialog, .app-dialog::backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .app-dialog { background: var(--bg-elevated); }
+  .sheet-head, .sheet-scrim { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .sheet-head { background: var(--bg-elevated); }
 }
 @media (prefers-contrast: more) {
   :root { --border: var(--text-faint); --border-strong: var(--text-muted); }

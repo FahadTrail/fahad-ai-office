@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  ROSTER, arabicCount, archiveFilter, codingSessionState, createRefresher, deliveryProgress, fractionLabel, objectiveSignature, employeeColor, employeeState, employeeTabs, fractionWidth, greeting, jobStatus, numericDate, outputTypes,
+  ROSTER, arabicCount, archiveFilter, codingSessionState, createRefresher, deliveryProgress, fractionLabel, objectiveSignature, employeeColor, employeeState, employeeTabs, fractionWidth, greeting, jobStatus, numericDate, outputTypes, workflowMap, workflowMetrics,
 } from '../src/hub-ui/office-model.js';
 import { startPreview } from '../tools/hub-preview.mjs';
 
@@ -72,6 +72,37 @@ test('employee tabs group by employee and exclude CHIEF plan and synthesis', () 
     { kind: 'synthesis', state: 'waiting', agentSlug: 'chief-of-staff' },
   ]);
   assert.deepEqual(tabs.map((tab) => [tab.slug, tab.nodes.length, tab.state]), [['product-tech', 2, 'working'], ['legal-compliance', 1, 'failed']]);
+});
+
+test('the visual workflow map draws only recorded dependency edges and caps its surface', () => {
+  const nodes = [
+    { id: 'plan', title: 'Plan', kind: 'plan', state: 'done', agentSlug: 'chief-of-staff', dependsOn: [] },
+    { id: 'research', title: 'Research', kind: 'workstream', state: 'done', agentSlug: 'research-strategy', dependsOn: ['plan'] },
+    { id: 'product', title: 'Product', kind: 'workstream', state: 'working', agentSlug: 'product-tech', dependsOn: ['research', 'missing'] },
+    { id: 'synthesis', title: 'Synthesis', kind: 'synthesis', state: 'waiting', agentSlug: 'chief-of-staff', dependsOn: ['product'] },
+  ];
+  const map = workflowMap(nodes);
+  assert.deepEqual(map.edges.map((edge) => `${edge.from}>${edge.to}`), ['plan>research', 'research>product', 'product>synthesis']);
+  assert.equal(map.edges.find((edge) => edge.to === 'product').active, true, 'a working destination is the only animated edge');
+  assert.deepEqual(map.nodes.map((entry) => entry.level), [0, 1, 2, 3]);
+  const capped = workflowMap(nodes, { maxNodes: 2 });
+  assert.equal(capped.hidden, 2);
+  assert.deepEqual(capped.edges.map((edge) => `${edge.from}>${edge.to}`), ['plan>research'], 'no edge points at a hidden card');
+});
+
+test('workflow charts count real assignment rows and report honest empty states', () => {
+  const metrics = workflowMetrics([
+    { kind: 'plan', state: 'done', agentSlug: 'chief-of-staff' },
+    { kind: 'workstream', state: 'done', agentSlug: 'research-strategy', agentLabel: 'RESEARCH' },
+    { kind: 'workstream', state: 'working', agentSlug: 'product-tech', agentLabel: 'PRODUCT' },
+    { kind: 'development', state: 'capacity', agentSlug: 'coding-agent', agentLabel: 'CODING' },
+    { kind: 'workstream', state: 'blocked', agentSlug: 'legal-compliance', agentLabel: 'LEGAL' },
+    { kind: 'synthesis', state: 'waiting', agentSlug: 'chief-of-staff' },
+  ], [{}, {}]);
+  assert.equal(metrics.total, 4);
+  assert.deepEqual(metrics.statuses, { done: 1, working: 1, waiting: 0, capacity: 1, failed: 1 });
+  assert.equal(metrics.handoffs, 2);
+  assert.deepEqual(workflowMetrics([], []).employees, []);
 });
 
 test('employee states are honest: idle is available, CHIEF coordinates, a delivery is سلّم', () => {
@@ -146,10 +177,23 @@ test('the premium stylesheet uses tokens only and honours motion, transparency a
   assert.match(css, /@media \(prefers-reduced-transparency: reduce\)/);
   assert.match(css, /@media \(prefers-contrast: more\)/);
   assert.match(css, /backdrop-filter: var\(--blur\)/);
+  assert.doesNotMatch(css.match(/\.material \{[^}]+\}/s)?.[0] || '', /backdrop-filter/, 'content cards are solid; glass is for navigation and overlays');
+  assert.match(css, /\.workflow-map/);
+  assert.match(css, /\.app-dialog/);
   assert.doesNotMatch(css, /transition: all/);
   const tokens = read('app.css');
   assert.match(tokens, /--blur: saturate\(180%\) blur\(20px\)/);
   assert.match(tokens, /font-family: "JetBrains Mono"/);
+});
+
+test('V2.1 keeps the true-data visuals, employee sheets and owner confirmation in the frontend boundary', () => {
+  const screens = read('screens.js');
+  const app = read('app.js');
+  assert.match(screens, /workflowMap\(workflow\.nodes, \{ maxNodes: 24 \}\)/);
+  assert.match(screens, /Every line below is a recorded dependency/);
+  assert.match(screens, /data-employee-sheet/);
+  assert.match(app, /Confirm approval/);
+  assert.match(app, /Every other owner gate remains in place/);
 });
 
 test('preview: history and job detail come from the real handlers over fictional rows', async () => {

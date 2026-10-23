@@ -11,7 +11,7 @@
 
 import {
   ROSTER, arabicCount, codingSessionState, createRefresher, deliveryProgress, fractionLabel, objectiveSignature, employeeColor, employeeCopy, employeeState, employeeTabs, fractionWidth, greeting,
-  isTerminal, jobStatus, nodeStateLabel, numericDate, outputTypes, phaseWords, archiveFilter,
+  isTerminal, jobStatus, nodeStateLabel, numericDate, outputTypes, phaseWords, archiveFilter, workflowMap, workflowMetrics,
 } from './office-model.js';
 
 const ICON = {
@@ -46,6 +46,65 @@ function skeleton(lines = 3) {
 function isoDate(ctx, value) {
   const text = numericDate(value);
   return text ? `<time class="num" dir="ltr" datetime="${ctx.esc(value)}">${ctx.esc(text)}</time>` : '';
+}
+
+const MAP_CARD_W = 196;
+const MAP_CARD_H = 76;
+const MAP_STEP_X = 260;
+const MAP_STEP_Y = 98;
+const MAP_PAD = 20;
+
+function stageRail(ctx, steps = []) {
+  const t = words(ctx);
+  const ar = lang(ctx) === 'ar';
+  if (!steps.length) return `<div class="stage-empty small muted">${t('لم تُسجّل مراحل CHIEF بعد.', 'CHIEF stages have not been recorded yet.')}</div>`;
+  return `<ol class="stage-rail" tabindex="0" aria-label="${t('مراحل تنفيذ المهمة', 'Job stages')}">${steps.map((step, index) => {
+    const state = STEP_STATE[step.state] || [step.state, step.state];
+    const label = STEP_WORDS[step.id] || [step.id, step.id];
+    return `<li class="stage-stop is-${ctx.esc(step.state)}" ${step.state === 'current' ? 'aria-current="step"' : ''}><span class="stage-index num" aria-hidden="true">${index + 1}</span><span><strong>${ctx.esc(label[ar ? 0 : 1])}</strong><small>${ctx.esc(state[ar ? 0 : 1])}</small></span></li>`;
+  }).join('')}</ol>`;
+}
+
+function workflowVisual(ctx, workflow, objective) {
+  const t = words(ctx);
+  const graph = workflowMap(workflow.nodes, { maxNodes: 24 });
+  const metrics = workflowMetrics(workflow.nodes, workflow.handoffs);
+  const width = Math.max(420, graph.columns * MAP_STEP_X + MAP_PAD * 2 - (MAP_STEP_X - MAP_CARD_W));
+  const height = Math.max(116, graph.rows * MAP_STEP_Y + MAP_PAD * 2 - (MAP_STEP_Y - MAP_CARD_H));
+  const position = new Map(graph.nodes.map((node) => [node.id, { x: MAP_PAD + node.level * MAP_STEP_X, y: MAP_PAD + node.row * MAP_STEP_Y }]));
+  const edges = graph.edges.map((edge) => {
+    const from = position.get(edge.from); const to = position.get(edge.to);
+    if (!from || !to) return '';
+    const x1 = from.x + MAP_CARD_W; const y1 = from.y + MAP_CARD_H / 2; const x2 = to.x; const y2 = to.y + MAP_CARD_H / 2;
+    const bend = x1 + Math.max(22, (x2 - x1) / 2);
+    return `<path class="map-edge${edge.active ? ' is-live' : ''}" d="M${x1} ${y1} C${bend} ${y1} ${bend} ${y2} ${x2} ${y2}"/>`;
+  }).join('');
+  const nodes = graph.nodes.map((node) => {
+    const pos = position.get(node.id);
+    const employee = node.agentSlug ? ` data-map-employee="${ctx.esc(node.agentSlug)}"` : '';
+    const element = node.agentSlug ? 'button' : 'div';
+    const label = `${node.agentLabel || t('مهمة', 'Task')} — ${node.title} — ${nodeStateLabel(node.state, lang(ctx))}`;
+    return `<${element} ${node.agentSlug ? 'type="button"' : ''} class="map-node st-${ctx.esc(node.state)}${node.state === 'working' ? ' is-live' : ''}" style="--map-x:${pos.x}px;--map-y:${pos.y}px;--emp:${employeeColor(node.agentSlug)}"${employee} aria-label="${ctx.esc(label)}">
+      <span class="map-node-top"><span class="emp-dot" aria-hidden="true"></span><span class="map-agent" dir="ltr">${ctx.esc(node.agentLabel || t('النظام', 'System'))}</span>${node.revision ? `<span class="tag">${t('تعديل', 'Revision')}</span>` : ''}</span>
+      <strong dir="auto">${ctx.esc(node.title || t('خطوة بدون عنوان', 'Untitled step'))}</strong><small>${ctx.esc(nodeStateLabel(node.state, lang(ctx)))}</small>
+    </${element}>`;
+  }).join('');
+  const map = graph.nodes.length ? `<div class="workflow-map-scroll" tabindex="0" aria-label="${t('خريطة قابلة للتمرير من CHIEF إلى التسليم النهائي', 'Scrollable map from CHIEF to final delivery')}"><div class="workflow-map" style="--map-w:${width}px;--map-h:${height}px" role="group"><svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-hidden="true" focusable="false">${edges}</svg>${nodes}</div></div>${graph.hidden ? `<p class="map-limit small muted">${t(`تظهر أول ${graph.nodes.length} خطوة من ${graph.nodes.length + graph.hidden} لحماية الأداء. كل الخطوات موجودة في تفاصيل التنفيذ.`, `Showing the first ${graph.nodes.length} of ${graph.nodes.length + graph.hidden} steps for performance. Every step remains in Execution details.`)}</p>` : ''}`
+    : `<div class="chart-empty"><strong>${t('لا توجد خريطة بعد', 'No map yet')}</strong><span>${t('ستظهر العلاقات فور تسجيل مهام واعتماديات حقيقية.', 'Relationships appear once real tasks and dependencies are recorded.')}</span></div>`;
+  const total = metrics.total;
+  const statusOrder = [['done', t('سُلّمت', 'Delivered')], ['working', t('تعمل الآن', 'Working now')], ['waiting', t('بانتظار', 'Waiting')], ['capacity', t('سعة', 'Capacity')], ['failed', t('متعثّرة', 'Failed')]];
+  const statusChart = total ? `<div class="status-chart" role="img" aria-label="${t(`${total} خطوة تسليم مسجلة`, `${total} recorded delivery steps`)}"><div class="status-stack">${statusOrder.filter(([key]) => metrics.statuses[key]).map(([key, label]) => `<span class="seg seg-${key}" style="width:${(metrics.statuses[key] / total) * 100}%" title="${ctx.esc(`${label}: ${metrics.statuses[key]}`)}"></span>`).join('')}</div><div class="chart-legend">${statusOrder.filter(([key]) => metrics.statuses[key]).map(([key, label]) => `<span><i class="seg-${key}"></i>${label} <b class="num">${metrics.statuses[key]}</b></span>`).join('')}</div></div>`
+    : `<div class="chart-empty"><strong>${t('لا توجد تكليفات بعد', 'No assignments yet')}</strong><span>${t('CHIEF ما زال في مرحلة التخطيط.', 'CHIEF is still planning.')}</span></div>`;
+  const maxWork = Math.max(1, ...metrics.employees.map((employee) => employee.total));
+  const workload = metrics.employees.length ? `<div class="workload-chart">${metrics.employees.map((employee) => `<button type="button" class="workload-row" data-map-employee="${ctx.esc(employee.slug)}"><span class="workload-name" dir="ltr">${ctx.esc(employee.label)}</span><span class="workload-bar"><i style="width:${Math.round((employee.total / maxWork) * 100)}%;--emp:${employeeColor(employee.slug)}"></i></span><span class="num">${employee.done}/${employee.total}</span></button>`).join('')}</div>`
+    : `<div class="chart-empty"><strong>${t('لا يوجد توزيع فريق بعد', 'No team distribution yet')}</strong><span>${t('لن نعرض نسبًا قبل وصول تكليفات حقيقية.', 'No ratios are shown until real assignments exist.')}</span></div>`;
+  const cost = workflow.job.costUsd == null ? t('غير متاح', 'Unavailable') : `$${Number(workflow.job.costUsd).toFixed(Number(workflow.job.costUsd) < 0.1 ? 4 : 2)}`;
+  const stages = objective?.orchestration?.steps || [];
+  return `<section class="journey material" aria-labelledby="journeyTitle"><div class="journey-head"><div><span class="eyebrow">${t('مباشر من سجل المهمة', 'Live from the job record')}</span><h2 id="journeyTitle">${t('رحلة التنفيذ', 'Execution journey')}</h2></div><span class="event-cue" role="status"><span class="live-dot${isTerminal(workflow.job.status) ? ' is-off' : ''}" aria-hidden="true"></span>${isTerminal(workflow.job.status) ? t('انتهت المهمة', 'Job ended') : t('يتحدّث مع أحداث المكتب', 'Updating with Office events')}</span></div>
+    ${stageRail(ctx, stages)}
+    <div class="map-head"><div><h3>${t('خريطة التفويض والاعتماديات', 'Delegation & dependency map')}</h3><p>${t('كل خط أدناه اعتماد مسجّل فعليًا، وليس مسارًا تخمينيًا.', 'Every line below is a recorded dependency, never an inferred route.')}</p></div><span class="metric-chip"><b class="num">${metrics.handoffs}</b>${t('تسليمات', 'handoffs')}</span></div>${map}
+    <div class="insight-grid"><section class="insight-card"><div class="insight-head"><h3>${t('حالة خطوات التسليم', 'Delivery-step status')}</h3><span class="metric-chip"><b class="num">${total}</b>${t('خطوة', 'steps')}</span></div>${statusChart}</section>
+      <section class="insight-card"><div class="insight-head"><h3>${t('توزيع التكليفات', 'Assignment distribution')}</h3><span class="metric-chip"><b class="num" dir="ltr">${ctx.esc(cost)}</b>${t('تكلفة مسجلة', 'recorded cost')}</span></div>${workload}</section></div></section>`;
 }
 
 // ===================================================================== Office
@@ -291,6 +350,7 @@ export async function renderJobDetail(ctx, id) {
       ctx.view.innerHTML = `<div class="pg job-page">
         <a class="back-link" href="${origin}">${ICON.back}<span>${origin === '#/archive' ? t('الأرشيف', 'Archive') : t('المكتب', 'Office')}</span></a>
         <header class="job-head" id="jobHead"></header>
+        <div id="workflowVisual"></div>
         <section class="synthesis material" id="synthesis" aria-labelledby="synthesisTitle"></section>
         <section class="group" aria-labelledby="teamOutTitle"><div class="group-head"><h2 id="teamOutTitle">${t('مخرجات الفريق', 'Team deliverables')}</h2></div><div id="teamOut"></div></section>
         <section class="group" aria-labelledby="followTitle"><div class="group-head"><h2 id="followTitle">${t('المتابعة', 'Follow-up')}</h2></div><div id="followSlot"></div><div id="composerSlot"></div></section>
@@ -311,9 +371,19 @@ export async function renderJobDetail(ctx, id) {
         <div><dt>${t('التكليفات المُسلّمة', 'Assignments delivered')}</dt><dd>${progress.fraction ? `<span class="num" dir="ltr" title="${ctx.esc(fractionLabel(progress, lang(ctx)))}">${progress.delivered}/${progress.total}</span>` : `<span class="muted">${ctx.esc(phaseWords(progress.phase, lang(ctx)) || '—')}</span>`}</dd></div>
       </dl>`;
     paintSynthesis({ workflow, objective, progress, direct, message });
+    paintWorkflowVisual(workflow, objective);
     paintTeam(workflow, tabs);
     paintFollow({ workflow, objective, conversation, job });
     paintExec({ workflow, objective });
+  };
+
+  const paintWorkflowVisual = (workflow, objective) => {
+    const slot = ctx.view.querySelector('#workflowVisual');
+    if (!slot) return;
+    slot.innerHTML = workflowVisual(ctx, workflow, objective);
+    slot.querySelectorAll('[data-map-employee]').forEach((button) => {
+      button.onclick = () => ctx.openEmployee(button.dataset.mapEmployee);
+    });
   };
 
   const paintSynthesis = ({ workflow, objective, progress, direct, message }) => {
@@ -389,7 +459,7 @@ export async function renderJobDetail(ctx, id) {
     };
     const active = tabs.find((tab) => tab.slug === ui.tab);
     slot.innerHTML = `<div class="emp-tabs" role="tablist" aria-label="${t('مخرجات الفريق', 'Team deliverables')}">${tabs.map(tabButton).join('')}</div>
-      <div class="emp-panel material" role="tabpanel" id="panel-${ctx.esc(active.slug)}" aria-labelledby="tab-${ctx.esc(active.slug)}" tabindex="0">${active.nodes.map(nodeCard).join('')}</div>`;
+      <div class="emp-panel material" role="tabpanel" id="panel-${ctx.esc(active.slug)}" aria-labelledby="tab-${ctx.esc(active.slug)}" tabindex="0"><div class="emp-panel-head"><div>${dot(active.slug)}<strong dir="ltr">${ctx.esc(active.label)}</strong><span class="small muted">${ctx.esc(nodeStateLabel(active.state, lang(ctx)))}</span></div><button type="button" class="btn btn-ghost btn-sm" data-employee-sheet="${ctx.esc(active.slug)}">${t('تفاصيل الموظف', 'Employee details')}</button></div>${active.nodes.map(nodeCard).join('')}</div>`;
     const buttons = [...slot.querySelectorAll('[role="tab"]')];
     const select = (slug, focus = false) => { ui.tab = slug; paintTeam(workflow, tabs); if (focus) ctx.view.querySelector(`#tab-${CSS.escape(slug)}`)?.focus(); };
     buttons.forEach((button, index) => {
@@ -402,6 +472,7 @@ export async function renderJobDetail(ctx, id) {
         if (event.key === 'End') { event.preventDefault(); select(buttons.at(-1).dataset.tab, true); }
       };
     });
+    slot.querySelector('[data-employee-sheet]')?.addEventListener('click', (event) => ctx.openEmployee(event.currentTarget.dataset.employeeSheet));
   };
 
   const paintFollow = ({ workflow, objective, conversation, job }) => {

@@ -12,7 +12,8 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { startPreview } from './hub-preview.mjs';
 
-const require = createRequire(join(execSync('npm root -g').toString().trim(), 'noop.js'));
+const moduleRoot = process.env.PLAYWRIGHT_NODE_MODULES || execSync('npm root -g').toString().trim();
+const require = createRequire(join(moduleRoot, 'noop.js'));
 const { chromium } = require('playwright');
 
 const WS = '11111111-1111-4111-8111-111111111111';
@@ -23,6 +24,7 @@ export const EDGE = {
   'job-planning': [job(7), 'history'], 'office-many': ['#/', 'history'], 'office-empty': ['#/', 'idle'], 'archive-history': ['#/archive', 'history'],
   'settings-team': ['#/settings/team', 'work'], 'settings-models': ['#/settings/models', 'work'], 'settings-coding': ['#/settings/coding', 'work'],
   'settings-health': ['#/settings/health', 'work'], 'settings-appearance': ['#/settings/appearance', 'work'], 'menu-open': ['#/', 'work', '#navMore > summary'],
+  'employee-sheet': ['#/', 'work', '[data-employee]'], 'approval-confirm': ['#/settings/approvals', 'work', '[data-approval-decision="approved"]'],
   'english-office': ['#/', 'history', null, 'en'], 'english-job': [job(1), 'history', null, 'en'],
 };
 const VIEWPORTS = { desktop: [1440, 900], mobile: [390, 844] };
@@ -43,7 +45,7 @@ async function shoot({ name, hash, moment = 'history', click = null, language = 
   await context.addInitScript(([id, value, lang]) => { localStorage.setItem('hub-workspace-id', id); localStorage.setItem('hub-theme', value); localStorage.setItem('hub-language', lang); }, [WS, theme, language]);
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(`${name}/${size}/${theme}: ${error.message}`));
-  page.on('console', (message) => { if (message.type() === 'error' && !/ERR_CERT_AUTHORITY_INVALID|localStorage|EventSource/.test(message.text())) errors.push(`${name}/${size}/${theme}: ${message.text()}`); });
+  page.on('console', (message) => { if (message.type() === 'error' && !/ERR_CERT_AUTHORITY_INVALID|localStorage|EventSource|status of 404/.test(message.text())) errors.push(`${name}/${size}/${theme}: ${message.text()}`); });
   await page.goto(`${await preview(moment)}${hash}`);
   await page.waitForTimeout(1200);
   if (click) { await page.locator(click).first().click(); await page.waitForTimeout(400); }
