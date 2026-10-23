@@ -56,7 +56,7 @@ test('no active objective yields an empty current state and does not promote his
   assert.equal(work.current, null);
   assert.deepEqual(work.active, []);
   assert.equal(work.counts.real, 0);
-  const legacy = objectiveIndex([completed]);
+  const legacy = objectiveIndex([completed], { now: Date.UTC(2026, 9, 9, 12, 0) });
   assert.equal(legacy.currentId, completed.id, 'the existing operations view is unchanged');
 });
 

@@ -52,7 +52,7 @@ Old hashes redirect to their new home: `#/attention`, `#/models`, `#/employees`,
 
 ## Verification
 
-* `node --test`: 784 tests, 783 pass. The one failure, `test/platform-foundation.test.js` line 52, fails identically on `main` at `e09e23d`: same assertion (`currentId` is `null`, expected the completed job), checked in a separate worktree. The cause is the test's fixture time, 2026-10-09 12:00 UTC. `objectiveIndex()` in `src/hub-office-ops.js` measures its 7-day "recent" window from the real clock, so the test has failed for every run since 2026-10-16. It is not UI code and is not changed here.
+* `node --test`: 784 of 784 pass. `test/platform-foundation.test.js` line 52 used to fail on `main` too (at `e09e23d`). Its fixture time is 2026-10-09 12:00 UTC, but `objectiveIndex()` in `src/hub-office-ops.js` measures its 7-day "recent" window from the real clock, so the test began failing on 2026-10-16. With Fahad's approval, the test now passes that fixture time as `now`. This is a test-only, one-line change; no production code changed.
 * Request load on the Office (preview, live stream connected), measured against the first push of this branch:
   * Initial load: 12 → 8 requests.
   * 45 s idle: 6 → 0.
