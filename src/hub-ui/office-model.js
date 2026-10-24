@@ -204,6 +204,71 @@ export function employeeTabs(nodes = []) {
   });
 }
 
+// A bounded, presentation-only view of the REAL workflow graph. Edges are
+// emitted only for explicit dependsOn ids returned by /api/workflows/:id; the
+// UI never guesses a connection. The cap keeps a pathological workflow from
+// creating an unbounded DOM/SVG surface. Execution details still lists every
+// node when the visual map is capped.
+export function workflowMap(nodes = [], { maxNodes = 24 } = {}) {
+  const source = nodes.filter((node) => node?.id).map((node) => ({
+    id: String(node.id), title: String(node.title || ''), kind: String(node.kind || 'task'), state: String(node.state || 'waiting'),
+    agentSlug: node.agentSlug || null, agentLabel: String(node.agentLabel || node.agent || ''), revision: Boolean(node.revision),
+    dependsOn: Array.isArray(node.dependsOn) ? node.dependsOn.map(String) : [],
+  }));
+  const ids = new Set(source.map((node) => node.id));
+  for (const node of source) node.dependsOn = node.dependsOn.filter((id) => ids.has(id) && id !== node.id);
+  const byId = new Map(source.map((node) => [node.id, node]));
+  const levels = new Map();
+  const levelOf = (node, visiting = new Set()) => {
+    if (levels.has(node.id)) return levels.get(node.id);
+    if (visiting.has(node.id)) return 0;
+    const next = new Set(visiting); next.add(node.id);
+    const dependencies = node.dependsOn.map((id) => byId.get(id)).filter(Boolean);
+    const level = dependencies.length ? 1 + Math.max(...dependencies.map((dependency) => levelOf(dependency, next))) : 0;
+    levels.set(node.id, level);
+    return level;
+  };
+  for (const node of source) levelOf(node);
+  const visible = source.slice(0, Math.max(1, maxNodes));
+  const visibleIds = new Set(visible.map((node) => node.id));
+  const rows = new Map();
+  const laidOut = visible.map((node) => {
+    const level = levels.get(node.id) || 0;
+    const row = rows.get(level) || 0;
+    rows.set(level, row + 1);
+    return { ...node, level, row };
+  });
+  const edges = laidOut.flatMap((node) => node.dependsOn.filter((id) => visibleIds.has(id)).map((from) => ({ from, to: node.id, active: node.state === 'working' })));
+  return {
+    nodes: laidOut, edges, hidden: Math.max(0, source.length - laidOut.length),
+    columns: laidOut.length ? Math.max(...laidOut.map((node) => node.level)) + 1 : 0,
+    rows: rows.size ? Math.max(...rows.values()) : 0,
+  };
+}
+
+// Concise charts use assignment nodes only, matching the delivery fraction.
+// No percentages are returned for an empty graph and unknown states remain in
+// the visible "waiting" bucket instead of being silently discarded.
+export function workflowMetrics(nodes = [], handoffs = []) {
+  const assignments = nodes.filter((node) => UNIT_KINDS.has(node.kind));
+  const statuses = { done: 0, working: 0, waiting: 0, capacity: 0, failed: 0 };
+  const employees = new Map();
+  for (const node of assignments) {
+    const key = node.state === 'done' ? 'done' : node.state === 'working' ? 'working' : node.state === 'capacity' ? 'capacity' : FAILED_STATES.has(node.state) ? 'failed' : 'waiting';
+    statuses[key] += 1;
+    const slug = node.agentSlug || node.agent || 'unknown';
+    const entry = employees.get(slug) || { slug, label: node.agentLabel || node.agent || slug, total: 0, done: 0 };
+    entry.total += 1;
+    if (key === 'done') entry.done += 1;
+    employees.set(slug, entry);
+  }
+  return {
+    total: assignments.length, statuses,
+    employees: [...employees.values()],
+    handoffs: Array.isArray(handoffs) ? handoffs.length : 0,
+  };
+}
+
 const NODE_STATE = Object.freeze({
   done: ['سلّم', 'Delivered'], working: ['يعمل', 'Working'], waiting: ['بانتظار مخرجات سابقة', 'Waiting for earlier work'],
   ready: ['جاهز للبدء', 'Ready to start'], capacity: ['بانتظار سعة نموذج مجانية — يكمل تلقائيًا', 'Waiting for free model capacity — resumes automatically'],

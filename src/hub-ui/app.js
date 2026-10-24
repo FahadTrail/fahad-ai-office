@@ -765,7 +765,20 @@ async function renderAttention() {
       ${info.length ? `<details class="disclosure"><summary>${ar ? 'آخر الأعمال المكتملة' : 'Recent completions'}</summary><div class="disclosure-body">${info.map((item) => `<a class="nf-item" href="${href(item)}"><span class="nf-cat">${ar ? 'تم' : 'Done'}</span><span class="grow" dir="auto">${esc(item.title)}</span><time>${when(item.at)}</time></a>`).join('')}</div></details>` : ''}</div>`;
     bind(view, { '[data-approval-decision]': async (_, button) => {
       const decision = button.dataset.approvalDecision;
-      const note = decision === 'rejected' ? await ask(ar ? 'سبب الرفض (اختياري)' : 'Reason for rejection (optional)', '', true) : null;
+      const approval = approvals.find((item) => String(item.id) === String(button.dataset.id));
+      if (!approval) return;
+      const action = approval.summary || approval.action || approval.tool_name || (ar ? 'الإجراء المحمي' : 'the protected action');
+      let note = null;
+      if (decision === 'approved') {
+        const confirmed = await dialog({
+          title: ar ? 'تأكيد الموافقة' : 'Confirm approval',
+          body: ar ? `${action} — سيُسمح بهذه الخطوة المحمية فقط ضمن المهمة الحالية، وتبقى كل بوابات المالك الأخرى كما هي.` : `${action} — this allows only this protected step in the current task. Every other owner gate remains in place.`,
+          confirm: ar ? 'موافقة ومتابعة' : 'Approve & continue',
+        });
+        if (!confirmed) return;
+      } else {
+        note = await ask(ar ? 'سبب الرفض (اختياري)' : 'Reason for rejection (optional)', '', true);
+      }
       if (decision === 'rejected' && note === null) return;
       busy(button, true, ar ? 'جارٍ الحفظ…' : 'Saving…');
       try { await api(`/api/approvals/${button.dataset.id}`, { method: 'POST', body: { decision, note: note || undefined } }); toast(decision === 'approved' ? (ar ? 'تمت الموافقة' : 'Approved') : (ar ? 'تم الرفض' : 'Rejected')); await draw(); await refreshSidebar(); }
@@ -996,10 +1009,9 @@ async function renderAppearancePanel() {
 function dialog({ title, body = '', input = null, confirm = 'OK', danger = false }) {
   return new Promise((resolve) => {
     const element = document.createElement('dialog');
-    element.className = 'card';
-    element.style.cssText = 'max-width:440px;width:calc(100vw - 32px);color:var(--text);border:1px solid var(--border-strong)';
+    element.className = 'app-dialog';
     const okLabel = confirm === 'OK' ? (state.language === 'ar' ? 'تم' : 'OK') : confirm === 'Yes' ? (state.language === 'ar' ? 'نعم' : 'Yes') : confirm;
-    element.innerHTML = `<form method="dialog"><h2 class="card-title">${esc(title)}</h2>${body ? `<p class="small muted">${esc(body)}</p>` : ''}${input !== null ? `<textarea class="input" rows="${input.multiline ? 3 : 1}" dir="auto">${esc(input.value)}</textarea>` : ''}<div class="row" style="justify-content:flex-end;margin-top:var(--s-4)"><button class="btn btn-ghost" value="cancel">${state.language === 'ar' ? 'إلغاء' : 'Cancel'}</button><button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" value="ok">${esc(okLabel)}</button></div></form>`;
+    element.innerHTML = `<form method="dialog" class="app-dialog-form"><span class="dialog-kicker">${state.language === 'ar' ? 'قرار المالك' : 'Owner decision'}</span><h2 class="dialog-title">${esc(title)}</h2>${body ? `<p class="dialog-body" dir="auto">${esc(body)}</p>` : ''}${input !== null ? `<textarea class="input dialog-input" rows="${input.multiline ? 3 : 1}" dir="auto">${esc(input.value)}</textarea>` : ''}<div class="dialog-actions"><button class="btn btn-ghost" value="cancel">${state.language === 'ar' ? 'إلغاء' : 'Cancel'}</button><button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" value="ok">${esc(okLabel)}</button></div></form>`;
     document.body.append(element);
     element.addEventListener('close', () => {
       const ok = element.returnValue === 'ok';

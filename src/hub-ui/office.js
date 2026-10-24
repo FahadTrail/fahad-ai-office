@@ -755,8 +755,9 @@ export function openHandoff(ctx, handoff) {
 // ------------------------------------------------------------------ employee workspace
 export async function openEmployee(ctx, slug) {
   const { api, esc, q, ws, when } = ctx;
+  const t = (ar, en) => (ctx.language === 'en' ? en : ar);
   await ensureOfficeStyles();
-  const panel = sheet(ctx, { title: 'Loading…', body: '<div class="drawer-loading" aria-busy="true"></div>', size: 'lg' });
+  const panel = sheet(ctx, { title: t('نحمّل تفاصيل الموظف…', 'Loading employee details…'), body: '<div class="drawer-loading" aria-busy="true"></div>', size: 'lg' });
   try {
     const [data, artifacts, capabilities] = await Promise.all([
       api(`/api/agents/${slug}${q({ workspaceId: ws() })}`),
@@ -767,36 +768,36 @@ export async function openEmployee(ctx, slug) {
     const state = data.state || { state: 'AVAILABLE' };
     const visual = visualState({ ...state, key: agent.key });
     const statusOf = new Map(capabilities.map((item) => [item.id, item]));
-    const tabs = [['now', 'Now'], ['artifacts', `Artifacts (${artifacts.length})`], ['handoffs', `Handoffs (${data.handoffs?.length || 0})`], ['history', 'History'], ...(agent.directChat ? [['chats', 'Conversations']] : []), ['tools', 'Tools']];
+    const tabs = [['now', t('الآن', 'Now')], ['artifacts', `${t('المخرجات', 'Artifacts')} (${artifacts.length})`], ['handoffs', `${t('التسليمات', 'Handoffs')} (${data.handoffs?.length || 0})`], ['history', t('السجل', 'History')], ...(agent.directChat ? [['chats', t('المحادثات', 'Conversations')]] : []), ['tools', t('الأدوات', 'Tools')]];
     const chat = agent.executor === 'coding'
-      ? '<a class="btn btn-primary" href="#/code">Give CODING a task</a>'
-      : agent.executor === 'chief' ? '<a class="btn btn-primary" href="#/chief">Ask CHIEF</a>'
-        : `<form class="drawer-chat" id="drawerChat"><label class="sr-only" for="drawerChatInput">Message ${esc(agent.label)}</label><input id="drawerChatInput" class="input" dir="auto" placeholder="Talk to ${esc(agent.label)} directly…"><button class="btn btn-primary" type="submit">Send</button></form>`;
+      ? `<a class="btn btn-primary" href="#/code">${t('أعط CODING مهمة', 'Give CODING a task')}</a>`
+      : agent.executor === 'chief' ? `<a class="btn btn-primary" href="#/chief">${t('اطلب من CHIEF', 'Ask CHIEF')}</a>`
+        : `<form class="drawer-chat" id="drawerChat"><label class="sr-only" for="drawerChatInput">${t('راسل', 'Message')} ${esc(agent.label)}</label><input id="drawerChatInput" class="input" dir="auto" placeholder="${t(`راسل ${agent.label} مباشرة…`, `Talk to ${agent.label} directly…`)}"><button class="btn btn-primary" type="submit">${t('أرسل', 'Send')}</button></form>`;
     panel.set(`${agent.label}`, `
       <div class="drawer-head" style="--agent:${esc(agent.color || 'var(--accent)')}">
         <div class="drawer-art" data-state="${esc(state.state)}">${stationArt(agent.key, agent.label)}</div>
         <div class="drawer-id"><div class="drawer-role">${esc(agent.tagline || agent.deliverable || '')}</div>
-          <div class="row"><span class="state-chip" data-state="${esc(state.state)}">${esc(stateWord(visual))}</span>${agent.nameAr ? `<span class="small muted" dir="rtl" lang="ar">${esc(agent.nameAr)}</span>` : ''}</div>
+          <div class="row"><span class="state-chip" data-state="${esc(state.state)}">${esc(stateLabel(visual, ctx.language))}</span>${agent.nameAr ? `<span class="small muted" dir="rtl" lang="ar">${esc(agent.nameAr)}</span>` : ''}</div>
           <p class="small muted">${esc(agent.scope)}</p>${chat}</div>
       </div>
       <div class="tabs" role="tablist">${tabs.map(([id, text], index) => `<button role="tab" type="button" class="tab" id="tab-${id}" aria-controls="pane-${id}" aria-selected="${index === 0}" data-tab="${id}">${esc(text)}</button>`).join('')}</div>
       <section class="pane" id="pane-now" role="tabpanel" aria-labelledby="tab-now">
-        ${state.assignment ? `<div class="now-card"><div class="xs faint">CURRENT ${state.assignment.sessionId ? 'TASK' : 'PROJECT'}</div>
+        ${state.assignment ? `<div class="now-card"><div class="xs faint">${state.assignment.sessionId ? t('المهمة الحالية', 'CURRENT TASK') : t('المشروع الحالي', 'CURRENT PROJECT')}</div>
           <a class="now-title" dir="auto" href="${state.assignment.jobId ? `#/workflow/${esc(state.assignment.jobId)}` : `#/task/${esc(state.assignment.sessionId)}`}">${esc(state.assignment.objective)}</a>
           <div class="small" dir="auto">${esc(state.assignment.task || '')}</div>${state.detail && state.detail !== `Working on ${state.assignment.task}` ? `<div class="small muted" dir="auto">${esc(state.detail)}</div>` : ''}
-          ${data.progress != null ? `<span class="progress" role="progressbar" aria-valuenow="${data.progress}" aria-valuemin="0" aria-valuemax="100" aria-label="Objective progress"><span style="width:${Math.max(3, data.progress)}%"></span></span><div class="xs faint num">${data.progress}% of the objective</div>` : ''}
-          ${state.assignment.resumesAt ? `<div class="small capacity-note">Resumes automatically around ${esc(new Date(state.assignment.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</div>` : ''}</div>`
-          : '<div class="now-card"><div class="now-title">Available</div><p class="small muted">No task assigned right now.</p></div>'}
-        ${data.attention?.length ? `<h3 class="pane-title">Needs attention</h3>${data.attention.map((item) => `<a class="attention-row attention-${esc(item.kind)}" href="${item.sessionId ? `#/task/${esc(item.sessionId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : '#/attention'}">${esc(item.text)}</a>`).join('')}` : ''}
-        ${data.codingSessions?.length ? `<h3 class="pane-title">Engineering tasks</h3>${data.codingSessions.map((session) => `<a class="list-row" href="#/task/${esc(session.id)}"><span class="grow" dir="auto">${esc(session.title)}</span><span class="xs faint">${esc(session.status)}${session.ci ? ` · CI ${esc(session.ci)}` : ''}</span></a>`).join('')}` : ''}
+          ${data.progress != null ? `<span class="progress" role="progressbar" aria-valuenow="${data.progress}" aria-valuemin="0" aria-valuemax="100" aria-label="${t('تقدم الهدف', 'Objective progress')}"><span style="width:${Math.max(3, data.progress)}%"></span></span><div class="xs faint num">${data.progress}% ${t('من الهدف', 'of the objective')}</div>` : ''}
+          ${state.assignment.resumesAt ? `<div class="small capacity-note">${t('يستأنف تلقائيًا حوالي', 'Resumes automatically around')} ${esc(new Date(state.assignment.resumesAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</div>` : ''}</div>`
+          : `<div class="now-card"><div class="now-title">${t('متاح', 'Available')}</div><p class="small muted">${t('لا توجد مهمة مكلّف بها الآن.', 'No task assigned right now.')}</p></div>`}
+        ${data.attention?.length ? `<h3 class="pane-title">${t('يحتاج انتباهك', 'Needs attention')}</h3>${data.attention.map((item) => `<a class="attention-row attention-${esc(item.kind)}" href="${item.sessionId ? `#/task/${esc(item.sessionId)}` : item.jobId ? `#/workflow/${esc(item.jobId)}` : '#/attention'}">${esc(item.text)}</a>`).join('')}` : ''}
+        ${data.codingSessions?.length ? `<h3 class="pane-title">${t('مهام هندسية', 'Engineering tasks')}</h3>${data.codingSessions.map((session) => `<a class="list-row" href="#/task/${esc(session.id)}"><span class="grow" dir="auto">${esc(session.title)}</span><span class="xs faint">${esc(session.status)}${session.ci ? ` · CI ${esc(session.ci)}` : ''}</span></a>`).join('')}` : ''}
       </section>
-      <section class="pane" id="pane-artifacts" role="tabpanel" aria-labelledby="tab-artifacts" hidden>${artifacts.length ? `<div class="drawer-artifacts">${artifacts.slice(0, 8).map((artifact) => ctx.renderArtifact(artifact)).join('')}</div><a class="btn btn-ghost btn-sm" href="#/artifacts">Open the artifact library</a>` : '<p class="muted small">No artifacts yet. Visual deliverables appear here.</p>'}</section>
-      <section class="pane" id="pane-handoffs" role="tabpanel" aria-labelledby="tab-handoffs" hidden>${data.handoffs?.length ? data.handoffs.map((handoff, index) => `<button type="button" class="list-row handoff-row" data-handoff="${index}"><span class="grow"><strong>${esc(handoff.from)}</strong> → <strong>${esc(handoff.to)}</strong><span class="small muted" dir="auto"> ${esc(handoff.task || '')}</span></span><span class="xs faint">${esc(when(handoff.at))}</span></button>`).join('') : '<p class="muted small">No handoffs in the last 30 days.</p>'}</section>
-      <section class="pane" id="pane-history" role="tabpanel" aria-labelledby="tab-history" hidden>${data.recent.length ? data.recent.map((item) => `<a class="list-row" href="#/workflow/${esc(item.jobId)}"><span class="grow"><span dir="auto">${esc(item.title)}</span><span class="small muted" dir="auto"> — ${esc(item.objective)}</span>${item.summary ? `<span class="block small" dir="auto">${esc(item.summary)}</span>` : ''}</span><span class="xs faint">${esc(item.status)} · ${esc(when(item.at))}</span></a>`).join('') : '<p class="muted small">No work in the last 30 days.</p>'}</section>
-      ${agent.directChat ? `<section class="pane" id="pane-chats" role="tabpanel" aria-labelledby="tab-chats" hidden>${data.conversations.length ? data.conversations.map((conversation) => `<a class="list-row" href="#/chat/${esc(conversation.id)}"><span class="grow" dir="auto">${esc(conversation.title)}</span><span class="xs faint">${esc(when(conversation.lastMessageAt))}</span></a>`).join('') : '<p class="muted small">No direct conversations yet.</p>'}</section>` : ''}
+      <section class="pane" id="pane-artifacts" role="tabpanel" aria-labelledby="tab-artifacts" hidden>${artifacts.length ? `<div class="drawer-artifacts">${artifacts.slice(0, 8).map((artifact) => ctx.renderArtifact(artifact)).join('')}</div><a class="btn btn-ghost btn-sm" href="#/artifacts">${t('افتح مكتبة المخرجات', 'Open the artifact library')}</a>` : `<p class="muted small">${t('لا توجد مخرجات بعد. تظهر الملفات المرئية هنا.', 'No artifacts yet. Visual deliverables appear here.')}</p>`}</section>
+      <section class="pane" id="pane-handoffs" role="tabpanel" aria-labelledby="tab-handoffs" hidden>${data.handoffs?.length ? data.handoffs.map((handoff, index) => `<button type="button" class="list-row handoff-row" data-handoff="${index}"><span class="grow"><strong>${esc(handoff.from)}</strong> → <strong>${esc(handoff.to)}</strong><span class="small muted" dir="auto"> ${esc(handoff.task || '')}</span></span><span class="xs faint">${esc(when(handoff.at))}</span></button>`).join('') : `<p class="muted small">${t('لا توجد تسليمات في آخر 30 يومًا.', 'No handoffs in the last 30 days.')}</p>`}</section>
+      <section class="pane" id="pane-history" role="tabpanel" aria-labelledby="tab-history" hidden>${data.recent.length ? data.recent.map((item) => `<a class="list-row" href="#/workflow/${esc(item.jobId)}"><span class="grow"><span dir="auto">${esc(item.title)}</span><span class="small muted" dir="auto"> — ${esc(item.objective)}</span>${item.summary ? `<span class="block small" dir="auto">${esc(item.summary)}</span>` : ''}</span><span class="xs faint">${esc(item.status)} · ${esc(when(item.at))}</span></a>`).join('') : `<p class="muted small">${t('لا يوجد عمل في آخر 30 يومًا.', 'No work in the last 30 days.')}</p>`}</section>
+      ${agent.directChat ? `<section class="pane" id="pane-chats" role="tabpanel" aria-labelledby="tab-chats" hidden>${data.conversations.length ? data.conversations.map((conversation) => `<a class="list-row" href="#/chat/${esc(conversation.id)}"><span class="grow" dir="auto">${esc(conversation.title)}</span><span class="xs faint">${esc(when(conversation.lastMessageAt))}</span></a>`).join('') : `<p class="muted small">${t('لا توجد محادثات مباشرة بعد.', 'No direct conversations yet.')}</p>`}</section>` : ''}
       <section class="pane" id="pane-tools" role="tabpanel" aria-labelledby="tab-tools" hidden>
         <div class="tool-grid">${(data.integrations || []).map((id) => { const item = statusOf.get(id); return `<div class="tool"><span class="tool-name">${esc(item?.label || id)}</span><span class="conn conn-${esc(connectionTone(item?.status))}">${esc(item?.status || 'Unknown')}</span></div>`; }).join('')}</div>
-        <p class="xs faint">Model: AUTO — each step is routed to the best available model for ${esc(agent.job)} work, free first.</p></section>`);
+        <p class="xs faint">${t('النموذج: تلقائي — تُوجّه كل خطوة لأفضل نموذج متاح لهذا العمل، المجاني أولًا.', `Model: AUTO — each step is routed to the best available model for ${agent.job} work, free first.`)}</p></section>`);
     const root = panel.element;
     root.querySelectorAll('[data-tab]').forEach((tab) => {
       tab.onclick = () => selectTab(root, tab.dataset.tab);
@@ -819,7 +820,7 @@ export async function openEmployee(ctx, slug) {
       } catch (error) { ctx.toast(error.message); }
     };
   } catch (error) {
-    panel.set('Could not open', `<p class="error-note">${esc(error.message)}</p>`);
+    panel.set(t('تعذر فتح التفاصيل', 'Could not open'), `<p class="error-note">${esc(error.message)}</p>`);
   }
 }
 function selectTab(root, id) {
@@ -840,7 +841,7 @@ export function sheet(ctx, { title, body, size = 'lg' }) {
   const element = document.createElement('div');
   element.className = `sheet sheet-${size}`;
   element.innerHTML = `<div class="sheet-scrim" data-close></div><div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1">
-    <div class="sheet-head"><h2 id="sheetTitle" class="sheet-title"></h2><button type="button" class="icon-btn" data-close aria-label="Close">✕</button></div><div class="sheet-body"></div></div>`;
+    <div class="sheet-head"><h2 id="sheetTitle" class="sheet-title"></h2><button type="button" class="icon-btn" data-close aria-label="${ctx.language === 'en' ? 'Close' : 'إغلاق'}">✕</button></div><div class="sheet-body"></div></div>`;
   document.body.append(element);
   const panel = element.querySelector('.sheet-panel');
   const set = (text, html) => { element.querySelector('#sheetTitle').textContent = text; element.querySelector('.sheet-body').innerHTML = html; };
