@@ -2,6 +2,8 @@
 
 Branch `feat/office-premium-v2-1`, based on deployed `main` at `56ff190e432939b0ec573b6807077978a602c46b`.
 
+The follow-up visual polish and its refreshed 26-view screenshot matrix are documented in [office-premium-v2.1-polish.md](office-premium-v2.1-polish.md). PR #121 remains open for visual approval.
+
 V2.1 is a presentation-only continuation of V2.0. It changes no database, migration, RPC, worker, model, prompt, routing, budget, permission or security rule. Production is not read beyond the public `/healthz`, and no production write or billable AI call is part of verification.
 
 ## Direction

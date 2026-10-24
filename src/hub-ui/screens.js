@@ -93,7 +93,15 @@ function workflowVisual(ctx, workflow, objective) {
     : `<div class="chart-empty"><strong>${t('لا توجد خريطة بعد', 'No map yet')}</strong><span>${t('ستظهر العلاقات فور تسجيل مهام واعتماديات حقيقية.', 'Relationships appear once real tasks and dependencies are recorded.')}</span></div>`;
   const total = metrics.total;
   const statusOrder = [['done', t('سُلّمت', 'Delivered')], ['working', t('تعمل الآن', 'Working now')], ['waiting', t('بانتظار', 'Waiting')], ['capacity', t('سعة', 'Capacity')], ['failed', t('متعثّرة', 'Failed')]];
-  const statusChart = total ? `<div class="status-chart" role="img" aria-label="${t(`${total} خطوة تسليم مسجلة`, `${total} recorded delivery steps`)}"><div class="status-stack">${statusOrder.filter(([key]) => metrics.statuses[key]).map(([key, label]) => `<span class="seg seg-${key}" style="width:${(metrics.statuses[key] / total) * 100}%" title="${ctx.esc(`${label}: ${metrics.statuses[key]}`)}"></span>`).join('')}</div><div class="chart-legend">${statusOrder.filter(([key]) => metrics.statuses[key]).map(([key, label]) => `<span><i class="seg-${key}"></i>${label} <b class="num">${metrics.statuses[key]}</b></span>`).join('')}</div></div>`
+  const statusColors = { done: 'success', working: 'accent', waiting: 'text-faint', capacity: 'info', failed: 'danger' };
+  let statusEnd = 0;
+  const statusStops = statusOrder.filter(([key]) => metrics.statuses[key]).map(([key]) => {
+    const start = statusEnd;
+    statusEnd += (metrics.statuses[key] / total) * 100;
+    return `var(--${statusColors[key]}) ${start}% ${statusEnd}%`;
+  }).join(',');
+  const statusDescription = statusOrder.filter(([key]) => metrics.statuses[key]).map(([key, label]) => `${label}: ${metrics.statuses[key]}`).join('، ');
+  const statusChart = total ? `<div class="status-chart" role="img" aria-label="${ctx.esc(`${t(`${total} خطوة تسليم مسجلة`, `${total} recorded delivery steps`)} — ${statusDescription}`)}"><div class="status-ring" style="--status-stops:${statusStops}"><span><b class="num">${total}</b><small>${t('خطوة تسليم', 'delivery steps')}</small></span></div><div class="chart-legend">${statusOrder.filter(([key]) => metrics.statuses[key]).map(([key, label]) => `<span><i class="seg-${key}"></i>${label} <b class="num">${metrics.statuses[key]}</b></span>`).join('')}</div></div>`
     : `<div class="chart-empty"><strong>${t('لا توجد تكليفات بعد', 'No assignments yet')}</strong><span>${t('CHIEF ما زال في مرحلة التخطيط.', 'CHIEF is still planning.')}</span></div>`;
   const maxWork = Math.max(1, ...metrics.employees.map((employee) => employee.total));
   const workload = metrics.employees.length ? `<div class="workload-chart">${metrics.employees.map((employee) => `<button type="button" class="workload-row" data-map-employee="${ctx.esc(employee.slug)}"><span class="workload-name" dir="ltr">${ctx.esc(employee.label)}</span><span class="workload-bar"><i style="width:${Math.round((employee.total / maxWork) * 100)}%;--emp:${employeeColor(employee.slug)}"></i></span><span class="num">${employee.done}/${employee.total}</span></button>`).join('')}</div>`
@@ -115,9 +123,14 @@ export async function renderOfficeHome(ctx) {
   const workspace = ctx.workspaces().find((item) => item.id === ctx.ws());
   ctx.view.innerHTML = `<div class="pg office-home">
     <section class="hero" aria-labelledby="greeting">
-      <h1 id="greeting" class="display">${ctx.esc(greeting(new Date().getHours(), lang(ctx)))}</h1>
-      <p class="hero-sub">${t('فريقك جاهز. ماذا تريد أن ننجز اليوم؟', 'Your team is ready. What should we get done today?')}</p>
+      <header class="hero-intro">
+        <span class="eyebrow hero-eyebrow">${t('مساحة لإنجاز ما يهم', 'Room for what matters')}</span>
+        <h1 id="greeting" class="display">${ctx.esc(greeting(new Date().getHours(), lang(ctx)))}</h1>
+        <p class="hero-sub">${t('فريقك جاهز. ماذا تريد أن ننجز اليوم؟', 'Your team is ready. What should we get done today?')}</p>
+        <p class="hero-caption">${t('أنت تضع الرؤية. وCHIEF ينسّق التفاصيل.', 'You set the direction. CHIEF coordinates the details.')}</p>
+      </header>
       <form class="command material" id="command" novalidate>
+        <div class="command-heading"><span class="eyebrow">${t('ابدأ بفكرة', 'Start with an idea')}</span><span class="command-recipient" dir="ltr">CHIEF ${ICON.send}</span></div>
         <label class="sr-only" for="goal">${t('الهدف المطلوب من CHIEF', 'Goal for CHIEF')}</label>
         <textarea id="goal" class="command-input" rows="1" dir="auto" maxlength="8000" placeholder="${t('اكتب الهدف الذي تريد إنجازه…', 'Describe the goal — CHIEF coordinates the team…')}"></textarea>
         <div class="command-bar">
@@ -134,8 +147,8 @@ export async function renderOfficeHome(ctx) {
         </div>
         <p class="form-error hidden" id="commandError" role="alert"></p>
       </form>
-      <div id="attentionSlot" aria-live="polite"></div>
     </section>
+    <div id="attentionSlot" aria-live="polite"></div>
     <section class="group" aria-labelledby="activeTitle">
       <div class="group-head"><h2 id="activeTitle">${t('قيد العمل', 'Active work')}</h2><span class="live-state" id="liveState" aria-live="polite"></span></div>
       <div id="activeSlot">${skeleton(2)}</div>
