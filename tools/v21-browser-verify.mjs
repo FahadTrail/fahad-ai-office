@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// V2.1 local-only browser and accessibility verification. Fictional preview
+// Premium Office local-only browser and accessibility verification. Fictional preview
 // rows pass through the real Hub handlers; nothing reaches production.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -90,6 +90,16 @@ if (await reply.count()) {
 } else failures.push('flow: Reply & Continue composer is missing');
 
 await page.goto(`${preview.url}#/`);
+await page.waitForSelector('.living-dashboard');
+if (await page.locator('.pulse-kpi').count() === 4) flowChecks += 1; else failures.push('flow: Living Dashboard KPI strip is incomplete');
+if (await page.locator('.living-flow .flow-step').count()) flowChecks += 1; else failures.push('flow: Living Dashboard delegation flow is missing');
+const dashboardEmployee = page.locator('[data-dashboard-employee]').first();
+await dashboardEmployee.focus();
+await dashboardEmployee.click();
+await page.waitForSelector('.sheet.open [role="dialog"]');
+await page.keyboard.press('Escape');
+await page.waitForSelector('.sheet', { state: 'detached' });
+if (await dashboardEmployee.evaluate((node) => document.activeElement === node)) flowChecks += 1; else failures.push('flow: dashboard employee sheet did not restore focus');
 await page.locator('#goal').fill('اختبار محلي لخريطة التفويض في المعاينة');
 await page.locator('#command').evaluate((form) => form.requestSubmit());
 await page.waitForURL(/#\/job\//);
@@ -100,8 +110,8 @@ await browser.close();
 preview.server.close();
 
 if (failures.length) {
-  console.error(`V2.1 verification failed (${failures.length}):\n${failures.map((item) => `- ${item}`).join('\n')}`);
+  console.error(`Premium Office verification failed (${failures.length}):\n${failures.map((item) => `- ${item}`).join('\n')}`);
   process.exitCode = 1;
 } else {
-  console.log(`V2.1 browser verification passed: ${axeViews} axe views, ${flowChecks} interaction checks, 0 violations, 0 console errors, 0 overflow.`);
+  console.log(`Premium Office browser verification passed: ${axeViews} axe views, ${flowChecks} interaction checks, 0 violations, 0 console errors, 0 overflow.`);
 }

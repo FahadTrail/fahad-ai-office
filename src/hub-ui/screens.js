@@ -11,7 +11,7 @@
 
 import {
   ROSTER, arabicCount, codingSessionState, createRefresher, deliveryProgress, fractionLabel, objectiveSignature, employeeColor, employeeCopy, employeeState, employeeTabs, fractionWidth, greeting,
-  isTerminal, jobStatus, nodeStateLabel, numericDate, outputTypes, phaseWords, archiveFilter, workflowMap, workflowMetrics,
+  isTerminal, jobStatus, livingDashboard, nodeStateLabel, numericDate, outputTypes, phaseWords, archiveFilter, workflowMap, workflowMetrics,
 } from './office-model.js';
 
 const ICON = {
@@ -115,6 +115,89 @@ function workflowVisual(ctx, workflow, objective) {
       <section class="insight-card"><div class="insight-head"><h3>${t('توزيع التكليفات', 'Assignment distribution')}</h3><span class="metric-chip"><b class="num" dir="ltr">${ctx.esc(cost)}</b>${t('تكلفة مسجلة', 'recorded cost')}</span></div>${workload}</section></div></section>`;
 }
 
+function activityLabel(ctx, entry = {}) {
+  const t = words(ctx);
+  const who = entry.who || 'CHIEF';
+  const title = entry.title || '';
+  const labels = {
+    objective: t('استلم CHIEF الهدف', 'CHIEF received the objective'),
+    plan: t(`قسّم CHIEF العمل إلى ${entry.count || 0} مسارات`, `CHIEF planned ${entry.count || 0} workstreams`),
+    planning: t('بدأ CHIEF تخطيط المهمة', 'CHIEF started planning'),
+    planned: t('أكمل CHIEF خطة التنفيذ', 'CHIEF finished the plan'),
+    assigned: t(`كلّف CHIEF ${who}${title ? ` — ${title}` : ''}`, `CHIEF assigned ${who}${title ? ` — ${title}` : ''}`),
+    start: t(`${who} بدأ العمل${title ? ` — ${title}` : ''}`, `${who} started${title ? ` — ${title}` : ''}`),
+    delivered: t(`${who} سلّم${title ? ` — ${title}` : ''}`, `${who} delivered${title ? ` — ${title}` : ''}`),
+    handoff: t(`${who} سلّم العمل إلى ${entry.to || ''}`, `${who} handed work to ${entry.to || ''}`),
+    launched: t(`${who} استلم العمل الهندسي${title ? ` — ${title}` : ''}`, `${who} took the engineering work${title ? ` — ${title}` : ''}`),
+    reviewed: t('أكمل CHIEF مراجعة عمل الفريق', 'CHIEF finished reviewing the team’s work'),
+    review_queued: t('وضع CHIEF المراجعة في الدور', 'CHIEF queued its review of the team’s work'),
+    synthesis_queued: t('وضع CHIEF التجميع النهائي في الدور', 'CHIEF queued the final synthesis'),
+    verified: t('تحقق النظام من أرقام FINANCE', 'FINANCE figures were verified by code'),
+    returned: t('أعيدت أرقام FINANCE للتصحيح', 'FINANCE figures were returned for correction'),
+    switch: t(`${who} بدّل النموذج من ${entry.from || '—'} إلى ${entry.to || '—'}`, `${who} switched model from ${entry.from || '—'} to ${entry.to || '—'}`),
+    waiting: t(`${who} ينتظر السعة وسيكمل تلقائيًا`, `${who} is waiting for capacity and will resume automatically`),
+    attention: t(`${who} يحتاج قرارك`, `${who} needs your decision`),
+    revision: t(`طلب CHIEF تعديلًا من ${entry.target || t('الفريق', 'the team')}`, `CHIEF requested a revision from ${entry.target || 'the team'}`),
+    synthesis: t('بدأ CHIEF جمع النتائج', 'CHIEF started the final synthesis'),
+    final: t('سلّم CHIEF النتيجة النهائية', 'CHIEF delivered the final synthesis'),
+    completed: t('اكتمل الهدف', 'Objective completed'),
+    failed: t(`${who} لم يتمكن من الإكمال${title ? ` — ${title}` : ''}`, `${who} could not finish${title ? ` — ${title}` : ''}`),
+    stopped: t('توقفت المهمة قبل اكتمالها', 'The objective stopped before finishing'),
+  };
+  return labels[entry.kind] || entry.text || t('تحديث مسجّل في المهمة', 'Recorded objective update');
+}
+
+function livingFlow(ctx, workflow) {
+  const t = words(ctx);
+  const graph = workflowMap(workflow?.nodes || [], { maxNodes: 10 });
+  if (!graph.nodes.length) return `<div class="dashboard-empty"><strong>${t('CHIEF يجهّز خطة التنفيذ', 'CHIEF is preparing the execution plan')}</strong><span>${t('ستظهر العلاقات بعد تسجيل التكليفات الفعلية.', 'Relationships appear after real assignments are recorded.')}</span></div>`;
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  return `<ol class="living-flow" aria-label="${t('مسار التفويض المسجّل', 'Recorded delegation flow')}">${graph.nodes.map((node) => {
+    const dependencyNames = node.dependsOn.map((id) => byId.get(id)?.agentLabel || byId.get(id)?.title).filter(Boolean);
+    const relation = dependencyNames.length ? t(`بعد ${dependencyNames.join('، ')}`, `After ${dependencyNames.join(', ')}`) : t('بداية المسار', 'Flow start');
+    const tag = node.agentSlug ? 'button' : 'div';
+    return `<li><${tag} ${node.agentSlug ? 'type="button"' : ''} class="flow-step st-${ctx.esc(node.state)}${node.state === 'working' ? ' is-live' : ''}" ${node.agentSlug ? `data-dashboard-employee="${ctx.esc(node.agentSlug)}"` : ''} style="--emp:${employeeColor(node.agentSlug)}" aria-label="${ctx.esc(`${node.agentLabel || 'CHIEF'} — ${node.title} — ${nodeStateLabel(node.state, lang(ctx))}`)}"><span class="flow-route"><i aria-hidden="true"></i><small>${ctx.esc(relation)}</small></span><span class="flow-owner" dir="ltr">${ctx.esc(node.agentLabel || 'CHIEF')}</span><strong dir="auto">${ctx.esc(node.title)}</strong><span class="flow-state">${ctx.esc(nodeStateLabel(node.state, lang(ctx)))}</span></${tag}></li>`;
+  }).join('')}</ol>${graph.hidden ? `<p class="small muted dashboard-limit">${t(`تظهر أول ${graph.nodes.length} خطوات من ${graph.nodes.length + graph.hidden}.`, `Showing the first ${graph.nodes.length} of ${graph.nodes.length + graph.hidden} steps.`)}</p>` : ''}`;
+}
+
+function dashboardView(ctx, { objectives, workflows, office, attention, operations }) {
+  const t = words(ctx);
+  const agents = office?.agents || [];
+  const attentionCount = attention?.counts?.action || 0;
+  const snapshot = livingDashboard({ objectives, workflows, agents, attentionCount, timeline: operations?.timeline || [] });
+  const workflow = workflows.find((item) => item?.nodes?.some((node) => node.kind === 'workstream' || node.kind === 'development')) || workflows[0] || null;
+  const featured = objectives.find((objective) => objective.id === workflow?.job?.id) || objectives[0] || null;
+  const progress = workflow ? deliveryProgress(workflow.nodes, { final: workflow.final, jobStatus: workflow.job.status }) : null;
+  const width = fractionWidth(progress);
+  const maxAssignments = Math.max(1, ...snapshot.employees.map((employee) => employee.total));
+  const statusParts = [
+    ['done', t('سُلّمت', 'Delivered')], ['working', t('تعمل الآن', 'Working')], ['waiting', t('تنتظر', 'Waiting')], ['capacity', t('سعة', 'Capacity')], ['failed', t('متعثّرة', 'Failed')],
+  ].filter(([key]) => snapshot.states[key]);
+  const stateTotal = Math.max(1, snapshot.assignments);
+  return `<div class="living-dashboard">
+    <div class="dashboard-kpis" aria-label="${t('ملخص المكتب المباشر', 'Live Office summary')}">
+      <a class="pulse-kpi" href="#/work"><span>${t('أهداف جارية', 'Active objectives')}</span><strong class="num">${snapshot.objectives}</strong><small>${t('من سجل العمل الحالي', 'from the current work record')}</small></a>
+      <a class="pulse-kpi" href="#/settings/team"><span>${t('يعملون الآن', 'Working now')}</span><strong class="num">${snapshot.team.busy}</strong><small>${t(`${snapshot.team.available} متاح من ${snapshot.team.total}`, `${snapshot.team.available} available of ${snapshot.team.total}`)}</small></a>
+      <a class="pulse-kpi${snapshot.attention ? ' has-attention' : ''}" href="#/settings/approvals"><span>${t('بانتظارك', 'Waiting for you')}</span><strong class="num">${snapshot.attention}</strong><small>${t('قرارات حقيقية فقط', 'real decisions only')}</small></a>
+      <div class="pulse-kpi"><span>${t('تكليفات مسجّلة', 'Recorded assignments')}</span><strong class="num">${snapshot.assignments}</strong><small>${t(`${snapshot.relationships} اعتماد · ${snapshot.handoffs} تسليم`, `${snapshot.relationships} dependencies · ${snapshot.handoffs} handoffs`)}</small></div>
+    </div>
+    <div class="dashboard-grid">
+      <section class="dashboard-card dashboard-focus material" aria-labelledby="focusTitle">
+        <div class="dashboard-card-head"><div><span class="eyebrow">${t('العمل الحي', 'Living work')}</span><h3 id="focusTitle">${featured ? ctx.esc(featured.title) : t('لا يوجد هدف جارٍ', 'No active objective')}</h3></div>${featured ? `<a class="group-link" href="#/job/${ctx.esc(featured.id)}">${t('افتح المهمة', 'Open job')}</a>` : ''}</div>
+        ${featured && workflow ? `<div class="focus-summary"><div class="focus-progress" role="img" aria-label="${ctx.esc(progress?.fraction ? fractionLabel(progress, lang(ctx)) : phaseWords(progress?.phase, lang(ctx)))}" style="--progress:${width == null ? 0 : width * 3.6}deg"><span><b class="num">${progress?.fraction ? `${progress.delivered}/${progress.total}` : '—'}</b><small>${progress?.fraction ? t('تكليفات', 'assignments') : t('مرحلة', 'stage')}</small></span></div><div><strong>${ctx.esc(phaseWords(progress?.phase, lang(ctx)))}</strong><p>${t('المسار التالي مبني على الاعتماديات المسجّلة فقط.', 'The flow below uses recorded dependencies only.')}</p></div></div>${livingFlow(ctx, workflow)}` : `<div class="dashboard-empty"><strong>${t('المكتب هادئ الآن', 'The Office is quiet right now')}</strong><span>${t('أرسل هدفًا إلى CHIEF وستظهر هنا الخطة الحقيقية وتوزيعاتها.', 'Send CHIEF a goal and its real plan and distribution will appear here.')}</span></div>`}
+      </section>
+      <section class="dashboard-card material" aria-labelledby="distributionTitle">
+        <div class="dashboard-card-head"><div><span class="eyebrow">${t('توزيع العمل', 'Work distribution')}</span><h3 id="distributionTitle">${t('من يحمل ماذا', 'Who owns what')}</h3></div><span class="metric-chip"><b class="num">${snapshot.assignments}</b>${t('تكليفات', 'assignments')}</span></div>
+        ${snapshot.assignments ? `<div class="distribution-stack" role="img" aria-label="${ctx.esc(statusParts.map(([key, label]) => `${label}: ${snapshot.states[key]}`).join('، '))}">${statusParts.map(([key]) => `<i class="seg-${key}" style="width:${(snapshot.states[key] / stateTotal) * 100}%"></i>`).join('')}</div><div class="distribution-legend">${statusParts.map(([key, label]) => `<span><i class="seg-${key}"></i>${label}<b class="num">${snapshot.states[key]}</b></span>`).join('')}</div><div class="dashboard-workload">${snapshot.employees.map((employee) => `<button type="button" data-dashboard-employee="${ctx.esc(employee.slug)}" style="--emp:${employeeColor(employee.slug)}"><span dir="ltr">${ctx.esc(employee.label)}</span><i><b style="width:${Math.round((employee.total / maxAssignments) * 100)}%"></b></i><strong class="num">${employee.done}/${employee.total}</strong></button>`).join('')}</div>` : `<div class="dashboard-empty"><strong>${t('لا يوجد توزيع بعد', 'No distribution yet')}</strong><span>${t('لن نعرض نسبًا قبل وصول تكليفات حقيقية.', 'No ratios are shown before real assignments arrive.')}</span></div>`}
+      </section>
+      <section class="dashboard-card dashboard-activity material" aria-labelledby="activityTitle">
+        <div class="dashboard-card-head"><div><span class="eyebrow">${t('آخر النشاط', 'Latest activity')}</span><h3 id="activityTitle">${t('ماذا حدث للتو', 'What just happened')}</h3></div>${featured ? `<a class="group-link" href="#/job/${ctx.esc(featured.id)}">${t('كل التفاصيل', 'All details')}</a>` : ''}</div>
+        ${snapshot.activity.length ? `<ol class="activity-list">${snapshot.activity.map((entry) => `<li><span class="activity-mark" style="--emp:${employeeColor(entry.agentKey)}" aria-hidden="true"></span><div><strong dir="auto">${ctx.esc(activityLabel(ctx, entry))}</strong><span>${entry.at ? isoDate(ctx, entry.at) : ''}</span></div></li>`).join('')}</ol>` : `<div class="dashboard-empty"><strong>${t('لا يوجد نشاط مسجّل بعد', 'No recorded activity yet')}</strong><span>${t('سيظهر هنا ما يسجله مسار التنفيذ الحقيقي.', 'The recorded execution timeline will appear here.')}</span></div>`}
+      </section>
+    </div>
+  </div>`;
+}
+
 // ===================================================================== Office
 export async function renderOfficeHome(ctx) {
   const t = words(ctx);
@@ -149,8 +232,12 @@ export async function renderOfficeHome(ctx) {
       </form>
     </section>
     <div id="attentionSlot" aria-live="polite"></div>
+    <section class="group living-group" aria-labelledby="livingTitle">
+      <div class="group-head"><div><span class="eyebrow">${t('صورة واحدة واضحة', 'One clear view')}</span><h2 id="livingTitle">${t('نبض المكتب', 'Office pulse')}</h2></div><span class="live-state" id="liveState" aria-live="polite"></span></div>
+      <div id="dashboardSlot">${skeleton(4)}</div>
+    </section>
     <section class="group" aria-labelledby="activeTitle">
-      <div class="group-head"><h2 id="activeTitle">${t('قيد العمل', 'Active work')}</h2><span class="live-state" id="liveState" aria-live="polite"></span></div>
+      <div class="group-head"><h2 id="activeTitle">${t('قيد العمل', 'Active work')}</h2></div>
       <div id="activeSlot">${skeleton(2)}</div>
     </section>
     <section class="group" aria-labelledby="teamTitle">
@@ -197,6 +284,7 @@ export async function renderOfficeHome(ctx) {
   // Workflow graphs are cached per objective and refetched only when that
   // objective's summary changed, at most four at a time.
   const graphs = new Map();
+  let operationsCache = { id: null, signature: null, value: null };
   const fetchGraphs = async (objectives) => {
     const stale = objectives.filter((objective) => graphs.get(objective.id)?.signature !== objectiveSignature(objective));
     for (let index = 0; index < stale.length; index += 4) {
@@ -216,8 +304,22 @@ export async function renderOfficeHome(ctx) {
     ]);
     const objectives = current.status === 'fulfilled' ? [...current.value.needsOwner, ...current.value.active, ...current.value.waiting, ...current.value.activeTests].slice(0, 12) : [];
     await fetchGraphs(objectives);
+    const featuredWorkflow = objectives.map((objective) => graphs.get(objective.id)?.graph).find((workflow) => workflow?.nodes?.some((node) => node.kind === 'workstream' || node.kind === 'development'));
+    const featured = objectives.find((objective) => objective.id === featuredWorkflow?.job?.id) || objectives[0] || null;
+    if (featured) {
+      const signature = objectiveSignature(featured);
+      if (operationsCache.id !== featured.id || operationsCache.signature !== signature) {
+        try {
+          const operations = await ctx.api(`/api/operations${ctx.q({ workspaceId: ctx.ws(), jobId: featured.id })}`);
+          operationsCache = { id: featured.id, signature, value: operations.view || null };
+        } catch {
+          operationsCache = { id: featured.id, signature, value: null };
+        }
+      }
+    } else operationsCache = { id: null, signature: null, value: null };
     if (!ctx.isCurrent()) return;
     paintAttention(attention);
+    paintDashboard(current, objectives, attention, office);
     paintActive(current, objectives, attention, sessions);
     paintTeam(office);
   };
@@ -243,6 +345,25 @@ export async function renderOfficeHome(ctx) {
     const label = fractionLabel(progress, lang(ctx));
     const extra = ['awaiting_synthesis', 'synthesizing', 'revising'].includes(progress.phase) ? ` · ${phaseWords(progress.phase, lang(ctx))}` : progress.failed ? ` · ${ar ? `${progress.failed} تعثّر` : `${progress.failed} failed`}` : '';
     return `<span class="job-progress"><span class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${progress.total}" aria-valuenow="${progress.delivered}" aria-label="${ctx.esc(label)}"><span style="width:${width}%"></span></span><span class="num fraction" dir="ltr">${progress.delivered}/${progress.total}</span><span class="sr-only">${ctx.esc(label)}</span>${extra ? `<span class="job-phase">${ctx.esc(extra.replace(/^ · /, ''))}</span>` : ''}</span>`;
+  };
+
+  const paintDashboard = (current, objectives, attention, office) => {
+    const slot = ctx.view.querySelector('#dashboardSlot');
+    if (!slot) return;
+    if (current.status !== 'fulfilled' || office.status !== 'fulfilled') {
+      slot.innerHTML = `<div class="state-card">${ctx.errorBlock(current.status !== 'fulfilled' ? current.reason?.message : office.reason?.message, ctx.esc)}<button class="btn btn-sm" type="button" data-dashboard-retry>${t('إعادة المحاولة', 'Try again')}</button></div>`;
+      slot.querySelector('[data-dashboard-retry]')?.addEventListener('click', () => { slot.innerHTML = skeleton(4); refresher.trigger(); });
+      return;
+    }
+    const workflows = objectives.map((objective) => graphs.get(objective.id)?.graph).filter(Boolean);
+    slot.innerHTML = dashboardView(ctx, {
+      objectives,
+      workflows,
+      office: office.value,
+      attention: attention.status === 'fulfilled' ? attention.value : null,
+      operations: operationsCache.value,
+    });
+    slot.querySelectorAll('[data-dashboard-employee]').forEach((button) => { button.onclick = () => ctx.openEmployee(button.dataset.dashboardEmployee); });
   };
 
   const paintActive = (current, objectives, attention, sessions) => {
