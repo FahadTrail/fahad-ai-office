@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  ROSTER, arabicCount, archiveFilter, codingSessionState, createRefresher, deliveryProgress, fractionLabel, objectiveSignature, employeeColor, employeeState, employeeTabs, fractionWidth, greeting, jobStatus, numericDate, outputTypes, workflowMap, workflowMetrics,
+  ROSTER, arabicCount, archiveFilter, codingSessionState, createRefresher, deliveryProgress, fractionLabel, livingDashboard, objectiveSignature, employeeColor, employeeState, employeeTabs, fractionWidth, greeting, jobStatus, numericDate, outputTypes, workflowMap, workflowMetrics,
 } from '../src/hub-ui/office-model.js';
 import { startPreview } from '../tools/hub-preview.mjs';
 
@@ -105,6 +105,27 @@ test('workflow charts count real assignment rows and report honest empty states'
   assert.deepEqual(workflowMetrics([], []).employees, []);
 });
 
+test('the living dashboard rolls up only recorded assignments, dependencies, handoffs and activity', () => {
+  const workflow = {
+    nodes: [
+      { id: 'plan', kind: 'plan', state: 'done', agentSlug: 'chief-of-staff', dependsOn: [] },
+      { id: 'research', kind: 'workstream', state: 'done', agentSlug: 'research-strategy', agentLabel: 'RESEARCH', dependsOn: ['plan'] },
+      { id: 'product', kind: 'workstream', state: 'working', agentSlug: 'product-tech', agentLabel: 'PRODUCT', dependsOn: ['research', 'missing'] },
+      { id: 'synthesis', kind: 'synthesis', state: 'waiting', agentSlug: 'chief-of-staff', dependsOn: ['product'] },
+    ],
+    handoffs: [{ from: 'CHIEF', to: 'RESEARCH' }, { from: 'RESEARCH', to: 'PRODUCT' }],
+  };
+  const dashboard = livingDashboard({
+    objectives: [{ id: 'job' }], workflows: [workflow], attentionCount: 1,
+    agents: [{ slug: 'chief-of-staff', state: 'THINKING' }, { slug: 'research-strategy', state: 'AVAILABLE' }, { slug: 'product-tech', state: 'WORKING' }],
+    timeline: [{ kind: 'detail', technical: true }, { kind: 'assigned', technical: false, who: 'PRODUCT' }],
+  });
+  assert.deepEqual([dashboard.objectives, dashboard.assignments, dashboard.delivered, dashboard.relationships, dashboard.handoffs, dashboard.attention], [1, 2, 1, 3, 2, 1]);
+  assert.deepEqual(dashboard.states, { done: 1, working: 1, waiting: 0, capacity: 0, failed: 0 });
+  assert.deepEqual([dashboard.team.busy, dashboard.team.available], [2, 1]);
+  assert.equal(dashboard.activity.length, 1, 'technical activity stays out of the quiet timeline');
+});
+
 test('employee states are honest: idle is available, CHIEF coordinates, a delivery is سلّم', () => {
   assert.equal(employeeState({ slug: 'research-strategy', state: 'AVAILABLE' }).label, 'متاح');
   assert.equal(employeeState({ slug: 'research-strategy' }).key, 'available');
@@ -163,7 +184,7 @@ test('the shell has the four-screen navigation and keeps every legacy destinatio
 
 test('the screens use the existing APIs and write only through the existing conversation endpoints', () => {
   const screens = read('screens.js');
-  for (const endpoint of ['/api/work/current', '/api/work/history', '/api/work/objectives/', '/api/workflows/', '/api/attention', '/api/office', '/api/work/sessions', "'/api/conversations'", '/messages', '/stop']) assert.ok(screens.includes(endpoint), endpoint);
+  for (const endpoint of ['/api/work/current', '/api/work/history', '/api/work/objectives/', '/api/workflows/', '/api/operations', '/api/attention', '/api/office', '/api/work/sessions', "'/api/conversations'", '/messages', '/stop']) assert.ok(screens.includes(endpoint), endpoint);
   const writes = [...screens.matchAll(/method: '(POST|PATCH|PUT|DELETE)'/g)].length;
   assert.equal(writes, 3, 'submit, Reply & Continue and Stop only');
   assert.doesNotMatch(screens, /Math\.random|demo|sample|placeholder result|fake/i);
@@ -194,6 +215,20 @@ test('V2.1 keeps the true-data visuals, employee sheets and owner confirmation i
   assert.match(screens, /data-employee-sheet/);
   assert.match(app, /Confirm approval/);
   assert.match(app, /Every other owner gate remains in place/);
+});
+
+test('V2.2 makes the homepage a bounded real-data dashboard without adding writes', () => {
+  const screens = read('screens.js');
+  const css = read('premium.css');
+  assert.match(screens, /livingDashboard\(\{ objectives, workflows, agents, attentionCount, timeline:/);
+  assert.match(screens, /workflowMap\(workflow\?\.nodes \|\| \[\], \{ maxNodes: 10 \}\)/);
+  assert.match(screens, /data-dashboard-employee/);
+  assert.match(screens, /The flow below uses recorded dependencies only/);
+  assert.match(screens, /class="living-dashboard"/);
+  assert.match(css, /\.dashboard-kpis/);
+  assert.match(css, /\.activity-list/);
+  assert.match(css, /\.flow-step\.is-live/);
+  assert.doesNotMatch(screens, /setInterval\(/, 'the page keeps the existing visibility-aware refresher');
 });
 
 test('preview: history and job detail come from the real handlers over fictional rows', async () => {

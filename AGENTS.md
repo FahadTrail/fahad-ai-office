@@ -69,7 +69,7 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## Office premium redesign V2.0 / V2.1
+## Office premium redesign V2.0 / V2.1 / V2.2
 
 V2.0 was merged as PR #120 and deployed at `56ff190e432939b0ec573b6807077978a602c46b`. Its baseline is documented in `docs/office-premium-redesign.md`.
 * Four screens: المكتب (`#/`), Job Detail (`#/job/:id`), الأرشيف (`#/archive`) and الإعدادات (`#/settings/:section`). The code is in `src/hub-ui/screens.js` and `app.js`.
@@ -79,7 +79,8 @@ V2.0 was merged as PR #120 and deployed at `56ff190e432939b0ec573b6807077978a602
 * No backend, schema or runtime change.
 * Visual QA: `node tools/redesign-shots.mjs <dir> --edge`.
 * V2.1 development is on `feat/office-premium-v2-1`; see `docs/office-premium-v2.1.md`.
-* Do not merge or deploy V2.1 without Fahad.
+* V2.2 development is on `feat/office-v2-2-living-dashboard`; see `docs/office-premium-v2.2.md`. It adds the real-data Living Dashboard to the Office homepage without backend changes.
+* Do not merge or deploy V2.2 without Fahad.
 
 ## Live Operations (2026-10-09)
 

@@ -269,6 +269,46 @@ export function workflowMetrics(nodes = [], handoffs = []) {
   };
 }
 
+// Office-home roll-up for V2.2. It combines only rows already returned by
+// /api/work/current, /api/office, /api/workflows/:id and /api/operations.
+// There are deliberately no estimates: an assignment exists only when the
+// workflow has a workstream/development node; a relationship exists only when
+// dependsOn names a recorded node; and unknown workflow data stays absent.
+export function livingDashboard({ objectives = [], workflows = [], agents = [], attentionCount = 0, timeline = [] } = {}) {
+  const graphs = workflows.filter(Boolean);
+  const assignments = graphs.flatMap((workflow) => (workflow.nodes || []).filter((node) => UNIT_KINDS.has(node.kind)));
+  const knownNodeIds = new Set(graphs.flatMap((workflow) => (workflow.nodes || []).map((node) => node.id).filter(Boolean)));
+  const relationships = graphs.reduce((total, workflow) => total + (workflow.nodes || []).reduce((count, node) => count + (node.dependsOn || []).filter((id) => knownNodeIds.has(id) && id !== node.id).length, 0), 0);
+  const stateCounts = { done: 0, working: 0, waiting: 0, capacity: 0, failed: 0 };
+  const employees = new Map();
+  for (const node of assignments) {
+    const state = node.state === 'done' ? 'done' : node.state === 'working' ? 'working' : node.state === 'capacity' ? 'capacity' : FAILED_STATES.has(node.state) ? 'failed' : 'waiting';
+    stateCounts[state] += 1;
+    if (!node.agentSlug) continue;
+    const row = employees.get(node.agentSlug) || { slug: node.agentSlug, label: node.agentLabel || node.agent || node.agentSlug, total: 0, done: 0, working: 0, waiting: 0, capacity: 0, failed: 0 };
+    row.total += 1; row[state] += 1;
+    employees.set(node.agentSlug, row);
+  }
+  const teamStates = { busy: 0, available: 0, waiting: 0, needs: 0, blocked: 0, delivered: 0 };
+  for (const agent of agents) {
+    const state = employeeState(agent).key;
+    if (state === 'working' || state === 'coordinating') teamStates.busy += 1;
+    else if (Object.hasOwn(teamStates, state)) teamStates[state] += 1;
+  }
+  return {
+    objectives: objectives.length,
+    assignments: assignments.length,
+    delivered: stateCounts.done,
+    relationships,
+    handoffs: graphs.reduce((total, workflow) => total + (Array.isArray(workflow.handoffs) ? workflow.handoffs.length : 0), 0),
+    attention: Math.max(0, Number(attentionCount) || 0),
+    states: stateCounts,
+    team: { total: agents.length, ...teamStates },
+    employees: [...employees.values()].sort((a, b) => b.total - a.total || a.label.localeCompare(b.label)).slice(0, 9),
+    activity: timeline.filter((entry) => !entry?.technical).slice(-6).reverse(),
+  };
+}
+
 const NODE_STATE = Object.freeze({
   done: ['سلّم', 'Delivered'], working: ['يعمل', 'Working'], waiting: ['بانتظار مخرجات سابقة', 'Waiting for earlier work'],
   ready: ['جاهز للبدء', 'Ready to start'], capacity: ['بانتظار سعة نموذج مجانية — يكمل تلقائيًا', 'Waiting for free model capacity — resumes automatically'],
