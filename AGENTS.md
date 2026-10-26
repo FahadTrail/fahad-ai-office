@@ -81,10 +81,14 @@ Built on the merged fix in PR #123 (`d8e2f5d`, branch
   pool) and fails over to another free route, never a paid one.
 * Billing safety fails closed: `CLOUDFLARE_PLAN=free` must be stated, or the
   route is blocked (`PLAN_NOT_VERIFIED`); `paid` makes it a priced paid route.
+  The plan is **owner-declared** (`planBasis`, `planVerified: false`), never
+  verified billing evidence: Cloudflare does not report it.
 * Per-model function calling comes from the Workers AI catalog; a tool-less
   model is never sent tool schemas.
 * `npm run canary:cloudflare` is a dry run; `-- --live` executes a capped,
-  Cloudflare-only check with a sanitized report and no database writes.
+  Cloudflare-only check with a sanitized report and no database writes. The
+  no-tool check passes only on the exact `CLOUDFLARE-OK` answer, and a capped
+  run reports partial coverage instead of implying full model coverage.
 * No migration, no deployment and no live provider call was made for this work.
 
 ## Office premium redesign V2.0 / V2.1 / V2.2

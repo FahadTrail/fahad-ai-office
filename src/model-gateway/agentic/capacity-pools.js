@@ -148,15 +148,21 @@ export function billingSafety(pool, { env = {} } = {}) {
     cloudflare: {
       plan,
       planVariable: 'CLOUDFLARE_PLAN',
+      // The inference API never reports the Workers plan, so this value is the
+      // owner's declaration: it is a configuration state, NOT verified billing
+      // evidence. A wrong declaration could still bill overage.
+      planBasis: 'owner-declared',
+      planVerified: false,
+      planNote: 'Declared by the owner in CLOUDFLARE_PLAN; Cloudflare does not report the Workers plan on the inference API, so this is not independently verified billing evidence.',
       routes: cloudflare.length,
       executable: cloudflare.filter((route) => !route.unavailableReasons?.length).length,
       billingClass: cloudflare.find((route) => route.billingClass)?.billingClass || null,
       blockedReasons: [...new Set(cloudflare.flatMap((route) => route.unavailableReasons || []))].toSorted(),
       note: plan === 'free'
-        ? 'Workers Free plan stated: a used-up daily allowance returns error 4006 and cannot bill the account.'
+        ? 'Workers Free plan declared by the owner (not verified by the provider): a used-up daily allowance returns error 4006 and cannot bill the account.'
         : plan === 'paid'
-          ? 'Workers Paid plan stated: the route is priced as paid and can never serve free-only work.'
-          : 'Plan not stated: the route is blocked (fail closed), because a Paid plan would bill neuron overage.',
+          ? 'Workers Paid plan declared by the owner: the route is priced as paid and can never serve free-only work.'
+          : 'Plan not declared: the route is blocked (fail closed), because a Paid plan would bill neuron overage.',
     },
     // Free-only work (allowPaid=false) can never select a paid route, and the
     // free-route guard refuses any billed answer on a free route.

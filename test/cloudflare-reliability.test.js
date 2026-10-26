@@ -14,7 +14,9 @@
 //   * a free-only turn fails over between free providers and never calls a
 //     paid route;
 //   * the scoped canary is a dry run by default, has hard caps and a sanitized
-//     report, and refuses to run live without a verified free plan.
+//     report, and refuses to run live without a declared free plan;
+//   * its no-tool check passes only on the exact expected answer, and a capped
+//     run reports partial coverage instead of implying every model was probed.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { postJson } from '../src/model-gateway/agentic/http.js';
@@ -26,7 +28,9 @@ import { MemoryProviderStateStore } from '../src/model-gateway/agentic/provider-
 import { billingSafety, poolCooldowns, poolSummary } from '../src/model-gateway/agentic/capacity-pools.js';
 import { qualifyRoute, QUALIFICATION_SUITE_VERSION } from '../src/model-gateway/agentic/qualification.js';
 import { userText } from '../src/model-gateway/agentic/conversation.js';
-import { canaryPreflight, cloudflareCanaryPlan, runCloudflareCanary } from '../src/canary/cloudflare-canary.js';
+import {
+  canaryPreflight, cloudflareCanaryPlan, runCloudflareCanary, matchesExpectedToken, NO_TOOL_EXPECTED,
+} from '../src/canary/cloudflare-canary.js';
 
 const ACCOUNT = 'b'.repeat(32);
 const TOKEN = 'cf-canary-token-value-0123456789';
@@ -127,6 +131,16 @@ test('an unstated Workers plan blocks the route (fail closed); a paid plan is ne
     assert.equal(safety.paidFallbackOnFreeOnly, 'refused');
     assert.equal(billingSafety([free], { env: ENV }).cloudflare.plan, 'free');
     assert.equal(billingSafety([paid], { env: { ...ENV, CLOUDFLARE_PLAN: 'paid' } }).cloudflare.billingClass, 'paid');
+
+    // The plan is the owner's declaration. No surface may present it as
+    // verified billing evidence (Cloudflare does not report the plan).
+    for (const [routes, env] of [[[free], ENV], [[paid], { ...ENV, CLOUDFLARE_PLAN: 'paid' }], [[blocked], unstated]]) {
+      const report = billingSafety(routes, { env }).cloudflare;
+      assert.equal(report.planBasis, 'owner-declared');
+      assert.equal(report.planVerified, false);
+      assert.match(report.planNote, /does not report|not independently verified/i);
+    }
+    assert.match(billingSafety([free], { env: ENV }).cloudflare.note, /declared by the owner \(not verified by the provider\)/);
   });
 });
 
@@ -235,7 +249,12 @@ test('the Cloudflare canary is a dry run by default and refuses an unverified pl
   assert.equal(dry.requestsSent, 0);
   assert.equal(dry.ok, undefined, 'a dry run makes no claim about the provider');
 
-  assert.equal(canaryPreflight({ env: ENV }).liveAllowed, true);
+  const preflight = canaryPreflight({ env: ENV });
+  assert.equal(preflight.liveAllowed, true);
+  assert.equal(preflight.plan, 'free');
+  assert.equal(preflight.planBasis, 'owner-declared', 'a stated plan is a declaration, not provider evidence');
+  assert.equal(preflight.planVerified, false);
+  assert.equal(preflight.planSource, 'CLOUDFLARE_PLAN');
   assert.deepEqual(canaryPreflight({ env: {} }).blockers, [
     'CLOUDFLARE_API_TOKEN_MISSING', 'CLOUDFLARE_ACCOUNT_ID_MISSING_OR_INVALID', 'CLOUDFLARE_PLAN_NOT_VERIFIED',
   ]);
@@ -284,8 +303,95 @@ test('the live canary measures a no-tool call and a real tool round trip without
 
   const serialized = JSON.stringify(report);
   assert.ok(!serialized.includes(TOKEN), 'the credential never appears in a report');
-  assert.ok(!serialized.includes('CLOUDFLARE-OK'), 'model output is not stored');
   assert.ok(!serialized.includes('Reply with exactly'), 'prompts are not stored');
+  // No answer text at all: the token appears only as the declared expectation
+  // in `checks[].expects`, never as something the model said.
+  const resultsOnly = JSON.stringify(report.results);
+  assert.ok(!resultsOnly.includes('CLOUDFLARE-OK'), 'model output is not stored in a result');
+  assert.ok(!resultsOnly.includes('"answer"') && !resultsOnly.includes('"content"'), 'no raw answer or content field');
+});
+
+test('the no-tool check passes only on the exact expected token, never on non-empty text', async () => {
+  assert.equal(NO_TOOL_EXPECTED, 'CLOUDFLARE-OK');
+  // Formatting around the token is tolerated (quotes, markdown, a full stop).
+  for (const answer of ['CLOUDFLARE-OK', '  CLOUDFLARE-OK\n', '`CLOUDFLARE-OK`', '**CLOUDFLARE-OK**', 'CLOUDFLARE-OK.', 'cloudflare-ok']) {
+    assert.equal(matchesExpectedToken(answer), true, JSON.stringify(answer));
+  }
+  // Extra content is not: the model did not follow the instruction.
+  for (const answer of ['', 'CLOUDFLARE-OKAY', 'Sure! CLOUDFLARE-OK', 'CLOUDFLARE-OK — here you go', 'OK']) {
+    assert.equal(matchesExpectedToken(answer), false, JSON.stringify(answer));
+  }
+
+  const chatty = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (body.tools?.length) {
+      const answered = body.messages.some((message) => message.role === 'tool');
+      return answered
+        ? json({ choices: [{ message: { content: '42' } }], usage: usageOf() })
+        : json({ choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'add_numbers', arguments: '{"a":17,"b":25}' } }] } }], usage: usageOf() });
+    }
+    return json({ choices: [{ message: { content: 'Sure! CLOUDFLARE-OK — anything else?' } }], usage: usageOf() });
+  };
+  const report = await runCloudflareCanary({ env: ENV, fetchFn: chatty, live: true, models: [MODEL] });
+  const [noTool] = report.results;
+  assert.equal(noTool.answered, true, 'the answer was not empty…');
+  assert.equal(noTool.expectedTokenMatched, false, '…but it was not the expected token');
+  assert.equal(noTool.ok, false);
+  assert.equal(noTool.failure, 'EXPECTED_TOKEN_MISMATCH');
+  assert.equal(report.ok, false, 'a chatty answer is not a passing canary');
+});
+
+test('the request cap admits a full three-model round trip and reports partial coverage honestly', async () => {
+  const plan = cloudflareCanaryPlan({ env: ENV });
+  assert.equal(plan.caps.maxRequests, 9, '3 models × 3 requests each: one no-tool call plus a two-call tool round trip');
+  assert.equal(plan.caps.requestsPerModel, 3);
+  assert.equal(plan.caps.requestsRequired, 9);
+  assert.equal(plan.caps.plannedRequests, 9);
+  assert.equal(plan.coverage.fullCoverage, true);
+  assert.equal(plan.coverage.completeModels.length, 3);
+  assert.deepEqual(plan.coverage.partialModels, []);
+  assert.deepEqual(plan.coverage.unprobedModels, []);
+  assert.ok(plan.checks.every((entry) => entry.planned));
+
+  // A tighter cap is still strict: the run stops at the first check that does
+  // not fit, and the plan says exactly which models that leaves out.
+  const tight = cloudflareCanaryPlan({ env: ENV, maxRequests: 6 });
+  assert.equal(tight.caps.plannedRequests, 6);
+  assert.equal(tight.coverage.fullCoverage, false);
+  assert.equal(tight.coverage.completeModels.length, 2);
+  assert.deepEqual(tight.coverage.unprobedModels, ['@cf/meta/llama-3.3-70b-instruct-fp8-fast']);
+  assert.match(tight.note, /PARTIAL COVERAGE/);
+
+  let called = 0;
+  const fetchFn = async (url, init) => {
+    called += 1;
+    const body = JSON.parse(init.body);
+    if (body.tools?.length) {
+      const answered = body.messages.some((message) => message.role === 'tool');
+      return answered
+        ? json({ choices: [{ message: { content: '42' } }], usage: usageOf() })
+        : json({ choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'add_numbers', arguments: '{"a":17,"b":25}' } }] } }], usage: usageOf() });
+    }
+    return json({ choices: [{ message: { content: 'CLOUDFLARE-OK' } }], usage: usageOf() });
+  };
+
+  // Execution follows the same stopping rule, so the dry run predicts reality.
+  const run = await runCloudflareCanary({ env: ENV, fetchFn, live: true, maxRequests: 6 });
+  assert.equal(called, 6);
+  assert.equal(run.requestsSent, 6);
+  assert.equal(run.coverage.fullCoverage, false);
+  assert.equal(run.partialCoverage, true);
+  assert.deepEqual(run.coverage.completeModels, tight.coverage.completeModels);
+  assert.deepEqual(run.coverage.unprobedModels, tight.coverage.unprobedModels);
+  assert.equal(run.stoppedBecause, 'REQUEST_CAP');
+  assert.equal(run.ok, false, 'partial coverage is never a passing canary');
+  assert.match(run.note, /PARTIAL COVERAGE/);
+
+  const full = await runCloudflareCanary({ env: ENV, fetchFn, live: true });
+  assert.equal(full.requestsSent, 9);
+  assert.equal(full.coverage.fullCoverage, true);
+  assert.equal(full.partialCoverage, undefined);
+  assert.equal(full.ok, true, JSON.stringify(full.results));
 });
 
 test('the live canary enforces its request cap and refuses models outside the allowlist', async () => {

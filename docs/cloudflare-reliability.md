@@ -85,6 +85,14 @@ plan is a stated setting:
 sudo bash ops/set-secret.sh CLOUDFLARE_PLAN   # free | paid (not a secret)
 ```
 
+**`CLOUDFLARE_PLAN` is an owner declaration, not verified billing evidence.**
+Cloudflare does not report the Workers plan on the inference API, so every
+surface that shows it labels the basis: the canary preflight and
+`GET /api/capacity` → `freeOnlySafety.cloudflare` both report
+`planBasis: 'owner-declared'` and `planVerified: false`. A wrong declaration
+could still bill overage, which is why a live canary is not proof of a free
+account either.
+
 | `CLOUDFLARE_PLAN` | Route | Why |
 |---|---|---|
 | unset / unknown | exists but **blocked** (`PLAN_NOT_VERIFIED`) | an unknown plan could be Paid, where overage is charged |
@@ -149,19 +157,20 @@ Unlike `npm run canary:agentic`, this command cannot reach another provider.
 | Property | Behaviour |
 |---|---|
 | Default | dry run: no network, no credential needed, prints the exact planned checks and caps |
-| Live gate | requires `--live` **and** a verified free plan; unstated or paid refuses with `executed: false` |
+| Live gate | requires `--live` **and** a *declared* free plan (`planBasis: 'owner-declared'`, `planVerified: false`); unstated or paid refuses with `executed: false` |
 | Allowlist | `CLOUDFLARE_CANARY_MODELS` (defaults to the three documented models); a requested id outside it is reported in `refused` and never probed |
 | Data | synthetic arithmetic and a fixed token; no repository or customer content |
-| Checks | `no-tool` (asserts no `tools` / `tool_choice` in the body) and `tool-calling` (a real `add_numbers` call, then the number `42`) |
-| Caps | 6 requests, 256 output tokens per request, 6,000 total tokens, 60 s timeout; the run stops at a cap and sets `stoppedBecause` |
+| Checks | `no-tool` (asserts no `tools` / `tool_choice` in the body **and** the answer is exactly `CLOUDFLARE-OK`) and `tool-calling` (a real `add_numbers` call, then only the number `42`) |
+| Caps | 9 requests (3 models × 3: one no-tool call plus a two-call tool round trip each), 256 output tokens per request, 6,000 total tokens, 60 s timeout |
+| Partial runs | the run stops at the first check that no longer fits and reports `coverage` (`completeModels`, `partialModels`, `unprobedModels`, `fullCoverage: false`) plus `stoppedBecause`; a capped run can never read as full coverage |
 | Writes | none: no database, no `provider_status`, no budget reservation |
-| Report | sanitized JSON: booleans, counts, durations, token usage, machine error codes and `providerCode`. No credential, prompt or model output |
+| Report | sanitized JSON: booleans, counts, durations, token usage, machine error codes, `providerCode` and a named `failure` for a check. No credential, prompt or model output |
 
 ## 10. Monitoring
 
 `GET /api/capacity` now adds (all additive):
 
-* `freeOnlySafety.cloudflare` — stated plan, executable routes, blocked
+* `freeOnlySafety.cloudflare` — the owner-declared plan (`planBasis: 'owner-declared'`, `planVerified: false`), executable routes, blocked
   reasons, and `paidFallbackOnFreeOnly: refused`;
 * per pool: `qualification { qualified, failed, untested }`, `published`
   (including `neuronsPerDay`), `resetKind`, `nextResetAt`, `lastErrorCode`,
@@ -174,12 +183,13 @@ The per-route pool table already lives on the Coding page
 
 Verified offline (this branch):
 
-* `npm ci` and `node --test`: 804 tests, 801 pass, 0 fail, 3 skipped (the
+* `npm ci` and `node --test`: 806 tests, 803 pass, 0 fail, 3 skipped (the
   container-root sandbox tests, as documented).
-* `test/cloudflare-reliability.test.js` (10 tests) covers error codes, shared
-  neuron cooldown, the plan gate, tool capability in qualification and in the
-  gateway, free-only failover, catalog parsing and the canary (dry run,
-  refusal, live shape, caps, redaction).
+* `test/cloudflare-reliability.test.js` (12 tests) covers error codes, shared
+  neuron cooldown, the plan gate and its `owner-declared` basis, tool
+  capability in qualification and in the gateway, free-only failover, catalog
+  parsing and the canary (dry run, refusal, live shape, exact-token no-tool
+  check, 9-request full coverage vs. reported partial coverage, redaction).
 * `test/cloudflare-routes.test.js` (PR #123) still passes with the new
   `CLOUDFLARE_PLAN=free` fixture.
 
@@ -211,8 +221,10 @@ Keys are never pasted into a chat and never committed.
 2. `npm run canary:cloudflare -- --live --max-requests=3`: one model, one
    no-tool call and one tool round trip. This validates the PR #123 shape and
    the tool path with real responses at a bounded spend.
-3. If it passes: `--live` with the full allowlist (6 requests), then read
-   `GET /api/capacity` for the qualification state and the neuron pool.
+3. If it passes: `--live` with the full allowlist (9 requests, one full round
+   trip per model), then read `GET /api/capacity` for the qualification state
+   and the neuron pool. Read `coverage` in the report: `fullCoverage: true` is
+the only result that covers all three models.
 4. Only then qualify the routes in the background cycle and measure tokens per
    neuron from `model_attempts`; record the result as MEASURED in
    `docs/capacity-v2.md`.
