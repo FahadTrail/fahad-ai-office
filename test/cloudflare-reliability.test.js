@@ -415,3 +415,42 @@ test('the live canary enforces its request cap and refuses models outside the al
   assert.equal(refused.ok, false);
   assert.equal(called, before, 'a model outside the allowlist is never probed');
 });
+
+test('the canary limits are hard maxima: flags may lower them, never raise them', async () => {
+  const wide = cloudflareCanaryPlan({ env: ENV, maxRequests: 500, maxOutputTokens: 100_000 });
+  assert.equal(wide.caps.maxRequests, 9);
+  assert.equal(wide.caps.maxOutputTokens, 256);
+  // A widened allowlist still cannot exceed nine requests.
+  const many = cloudflareCanaryPlan({ env: { ...ENV, CLOUDFLARE_CANARY_MODELS: '@cf/a/1,@cf/a/2,@cf/a/3,@cf/a/4,@cf/a/5' }, maxRequests: 15 });
+  assert.equal(many.caps.plannedRequests, 9);
+  assert.equal(many.coverage.fullCoverage, false);
+  assert.equal(cloudflareCanaryPlan({ env: ENV, maxRequests: 3 }).caps.maxRequests, 3, 'a lower cap is honoured');
+
+  let called = 0;
+  const bodies = [];
+  const fetchFn = async (url, init) => {
+    called += 1;
+    bodies.push(JSON.parse(init.body));
+    return json({ choices: [{ finish_reason: 'stop', message: { content: 'CLOUDFLARE-OK' } }], usage: usageOf(5, 2) });
+  };
+  const run = await runCloudflareCanary({ env: ENV, fetchFn, live: true, maxRequests: 500, maxOutputTokens: 100_000, maxTotalTokens: 1e9 });
+  assert.ok(called <= 9, `sent ${called} requests`);
+  assert.ok(bodies.every((body) => body.max_tokens == null || body.max_tokens <= 256 || body.max_completion_tokens <= 256));
+});
+
+for (const [status, code, label] of [[401, 10000, 'rejected credential'], [429, 4006, 'used-up daily neurons'], [403, 5035, 'model needs Workers Paid']]) {
+  test(`the live canary stops at the first provider error (${label})`, async () => {
+    let called = 0;
+    const fetchFn = async () => {
+      called += 1;
+      return new Response(JSON.stringify({ success: false, errors: [{ code, message: 'synthetic' }] }), { status, headers: { 'content-type': 'application/json' } });
+    };
+    const report = await runCloudflareCanary({ env: ENV, fetchFn, live: true });
+    assert.equal(called, 1, 'no request after the first error');
+    assert.equal(report.ok, false);
+    assert.equal(report.stoppedBecause, 'PROVIDER_ERROR');
+    assert.equal(report.stoppedOnError.providerCode, code);
+    assert.equal(report.coverage.fullCoverage, false);
+    assert.equal(report.coverage.unprobedModels.length, 2);
+  });
+}

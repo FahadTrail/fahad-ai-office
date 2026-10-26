@@ -161,7 +161,8 @@ Unlike `npm run canary:agentic`, this command cannot reach another provider.
 | Allowlist | `CLOUDFLARE_CANARY_MODELS` (defaults to the three documented models); a requested id outside it is reported in `refused` and never probed |
 | Data | synthetic arithmetic and a fixed token; no repository or customer content |
 | Checks | `no-tool` (asserts no `tools` / `tool_choice` in the body **and** the answer is exactly `CLOUDFLARE-OK`) and `tool-calling` (a real `add_numbers` call, then only the number `42`) |
-| Caps | 9 requests (3 models × 3: one no-tool call plus a two-call tool round trip each), 256 output tokens per request, 6,000 total tokens, 60 s timeout |
+| Caps | 9 requests (3 models × 3: one no-tool call plus a two-call tool round trip each), 256 output tokens per request, 6,000 total tokens, 60 s timeout; these are hard maxima: `--max-requests` or a wider allowlist can lower them, never raise them |
+| Errors | the first provider error (credential 10000, neurons 4006, Workers Paid 5035, withdrawn model 7000, timeout, …) stops the run: `stoppedBecause: 'PROVIDER_ERROR'`, `stoppedOnError`, and the remaining models are reported as unprobed |
 | Partial runs | the run stops at the first check that no longer fits and reports `coverage` (`completeModels`, `partialModels`, `unprobedModels`, `fullCoverage: false`) plus `stoppedBecause`; a capped run can never read as full coverage |
 | Writes | none: no database, no `provider_status`, no budget reservation |
 | Report | sanitized JSON: booleans, counts, durations, token usage, machine error codes, `providerCode` and a named `failure` for a check. No credential, prompt or model output |

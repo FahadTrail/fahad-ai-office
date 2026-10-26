@@ -18,7 +18,10 @@
 //     reported, never silently dropped.
 //   * No database writes, no provider_status updates, no budget reservations.
 //     The report is printed to stdout only.
-//   * Hard caps: total requests, output tokens per request and total tokens.
+//   * Hard caps: total requests, output tokens per request, total tokens and
+//     the request timeout. Flags can lower them, never raise them.
+//   * Stop on the first provider error (credential, quota, plan, model): the
+//     rest of the run is reported as not probed instead of being sent.
 //     The run stops at the first check that does not fit, says where it
 //     stopped and reports the resulting coverage (complete, partial, unprobed)
 //     so a truncated run is never mistaken for a full one.
@@ -67,6 +70,14 @@ export const CLOUDFLARE_CANARY_LIMITS = Object.freeze({
   maxTotalTokens: 6_000,
   timeoutMs: 60_000,
 });
+
+// The limits above are HARD maxima: a flag or caller may lower them, never
+// raise them. A missing or invalid value falls back to the limit itself.
+export function hardCap(value, limit, { min = 0, fallback = limit } = {}) {
+  const number = Number(value);
+  const chosen = value == null || !Number.isFinite(number) ? fallback : Math.floor(number);
+  return Math.min(limit, Math.max(min, chosen));
+}
 
 // Synthetic, non-private prompts. They ask for public arithmetic and a fixed
 // token; nothing from a repository or a customer ever enters this command.
@@ -154,7 +165,7 @@ export function canaryPreflight({ env = {} } = {}) {
 export function cloudflareCanaryPlan({ env = {}, models = null, maxRequests = CLOUDFLARE_CANARY_LIMITS.maxRequests, maxOutputTokens = CLOUDFLARE_CANARY_LIMITS.maxOutputTokens } = {}) {
   const preflight = canaryPreflight({ env });
   const { allowlist, selected, refused } = canarySelection({ env, models });
-  const budget = Math.max(0, Math.floor(Number(maxRequests) || 0));
+  const budget = hardCap(maxRequests, CLOUDFLARE_CANARY_LIMITS.maxRequests, { fallback: 0 });
   const checks = [];
   let planned = 0;
   let stopped = false;
@@ -189,7 +200,7 @@ export function cloudflareCanaryPlan({ env = {}, models = null, maxRequests = CL
       plannedRequests: planned,
       requestsRequired: selected.length * REQUESTS_PER_MODEL,
       requestsPerModel: REQUESTS_PER_MODEL,
-      maxOutputTokens: Math.max(1, Number(maxOutputTokens) || CLOUDFLARE_CANARY_LIMITS.maxOutputTokens),
+      maxOutputTokens: hardCap(maxOutputTokens || CLOUDFLARE_CANARY_LIMITS.maxOutputTokens, CLOUDFLARE_CANARY_LIMITS.maxOutputTokens, { min: 1 }),
       maxTotalTokens: CLOUDFLARE_CANARY_LIMITS.maxTotalTokens,
       timeoutMs: CLOUDFLARE_CANARY_LIMITS.timeoutMs,
       providers: ['cloudflare'],
@@ -288,7 +299,7 @@ export async function runCloudflareCanary({
   const account = String(env.CLOUDFLARE_ACCOUNT_ID).trim();
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${account}/ai/v1/chat/completions`;
   const cap = plan.caps.maxRequests;
-  const tokenCap = Math.max(0, Number(maxTotalTokens) || 0);
+  const tokenCap = hardCap(maxTotalTokens || CLOUDFLARE_CANARY_LIMITS.maxTotalTokens, CLOUDFLARE_CANARY_LIMITS.maxTotalTokens, { min: 1 });
   const sentBodies = [];
   const countingFetch = async (url, init) => {
     // The body is captured only to prove the request shape; it is never
@@ -297,16 +308,26 @@ export async function runCloudflareCanary({
     return fetchFn(url, init);
   };
   const protocol = new ChatCompletionsProtocol({
-    apiKey: env.CLOUDFLARE_API_TOKEN, endpoint, fetchFn: countingFetch, timeoutMs, omitEmptyTools: true,
+    apiKey: env.CLOUDFLARE_API_TOKEN, endpoint, fetchFn: countingFetch, omitEmptyTools: true,
+    timeoutMs: hardCap(timeoutMs || CLOUDFLARE_CANARY_LIMITS.timeoutMs, CLOUDFLARE_CANARY_LIMITS.timeoutMs, { min: 1 }),
   });
 
   const remainingRequests = () => cap - report.requestsSent;
   const recordTokens = (usage) => { report.totalTokens += usage.inputTokens + usage.outputTokens; };
+  // Any provider error (rejected credential, used-up neurons, a model that
+  // needs Workers Paid, a withdrawn model, a timeout) ends the run: another
+  // request would only repeat it or spend the allowance on an unclear state.
+  const stopOnError = (model, check) => {
+    const entry = report.results.at(-1);
+    report.stoppedBecause = 'PROVIDER_ERROR';
+    report.stoppedOnError = { model, check, errorCode: entry.errorCode, providerCode: entry.providerCode, status: entry.status };
+  };
 
   for (const model of plan.selected) {
+    if (report.stoppedBecause) break;
     // --- no-tool check: the PR #123 regression -------------------------
     if (remainingRequests() < 1) { report.results.push({ model, check: 'no-tool', ok: false, skipped: 'REQUEST_CAP' }); report.stoppedBecause = 'REQUEST_CAP'; break; }
-    if (tokenCap && report.totalTokens >= tokenCap) { report.results.push({ model, check: 'no-tool', ok: false, skipped: 'TOKEN_CAP' }); report.stoppedBecause = 'TOKEN_CAP'; break; }
+    if (report.totalTokens >= tokenCap) { report.results.push({ model, check: 'no-tool', ok: false, skipped: 'TOKEN_CAP' }); report.stoppedBecause = 'TOKEN_CAP'; break; }
     {
       const started = now();
       report.requestsSent += 1;
@@ -337,8 +358,10 @@ export async function runCloudflareCanary({
         });
       } catch (error) {
         report.results.push({ model, check: 'no-tool', ok: false, durationMs: now() - started, ...sanitizeError(error) });
+        stopOnError(model, 'no-tool');
       }
       log(JSON.stringify(report.results.at(-1)));
+      if (report.stoppedBecause) break;
     }
 
     // --- tool-calling round trip ---------------------------------------
@@ -347,7 +370,7 @@ export async function runCloudflareCanary({
       report.stoppedBecause = 'REQUEST_CAP';
       break;
     }
-    if (tokenCap && report.totalTokens >= tokenCap) {
+    if (report.totalTokens >= tokenCap) {
       report.results.push({ model, check: 'tool-calling', ok: false, skipped: 'TOKEN_CAP' });
       report.stoppedBecause = 'TOKEN_CAP';
       break;
@@ -393,6 +416,7 @@ export async function runCloudflareCanary({
         }
       } catch (error) {
         report.results.push({ model, check: 'tool-calling', ok: false, durationMs: now() - started, calls, ...sanitizeError(error) });
+        stopOnError(model, 'tool-calling');
       }
       log(JSON.stringify(report.results.at(-1)));
     }
