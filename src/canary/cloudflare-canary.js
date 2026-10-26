@@ -231,10 +231,12 @@ function planCoverage({ selected, checks, planned, budget, requestCap = budget }
     unprobedModels,
     note: fullCoverage
       ? 'full coverage: every selected model gets its no-tool call and its tool round trip'
-      : `PARTIAL COVERAGE: ${completeModels.length} of ${selected.length} selected models fully checked`
-        + `${partialModels.length ? `, ${partialModels.length} partly checked` : ''}`
-        + `${unprobedModels.length ? `, ${unprobedModels.length} not probed` : ''}`
-        + ` (request cap ${requestCap} of ${required} required)`,
+      : selected.length === 0
+        ? 'no model selected: nothing to probe'
+        : `PARTIAL COVERAGE: ${completeModels.length} of ${selected.length} selected models fully checked`
+          + `${partialModels.length ? `, ${partialModels.length} partly checked` : ''}`
+          + `${unprobedModels.length ? `, ${unprobedModels.length} not probed` : ''}`
+          + ` (request cap ${requestCap} of ${required} required)`,
   };
 }
 
