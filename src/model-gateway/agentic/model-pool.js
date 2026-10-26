@@ -311,6 +311,14 @@ export function capacityV2Routes(env = process.env) {
       secretEnv: 'CLOUDFLARE_API_TOKEN', secretRef: 'env://CLOUDFLARE_API_TOKEN', qualityTier: /coder|gpt-oss-120b/.test(model) ? 4 : 3,
       contextWindow: Math.min(Number(cloudflare.contexts[model]) || 32_000, 256_000), dataClass: 'NORMAL',
       privacyApproved: truthy(env.CLOUDFLARE_API_PRIVATE_DATA_APPROVED), privacyFlag: 'CLOUDFLARE_API_PRIVATE_DATA_APPROVED',
+      // Workers AI (/ai/v1/chat/completions) validates the tool fields per
+      // model: only some models advertise function calling, and a request that
+      // asks for tools without offering any (`tools: []` + `tool_choice:
+      // "auto"`) is refused with HTTP 400 PROVIDER_INVALID_REQUEST — or, on a
+      // model that does implement tool choice, answered with an empty message.
+      // Every no-tool call (Office jobs, the qualification prompt) must omit
+      // both fields; the tool probe still sends a real tools array.
+      protocolOptions: { omitEmptyTools: true },
     });
   }
   return routes;

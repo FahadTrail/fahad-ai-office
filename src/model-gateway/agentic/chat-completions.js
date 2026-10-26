@@ -89,8 +89,14 @@ export class ChatCompletionsProtocol {
       if (call.type && call.type !== 'function') continue;
       content.push({ type: 'tool_call', id: call.id, name: call.function?.name, arguments: safeJsonParse(call.function?.arguments) });
     }
+    // A choice with neither text nor a tool call is not a usable turn. It used
+    // to be returned as an empty success, which hid the cause: qualification
+    // reported "0/7 checks passed" instead of naming the failure.
+    if (!content.length) {
+      throw providerError(`${provider} returned an empty message`, { status: 502, type: 'empty_response', usage });
+    }
     return {
-      message: { role: 'assistant', content: content.length ? content : [{ type: 'text', text: '' }] },
+      message: { role: 'assistant', content },
       stopReason: content.some((block) => block.type === 'tool_call') ? 'tool_calls'
         : choice.finish_reason === 'length' ? 'max_tokens' : 'end',
       usage,
