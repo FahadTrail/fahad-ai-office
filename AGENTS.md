@@ -69,6 +69,24 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
+## Cloudflare reliability (2026-10-26)
+
+Built on the merged fix in PR #123 (`d8e2f5d`, branch
+`fix/cloudflare-empty-tools`), which stays unchanged. Development is on
+`feat/cloudflare-reliability`; see `docs/cloudflare-reliability.md`.
+
+* Workers AI errors keep their machine code (`providerCode`): `4006` is a
+  daily neuron quota, `7000` a withdrawn model, `10000` a rejected credential.
+* A used-up allowance rests every Workers AI model (one `cloudflare:neurons`
+  pool) and fails over to another free route, never a paid one.
+* Billing safety fails closed: `CLOUDFLARE_PLAN=free` must be stated, or the
+  route is blocked (`PLAN_NOT_VERIFIED`); `paid` makes it a priced paid route.
+* Per-model function calling comes from the Workers AI catalog; a tool-less
+  model is never sent tool schemas.
+* `npm run canary:cloudflare` is a dry run; `-- --live` executes a capped,
+  Cloudflare-only check with a sanitized report and no database writes.
+* No migration, no deployment and no live provider call was made for this work.
+
 ## Office premium redesign V2.0 / V2.1 / V2.2
 
 V2.0 was merged as PR #120 and deployed at `56ff190e432939b0ec573b6807077978a602c46b`. Its baseline is documented in `docs/office-premium-redesign.md`.

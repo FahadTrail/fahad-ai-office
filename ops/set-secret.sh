@@ -52,6 +52,12 @@ declare -A SHAPE=(
   [CLOUDFLARE_API_TOKEN]='^[A-Za-z0-9_-]{30,128}$'
   # Not a secret: the Cloudflare account id (32 hex characters).
   [CLOUDFLARE_ACCOUNT_ID]='^[a-f0-9]{32}$'
+  # Not a secret: which Cloudflare Workers plan the account is on. Workers AI
+  # gives 10,000 neurons/day on the FREE plan (a used-up allowance returns
+  # error 4006, no billing); on a Paid plan the overage is charged. Set free
+  # only while the dashboard shows Workers Free — an unstated plan keeps the
+  # route blocked.
+  [CLOUDFLARE_PLAN]='^(free|paid)$'
   # Not secrets: the owner's reviewed decision that a provider may receive
   # PRIVATE data (private code). Set true only after reading the provider's
   # current API data terms. OpenCode applies it to zero-retention models only.

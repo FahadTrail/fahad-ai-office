@@ -78,6 +78,11 @@ export class ChatCompletionsProtocol {
     if (choice.finish_reason === 'content_filter') {
       throw providerError(`${provider} filtered the request`, { status: 422, type: 'refusal', usage });
     }
+    // OpenAI-compatible providers may answer a safety refusal in its own field
+    // with no content; that is a refusal, not an empty turn.
+    if (typeof choice.message.refusal === 'string' && choice.message.refusal.trim()) {
+      throw providerError(`${provider} refused the request`, { status: 422, type: 'refusal', usage });
+    }
     const content = [];
     const textValue = typeof choice.message.content === 'string'
       ? choice.message.content
@@ -87,7 +92,11 @@ export class ChatCompletionsProtocol {
     if (textValue.trim()) content.push({ type: 'text', text: textValue });
     for (const call of choice.message.tool_calls || []) {
       if (call.type && call.type !== 'function') continue;
-      content.push({ type: 'tool_call', id: call.id, name: call.function?.name, arguments: safeJsonParse(call.function?.arguments) });
+      // A tool call without a function name cannot be executed or reported
+      // back to the provider (the tool message would address nothing).
+      const name = String(call.function?.name || '').trim();
+      if (!name) continue;
+      content.push({ type: 'tool_call', id: call.id, name, arguments: safeJsonParse(call.function?.arguments) });
     }
     // A choice with neither text nor a tool call is not a usable turn. It used
     // to be returned as an empty success, which hid the cause: qualification

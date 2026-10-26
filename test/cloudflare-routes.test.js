@@ -20,7 +20,9 @@ function cloudflarePool(fetchFn) {
   setProviderCatalog('cloudflare', { ok: true, models: MODELS, contexts: {} });
   try {
     return createModelPool({
-      env: { CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: KEY },
+      // CLOUDFLARE_PLAN=free is required for the route to run: an unstated plan
+      // could be a Workers Paid plan, where neuron overage is billed.
+      env: { CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: KEY, CLOUDFLARE_PLAN: 'free' },
       fetchFn,
     });
   } finally {

@@ -75,6 +75,11 @@ function credential(env, name) {
 // Parses the provider's list into chat model ids (+ context when published).
 export function parseCatalog(provider, body) {
   const contexts = {};
+  // Per-model function/tool calling support, only when the provider states it
+  // (Cloudflare's model catalog publishes a `function_calling` property).
+  // Absent means UNKNOWN, which stays permissive; an explicit false is kept so
+  // the route never sends tool fields to a model that cannot accept them.
+  const tools = {};
   let ids = [];
   if (provider === 'gemini') {
     for (const model of body?.models || []) {
@@ -89,8 +94,11 @@ export function parseCatalog(provider, body) {
       const id = String(model.name || '');
       if (!id || NON_CHAT.test(id)) continue;
       ids.push(id);
-      const context = Number((model.properties || []).find((entry) => entry?.property_id === 'context_window')?.value);
+      const properties = model.properties || [];
+      const context = Number(properties.find((entry) => entry?.property_id === 'context_window')?.value);
       if (context > 0) contexts[id] = context;
+      const toolFlag = properties.find((entry) => entry?.property_id === 'function_calling' || entry?.property_id === 'tool_calling');
+      if (toolFlag) tools[id] = toolFlag.value === true || /^(true|yes|1)$/i.test(String(toolFlag.value));
     }
   } else {
     for (const model of body?.data || []) {
@@ -102,7 +110,7 @@ export function parseCatalog(provider, body) {
     }
   }
   ids = [...new Set(ids.filter((id) => /^@?[A-Za-z0-9._/:-]{2,160}$/.test(id)))].sort();
-  return { models: ids, contexts };
+  return { models: ids, contexts, ...(Object.keys(tools).length ? { tools } : {}) };
 }
 
 export async function fetchProviderCatalog(provider, { env = process.env, fetchFn = fetch, timeoutMs = 15_000, now = () => Date.now() } = {}) {

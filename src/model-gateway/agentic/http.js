@@ -26,15 +26,21 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
   if (!response.ok) {
     let payload = {};
     try { payload = await response.json(); } catch {}
-    const type = payload?.error?.type || payload?.error?.status || payload?.error?.code || payload?.code || null;
+    // The provider's machine-readable error code, when the body carries one.
+    // Cloudflare Workers AI answers { success: false, errors: [{ code, message }] },
+    // where the message is human text and the number is the stable signal.
+    const providerCode = providerErrorCode(payload);
+    const type = payload?.error?.type || payload?.error?.status || payload?.error?.code || payload?.code || providerCode || null;
     // Only a boolean derived from the provider's text is kept: whether the
     // limit hit is a daily allowance (so the route waits for the reset).
     const errorText = JSON.stringify(payload?.error ?? payload ?? '').slice(0, 4000);
     // Cloudflare Workers AI answers error 4006 when the daily free neurons are
-    // used up (Free plan): a daily quota whatever the HTTP status says.
-    const cloudflareDaily = /"code":\s*4006\b|daily free allocation/i.test(errorText);
+    // used up (Free plan): a daily quota whatever the HTTP status says (a
+    // Workers Paid account would bill the overage instead, which is why the
+    // Cloudflare route refuses to run without a verified free plan).
+    const cloudflareDaily = providerCode === 4006 || /"code":\s*4006\b|daily free allocation/i.test(errorText);
     const dailyQuota = cloudflareDaily || (response.status === 429 && isDailyQuotaText(errorText));
-    const reason = providerReasonHint(response.status, errorText);
+    const reason = providerReasonHint(response.status, errorText) || providerCodeReason(providerCode);
     const google = googleQuotaDetails(payload);
     // A per-minute quota (Gemini QuotaFailure ...PerMinute...) resets within
     // a minute: the route waits for that window, never an escalating backoff.
@@ -46,6 +52,7 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
       status: cloudflareDaily ? 429 : response.status,
       ...(dailyQuota ? { quotaScope: 'day' } : minuteQuota ? { quotaScope: 'minute' } : {}),
       ...(reason ? { reason } : {}),
+      ...(providerCode != null ? { providerCode } : {}),
       type: typeof type === 'string' ? type : String(type ?? ''),
       retryAfter: response.headers.get('retry-after') ?? google.retryAfterSeconds,
       providerRequestId: requestId,
@@ -109,7 +116,9 @@ const REASON_HINTS = [
   ['REGION_NOT_SUPPORTED', /(country|region|territory|location).{0,30}(not supported|unsupported|not available)|unsupported (country|region|location)/i],
   ['PERMISSION_MISSING', /models:read|missing (the )?(required )?permission|insufficient.{0,20}(scope|permission)|resource not accessible by/i],
   ['MODEL_NOT_ENTITLED', /(not (eligible|entitled|authori[sz]ed)|no access|does not have access|access (to|for) (this |the )?model (is )?denied).{0,40}model|model access denied|not in (your|the) (allow|white)list/i],
-  ['CREDENTIAL_INVALID', /invalid.{0,20}(api.?key|token|credential|authentication)|incorrect api key|api key not valid|api key (is )?(invalid|expired|revoked)|authentication (failed|fails)|invalid_api_key|bad credentials/i],
+  // Cloudflare Workers AI words this as "Authentication error" (code 10000), which
+  // must rest the whole key like any other rejected credential.
+  ['CREDENTIAL_INVALID', /invalid.{0,20}(api.?key|token|credential|authentication)|incorrect api key|api key not valid|api key (is )?(invalid|expired|revoked)|authentication (failed|fails|error|required)|unauthorized|invalid_api_key|bad credentials/i],
   ['DATA_POLICY', /data policy|privacy setting|allow.*(training|logging)|free model (training|publication)/i],
   ['NO_TOOL_SUPPORT', /support(s)? tool|tool use|tool calling|tools are not supported|function calling is not supported/i],
   ['PRICE_FILTERED', /max[_ ]?price/i],
@@ -122,6 +131,28 @@ export function providerReasonHint(status, text) {
   const value = String(text || '');
   for (const [code, pattern] of REASON_HINTS) if (pattern.test(value)) return code;
   return null;
+}
+
+// A provider's own machine-readable error code, when the body carries one.
+// Cloudflare Workers AI answers { success: false, errors: [{ code, message }] }:
+// the number is the stable signal, the message is human text that may change
+// wording between incidents. Only the code is read here, never the message.
+export function providerErrorCode(payload) {
+  for (const value of [payload?.errors?.[0]?.code, payload?.error?.code, payload?.code]) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && /^[A-Za-z0-9_.-]{2,60}$/.test(value)) return value;
+  }
+  return null;
+}
+
+// Codes whose meaning the provider documents. Nothing else is guessed: an
+// unknown code keeps the (already sanitized) text hints as its only source.
+const PROVIDER_CODE_REASONS = new Map([
+  // Workers AI: "No such model or task" — the route is gone, stop calling it.
+  [7000, 'MODEL_NOT_FOUND'],
+]);
+export function providerCodeReason(code) {
+  return PROVIDER_CODE_REASONS.get(code) ?? null;
 }
 
 export function providerError(message, details = {}) {

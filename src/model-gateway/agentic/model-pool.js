@@ -257,7 +257,7 @@ const listEnv = (env, name, fallback) => {
 // The provider catalog decides: no catalog yet → no route (never a guess).
 function catalogModels(provider) {
   const entry = getProviderCatalogEntry(provider);
-  return entry ? { models: new Set(entry.models || []), contexts: entry.contexts || {} } : null;
+  return entry ? { models: new Set(entry.models || []), contexts: entry.contexts || {}, tools: entry.tools || {} } : null;
 }
 
 export function capacityV2Routes(env = process.env) {
@@ -304,6 +304,16 @@ export function capacityV2Routes(env = process.env) {
 
   const account = String(env.CLOUDFLARE_ACCOUNT_ID || '').trim();
   const cloudflare = catalogModels('cloudflare');
+  // Billing safety, fail closed. Workers AI's 10,000 daily neurons are an
+  // allowance only on the Workers FREE plan (a used-up allowance returns error
+  // 4006, no billing). On a Paid plan the same neurons are a credit and the
+  // overage is charged. The inference API does not report which plan an
+  // account is on, so the owner states it with CLOUDFLARE_PLAN=free. With no
+  // statement the route exists (visible in the dashboard) but never runs; a
+  // `paid` statement makes it a paid route, which then needs explicit pricing
+  // and can never be used by free-only work.
+  const plan = String(env.CLOUDFLARE_PLAN || '').trim().toLowerCase();
+  const planKnown = plan === 'free' || plan === 'paid';
   for (const model of listEnv(env, 'CLOUDFLARE_AI_MODELS', CLOUDFLARE_DEFAULT).filter((id) => cloudflare?.models.has(id))) {
     routes.push({
       ...common, provider: 'cloudflare', model,
@@ -311,6 +321,12 @@ export function capacityV2Routes(env = process.env) {
       secretEnv: 'CLOUDFLARE_API_TOKEN', secretRef: 'env://CLOUDFLARE_API_TOKEN', qualityTier: /coder|gpt-oss-120b/.test(model) ? 4 : 3,
       contextWindow: Math.min(Number(cloudflare.contexts[model]) || 32_000, 256_000), dataClass: 'NORMAL',
       privacyApproved: truthy(env.CLOUDFLARE_API_PRIVATE_DATA_APPROVED), privacyFlag: 'CLOUDFLARE_API_PRIVATE_DATA_APPROVED',
+      billingClass: plan === 'paid' ? BILLING_CLASS.PAID : BILLING_CLASS.FREE,
+      pricing: readPricing(env, 'CLOUDFLARE_PRICING_JSON'),
+      ...(planKnown ? {} : { planUnverified: true }),
+      // Only a model whose catalog entry states no function calling is marked
+      // tool-less. An absent property stays UNKNOWN (permissive), never false.
+      ...(cloudflare.tools?.[model] === false ? { toolCalling: false } : {}),
       // Workers AI (/ai/v1/chat/completions) validates the tool fields per
       // model: only some models advertise function calling, and a request that
       // asks for tools without offering any (`tools: []` + `tool_choice:
@@ -403,6 +419,9 @@ export function createModelPool({ env = process.env, fetchFn = fetch, protocolFa
     if (definition.billingClass === BILLING_CLASS.PAID && !definition.pricing) reasons.push('PRICING_UNKNOWN');
     if (definition.endpoint && /\.invalid\//.test(definition.endpoint)) reasons.push('ENDPOINT_NOT_CONFIGURED');
     if (definition.catalogBlocked) reasons.push(`CATALOG_${definition.catalogBlocked}`);
+    // The provider's plan decides whether an exhausted allowance bills the
+    // account: without a stated plan the route must not run (see above).
+    if (definition.planUnverified) reasons.push('PLAN_NOT_VERIFIED');
     if (definition.retired) reasons.push(definition.retired);
     const protocol = reasons.length ? null : protocolFactory(definition, { apiKey, fetchFn, env });
     return Object.freeze({ ...definition, capacityPool: capacityPool(definition), protocolClient: protocol, unavailableReasons: Object.freeze(reasons) });

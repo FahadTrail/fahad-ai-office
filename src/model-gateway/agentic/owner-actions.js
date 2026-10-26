@@ -31,9 +31,16 @@ const ACTIONS = [
     done: (env) => set(env, 'LLM7_API_KEY'),
   },
   {
-    id: 'cloudflare-key', facts: { signup: 'https://dash.cloudflare.com → Workers AI → API token', secretEnv: 'CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID', card: 'no (Workers Free plan)', phone: 'no', autoReloadRisk: 'none on the Free plan (overage returns error 4006); upgrading to Workers Paid would bill', adapterReady: true, independentPool: true, freeQuota: '10,000 neurons/day (PUBLISHED; tokens per neuron UNKNOWN until measured)', codingValue: 'small: qwen2.5-coder-32b, gpt-oss-120b; a PRIVATE-coding candidate after the privacy flag', privacyClass: 'NORMAL', setupMinutes: 10 }, priority: 3, provider: 'cloudflare', unlocks: '10,000 neurons/day, reset 00:00 UTC (PUBLISHED). NORMAL data: no training or retention.',
-    steps: ['Keep the account on the Workers FREE plan (a used-up allowance then returns error 4006 instead of billing).', 'Create an API token with the "Workers AI" read permission.', secret('CLOUDFLARE_API_TOKEN'), secret('CLOUDFLARE_ACCOUNT_ID')],
-    done: (env) => set(env, 'CLOUDFLARE_API_TOKEN') && set(env, 'CLOUDFLARE_ACCOUNT_ID'),
+    id: 'cloudflare-key', facts: { signup: 'https://dash.cloudflare.com → Workers AI → API token', secretEnv: 'CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_PLAN=free', card: 'no (Workers Free plan)', phone: 'no', autoReloadRisk: 'none on the Free plan (overage returns error 4006); a Workers Paid plan bills the overage, so the plan must be stated and an unstated plan keeps the route blocked', adapterReady: true, independentPool: true, freeQuota: '10,000 neurons/day (PUBLISHED; tokens per neuron UNKNOWN until measured)', codingValue: 'small: qwen2.5-coder-32b, gpt-oss-120b; a PRIVATE-coding candidate after the privacy flag', privacyClass: 'NORMAL', setupMinutes: 10 }, priority: 3, provider: 'cloudflare', unlocks: '10,000 neurons/day, reset 00:00 UTC (PUBLISHED). NORMAL data: no training or retention.',
+    steps: [
+      'Keep the account on the Workers FREE plan (a used-up allowance then returns error 4006 instead of billing).',
+      'Create an API token with the "Workers AI" read permission.',
+      secret('CLOUDFLARE_API_TOKEN'), secret('CLOUDFLARE_ACCOUNT_ID'),
+      // The inference API does not report the plan, and a Paid plan bills
+      // neuron overage: with no statement the route stays blocked.
+      `${secret('CLOUDFLARE_PLAN')} → type: free (only while the account is on the Workers Free plan; not a secret)`,
+    ],
+    done: (env) => set(env, 'CLOUDFLARE_API_TOKEN') && set(env, 'CLOUDFLARE_ACCOUNT_ID') && String(env?.CLOUDFLARE_PLAN || '').trim().toLowerCase() === 'free',
   },
   {
     id: 'ollama-key', facts: { signup: 'https://ollama.com/settings/keys', secretEnv: 'OLLAMA_API_KEY', card: 'no (Free plan)', phone: 'no', autoReloadRisk: 'none', adapterReady: true, independentPool: true, freeQuota: 'small monthly allowance, not published; 1 concurrent', codingValue: 'qwen3-coder, gpt-oss-120b; PRIVATE-coding candidate after the privacy flag, capacity UNKNOWN', privacyClass: 'NORMAL', setupMinutes: 5 }, priority: 4, provider: 'ollama', unlocks: 'Small monthly allowance (not published), 1 concurrent request. NORMAL data: prompts are not logged or trained on.',

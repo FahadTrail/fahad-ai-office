@@ -94,7 +94,7 @@ const FACTS = {
     limits: limits(),
     neuronsPerDay: 10_000,
     source: 'https://developers.cloudflare.com/workers-ai/platform/pricing/', checked: '2026-09-29',
-    note: '10,000 neurons/day shared by every Workers AI model, reset 00:00 UTC; tokens per neuron depend on the model (not a token number). On the Workers Free plan a used-up allowance returns error 4006 (no billing). Cloudflare does not train on or retain inference data.',
+    note: '10,000 neurons/day shared by every Workers AI model, reset 00:00 UTC; tokens per neuron depend on the model (not a token number). On the Workers Free plan a used-up allowance returns error 4006 (no billing); a Workers Paid plan bills the overage, so the plan is stated (CLOUDFLARE_PLAN) and an unstated plan blocks the route. Cloudflare does not train on or retain inference data.',
     ownerAction: 'CLOUDFLARE_API_TOKEN',
   },
   qwen: {
