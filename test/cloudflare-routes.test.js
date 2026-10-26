@@ -58,7 +58,7 @@ test('Cloudflare routes declare the no-empty-tools quirk and stay credential-gat
   const routes = pool.filter((route) => route.provider === 'cloudflare');
   assert.deepEqual(routes.map((route) => route.model), MODELS);
   for (const route of routes) {
-    assert.deepEqual(route.protocolOptions, { omitEmptyTools: true }, `${route.model}: empty tools must be omitted`);
+    assert.deepEqual(route.protocolOptions, { omitEmptyTools: true, omitToolChoice: true }, `${route.model}: empty tools and tool_choice are omitted`);
     assert.equal(route.endpoint, `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/v1/chat/completions`);
     assert.equal(route.billingClass, 'free');
     assert.deepEqual(route.unavailableReasons, []);
@@ -86,6 +86,33 @@ test('the qualification suite passes on Cloudflare because no call sends an empt
     if ('tools' in body) assert.ok(body.tools.length > 0, 'a tools field is only sent with actual tools');
   }
   assert.equal(bodies[1].body.tools[0].function.name, 'lookup_price');
+  // The tool probe keeps the schema but sends no `tool_choice`: a live canary
+  // on 2026-10-26 was refused with HTTP 400 / code 5006 (a model-input schema
+  // rejection), and that field was the only difference from the passing call.
+  assert.ok(!('tool_choice' in bodies[1].body), 'the tool probe sends no tool_choice');
+  for (const { body } of bodies) assert.ok(!('tool_choice' in body), 'no Cloudflare call sends tool_choice');
+});
+
+test('a Cloudflare tool request sends tools without tool_choice, and other providers keep auto', async () => {
+  const bodies = [];
+  const capture = async (url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return json({ choices: [{ finish_reason: 'tool_calls', message: { content: null, tool_calls: [
+      { id: 'call_1', type: 'function', function: { name: 'lookup_price', arguments: '{"item":"widget"}' } },
+    ] } }], usage: { prompt_tokens: 50, completion_tokens: 10 } });
+  };
+  const tool = { name: 'lookup_price', description: 'Look up a price.', inputSchema: { type: 'object', properties: { item: { type: 'string' } }, required: ['item'] } };
+
+  const route = cloudflarePool(capture).find((entry) => entry.provider === 'cloudflare');
+  await route.protocolClient.turn({ provider: 'cloudflare', model: MODELS[0], system: 'S', messages: [{ role: 'user', content: [{ type: 'text', text: 'price of a widget?' }] }], tools: [tool] });
+  const cloudflare = bodies.at(-1);
+  assert.equal(cloudflare.tools[0].function.name, 'lookup_price');
+  assert.equal(cloudflare.tools[0].function.parameters.type, 'object');
+  assert.ok(!('tool_choice' in cloudflare), 'Workers AI refuses the field; auto is its default anyway');
+
+  const other = new ChatCompletionsProtocol({ apiKey: KEY, endpoint: 'https://api.deepseek.com/v1/chat/completions', fetchFn: capture });
+  await other.turn({ provider: 'deepseek', model: 'deepseek-flash', system: 'S', messages: [{ role: 'user', content: [{ type: 'text', text: 'price of a widget?' }] }], tools: [tool] });
+  assert.equal(bodies.at(-1).tool_choice, 'auto', 'unchanged for every other provider');
 });
 
 test('the pre-fix body is exactly what Workers AI refused with HTTP 400', async () => {

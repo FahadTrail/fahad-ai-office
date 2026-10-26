@@ -27,7 +27,12 @@
 //     so a truncated run is never mistaken for a full one.
 //   * Separate checks: a no-tool call (which must omit the tool fields — the
 //     PR #123 regression — and answer the expected token EXACTLY) and a real
-//     tool-calling round trip.
+//     tool-calling round trip. The tool call sends the same shape the route
+//     sends: `tools` without `tool_choice`, because a live run on 2026-10-26
+//     was refused with HTTP 400 / code 5006 (a model-input schema rejection)
+//     and `tool_choice: "auto"` was the only field the passing no-tool call did
+//     not carry. The probe records whether the field was sent and, on a 400,
+//     the rejected JSON pointer, so the next run proves the shape it accepted.
 //   * Sanitized report: no credential, no prompt, no model text. Only
 //     booleans, counts, durations, token usage and machine error codes.
 //
@@ -178,7 +183,7 @@ export function cloudflareCanaryPlan({ env = {}, models = null, maxRequests = CL
         model, check: entry.check, requests: entry.requests, planned: fits,
         expects: entry.check === 'no-tool'
           ? `exactly the token ${NO_TOOL_EXPECTED} and NO tools / tool_choice field in the request body`
-          : 'an add_numbers call, then only the number 42 from its result',
+          : 'an add_numbers call from a tools-only body (no tool_choice), then only the number 42 from its result',
         ...(fits ? {} : { reason: 'REQUEST_CAP' }),
       });
     }
@@ -254,6 +259,10 @@ function planCoverage({ selected, checks, planned, budget, requestCap = budget }
 
 function sanitizeError(error) {
   const classified = classifyProviderError(error);
+  // A rejected body names the offending property as a JSON pointer. That is the
+  // only provider text a report may carry: it identifies a field of the request
+  // we built (http.js keeps nothing else from the message).
+  const schemaPaths = Array.isArray(error?.schemaPaths) ? error.schemaPaths.filter((path) => typeof path === 'string') : [];
   return {
     errorCode: classified.code || 'PROVIDER_ERROR',
     failureClass: classified.failureClass || null,
@@ -261,6 +270,7 @@ function sanitizeError(error) {
     providerType: String(classified.type || '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80) || null,
     providerCode: typeof error?.providerCode === 'number' || typeof error?.providerCode === 'string' ? error.providerCode : null,
     reason: classified.reason || null,
+    ...(schemaPaths.length ? { schemaPaths } : {}),
   };
 }
 
@@ -308,7 +318,10 @@ export async function runCloudflareCanary({
     return fetchFn(url, init);
   };
   const protocol = new ChatCompletionsProtocol({
-    apiKey: env.CLOUDFLARE_API_TOKEN, endpoint, fetchFn: countingFetch, omitEmptyTools: true,
+    apiKey: env.CLOUDFLARE_API_TOKEN, endpoint, fetchFn: countingFetch,
+    // Exactly the route's quirks (model-pool.js): a no-tool call sends neither
+    // field, a tool call sends `tools` without `tool_choice`.
+    omitEmptyTools: true, omitToolChoice: true,
     timeoutMs: hardCap(timeoutMs || CLOUDFLARE_CANARY_LIMITS.timeoutMs, CLOUDFLARE_CANARY_LIMITS.timeoutMs, { min: 1 }),
   });
 
@@ -380,17 +393,21 @@ export async function runCloudflareCanary({
       let calls = 0;
       try {
         report.requestsSent += 1; calls += 1;
+        const bodyIndex = sentBodies.length;
         const first = await protocol.turn({
           provider: 'cloudflare', model, system: SYSTEM,
           messages: [text(TOOL_PROMPT)], tools: [TOOL], maxOutputTokens: plan.caps.maxOutputTokens,
         });
         const firstUsage = usageOf(first);
         recordTokens(firstUsage);
+        // The shape that was accepted: tools offered, no forced/auto choice.
+        const sent = sentBodies[bodyIndex] || {};
+        const shape = { toolsSent: Array.isArray(sent.tools) && sent.tools.length > 0, toolChoiceSent: 'tool_choice' in sent };
         const call = (first.message?.content || []).find((block) => block.type === 'tool_call' && block.name === TOOL.name);
         if (!call) {
           report.results.push({
             model, check: 'tool-calling', ok: false, durationMs: now() - started, usage: firstUsage,
-            toolCalled: false, failure: 'MODEL_DID_NOT_CALL_TOOL',
+            toolCalled: false, failure: 'MODEL_DID_NOT_CALL_TOOL', ...shape,
           });
         } else {
           report.requestsSent += 1; calls += 1;
@@ -409,7 +426,7 @@ export async function runCloudflareCanary({
           report.results.push({
             model, check: 'tool-calling', ok: Boolean(call) && /^\s*42\s*$/.test(answer),
             durationMs: now() - started, toolCalled: Boolean(call), toolName: call.name,
-            answeredNumber: /^\s*42\s*$/.test(answer),
+            answeredNumber: /^\s*42\s*$/.test(answer), ...shape,
             usage: { inputTokens: firstUsage.inputTokens + secondUsage.inputTokens, outputTokens: firstUsage.outputTokens + secondUsage.outputTokens },
             calls,
           });
@@ -441,16 +458,21 @@ export async function runCloudflareCanary({
 }
 
 // Coverage of an executed run. A model counts as complete only when both of
-// its checks ran and neither was skipped.
+// its checks ran to a result. A check that stopped on a provider error is
+// reported as failed, never as covered: the 2026-10-26 incident showed why — a
+// refused tool call is one request, not a tool round trip.
 function executedCoverage(plan, results, requestCap) {
   const completeModels = [];
   const partialModels = [];
+  const failedModels = [];
   const unprobedModels = [];
   for (const model of plan.selected) {
     const own = results.filter((entry) => entry.model === model);
-    const ran = own.filter((entry) => !entry.skipped);
-    if (!ran.length) unprobedModels.push(model);
+    const errors = own.filter((entry) => entry.errorCode);
+    const ran = own.filter((entry) => !entry.skipped && !entry.errorCode);
+    if (errors.length) failedModels.push({ model, errorCode: errors[0].errorCode, completedChecks: ran.length, requiredChecks: CHECKS_PER_MODEL });
     else if (ran.length === CHECKS_PER_MODEL) completeModels.push(model);
+    else if (!ran.length) unprobedModels.push(model);
     else partialModels.push({
       model,
       reason: own.find((entry) => entry.skipped)?.skipped || 'INCOMPLETE',
@@ -469,11 +491,13 @@ function executedCoverage(plan, results, requestCap) {
     fullCoverage,
     completeModels,
     partialModels,
+    failedModels,
     unprobedModels,
     note: fullCoverage
       ? 'full coverage: every selected model ran its no-tool call and its tool round trip'
       : `PARTIAL COVERAGE: ${completeModels.length} of ${plan.selected.length} selected models fully checked`
         + `${partialModels.length ? `, ${partialModels.length} partly checked` : ''}`
+        + `${failedModels.length ? `, ${failedModels.length} stopped on an error` : ''}`
         + `${unprobedModels.length ? `, ${unprobedModels.length} not probed` : ''}`,
   };
 }

@@ -300,6 +300,16 @@ test('the live canary measures a no-tool call and a real tool round trip without
 
   assert.ok(!('tools' in bodies[0]) && !('tool_choice' in bodies[0]), 'the no-tool request keeps the PR #123 shape');
   assert.equal(bodies[1].tools[0].function.name, 'add_numbers', 'the tool probe still sends a real schema');
+  assert.ok(!('tool_choice' in bodies[1]), 'the tool probe sends the schema without tool_choice');
+  assert.equal(report.results[1].toolsSent, true, 'the report says which shape was accepted');
+  assert.equal(report.results[1].toolChoiceSent, false);
+  // Tool-response handling: the assistant call is replayed with its id and the
+  // result comes back as a `tool` message addressed to that call.
+  assert.deepEqual(bodies[2].messages.map((message) => message.role), ['system', 'user', 'assistant', 'tool']);
+  assert.equal(bodies[2].messages[2].content, null);
+  assert.equal(bodies[2].messages[2].tool_calls[0].id, 'call_1');
+  assert.equal(bodies[2].messages[3].tool_call_id, 'call_1');
+  assert.equal(bodies[2].messages[3].content, '42');
 
   const serialized = JSON.stringify(report);
   assert.ok(!serialized.includes(TOKEN), 'the credential never appears in a report');
@@ -309,6 +319,61 @@ test('the live canary measures a no-tool call and a real tool round trip without
   const resultsOnly = JSON.stringify(report.results);
   assert.ok(!resultsOnly.includes('CLOUDFLARE-OK'), 'model output is not stored in a result');
   assert.ok(!resultsOnly.includes('"answer"') && !resultsOnly.includes('"content"'), 'no raw answer or content field');
+});
+
+test('a rejected body keeps the offending schema pointer, never the provider prose', async () => {
+  // Workers AI answers an input-schema rejection with HTTP 400 and code 5006
+  // ("AiError: Bad input"), a code its published error reference does not list.
+  // The pointers it names are the only text kept: they describe our own request.
+  const message = "AiError: Bad input: Error: oneOf at '/' not met, 0 matches: required properties at '/' are 'prompt', "
+    + "Type mismatch of '/tools/0/function/parameters/type', 'integer' not in 'string', "
+    + "see https://api.cloudflare.com/client/v4/accounts/x/ai/v1/chat/completions for a widget price of 17";
+  const error = await postJson({
+    fetchFn: async () => json({ success: false, errors: [{ code: 5006, message }] }, 400),
+    url: 'https://api.cloudflare.com/client/v4/x', headers: {}, body: {}, provider: 'cloudflare',
+  }).catch((caught) => caught);
+
+  assert.equal(error.status, 400);
+  assert.equal(error.providerCode, 5006);
+  assert.equal(classifyProviderError(error).code, 'PROVIDER_INVALID_REQUEST');
+  assert.deepEqual(error.schemaPaths, ['/', '/tools/0/function/parameters/type']);
+  assert.doesNotMatch(error.message, /Bad input|widget|integer/, 'no provider prose reaches the error');
+  assert.ok(!JSON.stringify(error.schemaPaths).includes('17'));
+
+  // A 5xx is not a body rejection: no pointer list is invented for it.
+  const server = await postJson({
+    fetchFn: async () => json({ success: false, errors: [{ code: 3040, message: "Type mismatch of '/messages/0'" }] }, 500),
+    url: 'https://api.cloudflare.com/client/v4/x', headers: {}, body: {}, provider: 'cloudflare',
+  }).catch((caught) => caught);
+  assert.equal(server.schemaPaths, undefined);
+});
+
+test('the 400/5006 tool-call incident is reported as a named failure with the rejected field', async () => {
+  const bodies = [];
+  const fetchFn = async (url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if (body.tools?.length) {
+      return workersError(5006, "AiError: Bad input: Error: oneOf at '/' not met, 0 matches, "
+        + "Type mismatch of '/tools/0/function/parameters/type', 'integer' not in 'string'", 400);
+    }
+    return json({ choices: [{ finish_reason: 'stop', message: { content: 'CLOUDFLARE-OK' } }], usage: usageOf(24, 4) });
+  };
+
+  const report = await runCloudflareCanary({ env: ENV, fetchFn, live: true, models: [MODEL] });
+  assert.equal(report.requestsSent, 2, 'the no-tool call, then the refused tool call');
+  assert.equal(report.ok, false);
+  assert.equal(report.stoppedBecause, 'PROVIDER_ERROR');
+  assert.deepEqual(report.stoppedOnError, {
+    model: MODEL, check: 'tool-calling', errorCode: 'PROVIDER_INVALID_REQUEST', providerCode: 5006, status: 400,
+  });
+  const failed = report.results.at(-1);
+  assert.equal(failed.ok, false);
+  assert.equal(failed.calls, 1, 'the refused call is not retried with the allowance');
+  assert.deepEqual(failed.schemaPaths, ['/', '/tools/0/function/parameters/type'], 'the report names the refused field');
+  assert.ok(!JSON.stringify(report).includes('Bad input'), 'the provider message is never stored');
+  assert.ok(!('tool_choice' in bodies[1]), 'the shape the canary sent is the one the route sends');
+  assert.equal(report.coverage.fullCoverage, false, 'a model that stopped on an error is not a measured model');
 });
 
 test('the no-tool check passes only on the exact expected token, never on non-empty text', async () => {

@@ -12,10 +12,16 @@ export class ChatCompletionsProtocol {
   //     tool-call ids (Mistral). Ids are mapped deterministically, so an
   //     assistant tool call and its tool result always keep matching ids.
   //   omitEmptyTools — send no `tools` / `tool_choice` when there are no tools.
-  constructor({ apiKey, endpoint, pricing, fetchFn = fetch, timeoutMs = 600_000, maxTokensField = 'max_tokens', extraHeaders = {}, extraBody = {}, freeOnly = false, toolCallIds = null, omitEmptyTools = false } = {}) {
+  //   omitToolChoice — send `tools` without `tool_choice` even when tools are
+  //     offered. `tool_choice: "auto"` is the OpenAI default and means the same
+  //     as leaving it out, so this changes no intended behaviour; it exists for
+  //     Workers AI, whose per-model input schema rejected the field (see the
+  //     400/5006 incident in docs/cloudflare-reliability.md).
+  constructor({ apiKey, endpoint, pricing, fetchFn = fetch, timeoutMs = 600_000, maxTokensField = 'max_tokens', extraHeaders = {}, extraBody = {}, freeOnly = false, toolCallIds = null, omitEmptyTools = false, omitToolChoice = false } = {}) {
     this.freeOnly = freeOnly;
     this.toolCallIds = toolCallIds;
     this.omitEmptyTools = omitEmptyTools;
+    this.omitToolChoice = omitToolChoice;
     if (!/^https:\/\//.test(String(endpoint || ''))) throw new TypeError('Chat Completions endpoint must be an HTTPS URL');
     this.protocol = 'chat-completions';
     this.apiKey = apiKey || null;
@@ -55,7 +61,7 @@ export class ChatCompletionsProtocol {
             type: 'function',
             function: { name: tool.name, description: tool.description, parameters: portableSchema(tool.inputSchema) },
           })),
-          tool_choice: 'auto',
+          ...(this.omitToolChoice ? {} : { tool_choice: 'auto' }),
         }),
         stream: false,
         [this.maxTokensField]: maxOutputTokens,
