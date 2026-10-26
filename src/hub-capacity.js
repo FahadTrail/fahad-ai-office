@@ -3,11 +3,11 @@
 // today / this month from model_attempts. No quota number is invented:
 // `estimatedCapacityLeft` is null unless a provider reported one.
 import { createModelPool } from './model-gateway/agentic/model-pool.js';
-import { capacityHeadline, capacityPool, poolSummary } from './model-gateway/agentic/capacity-pools.js';
+import { billingSafety, capacityHeadline, capacityPool, poolSummary } from './model-gateway/agentic/capacity-pools.js';
 import { modelUsage } from './model-gateway/agentic/usage-telemetry.js';
 import { searchBreaker } from './office/web-tools.js';
 import { capacityModel } from './model-gateway/agentic/capacity-model.js';
-import { QualificationStore } from './model-gateway/agentic/qualification.js';
+import { QualificationStore, qualificationValid } from './model-gateway/agentic/qualification.js';
 import { routeLifecycle } from './model-gateway/agentic/provider-contract.js';
 import { ownerActions } from './model-gateway/agentic/owner-actions.js';
 
@@ -42,6 +42,22 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
     return [id, { tokensToday: today.totalTokens, tokensMonth: modelUsage(rows.month).totalTokens, failedToday: today.failed.calls, requestsToday: today.successful.calls }];
   }));
   const pools = poolSummary(pool, state, { now, usage });
+  // Per-pool qualification state (a count only; the Coding page's pool table
+  // carries the per-route detail). A stale or partial record is not a pass.
+  const qualificationByPool = new Map();
+  for (const route of pool) {
+    if (route.billingClass === 'paid') continue;
+    const id = (route.capacityPool || capacityPool(route)).id;
+    const entry = qualificationByPool.get(id) || { qualified: 0, failed: 0, untested: 0 };
+    const record = qualifications?.get?.(route.id) || null;
+    if (qualificationValid(record, now) && record.status === 'qualified') entry.qualified += 1;
+    else if (record) entry.failed += 1;
+    else entry.untested += 1;
+    qualificationByPool.set(id, entry);
+  }
+  // Billing safety of the free pools whose allowance could become a charge.
+  const freeOnlySafety = billingSafety(pool, { env });
+  const reportedPools = pools.map((entry) => ({ ...entry, qualification: qualificationByPool.get(entry.id) || null }));
   const all = modelUsage(attemptRows || []);
   const today = modelUsage((attemptRows || []).filter((row) => Date.parse(row.started_at) >= dayStart.getTime()));
   const configured = pools.filter((entry) => entry.state !== 'not_configured');
@@ -126,7 +142,8 @@ export async function capacityView({ db, env = process.env, now = Date.now() }) 
       })),
     },
     ownerActions: ownerActions({ env, pools: model.pools, qualifications, now }),
-    pools,
+    freeOnlySafety,
+    pools: reportedPools,
     usage: { today, month: all, definition: 'TOTAL MODEL USAGE = input + output tokens of every model attempt (successful and failed); see usage-telemetry.js' },
     search: searchBreaker.status(),
   };

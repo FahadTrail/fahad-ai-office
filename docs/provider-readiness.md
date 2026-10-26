@@ -15,6 +15,9 @@ Status on 2026-09-30. No provider was activated. The checks below were run offli
 3. Background qualification (`qualification.js`) grades the new routes: general skills, then the coding suite (`coding-qualification.js`) for routes with coding + tools skills.
 4. Capacity counts a route only after a live success (REPORTED quota is never MEASURED).
 5. `npm run canary:agentic` is the owner's explicit live check, plus a failover drill.
+   For Cloudflare alone, `npm run canary:cloudflare` is a dry run by default and
+   `npm run canary:cloudflare -- --live` executes a capped, provider-scoped
+   check (see `docs/cloudflare-reliability.md`).
 
 ## Per provider
 
@@ -22,7 +25,7 @@ Status on 2026-09-30. No provider was activated. The checks below were run offli
 |---|---|---|---|---|---|---|
 | **Mistral** | `MISTRAL_API_KEY` **+ `MISTRAL_BILLING_CLASS=free`** | `mistral:mistral-medium-latest` (one model, `MISTRAL_MODEL`) | **paid + `PRICING_UNKNOWN` with the key alone** → free only with the billing class | PUBLIC (free mode trains by default) | `mistral:account` | **Fixed on this branch:** the owner action now includes the billing-class step, and "done" requires it. Codestral needs `MISTRAL_MODEL=codestral-latest` (one model per route today). |
 | **LLM7** | `LLM7_API_KEY` | up to 4 admitted families (gpt-oss, qwen coder, deepseek, codestral, glm ≥ 4.5, …); `llama-3.1-8b` rejected | free | PUBLIC | `llm7:free` (1M tokens/rolling 24 h, PUBLISHED) | none; context defaults to 32K when the catalog gives none |
-| **Cloudflare Workers AI** | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` | the defaults present in the account catalog (`gpt-oss-120b`, `qwen2.5-coder-32b`, `llama-3.3-70b`) | free (error 4006 = daily quota, never billed on the Free plan) | NORMAL; PRIVATE after `CLOUDFLARE_API_PRIVATE_DATA_APPROVED` | `cloudflare:neurons` (`capacity-pools.js`) | tokens per neuron UNKNOWN until measured |
+| **Cloudflare Workers AI** | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` + **`CLOUDFLARE_PLAN=free`** | the defaults present in the account catalog (`gpt-oss-120b`, `qwen2.5-coder-32b`, `llama-3.3-70b`) | free only with a declared free plan — `CLOUDFLARE_PLAN` is **owner-declared**, not verified billing evidence (error 4006 = daily quota, no billing). An unstated plan blocks the route; `paid` prices it as paid and it can never serve free-only work | NORMAL; PRIVATE after `CLOUDFLARE_API_PRIVATE_DATA_APPROVED` | `cloudflare:neurons` (`capacity-pools.js`) | tokens per neuron UNKNOWN until measured; per-model function calling comes from the catalog. See `docs/cloudflare-reliability.md` |
 | **Ollama Cloud** | `OLLAMA_API_KEY` | `gpt-oss:120b`, `qwen3-coder:480b`, `deepseek-v3.1:671b` when listed | free | NORMAL; PRIVATE after the flag | `ollama:cloud` (scarce, 1 concurrent) | allowance not published: DEFERRED |
 | **OpenCode Zen** | `OPENCODE_ZEN_API_KEY` | only the listed free promotions (`space-bunny-free` NORMAL, `big-pickle` PUBLIC, …); `muse-spark` and paid models excluded | free (promo) | per model | `opencode:free` | **auto-reload must be disabled first** ($20 when below $5) |
 

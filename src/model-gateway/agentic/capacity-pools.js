@@ -1,4 +1,4 @@
-import { freeAllowance } from './free-quota.js';
+import { freeAllowance, nextResetAt } from './free-quota.js';
 
 // Independent capacity pools.
 //
@@ -80,11 +80,21 @@ export function poolSummary(pool, state, { now = Date.now(), usage = new Map() }
     entry.allowance ||= freeAllowance(route);
     if (!route.unavailableReasons?.length) entry.configured = true;
     const routeState = state.get(route.id);
+    // The newest failure code of any member explains why the pool is not
+    // usable, without inventing a provider message.
+    if (routeState?.lastErrorCode) {
+      const at = String(routeState.lastErrorAt || '');
+      if (!entry.lastErrorAt || at >= entry.lastErrorAt) {
+        entry.lastErrorCode = routeState.lastErrorCode;
+        entry.lastErrorAt = at;
+      }
+    }
     const cooling = routeState?.cooldownUntil && Date.parse(routeState.cooldownUntil) > now;
     if (cooling) {
       const exhausted = routeState.health === 'quota_exhausted';
       entry.reasons.push(routeState.health);
       if (!entry.nextReset || Date.parse(routeState.cooldownUntil) < Date.parse(entry.nextReset)) entry.nextReset = routeState.cooldownUntil;
+      if (!entry.cooldownUntil || Date.parse(routeState.cooldownUntil) > Date.parse(entry.cooldownUntil)) entry.cooldownUntil = routeState.cooldownUntil;
       entry.coolingMembers = (entry.coolingMembers || 0) + 1;
       if (exhausted) entry.exhaustedMembers = (entry.exhaustedMembers || 0) + 1;
     }
@@ -97,7 +107,7 @@ export function poolSummary(pool, state, { now = Date.now(), usage = new Map() }
       : cooling === 0 ? 'available'
         : entry.shared || cooling >= all ? ((entry.exhaustedMembers || 0) > 0 ? 'exhausted' : 'degraded') : 'degraded';
     const used = usage.get(entry.id) || { tokensToday: 0, tokensMonth: 0, failedToday: 0, requestsToday: 0 };
-    const { coolingMembers, exhaustedMembers, allowance, ...rest } = entry;
+    const { coolingMembers, exhaustedMembers, allowance, lastErrorAt, lastErrorCode, cooldownUntil, ...rest } = entry;
     let estimatedCapacityLeft = null;
     if (state === 'exhausted') estimatedCapacityLeft = { requests: 0, basis: 'provider reported the allowance used up' };
     else if (allowance?.requestsPerDay) {
@@ -105,8 +115,59 @@ export function poolSummary(pool, state, { now = Date.now(), usage = new Map() }
       estimatedCapacityLeft = { requests: Math.max(0, allowance.requestsPerDay - Number(used.requestsToday || 0)),
         basis: 'ESTIMATED — published daily limit minus our audited use today (the key may also be used elsewhere)' };
     }
-    return { ...rest, state, ...used, estimatedCapacityLeft };
+    return {
+      ...rest, state, ...used, estimatedCapacityLeft,
+      // Published allowance facts (null when the provider publishes none) and
+      // the next scheduled reset, so the dashboard can show what is known.
+      published: allowance ? {
+        requestsPerDay: allowance.requestsPerDay ?? null,
+        tokensPerDay: allowance.tokensPerDay ?? null,
+        neuronsPerDay: allowance.neuronsPerDay ?? null,
+        note: allowance.note,
+        source: allowance.source,
+      } : null,
+      resetKind: allowance?.reset?.kind || null,
+      nextResetAt: allowance?.reset ? nextResetAt(allowance.reset, now) : null,
+      lastErrorCode: lastErrorCode || null,
+      cooldownUntil: cooldownUntil || entry.nextReset || null,
+    };
   }).toSorted((left, right) => left.id.localeCompare(right.id));
+}
+
+// Billing safety of the free providers whose allowance can turn into a charge.
+// Workers AI is the only one today: its 10,000 daily neurons are an allowance
+// on the Workers FREE plan (a used-up allowance returns error 4006 and cannot
+// bill) but a credit on a Paid plan, where the overage is charged. The plan is
+// not reported by the inference API, so it is a stated setting and an unstated
+// plan blocks the route (model-pool.js PLAN_NOT_VERIFIED).
+export function billingSafety(pool, { env = {} } = {}) {
+  const cloudflare = pool.filter((route) => route.provider === 'cloudflare');
+  const stated = String(env.CLOUDFLARE_PLAN || '').trim().toLowerCase();
+  const plan = stated === 'free' || stated === 'paid' ? stated : 'UNVERIFIED';
+  return {
+    cloudflare: {
+      plan,
+      planVariable: 'CLOUDFLARE_PLAN',
+      // The inference API never reports the Workers plan, so this value is the
+      // owner's declaration: it is a configuration state, NOT verified billing
+      // evidence. A wrong declaration could still bill overage.
+      planBasis: 'owner-declared',
+      planVerified: false,
+      planNote: 'Declared by the owner in CLOUDFLARE_PLAN; Cloudflare does not report the Workers plan on the inference API, so this is not independently verified billing evidence.',
+      routes: cloudflare.length,
+      executable: cloudflare.filter((route) => !route.unavailableReasons?.length).length,
+      billingClass: cloudflare.find((route) => route.billingClass)?.billingClass || null,
+      blockedReasons: [...new Set(cloudflare.flatMap((route) => route.unavailableReasons || []))].toSorted(),
+      note: plan === 'free'
+        ? 'Workers Free plan declared by the owner (not verified by the provider): a used-up daily allowance returns error 4006 and cannot bill the account.'
+        : plan === 'paid'
+          ? 'Workers Paid plan declared by the owner: the route is priced as paid and can never serve free-only work.'
+          : 'Plan not declared: the route is blocked (fail closed), because a Paid plan would bill neuron overage.',
+    },
+    // Free-only work (allowPaid=false) can never select a paid route, and the
+    // free-route guard refuses any billed answer on a free route.
+    paidFallbackOnFreeOnly: 'refused',
+  };
 }
 
 // One-sentence owner summary (the Hub opens with a human sentence, not a

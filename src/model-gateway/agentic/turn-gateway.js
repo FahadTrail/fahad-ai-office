@@ -290,7 +290,12 @@ export class AgentTurnGateway {
             model: route.model,
             system: input.system,
             messages: input.messages,
-            tools,
+            // A route whose model does not implement function calling (the
+            // provider's own catalog says so) is never offered tool schemas:
+            // Workers AI answers such a request with HTTP 400. Jobs that need
+            // tools are already ruled out for that route by the capability
+            // gate; this keeps the remaining calls valid.
+            tools: route.toolCalling === false ? [] : tools,
             maxOutputTokens: outputTokens,
             clientRequestId: attemptId,
             ...(routing.effort ? { effort: routing.effort } : {}),

@@ -59,7 +59,11 @@ export const FREE_ALLOWANCES = Object.freeze({
   cloudflare: {
     reset: { kind: 'daily', timeZone: 'UTC' },
     requestsPerDay: null,
-    note: '10,000 neurons/day shared by all Workers AI models, reset 00:00 UTC. A used-up allowance answers error 4006 on the Free plan (no billing).',
+    // Workers AI is metered in neurons, not tokens: 10,000/day for the whole
+    // account. Tokens per neuron depend on the model (UNKNOWN until measured),
+    // so no token number is ever derived from this.
+    neuronsPerDay: 10_000,
+    note: '10,000 neurons/day shared by all Workers AI models, reset 00:00 UTC. A used-up allowance answers error 4006 on the Workers Free plan (no billing); a Workers Paid plan bills the overage, which is why CLOUDFLARE_PLAN=free is required before the route runs. That plan is the owner declaration (CLOUDFLARE_PLAN): Cloudflare does not report it, so it is never verified billing evidence.',
     source: 'https://developers.cloudflare.com/workers-ai/platform/pricing/',
   },
   llm7: {
@@ -186,6 +190,7 @@ export function freeQuotaStatus(route, { env = {}, usedToday = null, rateLimit =
     published: {
       requestsPerDay: allowance.requestsPerDay,
       tokensPerDay: allowance.tokensPerDay ?? null,
+      neuronsPerDay: allowance.neuronsPerDay ?? null,
       note: allowance.note,
       source: allowance.source,
     },

@@ -17,6 +17,8 @@ import { harvest, parseTables } from '../tools/omniroute-harvest.mjs';
 const KEY = 'test-key-1234567890abcdef';
 const ENV = {
   OPENCODE_ZEN_API_KEY: KEY, LLM7_API_KEY: KEY, OLLAMA_API_KEY: KEY, CLOUDFLARE_API_TOKEN: KEY, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
+  // Workers AI runs only with a stated plan: a Paid plan bills neuron overage.
+  CLOUDFLARE_PLAN: 'free',
   GROQ_API_KEY: KEY, OPENROUTER_API_KEY: KEY, GEMINI_API_KEY: KEY, ZHIPU_API_KEY: KEY, DEEPSEEK_API_KEY: KEY, ANTHROPIC_API_KEY: KEY,
 };
 const catalog = (models, contexts = {}) => ({ ok: true, status: 200, fetchedAt: new Date().toISOString(), models, contexts });
