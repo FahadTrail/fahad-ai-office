@@ -13,7 +13,8 @@ export async function startTelegramChannel({ db, store, log, env = process.env }
   }
   if (!workspaceId) throw new Error('no project for the Telegram channel');
   const host = String(env.HUB_PUBLIC_HOST || '').trim();
-  const bridge = new OfficeBridge({ db, store, workspaceId, channel: 'telegram', hubUrl: /^[a-z0-9.-]+$/i.test(host) ? `https://${host}` : '' });
+  const bridge = new OfficeBridge({ db, store, workspaceId, channel: 'telegram', hubUrl: /^[a-z0-9.-]+$/i.test(host) ? `https://${host}` : '',
+    notifyHubResults: !/^(0|false|no|off)$/i.test(String(env.TELEGRAM_NOTIFY_HUB_RESULTS || '')) });
   let channel;
   try {
     channel = new TelegramChannel({ token, ownerChatId: env.TELEGRAM_OWNER_CHAT_ID, bridge, log: (...parts) => log(...parts), pollSeconds: 20 });

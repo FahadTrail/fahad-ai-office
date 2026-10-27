@@ -10,11 +10,115 @@ Evidence levels used below: **CODE** (implemented), **TESTED** (automated
 tests pass), **DEPLOYED** (running in production), **E2E** (a real workflow was
 observed end to end), **UNPROVEN** (no current evidence).
 
+## 0. Mission 2 — implementation without verification (2026-10-27, evening)
+
+Fahad's rule for this mission: **no tests of any kind, no live AI calls, no
+PR (it would start CI), no merge, no deploy, no migration, no production
+write.** Everything below is on branch `claude/kind-ptolemy-kd5e5j` (pushed;
+pushes to this branch do not start CI) and is **IMPLEMENTED — VERIFICATION
+PENDING**. Tests were written for every change but none was executed; only
+`node --check` syntax checks ran.
+
+| Package | Previously complete | Implemented now | Remaining | Blocker | Verification pending |
+| --- | --- | --- | --- | --- | --- |
+| A Data incident & recovery safety | Explicit-ID cleanup script with expected counts | Bulk-delete/TRUNCATE guard migration on 23 history tables (opt-in per transaction, audited); ops watch row-count snapshots + data-loss and allowed-bulk-delete alerts; cleanup script opts in | Apply the migration; a backup restore drill | Owner approval for the migration; backups depend on the Supabase plan (not visible from here) | `test/data-safety.test.js`, replay scenario `bulk_delete_guard.sql`, regenerate `schema-fingerprint.txt` |
+| B Office experience & deliverables | Versions, pin/archive/approve/revise, artifact exports, Resume/Stop (#130) | Full reports (employee + CHIEF synthesis) download as Word (.doc), PDF (print) or Markdown; failed objectives in Needs Fahad point to Resume, in Arabic | Live use of every flow | None (code) | `test/report-export.test.js` + browser check |
+| C Coding Agent | Full lifecycle, protected-file approvals (V2), checkpoints, CI repair | Repository profile: Node (npm/pnpm/yarn/bun), Python, Go, Rust; dependency install once before the test gate; project summary in the system prompt | A live session on a non-Office repository | Sandbox network for installs is unverified | `test/repo-profile.test.js` + one real session |
+| D Continuity | Stale-task requeue, coding lease reclaim, capacity wait, owner Resume | Ops watch flags an objective that is running with nothing able to run | Supervisor activation (vendor CLIs) | Vendor CLI logins on the VPS (owner) | `test/data-safety.test.js` (stuck case) |
+| E Integrations | GitHub, repo, CI, deploy, Supabase tools, web search/fetch, Telegram | Google Drive/Docs/Sheets connector (read: search/read; write: create-only in one Office folder), privacy-forced routing, honest Integrations state, one-time OAuth setup that never prints the token; tool use now counts only successful calls | Connect it | Owner must create a Google OAuth client and authorize (§6.6) | `test/google-workspace.test.js`; one real Drive call after connecting |
+| F Model pool & capacity | Free-first routing, privacy, budget, per-model status/reason/billing/health/roles | Nothing needed (Cloudflare closed and preserved) | — | — | — |
+| G Security & operations | RLS deny-by-default, redaction, deploy rollback, ops watch | Hub refuses writes whose `Origin` is not the Hub (sibling-subdomain CSRF); Telegram notices for finished Hub objectives | Repository visibility; scrub VPS hostname if wanted | Owner decision | `test/hub-origin.test.js`, `test/telegram-channel.test.js` |
+| H Cleanup & completeness | — | Inventory only (below); nothing closed or deleted | Close superseded PRs | Owner decision | — |
+
+### Commits (branch `claude/kind-ptolemy-kd5e5j`, on top of `main` `4db3672`)
+
+| Commit | Package | Change |
+| --- | --- | --- |
+| `54800c1` | A | Bulk-delete guard migration `20261027200000`, replay scenario, cleanup opt-in, ops-watch integrity alerts |
+| `dcdc601` | E | Google Workspace connector, Office tool wiring, Integrations state, OAuth setup, `set-secret.sh` names |
+| `91c7a41` | B | Word/PDF/Markdown export of full reports |
+| `83b08d8` | B | Failed objectives in Needs Fahad → Resume (Arabic) |
+| `618d462` | C | Repository profile and dependency setup before the gate |
+| `980ab94`, `4bcd74a` | D | Stuck-objective alert |
+| `1218529` | G | Origin check on Hub writes |
+| `b6bc44b` | B/G | Telegram notices for finished Hub objectives |
+
+### §A — the 2026-10-22 data loss (read-only investigation)
+
+* `pg_stat_user_tables`: every operational table was autovacuumed at
+  **2026-10-22 21:06:05 UTC**; delete counters show jobs 121, tasks 291, runs
+  311, results 313, events 3,534, agent_events 2,927, model_attempts 1,389,
+  tool_executions 839, conversations 49 of 50, agent_sessions 40, artifacts
+  153 rows removed. Configuration survived (provider_canary_runs 0 deleted,
+  provider_status, knowledge_items, grants, policies).
+* The Telegram conversation was recreated by the runtime at 21:05:56, so the
+  deletion happened just before. No commit, deploy or migration is near that
+  time; the only repository delete script works on explicit IDs with expected
+  counts and could not select everything. **Cause: a privileged manual or
+  agent SQL run, not explained by repository code.** Who ran it is not
+  recorded (Postgres logs from that day are not retained).
+* Nothing was restored or modified. If the history matters, a Supabase
+  point-in-time restore (plan-dependent) to a **new** project is the only
+  route; check Dashboard → Database → Backups.
+
+### Engineering decisions
+
+* The bulk-delete guard is a statement-level `AFTER DELETE … REFERENCING OLD
+  TABLE` trigger plus `BEFORE TRUNCATE`; limit 25 rows/statement; opt-in is
+  `set_config('office.allow_bulk_delete', '<tables>|all', true)` (transaction
+  local). It is an accident guard, not a security boundary (a superuser can
+  disable triggers).
+* Google Workspace uses the owner's own OAuth client (Desktop type, loopback
+  redirect) with `drive.readonly` + `drive.file`; writes only create files in
+  `GOOGLE_DRIVE_OFFICE_FOLDER_ID`. Tools are offered only when the request
+  names Drive/Docs/Sheets, and such a run uses privacy-approved routes only;
+  if none is free, it may reach a paid route under the existing $2 cap.
+* Word export is an HTML document saved as `.doc` (no new dependency); true
+  `.docx` would need a zip library.
+* The Coding Agent installs dependencies only when a lockfile/requirements
+  file exists and the dependency directory is missing, once per sandbox.
+
+### Configuration requirements (owner)
+
+* Google: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
+  `GOOGLE_OAUTH_REFRESH_TOKEN` (via `src/ops/google-oauth-setup.js`),
+  `GOOGLE_DRIVE_OFFICE_FOLDER_ID` — all through `sudo bash ops/set-secret.sh`.
+  Full steps are in the header of `src/ops/google-oauth-setup.js`.
+* Optional: `TELEGRAM_NOTIFY_HUB_RESULTS=false` to silence the new notices.
+
+### Security notes for the public repository
+
+* No credential, `.env`, key or personal e-mail in the tree or history.
+* The VPS hostname `srv1964598.hstgr.cloud`, server paths and the Supabase
+  project ref are visible (`docker-compose.yml`, `ops/set-hub-domain.sh`,
+  docs). Not secrets, but reconnaissance aids; the Hub also answers on the raw
+  VPS hostname. Making the repository private is the simple fix (owner).
+
+### §H — open PRs (nothing closed)
+
+* #124 `feat/cloudflare-reliability` and #125 `claude/focused-rubin-ryev82`:
+  drafts superseded by merged #126 (`27ab29c`).
+* #114 `v5.4-activation-followup`, #109 `cursor/cloud-agent-environment-2419`:
+  older documentation/activation follow-ups; review or close.
+
+### Verification order (when Fahad allows it)
+
+1. `npm run db:replay` and regenerate `supabase/verify/schema-fingerprint.txt`
+   (the new migration changes it; CI fails until this is done).
+2. `node --test` (new: `data-safety`, `google-workspace`, `report-export`,
+   `repo-profile`, `hub-origin`, telegram notice case).
+3. Browser check of the job page and Deliverables drawer exports.
+4. Open the PR → CI → owner merge → deploy.
+5. Owner applies `20261027200000_bulk_delete_guard` (reviewed).
+6. Live: the five scenarios (§7), one coding session on a small non-Office
+   repository, and Google connect + one Drive call if wanted.
+
 ## 1. Verified baseline (2026-10-27, read-only checks)
 
 | Fact | Evidence |
 | --- | --- |
-| Production commit `a0b8022e94d9bb002198470ea9b76f7f2b2289b1` | Deploy run [40554067285](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40554067285) succeeded; `runtime_started` event "Office runtime started on commit a0b8022e94d9" |
+| Production commit at the start of the mission: `a0b8022e94d9bb002198470ea9b76f7f2b2289b1` | Deploy run [40554067285](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40554067285) succeeded; `runtime_started` event "Office runtime started on commit a0b8022e94d9" |
+| **Production commit now: `4db3672c2bb3ae91c3fc8e4121959905a432261b`** (PR #130 merged by Fahad) | Deploy run [40569532162](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40569532162) succeeded 2026-10-27 19:32 UTC; events `runtime_started` "Office runtime started on commit 4db3672c2bb3", Supabase tools self-check and Telegram channel re-paired right after |
 | Office coding worker alive | `coding_workers.office`: `healthy`, `MEASURED`, last seen 2026-10-27 18:48 UTC |
 | Telegram channel paired | `telegram_channel` events after each of the last deploys |
 | Budget | `workspace_policies`: $2.00/month, $0.00 spent, $0.00 reserved, period 2026-10-01 → 2026-11-01, max $0.10 per request |
@@ -31,7 +135,7 @@ observed end to end), **UNPROVEN** (no current evidence).
 | --- | --- | --- |
 | CHIEF objective → plan → specialists → synthesis | DONE: CODE, TESTED, DEPLOYED. E2E **UNPROVEN since the reset** | Last real runs predate 2026-10-23; the rows were removed. |
 | Multi-agent handoffs, revisions, consults, capacity wait | DONE: CODE, TESTED, DEPLOYED | `office-orchestration`, `office-capacity-wait` tests |
-| Owner recovery of a failed/stopped objective | **DONE in this mission** (CODE, TESTED, browser-verified on preview); deploy pending merge | Was MISSING: a failed objective had no retry, and Stop existed only for conversation jobs |
+| Owner recovery of a failed/stopped objective | **DONE in this mission** (CODE, TESTED, browser-verified on preview, DEPLOYED `4db3672`); E2E on a real objective UNPROVEN | Was MISSING: a failed objective had no retry, and Stop existed only for conversation jobs |
 | Failure reasons in Arabic | **DONE in this mission** | Raw English error was shown in the Arabic UI; now a Gulf-Arabic sentence plus technical details |
 | Deliverables Center (view, download, pin/archive/approve/revise) | DONE: CODE, TESTED, DEPLOYED | V5.3 |
 | Living Dashboard V2.2, Arabic-first RTL, desktop + mobile | DONE: CODE, TESTED, DEPLOYED | Screenshots: no console errors, no horizontal overflow |
@@ -77,7 +181,7 @@ production write, no deployment was made by this mission.
 
 ## 6. Owner decisions (one batch)
 
-1. **Merge this mission's PR** → deploys automatically (UI + two Hub endpoints; no migration). Rollback: revert the merge commit; the deploy pipeline rolls back on a failed healthcheck by itself.
+1. ~~Merge this mission's PR~~ **done**: #130 merged and deployed (`4db3672`). Rollback if ever needed: revert the merge commit.
 2. **Run the acceptance scenarios** in §7 on production after the deploy (free routes; expected cost $0, worst case a few cents inside the $2 cap).
 3. **Repository visibility**: make it private (recommended). Risk: none to the runtime; GitHub Actions then counts against the private-repo minute allowance. Rollback: make it public again.
 4. Optional: apply `20261009160000_platform_work_indexes` (two indexes, no data change; rollback `drop index`).
@@ -96,6 +200,9 @@ Submit each from the Office composer and record job id, status, steps and cost h
 
 ## Continuation point
 
-* Branch `claude/kind-ptolemy-kd5e5j`; PR [#130](https://github.com/FahadTrail/fahad-ai-office/pull/130) open against `main`.
-* Next: owner decisions §6.1 and §6.2. After the scenarios run, update §2 (E2E column) and §4 with job ids and costs from `jobs` / `model_attempts`.
-* Then, if Fahad wants it: Google Drive (§6.6), a backup restore drill on a throwaway project, and Continuity Supervisor activation only if a vendor CLI login is provided.
+* Production runs `4db3672` (PR #130). Branch `claude/kind-ptolemy-kd5e5j`
+  holds Mission 2 on top of it (head: see `git log`), **not tested, not in a
+  PR, not deployed** — by Fahad's instruction.
+* Next: Fahad authorizes verification → follow "Verification order" in §0.
+* Do not repeat the §A investigation or the Cloudflare work. Do not start new
+  features before §0 is verified.

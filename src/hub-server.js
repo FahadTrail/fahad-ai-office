@@ -152,6 +152,10 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
         return sendJson(response, 200, { ok: true });
       }
       if (!requestUrl.pathname.startsWith('/api/')) return sendJson(response, 404, { ok: false, error: 'NOT_FOUND' });
+      // A browser always names the page that sends a write. SameSite=Lax still
+      // lets a sibling subdomain (same site) send one with Fahad's cookie, so a
+      // write whose Origin is not this Hub's own host is refused.
+      if (!['GET', 'HEAD'].includes(request.method) && !sameOrigin(request)) return sendJson(response, 403, { ok: false, error: 'CROSS_ORIGIN_REFUSED' });
       if (authRequired && !(await authorized(request, accessToken, { authClient, authEnabled, ownerEmail }))) {
         return sendJson(response, 401, { ok: false, error: authEnabled ? 'HUB_UNAUTHORIZED' : 'HUB_AUTH_NOT_CONFIGURED' });
       }
@@ -500,6 +504,15 @@ function readCookie(request, name) {
   const header = request.headers.cookie || '';
   const entry = header.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
   return entry ? decodeURIComponent(entry.slice(name.length + 1)) : '';
+}
+
+// No Origin header: not a browser page (curl, server-side callers) — the
+// normal authorization still applies. "null" (sandboxed frames, file pages)
+// and any other host are refused.
+export function sameOrigin(request) {
+  const origin = request.headers.origin;
+  if (origin === undefined) return true;
+  try { return new URL(origin).host === String(request.headers.host || ''); } catch { return false; }
 }
 
 function sessionCookie(value) {

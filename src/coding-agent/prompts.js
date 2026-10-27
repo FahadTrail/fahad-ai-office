@@ -1,6 +1,6 @@
 import { renderRecentActivity, truncate } from '../model-gateway/agentic/conversation.js';
 
-export function systemPrompt({ repository, baseBranch, workBranch, testCommand, supabaseProjects = [], verifyHosts = [] }) {
+export function systemPrompt({ repository, baseBranch, workBranch, testCommand, supabaseProjects = [], verifyHosts = [], projectSummary = '' }) {
   return [
     'You are the Fahad AI Office Coding Agent, an autonomous software engineer working inside an isolated sandbox',
     `that contains a clone of ${repository} on branch ${workBranch} (based on ${baseBranch}).`,
@@ -24,6 +24,7 @@ export function systemPrompt({ repository, baseBranch, workBranch, testCommand, 
     '- Decide routine engineering questions yourself. Use request_human only when genuinely blocked.',
     '- A "MESSAGE FROM FAHAD" in the conversation is the owner answering you: follow it and continue the same task.',
     `- Test gate command: ${testCommand || 'none configured — choose and run appropriate checks yourself'}.`,
+    projectSummary ? `- ${projectSummary}` : '',
     supabaseProjects.length ? `- Allowlisted Supabase projects: ${supabaseProjects.join(', ')} (reads are automatic; writes and migrations need owner approval).` : '',
     verifyHosts.length ? `- Allowlisted verification hosts: ${verifyHosts.join(', ')}.` : '',
   ].filter((line) => line !== '').join('\n');

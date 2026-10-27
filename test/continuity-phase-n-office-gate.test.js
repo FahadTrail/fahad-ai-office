@@ -126,7 +126,9 @@ test('a normal Coding Agent task without a configured testCommand auto-detects a
 
 test('the controller keeps auto-detection as the fallback — an explicit testCommand only ever overrides, never disables', () => {
   const src = readFileSync(CONTROLLER_PATH, 'utf8');
-  assert.ok(src.includes('this.testCommand = this.config.testCommand ?? await detectTestCommand(this.sandbox);'),
+  // Auto-detection now comes from the repository profile (repo-profile.js).
+  assert.ok(src.includes('this.profile = await detectRepositoryProfile(this.sandbox).catch(() => null);'), 'prepareSandbox profiles the repository');
+  assert.ok(src.includes('this.testCommand = this.config.testCommand ?? this.profile?.testCommand ?? null;'),
     'prepareSandbox still auto-detects when the task config carries no testCommand');
   // Normalization never invents a command for a task that has none, and null
   // falls through the ?? straight back into auto-detection.

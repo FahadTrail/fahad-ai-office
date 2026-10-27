@@ -21,6 +21,7 @@ import { userText, toolResult } from '../model-gateway/agentic/conversation.js';
 import { authorizedRoutes } from '../workspace-policy/engine.js';
 import { findSecretMaterial } from '../coding-agent/policy.js';
 import { createOfficeToolExecutor, officeWebTools } from './web-tools.js';
+import { createGoogleWorkspaceClient, googleWorkspaceTools } from '../integrations/google-workspace.js';
 
 export const DATA_CLASS = Object.freeze({ GENERAL: 'general', CONFIDENTIAL: 'confidential' });
 
@@ -83,6 +84,9 @@ export class OfficeModelRunner {
     systemPrompt,
     prompt,
     useWebTools = false,
+    // The request asks for Google Drive/Docs/Sheets: offer those tools when
+    // the connector is configured, and keep the whole run on private routes.
+    useWorkspaceTools = false,
     maxTurns = 8,
     maxOutputTokens = 4000,
     dataClass = DATA_CLASS.GENERAL,
@@ -116,7 +120,8 @@ export class OfficeModelRunner {
     // workspace keep their previous behaviour (Anthropic without a workspace
     // budget), now with free routes tried first.
     const remainingBudgetUsd = policy ? Math.max(0, Number(policy.budget.monthlyLimitUsd) - Number(policy.budget.spentUsd) - Number(policy.budget.reservedUsd)) : Infinity;
-    const requiresPrivateData = dataClass !== DATA_CLASS.GENERAL;
+    const workspaceTools = useWorkspaceTools ? googleWorkspaceTools(this.env) : [];
+    const requiresPrivateData = dataClass !== DATA_CLASS.GENERAL || workspaceTools.length > 0;
     // Qualification evidence for free models (job gates + job-specific order).
     const qualifications = this.qualificationStore ? await this.qualificationStore.snapshot().catch(() => null) : null;
     const gateway = new AgentTurnGateway({
@@ -124,9 +129,12 @@ export class OfficeModelRunner {
       minQualityTier: Number(this.env.CODING_MIN_QUALITY_TIER || 4), ...(this.sleepFn ? { sleepFn: this.sleepFn } : {}), ...(this.now ? { now: this.now } : {}),
     });
     const searchRoute = pool.find((route) => route.provider === 'gemini');
-    const executeTool = this.toolExecutorFactory({ env: this.env, fetchFn: this.fetchFn, allowSearch: !requiresPrivateData || Boolean(searchRoute?.privacyApproved) });
+    const executeTool = this.toolExecutorFactory({
+      env: this.env, fetchFn: this.fetchFn, allowSearch: !requiresPrivateData || Boolean(searchRoute?.privacyApproved),
+      ...(workspaceTools.length ? { googleWorkspace: createGoogleWorkspaceClient({ env: this.env, fetchFn: this.fetchFn }) } : {}),
+    });
     // web_search is withheld while the search circuit breaker is open.
-    const tools = useWebTools ? officeWebTools() : [];
+    const tools = [...(useWebTools || workspaceTools.length ? officeWebTools() : []), ...workspaceTools];
 
     const completed = [];
     const path = [];
@@ -274,7 +282,9 @@ export class OfficeModelRunner {
           results.push(toolResult(call, content, { isError: !outcome.ok }));
           if (!previous) {
             completed.push({ key, name: call.name, args: call.arguments || {}, result: outcome.result, summary: content.slice(0, 1500) });
-            toolsUsed.push(call.name);
+            // Only successful calls count as use: the Hub turns tools_used into
+            // "Connected" evidence, which a failed call must never produce.
+            if (outcome.ok) toolsUsed.push(call.name);
           }
           await (hooks.onActivity || (async () => {}))({ turns: turn + 1, hostTool: { name: call.name, status: outcome.ok ? 'completed' : 'failed', id: call.id, durationMs: Date.now() - startedAt, ...(outcome.ok ? {} : { error: String(outcome.result?.error || 'TOOL_FAILED').slice(0, 60) }) } });
         }

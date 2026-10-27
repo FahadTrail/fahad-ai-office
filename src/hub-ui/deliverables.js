@@ -7,7 +7,7 @@
 import { roleMark } from './characters.js?v=__UI_VERSION__';
 import { ARTIFACT_LABELS, artifactPreview } from './artifacts.js';
 import { escapeHtml as esc, renderMarkdown } from './markdown.js';
-import { download, fileName, moodboardPng, printArtifact, svgToPng, toCsv, toMarkdown } from './export.js?v=__UI_VERSION__';
+import { download, exportReport, fileName, moodboardPng, printArtifact, svgToPng, toCsv, toMarkdown } from './export.js?v=__UI_VERSION__';
 
 export const STATUS_ORDER = Object.freeze(['needs_fahad', 'blocked', 'needs_review', 'in_progress', 'waiting', 'ready']);
 // Smart order: what needs Fahad, then what is new and ready, then what is
@@ -51,7 +51,7 @@ const COPY = {
     coding: { prLabel: 'Pull request', pr: (n) => `Pull request #${n}`, ciLabel: 'CI', tests: 'Tests', deploy: 'Deployment', files: (n) => `Files changed (${n})`, passing: 'Passing', failing: 'Failing', none: '—', branch: 'Branch', ci: { success: 'passed', failure: 'failed', pending: 'running' }, risk: { low: 'LOW', medium: 'MEDIUM', high: 'HIGH', critical: 'CRITICAL' } },
     approveMerge: 'Approve', reject: 'Reject', answer: 'Your answer', reply: 'Reply & continue', resume: 'Continue', messageCoding: 'Message CODING (optional)', replySent: 'Sent — CODING continues the same task',
     pendingNote: (who) => `No decision needed yet — ${who} is still working on it.`, waitingNote: 'Nothing to decide yet. It starts automatically.', blockedNote: 'Open the conversation to retry this request.',
-    exportCsv: 'CSV', exportDoc: 'Document', exportImage: 'Image', exportPrint: 'Print / PDF', exportFailed: 'Export failed',
+    exportCsv: 'CSV', exportDoc: 'Document', exportImage: 'Image', exportPrint: 'Print / PDF', exportFailed: 'Export failed', exportWord: 'Word', exportPdf: 'PDF', exportMd: 'Markdown', downloadReport: 'Download the report',
     codingDraft: (title, pr) => `Revise “${title}”${pr ? ` (PR #${pr})` : ''}: `, chiefDraft: (title, who) => `Continue from “${title}” by ${who}: `,
     revisionMessage: (title, type, note, summary) => `Revision request from Fahad — “${title}” (${type}).\nWhat to change: ${note}${summary ? `\n\nCurrent version summary: ${summary}` : ''}`,
     memoryDecision: (text, title) => `Fahad approved: ${text} (from “${title}”)`,
@@ -84,7 +84,7 @@ const COPY = {
     coding: { prLabel: 'طلب الدمج', pr: (n) => `طلب الدمج #${n}`, ciLabel: 'فحوصات CI', tests: 'الاختبارات', deploy: 'النشر', files: (n) => `الملفات المتغيرة (${n})`, passing: 'ناجحة', failing: 'فاشلة', none: '—', branch: 'الفرع', ci: { success: 'نجحت', failure: 'فشلت', pending: 'شغالة' }, risk: { low: 'منخفض', medium: 'متوسط', high: 'عالي', critical: 'حرج' } },
     approveMerge: 'موافقة', reject: 'رفض', answer: 'جوابك', reply: 'رد وكمّل', resume: 'كمّل', messageCoding: 'رسالة لـCODING (اختياري)', replySent: 'انرسل — CODING يكمل نفس المهمة',
     pendingNote: (who) => `ما في قرار مطلوب الحين — ${who} لسه يشتغل عليه.`, waitingNote: 'ما في شي تقرره الحين. يبدأ تلقائي.', blockedNote: 'افتح المحادثة عشان تعيد الطلب.',
-    exportCsv: 'CSV', exportDoc: 'مستند', exportImage: 'صورة', exportPrint: 'طباعة / PDF', exportFailed: 'تعذر التصدير',
+    exportCsv: 'CSV', exportDoc: 'مستند', exportImage: 'صورة', exportPrint: 'طباعة / PDF', exportFailed: 'تعذر التصدير', exportWord: 'وورد', exportPdf: 'PDF', exportMd: 'Markdown', downloadReport: 'نزّل التقرير',
     codingDraft: (title, pr) => `عدّل «${title}»${pr ? ` (PR #${pr})` : ''}: `, chiefDraft: (title, who) => `كمّل من «${title}» (${who}): `,
     revisionMessage: (title, type, note, summary) => `طلب تعديل من فهد — «${title}» (${type}).\nالمطلوب: ${note}${summary ? `\n\nملخص النسخة الحالية: ${summary}` : ''}`,
     memoryDecision: (text, title) => `فهد اعتمد: ${text} (من «${title}»)`,
@@ -599,7 +599,7 @@ export async function renderDeliverables(ctx, body, { id }) {
       const summary = report?.summary || item.summary;
       if (summary && item.kind !== 'artifact') parts.push(`<section class="dl-d-section dl-d-summary"><h3>${esc(t.summary)}</h3><p dir="auto">${esc(summary)}</p></section>`);
       if (artifacts.length) parts.push(`<section class="dl-d-section"><h3>${esc(t.visuals)}</h3>${artifacts.map((artifact, index) => `<div class="dl-artifact" data-artifact="${index}">${ctx.renderArtifact(artifact)}<div class="viewer-actions" role="group" aria-label="Export">${toCsv(artifact) ? `<button type="button" class="btn btn-sm" data-export="csv" data-index="${index}">${esc(t.exportCsv)}</button>` : ''}<button type="button" class="btn btn-sm" data-export="md" data-index="${index}">${esc(t.exportDoc)}</button>${['chart', 'moodboard'].includes(artifact.type) ? `<button type="button" class="btn btn-sm" data-export="png" data-index="${index}">${esc(t.exportImage)}</button>` : ''}<button type="button" class="btn btn-sm" data-export="print" data-index="${index}">${esc(t.exportPrint)}</button></div></div>`).join('')}</section>`);
-      if (item.kind === 'office') parts.push(report?.text ? `<section class="dl-d-section"><h3>${esc(t.report)}</h3><div class="md dl-report" dir="auto">${renderMarkdown(report.text)}</div></section>` : item.status === 'in_progress' || item.status === 'waiting' ? '' : `<p class="muted small">${esc(t.noReport)}</p>`);
+      if (item.kind === 'office') parts.push(report?.text ? `<section class="dl-d-section"><h3>${esc(t.report)}</h3><div class="viewer-actions" role="group" aria-label="${esc(t.downloadReport)}"><button type="button" class="btn btn-sm" data-report-export="word">${esc(t.exportWord)}</button><button type="button" class="btn btn-sm" data-report-export="pdf">${esc(t.exportPdf)}</button><button type="button" class="btn btn-sm" data-report-export="md">${esc(t.exportMd)}</button></div><div class="md dl-report" dir="auto">${renderMarkdown(report.text)}</div></section>` : item.status === 'in_progress' || item.status === 'waiting' ? '' : `<p class="muted small">${esc(t.noReport)}</p>`);
     }
     if (isLatest && item.version?.count > 1) parts.push(`<section class="dl-d-section"><h3>${esc(t.versions)}</h3><ol class="dl-versions">${item.version.list.map((entry) => `<li><button type="button" class="dl-version" data-version="${esc(entry.key)}" ${entry.delivered ? '' : 'disabled'}><b>${esc(t.version(entry.number, item.version.count))}</b>${entry.revision ? ` <span class="tag muted">${esc(t.revision)}</span>` : ''}<span class="xs faint">${esc(entry.delivered ? when(entry.at) : t.status.in_progress)}</span></button></li>`).join('')}</ol></section>`);
     const links = [item.links?.workflow ? `<a href="${esc(item.links.workflow)}">${esc(t.openWorkflow)}</a>` : '', item.links?.chat ? `<a href="${esc(item.links.chat)}">${esc(t.openChat)}</a>` : ''].filter(Boolean);
@@ -609,6 +609,11 @@ export async function renderDeliverables(ctx, body, { id }) {
 
   function wireExports(root, item, extra) {
     const artifacts = item.kind === 'artifact' ? item.artifacts : (extra?.artifacts || item.artifacts || []);
+    root.querySelectorAll('[data-report-export]').forEach((button) => { button.onclick = () => {
+      try {
+        exportReport(button.dataset.reportExport, { title: `${item.agent.label} — ${item.title || typeLabel(item.type, language)}`, markdown: extra?.report?.text || '', render: renderMarkdown });
+      } catch (error) { ctx.toast(`${t.exportFailed}: ${error.message}`); }
+    }; });
     root.querySelectorAll('[data-export]').forEach((button) => { button.onclick = async () => {
       const artifact = artifacts[Number(button.dataset.index)];
       const holder = root.querySelector(`[data-artifact="${button.dataset.index}"]`);

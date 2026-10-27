@@ -270,3 +270,17 @@ test('the oldest open conversation always wins, and concurrent callers share one
   assert.equal(await bridge.conversation(), ids[0]);
   assert.equal(fresh.state.inserts, 1);
 });
+
+test('objectives started in the Hub send a short notice with a link, once', async () => {
+  const { tables, bridge } = setup();
+  const conversationId = await bridge.conversation();
+  tables.jobs.push({ id: 'hub-1', project_id: 'ws-1', conversation_id: null, title: 'خطة إطلاق مقهى', goal: 'جهّز خطة إطلاق مقهى في الشارقة', status: 'failed', completed_at: '2026-09-27T10:05:00Z' });
+  tables.jobs.push({ id: 'hub-2', project_id: 'ws-1', conversation_id: 'other-chat', title: 'Market brief', goal: 'Compare three delivery apps in Dubai', status: 'completed', completed_at: '2026-09-27T10:06:00Z' });
+  tables.jobs.push({ id: 'tg-1', project_id: 'ws-1', conversation_id: conversationId, title: 'From Telegram', goal: 'hello', status: 'completed', completed_at: '2026-09-27T10:07:00Z' });
+  const notices = (await bridge.outbox()).filter((item) => /#\/job\//.test(item.text));
+  assert.deepEqual(notices.map((item) => item.text.split('\n').at(-1)), ['https://office.example/#/job/hub-1', 'https://office.example/#/job/hub-2']);
+  assert.match(notices[0].text, /توقفت المهمة.*\n.*تستأنفها/);
+  assert.match(notices[1].text, /^✅ Objective complete: Market brief/);
+  for (const notice of notices) await notice.ack();
+  assert.equal((await bridge.outbox()).filter((item) => /#\/job\//.test(item.text)).length, 0, 'delivered exactly once');
+});

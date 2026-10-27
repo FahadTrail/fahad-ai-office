@@ -120,6 +120,7 @@ column|3d8c3c2dfe145c7604291ac8d8f2a6b5|public.workspace_routing_policies.route_
 column|3e6f9302793de583e5aa278d8336bcb2|public.capacity_snapshots.summary jsonb null=NO default=
 column|3f2705ae7392f81581ae3cb05ae73f16|public.continuity_checkpoints.stage text null=NO default=
 column|3fe34179d59128f81a67c0c4a18d155f|public.knowledge_items.source_date date null=YES default=
+column|3fed7013c8789b02cb1155bf93d1e07a|private.bulk_delete_audit.id bigint null=NO default=
 column|40085e742f6a591635115051e83d8bb5|public.agent_sessions.spent_usd numeric null=NO default=0
 column|405154d1ba0faee57bf72adacbd9a6fa|public.coding_workers.updated_at timestamp with time zone null=NO default=now()
 column|40c78ed3df615eb036c9ad9c9aace726|public.agent_approvals.status text null=NO default='pending'::text
@@ -130,6 +131,7 @@ column|428484d6c1501c5726e0d4a360a2477f|public.approvals.task_id uuid null=YES d
 column|430154c09eb69a4e120a2e206e660a81|public.approvals.title text null=NO default=
 column|448965b0ab71d978e65c1e35a03f3b72|public.coding_leases.heartbeat_at timestamp with time zone null=NO default=now()
 column|44eda94cfcad2d25aa624075b7fa32c7|public.agent_sessions.agent_id uuid null=NO default=
+column|4512a867d9ed6cbe4be6368604a82d8b|private.bulk_delete_audit.client_addr inet null=YES default=inet_client_addr()
 column|45d8a565db7174c5624af98aae6f81b0|public.continuity_tasks.idempotency_key text null=NO default=
 column|4603547b60c524f585d0a38cc132e48b|public.coding_worker_sessions.tokens_basis text null=NO default='UNKNOWN'::text
 column|46189cb94d3bc732537e3b77b97cc561|public.tool_executions.workspace_id uuid null=NO default=
@@ -196,15 +198,18 @@ column|5fcaca012a7ea805b6d9de5bf355eb8c|public.workspace_policies.version bigint
 column|615af1922fbb9ae689edd12a31036595|public.model_attempts.task_id uuid null=NO default=
 column|617789b30ad8362b67aad6b428d096ae|public.provider_canary_runs.error text null=YES default=
 column|61d8c202a0afb24f8a52576043f31835|public.workspace_policies.monthly_budget_usd numeric null=NO default=
+column|61e42cbd4f71e2936d61fd08bd1c2c1d|private.bulk_delete_audit.cascaded boolean null=NO default=false
 column|62c5cdf82d09f189c9fe6578650562df|public.project_memory.content text null=NO default=
 column|6331c58af42663c7e9b708fafdf984e3|public.agent_sessions.blocker text null=YES default=
 column|636d0d39fd7617d197cf26690bc024dd|public.coding_handoffs.status text null=NO default='PROPOSED'::text
+column|63b6dfa9e7facfc908c6792ef42fa957|private.bulk_delete_audit.session_role text null=NO default=SESSION_USER
 column|644708c967a77d3225e4db6d325cfea0|public.agent_approvals.consumed_at timestamp with time zone null=YES default=
 column|647ce5ab13ede258d4729da959af9fb9|public.agent_sessions.completed_at timestamp with time zone null=YES default=
 column|64fef8d308403220a1f94edcc9fb7d3c|public.coding_handoffs.checkpoint_id uuid null=NO default=
 column|65048632eb6f1242b5404211ac89189a|public.coding_workers.last_seen_at timestamp with time zone null=YES default=
 column|6517bb6fa75ffd4f6ca6f32338d2e789|public.coding_leases.status text null=NO default='ACTIVE'::text
 column|652008743ce592eef5673c76f101a8b8|public.continuity_tasks.created_at timestamp with time zone null=NO default=now()
+column|65216783483ea692c437e4355904a973|private.bulk_delete_audit.table_name text null=NO default=
 column|65c24def2cdb6d90906af624c86eb237|public.agent_approvals.id uuid null=NO default=gen_random_uuid()
 column|6671db73c3cb40316929ec206c6f2042|public.tasks.progress integer null=NO default=0
 column|667fa183b2f62987bb3132072faf72d1|public.files.task_id uuid null=YES default=
@@ -220,6 +225,7 @@ column|6a41e439ff20f97596540fc4415e1e9c|public.coding_leases.token uuid null=NO 
 column|6a7c9253f679f4260f40ea8dbdea064c|public.coding_handoffs.reason text null=NO default=
 column|6a8add9ae0c0ae7896fdb292bb8728d4|public.coding_usage_snapshots.id bigint null=NO default=nextval('coding_usage_snapshots_id_seq'::regclass)
 column|6abd9b1a739e46390b4f9897d82a0e7a|public.coding_checkpoints.native_checkpoint_id uuid null=YES default=
+column|6c00156742aeeed1cc55800c5f5cc97e|private.bulk_delete_audit.operation text null=NO default=
 column|6c2658231139980517d644f8436f0bb9|public.memory.content text null=NO default=
 column|6d9ea3cc4d8471f7dfc95f4207116568|public.jobs.requested_provider text null=NO default='auto'::text
 column|6ddeb7b2bca1091cce6125fc46bb8c95|public.coding_handoffs.accepted_at timestamp with time zone null=YES default=
@@ -287,6 +293,7 @@ column|8ef810223c3b7e72a66c63c4ce119f00|public.tasks.sequence integer null=NO de
 column|8f3f67c3a7604993569b13c2877d5602|public.deliverable_reviews.archived boolean null=NO default=false
 column|8fe9a0433709ff738f81c07533c407fc|public.office_owners.label text null=NO default='Owner'::text
 column|9063cc19595e1d383643897abda43d47|public.agent_sessions.next_action text null=YES default=
+column|9085a65d1c96dc4be587e64e8c62b163|private.bulk_delete_audit.txid bigint null=NO default=txid_current()
 column|90ba2633060142428728053a538c7121|public.model_attempts.status text null=NO default=
 column|90de17e9f5e4d910795be1154b5db6bc|public.agent_events.message text null=NO default=
 column|90ea90aa58cfb88f5132c96b92c0a50b|public.jobs.progress integer null=NO default=0
@@ -382,6 +389,7 @@ column|bb9c7c66107c73eabf163775bbcc6a85|public.tasks.job_id uuid null=NO default
 column|be0c31372dc180cbcc7438d1b445a38f|public.continuity_checkpoints.sequence integer null=NO default=
 column|bea44268019e1e7f72967a801153e5a1|public.workspace_routing_policies.excluded_routes ARRAY null=NO default='{}'::text[]
 column|bec14ed8be8b5e340ad118aa88945d06|public.files.size_bytes bigint null=YES default=
+column|bf46026e86bd210cb8e3d99c7e06cf36|private.bulk_delete_audit.row_count bigint null=YES default=
 column|bf4a2145c912fcbbbfde80f50d5d261d|public.continuity_handoffs.checkpoint_id uuid null=NO default=
 column|bf8fcf18e652e4a6269971628b7e7b5a|public.approvals.id uuid null=NO default=gen_random_uuid()
 column|bfc2613e923dda5933dcfb4aab152b05|public.provider_status.last_error_code text null=YES default=
@@ -470,6 +478,7 @@ column|e8552f8d86e91191feb6ed8ccd0fb5e9|public.coding_worker_sessions.task_token
 column|e85811beb83b65a8d25020ab9b258ce0|public.workspace_policies.reserved_usd numeric null=NO default=0
 column|e9147edd98eff61e1c7fb2292c8c81ce|public.coding_checkpoints.next_exact_action text null=NO default=
 column|ea1963639e1e38fb8d2680153cf1173f|public.continuity_checkpoints.payload jsonb null=NO default=
+column|ea6516ca70d18f287eb79c3724ce9878|private.bulk_delete_audit.at timestamp with time zone null=NO default=now()
 column|ea875c8db3405fbdebf4a3672c0bd4bc|public.workspace_tool_grants.decision text null=NO default='deny'::text
 column|ec3ac638dc4121950865a462e260a472|public.tool_executions.broker text null=NO default=
 column|eca2ae2843c1de17d47ab6115bd429a0|public.events.agent_id uuid null=YES default=
@@ -477,6 +486,7 @@ column|eca44e88108d8ab3568df7927cf89f70|public.coding_handoffs.from_session_id u
 column|ecaca1e37990f8e9410e791c26faa756|public.capacity_snapshots.taken_at timestamp with time zone null=NO default=now()
 column|ed02936ed3d5fb75ea3edb458d690456|public.provider_status.last_error_at timestamp with time zone null=YES default=
 column|ee00d5f8a3c2f9b1b08ea61a023dde13|public.continuity_tasks.completed_at timestamp with time zone null=YES default=
+column|ee1f0ec908de93d366f84ed1ed378b9b|private.bulk_delete_audit.db_role text null=NO default=CURRENT_USER
 column|ee7457b49ecd80a72201a08ab78a5657|public.runs.tokens_out integer null=NO default=0
 column|eefa251abd629035e94c0babbedbff7b|public.jobs.completed_at timestamp with time zone null=YES default=
 column|ef5ff28f05c9ec5cba267290de0e703c|public.jobs.token_budget integer null=NO default=400000
@@ -502,6 +512,7 @@ column|f603f7e3d34cc0d04c04290088b204a9|public.agent_events.type text null=NO de
 column|f65572ad08251ed2016d4cf4048c5abb|public.continuity_tasks.expected_sha text null=NO default=
 column|f6a0f00ec2e485da49a99d44b8a47ad9|public.workspace_provider_permissions.provider text null=NO default=
 column|f7131f1c2bda7ff6da9fcfca1d0eaeb9|public.agent_sessions.config jsonb null=NO default='{}'::jsonb
+column|f743c811fb8fb349d3e4af0face0f85b|private.bulk_delete_audit.application_name text null=YES default=current_setting('application_name'::text, true)
 column|f746e2446b17dfce9b5514d1769d7863|public.agent_checkpoints.reason text null=NO default=
 column|f8719f2bb870205fe5abe1846257a40d|public.events.id bigint null=NO default=nextval('events_id_seq'::regclass)
 column|f947e6da0736f575039ca3b601591d79|public.tool_executions.cost_usd numeric null=NO default=0
@@ -697,6 +708,7 @@ constraint|8533011a9c0f1b1ed9be2ea1a4bcb163|public.knowledge_items knowledge_ite
 constraint|8595943a3e49832a5da7d522fa568f77|public.agent_sessions agent_sessions_repository_check CHECK ((repository ~ '^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$'::text))
 constraint|85cc09c92f4fac14093eda091761a409|public.coding_handoffs coding_handoffs_status_check CHECK ((status = ANY (ARRAY['PROPOSED'::text, 'ACCEPTED'::text, 'STARTED'::text, 'FAILED'::text])))
 constraint|872e76b0cc7fa8d39722fcb1a98b4999|public.deliverable_reviews deliverable_reviews_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+constraint|87860cb374549053f9e8c5b7ab2efd3e|private.bulk_delete_audit bulk_delete_audit_pkey PRIMARY KEY (id)
 constraint|8a17d849ccc84d33574eafa90dbfd7b0|public.coding_worker_sessions coding_worker_sessions_tokens_basis_check CHECK ((tokens_basis = ANY (ARRAY['MEASURED'::text, 'PROVIDER_REPORTED'::text, 'ESTIMATE
 constraint|8a18dfed89ecd2934760f045084aa447|public.agent_sessions agent_sessions_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT
 constraint|8b0cd0861bcd65ebfebce3c472383678|public.workspace_routing_policies workspace_routing_policies_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES workspace_policies(workspace_id) ON DELETE 
@@ -775,6 +787,7 @@ constraint|c638662fccffec5881a1099dd27cf41a|public.continuity_tasks continuity_t
 constraint|c6737505b3b0db8fe774e42a265b2ac7|public.provider_canary_runs provider_canary_runs_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'completed'::text, 'failed'::text])))
 constraint|c68c0bebcb384d1452aa274c80bc3c0f|public.jobs jobs_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text])))
 constraint|c8de7c9b824d768514e76473b7da8877|public.tool_executions tool_executions_risk_check CHECK ((risk = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'critical'::text])))
+constraint|c9374346a41408d68ae68af0ab8ec322|private.bulk_delete_audit bulk_delete_audit_operation_check CHECK ((operation = ANY (ARRAY['delete'::text, 'truncate'::text])))
 constraint|ca7f7ecb7e20b717b4b5436d50594a3f|public.workspace_policies workspace_policies_monthly_budget_usd_check CHECK ((monthly_budget_usd > (0)::numeric))
 constraint|cada99fcd5f1aa1874b48353060f0ac0|public.tool_executions tool_executions_duration_ms_check CHECK (((duration_ms IS NULL) OR (duration_ms >= 0)))
 constraint|ccb2182f52f97b14ffc502e782778f01|public.runs runs_job_id_fkey FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
@@ -865,13 +878,16 @@ function_acl|08525a5b3ad97b20a3021cd9cc69fd37|private.requeue_stale_tasks(p_olde
 function_acl|0d9e5376703b006def7abb32c4293aa7|public.finish_agent_session(p_session uuid, p_token uuid, p_status text, p_result jsonb, p_blocker text, p_error_code text) service_role=X/postgres
 function_acl|0fac705f52806f8158eb5127e11f0852|public.request_agent_session_cancel(p_session uuid) service_role=X/postgres
 function_acl|176979b54ddacd162c8968b59baf59b5|public.defer_task(p_task uuid, p_run uuid, p_until timestamp with time zone, p_info jsonb, p_max_waits integer) service_role=X/postgres
+function_acl|188d6f0305375dd9045e1694bc8a148b|private.guard_bulk_delete() default
 function_acl|1b23bbdcb2281ac16c5b94a2c1b07b93|public.requeue_stale_tasks(p_older_than interval) service_role=X/postgres
+function_acl|253812c53a53dcc245b62dd02e8f5003|private.bulk_delete_audit_append_only() default
 function_acl|33e1bb065e59414dfb21430b4f53420f|public.create_task(p_job uuid, p_agent_slug text, p_title text, p_brief text, p_sequence integer, p_depends_on uuid[], p_max_attempts integer) service_role=X/po
 function_acl|36d4bea7af21e3ccdc0a48f7658942c8|private.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) default
 function_acl|36f94ecba5cd0f4cb5b34c81fcf8654a|public.enforce_tool_execution_workspace() service_role=X/postgres
 function_acl|387bade0f59df681a192c1fe79b62eda|public.freeze_stale_coding_leases(p_grace_seconds integer) service_role=X/postgres
 function_acl|47b88979a08c25b63e7e882bb5711078|public.claim_next_task(p_agent_slug text) service_role=X/postgres
 function_acl|47d1fb58088a9d13c42fcd42c5d69e12|public.reclaim_coding_lease(p_lease uuid) service_role=X/postgres
+function_acl|482784eb0639a96adf18d8fd392bd9e0|private.bulk_delete_allowed(p_table text) default
 function_acl|4864452345124bec40cbf0daa3548ba5|public.continuity_acquire_lease(p_task_id uuid, p_owner text, p_token uuid, p_seconds integer) service_role=X/postgres
 function_acl|4c37559da0c824589be4bed1ef5e2cf3|public.save_agent_checkpoint(p_session uuid, p_token uuid, p_reason text, p_patch jsonb, p_transcript jsonb, p_git_head text) service_role=X/postgres
 function_acl|4ce9f66af07dd34101d8612f676ace8a|public.decide_agent_approval(p_approval uuid, p_decision text, p_decided_by text, p_note text) service_role=X/postgres
@@ -926,6 +942,7 @@ function|1776797e78ed506f729ea5cbb011fa2b|public.create_coding_session(p_workspa
 function|1f8f61edc42757d9ae90770e50719d87|private.report_progress(p_task uuid, p_run uuid, p_progress integer, p_message text) md5=5efc8a1a3c3926a495155a7c4f497b95
 function|2300f1c17f90377775c8128b332178cd|public.create_task(p_job uuid, p_agent_slug text, p_title text, p_brief text, p_sequence integer, p_depends_on uuid[], p_max_attempts integer) md5=cde1db2ce0ae1
 function|2a65f482d84cf108f5eb9ffd67aaad0b|public.request_agent_session_cancel(p_session uuid) md5=c11b5a536255329c80c21fa5ac5ab695
+function|2c902f3c2b155af368ff20a557a65d21|private.bulk_delete_allowed(p_table text) md5=38a2add3ab5f1728b9f66206444c2f59
 function|2e1057dc862ddfc6a7aa098e5d3caa42|public.renew_agent_session_lease(p_session uuid, p_token uuid, p_lease_seconds integer) md5=94409818ea2241f4f5232c722e969b26
 function|3e5861969d8d882a7ab85c1187d0632c|public.complete_task(p_task uuid, p_run uuid, p_summary text, p_content text, p_format text, p_tokens_in integer, p_tokens_out integer, p_cost numeric) md5=9e2c
 function|448ab425004043a67ba674a095d96f19|public.reply_agent_session(p_session uuid, p_message text, p_created_by text) md5=06dbfd31a5a102d9d2f47d793e2b1288
@@ -951,7 +968,9 @@ function|a8529a0e3bcfc993e69dde9e44ffc11b|private.requeue_stale_tasks(p_older_th
 function|acccb14fced6b73ccfbcf9c90e9b803f|public.reserve_workspace_budget(p_workspace uuid, p_idempotency_key text, p_requested_usd numeric) md5=c4feb8eea2400022bbd7672802afddd5
 function|adae47c8ab36845ca18c3b6a07b29962|public.settle_workspace_budget(p_workspace uuid, p_reservation uuid, p_idempotency_key text, p_actual_usd numeric) md5=3f68bb3dfcd54c772e93e2f1433e73d1
 function|b17eb7edb59bcfcb49ce406673f74e32|public.resume_agent_session(p_session uuid) md5=fe891cfdb670ebcc1eec2bcb486e9e0f
+function|b433ff7443f68aabfd7f8c10fa44c58a|private.guard_bulk_delete() md5=02f7dd7a551fb1260b6cfbd4f8c55163
 function|b93f9174def89154e0cfd87761d602be|public.request_agent_approval(p_session uuid, p_token uuid, p_call_id text, p_broker text, p_tool text, p_action text, p_risk text, p_summary text, p_arguments_
+function|c1503030fe205a44821e5b45d59935e5|private.bulk_delete_audit_append_only() md5=cf9ffac0b0adad8b53b21fa60314fe67
 function|c8049f4cf72ae52ca6abb4c24ffd0275|public.enforce_model_attempt_workspace() md5=984efbd3b908b96ee1818f21b3f20c2f
 function|ce1217e2ced868e848a27dc5f4a91735|private.fail_task(p_task uuid, p_run uuid, p_error text) md5=d31bad1c8f4208537383a81a6ab2764e
 function|ce5dbf18a2bc5a56bf22cee59ace46dc|public.create_hub_project(p_name text) md5=5d8461114dd0c6215655ebcaa545d976
@@ -976,6 +995,7 @@ index|0f80f836d8a9352fc5430929b14e5516|public CREATE INDEX workspace_budget_rese
 index|144d2ede49df72d81b234fe1443caae4|public CREATE UNIQUE INDEX events_pkey ON public.events USING btree (id)
 index|1d038256d016cc966bc3d1b3c2b6c6b8|public CREATE UNIQUE INDEX agent_approvals_pkey ON public.agent_approvals USING btree (id)
 index|1f8a2afe644827d11af5a33217c071cd|public CREATE INDEX idx_runs_task ON public.runs USING btree (task_id)
+index|20bec5e9e0421c52931b4cafcaa670c4|private CREATE UNIQUE INDEX bulk_delete_audit_pkey ON private.bulk_delete_audit USING btree (id)
 index|2114a7a1363d9639b8a6408e4e586c88|public CREATE INDEX idx_tasks_ready ON public.tasks USING btree (job_id, status, sequence)
 index|22c79ba85f42c20afc682869764ee11a|public CREATE INDEX tool_executions_task_run_idx ON public.tool_executions USING btree (task_id, run_id)
 index|2c024f3fd87ba738e8ba480f856fe9f0|public CREATE UNIQUE INDEX continuity_checkpoints_task_id_sequence_key ON public.continuity_checkpoints USING btree (task_id, sequence)
@@ -1011,6 +1031,7 @@ index|67f70ea4cb2a46e82446017ae5d2d657|public CREATE INDEX idx_approvals_job ON 
 index|6a0d0ad34855b983718be48543caa975|public CREATE INDEX continuity_events_task_id_idx ON public.continuity_events USING btree (task_id)
 index|6ba521aec376f7b3c3921880ddbe501a|public CREATE UNIQUE INDEX agent_sessions_run_id_key ON public.agent_sessions USING btree (run_id)
 index|6c713ba976032d90ada5739312ca75e6|public CREATE INDEX idx_events_agent ON public.events USING btree (agent_id)
+index|6c94ef91e4605016353f62eca40b351b|public CREATE INDEX jobs_project_current_idx ON public.jobs USING btree (project_id, created_at DESC) WHERE (status = ANY (ARRAY['planning'::text, 'running'::te
 index|6fab48d52af3bfdfd4560998aac0e84e|public CREATE INDEX idx_memory_key ON public.memory USING btree (key)
 index|70e688a95b3db953584d520dfe3b0be2|public CREATE UNIQUE INDEX agents_pkey ON public.agents USING btree (id)
 index|72aba94317a553bcc61188521d328181|public CREATE UNIQUE INDEX agents_slug_key ON public.agents USING btree (slug)
@@ -1019,6 +1040,7 @@ index|75a0ea7c70f929990612af11ba0a04ba|public CREATE UNIQUE INDEX continuity_tas
 index|76c1589f520f426108171c96715f973b|public CREATE UNIQUE INDEX knowledge_items_pkey ON public.knowledge_items USING btree (id)
 index|76e3f4716b352bfe2ef2b249b6e4970e|public CREATE UNIQUE INDEX runs_pkey ON public.runs USING btree (id)
 index|7715bd444017f8b7f9ee5f10c449291b|public CREATE INDEX coding_usage_snapshots_worker_taken ON public.coding_usage_snapshots USING btree (worker_key, taken_at DESC)
+index|77b762281fac142b13ac0256283bf500|public CREATE INDEX jobs_project_history_idx ON public.jobs USING btree (project_id, completed_at DESC, created_at DESC) WHERE (status = ANY (ARRAY['completed':
 index|79649c3e6939e896dd791e018fad94f1|public CREATE INDEX model_attempts_provider_status_idx ON public.model_attempts USING btree (provider, status, started_at DESC)
 index|7b09379fa08b77da8c03ff55dcb40af7|public CREATE INDEX conversations_project_idx ON public.conversations USING btree (project_id, archived, last_message_at DESC)
 index|7c49282fb5f4dd71460496f447d18d6f|public CREATE INDEX tool_executions_workspace_started_idx ON public.tool_executions USING btree (workspace_id, started_at DESC)
@@ -1080,8 +1102,6 @@ index|ec62132b698406cb86217b41ade1c9c0|public CREATE INDEX agent_sessions_queue_
 index|f1edfbe2cc80b20ea2c2232bc19d578b|public CREATE INDEX idx_tasks_agent ON public.tasks USING btree (agent_id)
 index|f791eb950a74f0e9a5dfeee104ee5fae|public CREATE INDEX tool_executions_open_idx ON public.tool_executions USING btree (status, started_at) WHERE (status = 'running'::text)
 index|f8f766db67da90d3ee5372e8ca0bccc3|public CREATE INDEX agent_events_session_idx ON public.agent_events USING btree (session_id, id)
-index|6c94ef91e4605016353f62eca40b351b|public CREATE INDEX jobs_project_current_idx ON public.jobs USING btree (project_id, created_at DESC) WHERE (status = ANY (ARRAY['planning'::text, 'running'::te
-index|77b762281fac142b13ac0256283bf500|public CREATE INDEX jobs_project_history_idx ON public.jobs USING btree (project_id, completed_at DESC, created_at DESC) WHERE (status = ANY (ARRAY['completed':
 policy|011cda4c782aea155c3a0e7898816442|public.handoffs owner_only_handoffs ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
 policy|09c5ff129b2856b67dded62f70187e32|public.projects owner_only_projects ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
 policy|0b444f462ec0bb5dc514d8f820bdda7b|public.runs owner_only_runs ALL roles={authenticated} using=private.is_owner() check=private.is_owner()
@@ -1138,6 +1158,7 @@ table_acl|b91aab968efbca65f241adaad37c6ba5|public.jobs rls=t authenticated=arwdD
 table_acl|c0030309f428e8f3cac5fa87726cb13c|public.project_memory rls=t service_role=arwd/postgres
 table_acl|c2a159b528b9cc3ad068fc7da2756410|public.model_attempts rls=t service_role=arw/postgres
 table_acl|c3c731e39c6789403a9ed75476eac766|public.continuity_tasks rls=t service_role=arwdDxt/postgres
+table_acl|cfc654b51714495470c4e91aca512150|private.bulk_delete_audit rls=t default
 table_acl|d745412f0b5b6885afbee2001d4a824f|public.memory rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|d74da9758abdee44bf5fb032c64199c8|public.approvals rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|de7a6a45a1cbcd6d48cbd71623aa1427|public.continuity_checkpoints rls=t service_role=arwdDxt/postgres
@@ -1145,5 +1166,53 @@ table_acl|e449bf9624aad7fbc144289686e9e749|public.coding_handoffs rls=t service_
 table_acl|ec5f0a2dbbf471541891abe981e343ad|public.results rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|ec6f62bff368439d5ea6eecc618d38f6|public.projects rls=t authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres
 table_acl|ed42b206b6039262f64203a85f4c02d9|public.deliverable_reviews rls=t service_role=arwd/postgres
+trigger|0aff12484145c72269dca9d83edeac2d|public.results CREATE TRIGGER results_bulk_delete_guard AFTER DELETE ON public.results REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION pri
+trigger|0f5c2db5b01056cf57d6bed0812557e5|public.runs CREATE TRIGGER runs_truncate_guard BEFORE TRUNCATE ON public.runs FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_delete()
+trigger|18750337cf9974f36fcabbf6e5def754|private.bulk_delete_audit CREATE TRIGGER bulk_delete_audit_no_truncate BEFORE TRUNCATE ON private.bulk_delete_audit FOR EACH STATEMENT EXECUTE FUNCTION private.
+trigger|1d36c22162924ff897c17e0608f22742|public.agent_sessions CREATE TRIGGER agent_sessions_truncate_guard BEFORE TRUNCATE ON public.agent_sessions FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bu
+trigger|1d8c46315b522e36f3329f8b2561be1c|public.workspace_provider_permissions CREATE TRIGGER workspace_provider_permissions_truncate_guard BEFORE TRUNCATE ON public.workspace_provider_permissions FOR 
+trigger|1e762987c448346741a44b9719f2e395|public.handoffs CREATE TRIGGER handoffs_bulk_delete_guard AFTER DELETE ON public.handoffs REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION 
+trigger|24cb0b688480a102909859a8ff4fc807|public.agent_sessions CREATE TRIGGER agent_sessions_bulk_delete_guard AFTER DELETE ON public.agent_sessions REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT
+trigger|2c64ffee5acdc358dd25a50a32aa2182|public.projects CREATE TRIGGER projects_bulk_delete_guard AFTER DELETE ON public.projects REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION 
+trigger|3270c923d8f6137b0b7901d9e8cdbc13|public.tool_executions CREATE TRIGGER tool_executions_bulk_delete_guard AFTER DELETE ON public.tool_executions REFERENCING OLD TABLE AS old_rows FOR EACH STATEM
+trigger|5415179e43ca34e7fc9f52588b1cc4c3|public.agent_events CREATE TRIGGER agent_events_bulk_delete_guard AFTER DELETE ON public.agent_events REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECU
+trigger|59a46b37a4cb0d76a6245316c9a67087|public.artifacts CREATE TRIGGER artifacts_bulk_delete_guard AFTER DELETE ON public.artifacts REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTI
+trigger|5a71106c2ca583d2bdc7893c750cb230|public.workspace_provider_permissions CREATE TRIGGER workspace_provider_permissions_bulk_delete_guard AFTER DELETE ON public.workspace_provider_permissions REFE
+trigger|5b49ca834bc863f6dd758ac27e94df20|public.agent_owner_inputs CREATE TRIGGER agent_owner_inputs_truncate_guard BEFORE TRUNCATE ON public.agent_owner_inputs FOR EACH STATEMENT EXECUTE FUNCTION priv
+trigger|6c75f9eeaa3fe7c3924b0b884a33c288|public.workspace_policies CREATE TRIGGER workspace_policies_bulk_delete_guard AFTER DELETE ON public.workspace_policies REFERENCING OLD TABLE AS old_rows FOR EA
+trigger|6e19fafbf7a26db29d6d309fbb78ae14|public.results CREATE TRIGGER results_truncate_guard BEFORE TRUNCATE ON public.results FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_delete()
+trigger|7158ba1afa1c59695f19e4ed6f963af7|public.agent_checkpoints CREATE TRIGGER agent_checkpoints_truncate_guard BEFORE TRUNCATE ON public.agent_checkpoints FOR EACH STATEMENT EXECUTE FUNCTION private
+trigger|758c02c471524342d2b84c8466a51c9e|public.workspace_tool_grants CREATE TRIGGER workspace_tool_grants_bulk_delete_guard AFTER DELETE ON public.workspace_tool_grants REFERENCING OLD TABLE AS old_ro
+trigger|75f0e8a0413f794c1d604acc34251f2d|public.knowledge_items CREATE TRIGGER knowledge_items_bulk_delete_guard AFTER DELETE ON public.knowledge_items REFERENCING OLD TABLE AS old_rows FOR EACH STATEM
+trigger|781bf3ee64f3ab5f518919471bf66d58|public.project_memory CREATE TRIGGER project_memory_bulk_delete_guard AFTER DELETE ON public.project_memory REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT
+trigger|788b40cbd9727919f6ad7042c92be13c|public.agent_checkpoints CREATE TRIGGER agent_checkpoints_bulk_delete_guard AFTER DELETE ON public.agent_checkpoints REFERENCING OLD TABLE AS old_rows FOR EACH 
+trigger|7bd3a4b40ea083a83e3b45ebcaef7cd3|public.handoffs CREATE TRIGGER handoffs_truncate_guard BEFORE TRUNCATE ON public.handoffs FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_delete()
+trigger|7fed7c88ba6db730c78230b722159c82|public.agent_owner_inputs CREATE TRIGGER agent_owner_inputs_bulk_delete_guard AFTER DELETE ON public.agent_owner_inputs REFERENCING OLD TABLE AS old_rows FOR EA
+trigger|81278dd92e89e8f3de1e7aee069b9f8b|public.events CREATE TRIGGER events_truncate_guard BEFORE TRUNCATE ON public.events FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_delete()
 trigger|81c79fb68ce3d3f037980d22aeb4c4f1|public.tool_executions CREATE TRIGGER tool_executions_workspace_guard BEFORE INSERT OR UPDATE OF workspace_id, job_id, task_id, run_id, agent_id ON public.tool_
+trigger|85014278632e8914387e2a757deeec29|public.knowledge_items CREATE TRIGGER knowledge_items_truncate_guard BEFORE TRUNCATE ON public.knowledge_items FOR EACH STATEMENT EXECUTE FUNCTION private.guard
+trigger|8bbe4c88877fa3feb10f685020a58620|public.events CREATE TRIGGER events_bulk_delete_guard AFTER DELETE ON public.events REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION privat
+trigger|8d2e75c33d7efa08cbbbffbbab1d0cb9|public.project_memory CREATE TRIGGER project_memory_truncate_guard BEFORE TRUNCATE ON public.project_memory FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bu
+trigger|8f6a40b519cf13fd65bc7120f873790b|public.jobs CREATE TRIGGER jobs_truncate_guard BEFORE TRUNCATE ON public.jobs FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_delete()
+trigger|9744ce33ec6eb0dfe4eb98e106fda599|public.provider_canary_runs CREATE TRIGGER provider_canary_runs_bulk_delete_guard AFTER DELETE ON public.provider_canary_runs REFERENCING OLD TABLE AS old_rows 
+trigger|9bee609eb5b85fc3d7e93f5607a2be7e|public.conversations CREATE TRIGGER conversations_bulk_delete_guard AFTER DELETE ON public.conversations REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EX
+trigger|9fdf9e679f28d6c4cad0e66c7b94c0d7|public.deliverable_reviews CREATE TRIGGER deliverable_reviews_truncate_guard BEFORE TRUNCATE ON public.deliverable_reviews FOR EACH STATEMENT EXECUTE FUNCTION p
+trigger|a096c17410a7f007f28e8442e025b10a|public.workspace_tool_grants CREATE TRIGGER workspace_tool_grants_truncate_guard BEFORE TRUNCATE ON public.workspace_tool_grants FOR EACH STATEMENT EXECUTE FUNC
+trigger|a25bcc9fa6346c8578dcbb16b7cd9015|public.agent_approvals CREATE TRIGGER agent_approvals_truncate_guard BEFORE TRUNCATE ON public.agent_approvals FOR EACH STATEMENT EXECUTE FUNCTION private.guard
+trigger|a26ed2e31554facbf500ebf64fcd0509|public.projects CREATE TRIGGER projects_truncate_guard BEFORE TRUNCATE ON public.projects FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_delete()
+trigger|a37529db35f0e64ab4d7a883de609f98|public.artifacts CREATE TRIGGER artifacts_truncate_guard BEFORE TRUNCATE ON public.artifacts FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_delete()
+trigger|a87fd881fa89df022ffedcfdcb525ba5|public.model_attempts CREATE TRIGGER model_attempts_truncate_guard BEFORE TRUNCATE ON public.model_attempts FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bu
+trigger|b016876c0870141d422daba8515cf3bb|public.agent_approvals CREATE TRIGGER agent_approvals_bulk_delete_guard AFTER DELETE ON public.agent_approvals REFERENCING OLD TABLE AS old_rows FOR EACH STATEM
+trigger|b0282ba05c2393e04a4ca6e453e42519|public.tasks CREATE TRIGGER tasks_truncate_guard BEFORE TRUNCATE ON public.tasks FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_delete()
+trigger|b6a067701500154b31b33b39b0f4a754|public.jobs CREATE TRIGGER jobs_bulk_delete_guard AFTER DELETE ON public.jobs REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION private.guar
+trigger|b847590a0d0a828c7691e9282f59227d|public.workspace_policies CREATE TRIGGER workspace_policies_truncate_guard BEFORE TRUNCATE ON public.workspace_policies FOR EACH STATEMENT EXECUTE FUNCTION priv
+trigger|b93c6007954c167ecbdb1b0103656f88|public.tasks CREATE TRIGGER tasks_bulk_delete_guard AFTER DELETE ON public.tasks REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION private.g
+trigger|c229240742799f81e015b32cd688d07e|public.provider_canary_runs CREATE TRIGGER provider_canary_runs_truncate_guard BEFORE TRUNCATE ON public.provider_canary_runs FOR EACH STATEMENT EXECUTE FUNCTIO
+trigger|c23ccbbac391196ac96e8a59421914ba|private.bulk_delete_audit CREATE TRIGGER bulk_delete_audit_no_delete BEFORE DELETE OR UPDATE ON private.bulk_delete_audit FOR EACH STATEMENT EXECUTE FUNCTION pr
+trigger|c4875958fbe3262878dd5aee2eae0fec|public.deliverable_reviews CREATE TRIGGER deliverable_reviews_bulk_delete_guard AFTER DELETE ON public.deliverable_reviews REFERENCING OLD TABLE AS old_rows FOR
 trigger|c56835cd57cc719727e68490ca83553a|public.model_attempts CREATE TRIGGER model_attempts_workspace_guard BEFORE INSERT OR UPDATE OF workspace_id, job_id, task_id, run_id ON public.model_attempts FO
+trigger|cf89b18dae164ebf8e4f7295982c458b|public.tool_executions CREATE TRIGGER tool_executions_truncate_guard BEFORE TRUNCATE ON public.tool_executions FOR EACH STATEMENT EXECUTE FUNCTION private.guard
+trigger|d10e5ce2bf4bd40962c421a5923b205c|public.model_attempts CREATE TRIGGER model_attempts_bulk_delete_guard AFTER DELETE ON public.model_attempts REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT
+trigger|e1ff1d7a622acc22c45a941e3728e5e7|public.agent_events CREATE TRIGGER agent_events_truncate_guard BEFORE TRUNCATE ON public.agent_events FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_del
+trigger|fe7a1a11b50e74d956e0ad32759203c6|public.runs CREATE TRIGGER runs_bulk_delete_guard AFTER DELETE ON public.runs REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION private.guar
+trigger|ffac474c3d172219457d4bbac6cbda25|public.conversations CREATE TRIGGER conversations_truncate_guard BEFORE TRUNCATE ON public.conversations FOR EACH STATEMENT EXECUTE FUNCTION private.guard_bulk_

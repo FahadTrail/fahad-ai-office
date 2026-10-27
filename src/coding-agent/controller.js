@@ -22,6 +22,7 @@ import { ReadTracker, compactTestOutput, elideOldToolResults } from './context-b
 import { taskSize, turnBudgetAction } from './turn-budget.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
 import { createCodeIntelligence } from '../continuity/code-intelligence.js';
+import { detectRepositoryProfile, profileSummary, setupNeeded } from './repo-profile.js';
 
 export const DEFAULT_LIMITS = Object.freeze({
   maxIterations: 120,
@@ -227,7 +228,9 @@ class SessionRun {
     }
     this.broker = this.c.createBroker(this.session, this.sandbox);
     await this.loadGrants();
-    this.testCommand = this.config.testCommand ?? await detectTestCommand(this.sandbox);
+    // Repository onboarding: project type, dependency setup, tests, checks.
+    this.profile = await detectRepositoryProfile(this.sandbox).catch(() => null);
+    this.testCommand = this.config.testCommand ?? this.profile?.testCommand ?? null;
     await this.refreshGitState();
     // Local opt-in navigation hint only. No graph, CLI or query failure may
     // delay a coding session; the agent still verifies each suggested file.
@@ -386,6 +389,7 @@ class SessionRun {
     const system = systemPrompt({
       repository: this.session.repository, baseBranch: this.session.baseBranch, workBranch: this.session.workBranch,
       testCommand: this.testCommand, supabaseProjects: supabaseReady ? this.config.supabase.projects : [], verifyHosts: this.config.verify.hosts,
+      projectSummary: profileSummary(this.profile),
     });
     const elided = elideOldToolResults(this.transcript.messages, this.c.limits.context || {});
     if (elided.results) {
@@ -794,6 +798,17 @@ class SessionRun {
     let testOutcome = null;
     if (!failures.length && this.testCommand && changedPaths.length) {
       await this.setPhase('test');
+      // A fresh clone has no dependencies: install them once, through the
+      // same audited shell tool, before the first gate run.
+      if (await setupNeeded(this.sandbox, this.profile, this.state)) {
+        const setup = await this.invoke('shell.run', 'execute', { command: this.profile.setupCommand, timeout_seconds: 1200 }, { callId: `setup-${this.session.iteration}-${randomUUID().slice(0, 8)}` });
+        if (setup.error || setup.structured?.exitCode !== 0) {
+          await this.event('test', `Dependency setup failed: ${this.profile.setupCommand}`, { setup: true, exitCode: setup.structured?.exitCode ?? null }, 'warning');
+        } else {
+          this.state.setupDone = true;
+          await this.event('test', `Dependencies installed: ${this.profile.setupCommand}`, { setup: true, exitCode: 0 });
+        }
+      }
       testOutcome = await this.invoke('shell.run', 'execute', { command: this.testCommand, timeout_seconds: 1800 }, { callId: `gate-${this.session.iteration}-${randomUUID().slice(0, 8)}` });
       if (testOutcome.error) failures.push(`Test gate could not run: ${testOutcome.error}`);
       else {
@@ -1088,21 +1103,6 @@ function normalizeState(state) {
     ciRounds: Number(state.ciRounds || 0),
     efficiency: { elidedChars: 0, elisions: 0, dedupedReads: 0, dedupedChars: 0, testCompactedChars: 0, ...(state.efficiency || {}) },
   };
-}
-
-async function detectTestCommand(sandbox) {
-  try {
-    const file = await sandbox.readFile('package.json');
-    const json = JSON.parse(file.content.split('\n').map((line) => line.replace(/^\s*\d+ {2}/, '')).join('\n'));
-    if (json.scripts?.test && !/no test specified/.test(json.scripts.test)) return 'npm test';
-  } catch {}
-  for (const [path, command] of [['pytest.ini', 'python -m pytest -q'], ['pyproject.toml', 'python -m pytest -q'], ['go.mod', 'go test ./...'], ['Cargo.toml', 'cargo test']]) {
-    try {
-      await sandbox.resolveInside(path);
-      return command;
-    } catch {}
-  }
-  return null;
 }
 
 function looksLikeTest(command, testCommand) {

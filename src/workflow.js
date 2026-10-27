@@ -19,6 +19,7 @@ import {
 import { ScopedToolBrokerSession } from './tool-broker/session.js';
 import { routingLanguage } from './office/language.js';
 import { extractFreeOnly } from './office/markers.js';
+import { wantsGoogleWorkspace } from './integrations/google-workspace.js';
 
 export const WORKFLOW = 'chief-research-chief';
 export const WORKFLOW_VERSION = 1;
@@ -941,6 +942,8 @@ export class OfficeWorkflow {
       systemPrompt: args.systemPrompt,
       prompt: args.prompt,
       useWebTools: (args.allowedTools || []).length > 0,
+      // Specialists only (they already work with tools); never the planner.
+      useWorkspaceTools: (args.allowedTools || []).length > 0 && wantsGoogleWorkspace(request.goal),
       maxTurns: args.maxTurns,
       // The Chief's synthesis consolidates every employee: give it room.
       ...(String(stage).startsWith(STAGES.SYNTHESIS) ? { maxOutputTokens: 8000 } : {}),

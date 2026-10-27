@@ -79,6 +79,11 @@ are in `docs/FAHAD-OFFICE-COMPLETION.md`. Key facts:
   only unfinished steps, keeps delivered work) and `POST /api/jobs/:id/stop`
   (`src/hub-job-actions.js`), with Arabic failure wording on the job screen.
 * No migration, provider, budget or privacy change was made.
+* Mission 2 (same day, branch `claude/kind-ptolemy-kd5e5j`): bulk-delete guard
+  migration (unapplied), data-loss/stuck alerts, Google Drive/Docs/Sheets
+  connector (not connected), Word/PDF report export, Coding Agent repository
+  profile, Hub Origin check, Telegram notices. **Implemented, verification
+  pending** — nothing tested, merged or deployed; see §0 of the record.
 
 ## Cloudflare reliability (2026-10-26)
 

@@ -122,3 +122,33 @@ export function printArtifact(html, title) {
   window.print();
   setTimeout(done, 60_000);
 }
+
+// Full reports (an employee's report, CHIEF's final synthesis) as documents
+// Fahad can keep or forward. The Markdown is rendered by the same safe
+// renderer the Hub uses (everything escaped; links limited to http/mailto).
+//   Word      an HTML document saved as .doc — Word, Google Docs and Pages
+//             open it with headings, lists and tables; dir follows the text.
+//   PDF       the browser's print dialog on the rendered report (Save as PDF).
+//   Markdown  the original text.
+const ARABIC = /[؀-ۿ]/;
+export const reportFileName = (title, extension) => `${clean(title || 'report').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 80) || 'report'}.${extension}`;
+
+export function reportDocument(title, html, { text = '' } = {}) {
+  const rtl = ARABIC.test(`${title} ${text}`.slice(0, 2000));
+  const safeTitle = clean(title).replace(/[<>&"]/g, (char) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[char]);
+  return `<!doctype html><html lang="${rtl ? 'ar' : 'en'}" dir="${rtl ? 'rtl' : 'ltr'}"><head><meta charset="utf-8"><title>${safeTitle}</title>
+<style>body{font-family:"IBM Plex Sans Arabic","Segoe UI",Tahoma,Arial,sans-serif;line-height:1.7;color:#1d1d1f;max-width:780px;margin:32px auto;padding:0 24px}
+h1{font-size:24px;margin:0 0 16px}h2{font-size:19px;margin:24px 0 8px}h3{font-size:16px;margin:18px 0 6px}
+table{border-collapse:collapse;width:100%;margin:12px 0}th,td{border:1px solid #c8c8cc;padding:6px 8px;text-align:start;vertical-align:top}th{background:#f2f2f4}
+code{font-family:Consolas,monospace;font-size:13px}pre{white-space:pre-wrap;background:#f5f5f7;padding:10px}blockquote{border-inline-start:3px solid #c8c8cc;margin:8px 0;padding-inline-start:12px;color:#555}</style>
+</head><body><h1>${safeTitle}</h1>${html}</body></html>`;
+}
+
+export function exportReport(format, { title, markdown, render }) {
+  const text = String(markdown || '');
+  if (format === 'md') return download(reportFileName(title, 'md'), text, 'text/markdown;charset=utf-8');
+  const html = render(text);
+  if (format === 'word') return download(reportFileName(title, 'doc'), `﻿${reportDocument(title, html, { text })}`, 'application/msword;charset=utf-8');
+  if (format === 'pdf') return printArtifact(`<div class="md" dir="auto">${html}</div>`, clean(title));
+  throw new Error(`Unknown export format ${format}`);
+}
