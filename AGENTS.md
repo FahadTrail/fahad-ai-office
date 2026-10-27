@@ -71,6 +71,11 @@ inside the built runtime image as root.
 
 ## Completion mission (2026-10-27) — start here
 
+**Current state (Mission 3):** production runs `81004b2` (PR #131); see §R of
+`docs/FAHAD-OFFICE-COMPLETION.md`. The bulk-delete guard migration
+`20261027200000` is replay-proven but NOT applied (owner confirms the backup
+first); Google is pending owner OAuth.
+
 The authoritative status, inventory, owner decisions and continuation point
 are in `docs/FAHAD-OFFICE-COMPLETION.md`. Key facts:
 * Production data was reset around 2026-10-23 (0 jobs/sessions/attempts); no
