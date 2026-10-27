@@ -10,14 +10,15 @@
 
 import { autoTitle } from '../hub-workspace.js';
 import { detectLanguage } from '../office/language.js';
+import { isTestObjective } from '../hub-office-ops.js';
 
 const CONVERSATION_TITLE = { telegram: 'Telegram · CHIEF', whatsapp: 'WhatsApp · CHIEF' };
 const MAX_MESSAGE = 8000;
 
 export class OfficeBridge {
-  constructor({ db, store, workspaceId, channel = 'telegram', hubUrl = '', now = () => Date.now(), ratePerMinute = 20 }) {
+  constructor({ db, store, workspaceId, channel = 'telegram', hubUrl = '', now = () => Date.now(), ratePerMinute = 20, notifyHubResults = true }) {
     if (!db || !store || !workspaceId) throw new TypeError('OfficeBridge needs db, store and workspaceId');
-    Object.assign(this, { db, store, workspaceId, channel, hubUrl: String(hubUrl || '').replace(/\/+$/, ''), now, ratePerMinute });
+    Object.assign(this, { db, store, workspaceId, channel, hubUrl: String(hubUrl || '').replace(/\/+$/, ''), now, ratePerMinute, notifyHubResults });
     this.startedAt = new Date(now()).toISOString();
     this.recent = [];
     this.notifiedJobs = new Set();
@@ -125,6 +126,41 @@ export class OfficeBridge {
             payload: { kind: 'channel_delivered', channel: this.channel, at: new Date(this.now()).toISOString() } });
         },
       });
+    }
+    // Objectives Fahad started in the Hub: a short notice with a link, so he
+    // knows the work finished (or stopped) without keeping the Hub open. The
+    // same durable marker keeps it exactly-once across restarts.
+    if (this.notifyHubResults) {
+      const { data: hubDone } = await this.db.from('jobs').select('id,title,goal,status,completed_at,conversation_id')
+        .eq('project_id', this.workspaceId).in('status', ['completed', 'failed']).gte('completed_at', this.pendingSince)
+        .order('completed_at', { ascending: true }).limit(20);
+      // This channel's own conversation already gets the full result above.
+      const fresh = (hubDone || []).filter((job) => job.conversation_id !== conversationId && !this.notifiedJobs.has(job.id) && !isTestObjective(job)).slice(0, 10);
+      const marked = new Set();
+      if (fresh.length) {
+        const { data: marks } = await this.db.from('events').select('job_id,payload').eq('type', 'activity').in('job_id', fresh.map((job) => job.id));
+        for (const mark of marks || []) if (mark.payload?.kind === 'channel_delivered' && mark.payload?.channel === this.channel) marked.add(mark.job_id);
+      }
+      for (const job of fresh) {
+        if (marked.has(job.id)) { this.notifiedJobs.add(job.id); continue; }
+        const arabic = detectLanguage(job.goal || job.title) !== 'en';
+        const title = clip(job.title || job.goal || '', 140);
+        const link = this.link(`#/job/${job.id}`);
+        const text = job.status === 'completed'
+          ? (arabic ? `✅ اكتملت المهمة: ${title}` : `✅ Objective complete: ${title}`)
+          : (arabic ? `⚠️ توقفت المهمة: ${title}
+تقدر تستأنفها من حيث وقفت، وما تم تسليمه محفوظ.` : `⚠️ Objective stopped: ${title}
+You can resume it where it stopped; delivered work is kept.`);
+        out.push({
+          text: `${text}${link ? `
+${link}` : ''}`,
+          ack: async () => {
+            this.notifiedJobs.add(job.id);
+            await this.db.from('events').insert({ job_id: job.id, type: 'activity', level: 'info', message: `Result notice delivered to ${this.channel}.`,
+              payload: { kind: 'channel_delivered', channel: this.channel, notice: true, at: new Date(this.now()).toISOString() } });
+          },
+        });
+      }
     }
     const { data: approvals } = await this.db.from('agent_approvals').select('id,session_id,tool_name,summary,risk,requested_at')
       .eq('workspace_id', this.workspaceId).eq('status', 'pending').gte('requested_at', this.pendingSince).order('requested_at', { ascending: true }).limit(10);
