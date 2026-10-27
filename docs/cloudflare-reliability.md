@@ -32,7 +32,10 @@ on it:
 
 * every Cloudflare no-tool call sends **neither** `tools` nor `tool_choice`;
 * a real tool call still sends a full `tools` array (qualification probe,
-  coding turns, Office tool use);
+  coding turns, Office tool use), and sends **no** `tool_choice`: a live run on
+  2026-10-26 was refused with HTTP 400 / code 5006 when the field was present
+  (see §4.1). `auto` is the OpenAI default, so the omission changes no intended
+  behaviour — it removes a field the schema rejected;
 * the Workers AI catalog reports `function_calling` per model. When the
   catalog says `false`, the route is marked `toolCalling: false`: the
   qualification suite skips its tool probe, coding qualification skips the
@@ -75,6 +78,54 @@ adapter.
 A route that is known to be unavailable is not called again while its
 cooldown or qualification back-off is active. The 4006 path is pool-wide
 because the allowance is per account, not per model.
+
+### 4.1 The 2026-10-26 tool-call rejection (HTTP 400, code 5006)
+
+A live canary on production `27ab29ca` against `@cf/openai/gpt-oss-120b` (declared
+free plan) behaved like this: the no-tool call passed (request 1), the first
+tool-calling request returned **HTTP 400 with provider code `5006`**
+(`PROVIDER_INVALID_REQUEST`), the run stopped after 2 requests, wrote nothing and
+never touched another provider.
+
+What the evidence supports, and what it does not:
+
+* `5006` is **not** listed in Cloudflare's published Workers AI error reference
+  and **not** in Cloudflare's own SDK map of code → HTTP status, so its meaning
+  is not taken on faith. The same code is documented in the field with the
+  message `AiError: Bad input: Error: oneOf at '/' not met …` for bodies a
+  **per-model input schema** refuses (`cloudflare/cloudflare-os#54`, HTTP 400 on
+  this very endpoint). That is evidence of a **body/schema rejection**, not a
+  credential, quota, plan or withdrawn-model problem — those have their own
+  codes (10000, 4006, 5035, 7000) and their own rows above.
+* The failing body differed from the passing no-tool body in exactly two fields:
+  `tools` and `tool_choice: "auto"`. Messages were plain strings (no
+  content-parts arrays, no `content: null` — the shapes #54 documents as
+  rejected), and `max_tokens`/`stream` were identical in both calls.
+* `tools` in this nested `{ type, function: { name, description, parameters } }`
+  shape is accepted on the same endpoint and model: #54's first tools-bound call
+  succeeds, and Cloudflare's own `workers-ai-provider` builds exactly this
+  envelope. It is not a *flat vs nested* tool-definition problem.
+* The remaining field is `tool_choice: "auto"`. Cloudflare's own provider omits
+  `tool_choice` unless a caller explicitly forces a choice, and Cloudflare
+  documents that gpt-oss does not reliably honour `tool_choice`. `auto` is also
+  the OpenAI default when tools are present, so sending it or omitting it asks
+  the model for the same behaviour.
+
+**The fix.** Cloudflare routes (and the canary, which mirrors them) send `tools`
+without `tool_choice` (`protocolOptions.omitToolChoice`). Every other
+chat-completions provider is untouched and still sends `tool_choice: "auto"`.
+
+**Certainty.** The root cause is narrowed by elimination to that field, not
+confirmed by the provider: no live call was made after the fix. The canary now
+records the shape it sent (`toolsSent`, `toolChoiceSent`) and, when a 400 names
+the offending property, the JSON pointers only (`schemaPaths`, e.g.
+`/tools/0/function/parameters/type`) — `http.js` keeps nothing else from the
+provider message. One bounded live run therefore either passes (confirming the
+field) or names the property that is still refused.
+
+**Coverage honesty.** A check that stopped on a provider error is reported as a
+failed model (`coverage.failedModels`), never as a covered one: the incident sent
+one refused request, not a tool round trip.
 
 ## 5. Billing safety (fail closed)
 
@@ -160,12 +211,12 @@ Unlike `npm run canary:agentic`, this command cannot reach another provider.
 | Live gate | requires `--live` **and** a *declared* free plan (`planBasis: 'owner-declared'`, `planVerified: false`); unstated or paid refuses with `executed: false` |
 | Allowlist | `CLOUDFLARE_CANARY_MODELS` (defaults to the three documented models); a requested id outside it is reported in `refused` and never probed |
 | Data | synthetic arithmetic and a fixed token; no repository or customer content |
-| Checks | `no-tool` (asserts no `tools` / `tool_choice` in the body **and** the answer is exactly `CLOUDFLARE-OK`) and `tool-calling` (a real `add_numbers` call, then only the number `42`) |
+| Checks | `no-tool` (asserts no `tools` / `tool_choice` in the body **and** the answer is exactly `CLOUDFLARE-OK`) and `tool-calling` (a real `add_numbers` call from a tools-only body — no `tool_choice` — then only the number `42`; the result records `toolsSent` / `toolChoiceSent`) |
 | Caps | 9 requests (3 models × 3: one no-tool call plus a two-call tool round trip each), 256 output tokens per request, 6,000 total tokens, 60 s timeout; these are hard maxima: `--max-requests` or a wider allowlist can lower them, never raise them |
 | Errors | the first provider error (credential 10000, neurons 4006, Workers Paid 5035, withdrawn model 7000, timeout, …) stops the run: `stoppedBecause: 'PROVIDER_ERROR'`, `stoppedOnError`, and the remaining models are reported as unprobed |
 | Partial runs | the run stops at the first check that no longer fits and reports `coverage` (`completeModels`, `partialModels`, `unprobedModels`, `fullCoverage: false`) plus `stoppedBecause`; a capped run can never read as full coverage |
 | Writes | none: no database, no `provider_status`, no budget reservation |
-| Report | sanitized JSON: booleans, counts, durations, token usage, machine error codes, `providerCode` and a named `failure` for a check. No credential, prompt or model output |
+| Report | sanitized JSON: booleans, counts, durations, token usage, machine error codes, `providerCode`, a named `failure` for a check, and on a 400 the refused JSON `schemaPaths` (§4.1). No credential, prompt, provider prose or model output |
 
 ## 10. Monitoring
 
@@ -184,15 +235,20 @@ The per-route pool table already lives on the Coding page
 
 Verified offline (this branch):
 
-* `npm ci` and `node --test`: 806 tests, 803 pass, 0 fail, 3 skipped (the
+* `npm ci` and `node --test`: 813 tests, 810 pass, 0 fail, 3 skipped (the
   container-root sandbox tests, as documented).
-* `test/cloudflare-reliability.test.js` (12 tests) covers error codes, shared
+* `test/cloudflare-reliability.test.js` (14 tests) covers error codes, shared
   neuron cooldown, the plan gate and its `owner-declared` basis, tool
   capability in qualification and in the gateway, free-only failover, catalog
-  parsing and the canary (dry run, refusal, live shape, exact-token no-tool
-  check, 9-request full coverage vs. reported partial coverage, redaction).
+  parsing, the canary (dry run, refusal, live shape, exact-token no-tool check,
+  9-request full coverage vs. reported partial coverage, redaction), the
+  `schemaPaths` sanitiser (pointers only, no provider prose) and the 400/5006
+  incident replayed offline: the refused tool call, its named failure and the
+  field it named.
 * `test/cloudflare-routes.test.js` (PR #123) still passes with the new
-  `CLOUDFLARE_PLAN=free` fixture.
+  `CLOUDFLARE_PLAN=free` fixture, plus the tool-shape test: a Cloudflare tool
+  request carries the schema and no `tool_choice`, while every other provider
+  still sends `auto`.
 
 NOT verified, and cannot be from here:
 
@@ -200,6 +256,8 @@ NOT verified, and cannot be from here:
 * whether this account's catalog actually lists the three models;
 * whether each model reports `function_calling`, so the tool-less path is
   covered by fixtures only;
+* **whether the 400/5006 rejection is really `tool_choice`** (§4.1): the fix is
+  narrowing by elimination, and one bounded live run is what confirms it;
 * tokens per neuron, and therefore the real value of 10,000 neurons/day.
 
 ## 12. Remaining owner actions
@@ -221,7 +279,10 @@ Keys are never pasted into a chat and never committed.
    the plan gate and the caps.
 2. `npm run canary:cloudflare -- --live --max-requests=3`: one model, one
    no-tool call and one tool round trip. This validates the PR #123 shape and
-   the tool path with real responses at a bounded spend.
+   the tool path with real responses at a bounded spend, and it is the run that
+   confirms or refutes the `tool_choice` finding in §4.1: read
+   `results[].toolChoiceSent` (must be `false`) and, if the tool call is still
+   refused, `results[].schemaPaths` — it names the property Workers AI refused.
 3. If it passes: `--live` with the full allowlist (9 requests, one full round
    trip per model), then read `GET /api/capacity` for the qualification state
    and the neuron pool. Read `coverage` in the report: `fullCoverage: true` is

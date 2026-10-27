@@ -72,8 +72,9 @@ inside the built runtime image as root.
 ## Cloudflare reliability (2026-10-26)
 
 Built on the merged fix in PR #123 (`d8e2f5d`, branch
-`fix/cloudflare-empty-tools`), which stays unchanged. Development is on
-`feat/cloudflare-reliability`; see `docs/cloudflare-reliability.md`.
+`fix/cloudflare-empty-tools`), which stays unchanged. The reliability work is
+merged (`27ab29c`); the `tool_choice` / 400-5006 fix is on
+`fix/cloudflare-gpt-oss-tools`. See `docs/cloudflare-reliability.md` (§4.1).
 
 * Workers AI errors keep their machine code (`providerCode`): `4006` is a
   daily neuron quota, `7000` a withdrawn model, `10000` a rejected credential.
@@ -85,11 +86,21 @@ Built on the merged fix in PR #123 (`d8e2f5d`, branch
   verified billing evidence: Cloudflare does not report it.
 * Per-model function calling comes from the Workers AI catalog; a tool-less
   model is never sent tool schemas.
+* Cloudflare tool calls send `tools` **without** `tool_choice`. A live canary
+  on `@cf/openai/gpt-oss-120b` (2026-10-26) passed the no-tool call and was then
+  refused with HTTP 400 / code `5006`; `5006` is a per-model input-schema
+  rejection (`AiError: Bad input`), and `tool_choice: "auto"` was the only field
+  the passing call did not carry. Omitting it is semantically identical.
+  Root cause is narrowed by elimination, not provider-confirmed: the canary
+  reports `toolsSent` / `toolChoiceSent` and, on a 400, the refused JSON
+  `schemaPaths` only. Other providers still send `tool_choice: "auto"`.
 * `npm run canary:cloudflare` is a dry run; `-- --live` executes a capped,
   Cloudflare-only check with a sanitized report and no database writes. The
-  no-tool check passes only on the exact `CLOUDFLARE-OK` answer, and a capped
-  run reports partial coverage instead of implying full model coverage.
-* No migration, no deployment and no live provider call was made for this work.
+  no-tool check passes only on the exact `CLOUDFLARE-OK` answer, a capped run
+  reports partial coverage instead of implying full model coverage, and a check
+  that stopped on an error is reported as a failed model, not a covered one.
+* No migration, no deployment and no post-fix live provider call was made for
+  this work.
 
 ## Office premium redesign V2.0 / V2.1 / V2.2
 

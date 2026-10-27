@@ -334,7 +334,16 @@ export function capacityV2Routes(env = process.env) {
       // model that does implement tool choice, answered with an empty message.
       // Every no-tool call (Office jobs, the qualification prompt) must omit
       // both fields; the tool probe still sends a real tools array.
-      protocolOptions: { omitEmptyTools: true },
+      //
+      // A real tool call keeps `tools` but drops `tool_choice`. In a live canary
+      // on 2026-10-26 the no-tool call passed while the first tool call was
+      // rejected with HTTP 400 and provider code 5006 ("AiError: Bad input",
+      // the model-input schema validator) — the only difference was
+      // `tool_choice: "auto"`, a field Cloudflare's own gpt-oss guidance calls
+      // unreliable and its own SDK omits unless a caller forces a choice.
+      // is semantically identical (auto is the OpenAI default), and the canary
+      // now reports the rejected schema path if a tool call is still refused.
+      protocolOptions: { omitEmptyTools: true, omitToolChoice: true },
     });
   }
   return routes;

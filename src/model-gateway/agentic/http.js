@@ -41,6 +41,10 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
     const cloudflareDaily = providerCode === 4006 || /"code":\s*4006\b|daily free allocation/i.test(errorText);
     const dailyQuota = cloudflareDaily || (response.status === 429 && isDailyQuotaText(errorText));
     const reason = providerReasonHint(response.status, errorText) || providerCodeReason(providerCode);
+    // A body/schema rejection names the offending property as a JSON pointer.
+    // Only those pointers survive: they describe the request we built, never a
+    // prompt, a model answer or a credential.
+    const schemaPaths = response.status === 400 ? schemaPathsFromErrorText(errorText) : [];
     const google = googleQuotaDetails(payload);
     // A per-minute quota (Gemini QuotaFailure ...PerMinute...) resets within
     // a minute: the route waits for that window, never an escalating backoff.
@@ -53,6 +57,7 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
       ...(dailyQuota ? { quotaScope: 'day' } : minuteQuota ? { quotaScope: 'minute' } : {}),
       ...(reason ? { reason } : {}),
       ...(providerCode != null ? { providerCode } : {}),
+      ...(schemaPaths.length ? { schemaPaths } : {}),
       type: typeof type === 'string' ? type : String(type ?? ''),
       retryAfter: response.headers.get('retry-after') ?? google.retryAfterSeconds,
       providerRequestId: requestId,
@@ -143,6 +148,24 @@ export function providerErrorCode(payload) {
     if (typeof value === 'string' && /^[A-Za-z0-9_.-]{2,60}$/.test(value)) return value;
   }
   return null;
+}
+
+// Workers AI rejects a body its per-model input schema cannot validate with
+// HTTP 400 and code 5006 ("AiError: Bad input"), which its published error
+// reference does not list. The message names the offending properties as
+// quoted JSON pointers — "Type mismatch of '/messages/0/content'" — and that is
+// the only part kept here: every quoted pointer in the text, capped and
+// de-duplicated. Prose, values and provider wording are discarded, so a report
+// can say WHICH field was refused without carrying repository or prompt text.
+export function schemaPathsFromErrorText(text) {
+  const paths = [];
+  for (const match of String(text || '').matchAll(/(['"])(\/(?:[A-Za-z0-9_]+(?:\/[A-Za-z0-9_]+|\[\d+\])*)?)\1/g)) {
+    const pointer = match[2];
+    if (pointer.includes('//') || pointer.length > 80) continue;
+    if (!paths.includes(pointer)) paths.push(pointer);
+    if (paths.length >= 8) break;
+  }
+  return paths;
 }
 
 // Codes whose meaning the provider documents. Nothing else is guessed: an
