@@ -107,20 +107,34 @@ export async function qualifyRoute(route, { now = () => Date.now(), maxOutputTok
     usage.costUsd += result?.usage?.costUsd || 0;
   };
   const call = async (input) => {
-    const result = await route.protocolClient.turn({ provider: route.provider, model: route.model, maxOutputTokens, ...input });
-    assertFreeRouteHonest(route, result);
+    let result;
+    try {
+      result = await route.protocolClient.turn({ provider: route.provider, model: route.model, maxOutputTokens, ...input });
+    } catch (error) {
+      // Failed responses can still consume tokens. The failed turn is not
+      // returned, so account its reported usage here exactly once.
+      add(error);
+      throw error;
+    }
     add(result);
+    assertFreeRouteHonest(route, result);
     return result;
   };
   const base = { routeId: route.id, provider: route.provider, model: route.model, suiteVersion: QUALIFICATION_SUITE_VERSION, testedAt: new Date(startedAt).toISOString() };
   let skills;
+  const toolCheck = { stage: route.toolCalling === false ? 'not_supported' : 'not_started' };
   try {
     const combined = await call({ system: EVAL_SYSTEM, messages: [text(EVAL_PROMPT)], tools: [] });
     skills = { ...gradeCombined(replyText(combined)), tools: false };
     if (route.toolCalling !== false) {
+      toolCheck.stage = 'requesting_tool';
       const first = await call({ system: EVAL_SYSTEM, messages: [text(TOOL_PROMPT)], tools: [TOOL] });
       const toolCall = (first.message?.content || []).find((block) => block.type === 'tool_call' && block.name === 'lookup_price');
+      toolCheck.toolCalled = Boolean(toolCall);
+      toolCheck.argumentsMatched = Boolean(toolCall && /widget/i.test(JSON.stringify(toolCall.arguments || {})));
+      toolCheck.stage = toolCall ? 'arguments_mismatch' : 'tool_not_called';
       if (toolCall && /widget/i.test(JSON.stringify(toolCall.arguments || {}))) {
+        toolCheck.stage = 'requesting_answer';
         const second = await call({
           system: EVAL_SYSTEM,
           tools: [TOOL],
@@ -131,14 +145,33 @@ export async function qualifyRoute(route, { now = () => Date.now(), maxOutputTok
           ],
         });
         skills.tools = gradeToolAnswer(replyText(second));
+        toolCheck.stage = skills.tools ? 'passed' : 'answer_mismatch';
+        toolCheck.answerHasText = Boolean(replyText(second));
+        toolCheck.answerHasToolCalls = (second.message?.content || []).some((block) => block.type === 'tool_call');
+        toolCheck.answerTruncated = second.stopReason === 'max_tokens';
       }
     }
   } catch (error) {
-    return { ...base, status: 'error', errorCode: errorCode(error), durationMs: now() - startedAt, usage, incident: FREE_ROUTE_INCIDENTS.has(error?.type) ? error.type : null, error };
+    const diagnostics = {};
+    for (const key of ['status', 'providerStatus']) {
+      if (Number.isInteger(error?.[key]) && error[key] >= 100 && error[key] <= 599) diagnostics[key] = error[key];
+    }
+    if (error?.type === 'empty_response') diagnostics.type = 'empty_response';
+    // Copy only the protocol's fixed booleans/enums, never an error payload.
+    const shape = error?.responseDiagnostics;
+    if (shape) {
+      diagnostics.response = {
+        messagePresent: shape.messagePresent === true,
+        finishReason: ['stop', 'length', 'tool_calls', 'content_filter'].includes(shape.finishReason) ? shape.finishReason : 'unknown',
+        contentKind: ['string', 'array', 'absent'].includes(shape.contentKind) ? shape.contentKind : 'unknown',
+        toolCallsPresent: shape.toolCallsPresent === true,
+      };
+    }
+    return { ...base, status: 'error', errorCode: errorCode(error), diagnostics, toolCheck, durationMs: now() - startedAt, usage, incident: FREE_ROUTE_INCIDENTS.has(error?.type) ? error.type : null, error };
   }
   const passed = SKILLS.filter((skill) => skills[skill]).length;
   const status = skills.structured && passed >= 5 ? 'qualified' : passed >= 3 ? 'partial' : 'failed';
-  return { ...base, status, skills, passed, total: SKILLS.length, durationMs: now() - startedAt, usage };
+  return { ...base, status, skills, toolCheck, passed, total: SKILLS.length, durationMs: now() - startedAt, usage };
 }
 
 export function qualificationValid(record, now = Date.now()) {

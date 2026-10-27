@@ -80,7 +80,7 @@ export async function postJson({ fetchFn = fetch, url, headers, body, timeoutMs 
       cause: error,
     });
   }
-  return { body: payload, requestId, rateLimit };
+  return { body: payload, requestId, rateLimit, providerStatus: response.status };
 }
 
 // Google (Gemini API) states the quota it enforced in the 429 body:
