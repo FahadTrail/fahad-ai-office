@@ -101,6 +101,18 @@ export function integrityFindings(previous, current, bulkDeletes = []) {
   return out;
 }
 
+// A running objective with no step queued, assigned or running can never
+// progress on its own (nothing is claimable). Announced once per objective,
+// after a grace period so a plan that is still being written is not flagged.
+const OPEN_TASK = new Set(['queued', 'assigned', 'running', 'review', 'handoff', 'waiting_approval']);
+export function stuckObjectives({ jobs = [], tasks = [], now = Date.now(), graceMinutes = 30 }) {
+  const open = new Set(tasks.filter((task) => OPEN_TASK.has(task.status)).map((task) => task.job_id));
+  return jobs
+    .filter((job) => ['running', 'planning'].includes(job.status) && !open.has(job.id) && now - Date.parse(job.created_at) > graceMinutes * 60_000)
+    .map((job) => ({ key: `stuck:${job.id}`, severity: 'medium',
+      text: `Objective stuck: "${String(job.title || job.id).slice(0, 80)}" is ${job.status} but has no step queued or running. Open it in the Hub and Stop, then Resume.` }));
+}
+
 // One exact row count per table; a table that cannot be counted is left out
 // (null) rather than read as zero, so a read error never looks like data loss.
 export async function readIntegrityCounts(db) {
@@ -175,6 +187,14 @@ export async function runOpsWatch(args = process.argv.slice(2), { env = process.
     }
   } catch (error) {
     log(`ops watch: integrity check skipped (${error.message})`);
+  }
+  try {
+    const open = await db.from('jobs').select('id,title,status,created_at').in('status', ['running', 'planning']).limit(100);
+    const ids = (open.data || []).map((job) => job.id);
+    const steps = ids.length ? await db.from('tasks').select('job_id,status').in('job_id', ids) : { data: [] };
+    if (!open.error && !steps.error) all.push(...stuckObjectives({ jobs: open.data || [], tasks: steps.data || [] }));
+  } catch (error) {
+    log(`ops watch: stuck-objective check skipped (${error.message})`);
   }
   const fresh = newFindings(all, (announced.data || []).flatMap((row) => row.payload?.keys || []));
   if (!fresh.length) { log(JSON.stringify({ ok: true, findings: all.length, new: 0 })); return { sent: 0 }; }

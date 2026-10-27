@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { INTEGRITY_TABLES, integrityFindings } from '../src/ops/ops-watch.js';
+import { INTEGRITY_TABLES, integrityFindings, stuckObjectives } from '../src/ops/ops-watch.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -40,4 +40,15 @@ test('the bulk-delete guard covers the history tables, is transaction-local, aud
   assert.match(read('supabase/verify/scenarios/bulk_delete_guard.sql'), /a 29-row delete was not refused/);
   // The reviewed cleanup opts in for its own transaction only.
   assert.match(read('ops/cleanup/v5.4-test-data-cleanup.sql'), /set_config\('office\.allow_bulk_delete', 'all', true\)/);
+});
+
+test('a running objective with nothing claimable is announced once its grace period passes', () => {
+  const now = Date.parse('2026-10-27T12:00:00Z');
+  const jobs = [
+    { id: 'a', title: 'Stuck plan', status: 'running', created_at: '2026-10-27T10:00:00Z' },
+    { id: 'b', title: 'Working', status: 'running', created_at: '2026-10-27T10:00:00Z' },
+    { id: 'c', title: 'Just started', status: 'planning', created_at: '2026-10-27T11:50:00Z' },
+  ];
+  const tasks = [{ job_id: 'a', status: 'done' }, { job_id: 'a', status: 'failed' }, { job_id: 'b', status: 'queued' }];
+  assert.deepEqual(stuckObjectives({ jobs, tasks, now }).map((item) => item.key), ['stuck:a']);
 });
