@@ -12,6 +12,7 @@ import {
 import { CODING_MARKUP, CODING_SCRIPT, CODING_STYLE, handleCodingApi } from './hub-coding.js';
 import { runtimeVersion } from './ops/runtime-started.js';
 import { handleWorkspaceApi } from './hub-workspace.js';
+import { resumeObjective, stopObjective } from './hub-job-actions.js';
 import { handleOfficeApi } from './hub-office.js';
 import { handleOperationsApi } from './hub-office-ops.js';
 import { handlePlatformApi } from './hub-platform.js';
@@ -213,6 +214,13 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
         const job = await store.createJob({ title: goal.slice(0, 120), goal, priority, projectId: workspaceId, requestedProvider });
         return sendJson(response, 201, { ok: true, job: { id: job.id, title: job.title, goal: job.goal, status: job.status, workspaceId } });
       }
+      const jobAction = requestUrl.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)\/(resume|stop)$/i);
+      if (request.method === 'POST' && jobAction) {
+        const jobId = requireUuid(jobAction[1], 'jobId');
+        const actor = authEnabled ? ownerEmail : null;
+        const result = jobAction[2] === 'resume' ? await resumeObjective(db, jobId, { actor }) : await stopObjective(db, jobId, { actor });
+        return sendJson(response, 200, { ok: true, ...result });
+      }
       const jobMatch = requestUrl.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
       if (request.method === 'GET' && jobMatch) {
         const jobId = requireUuid(jobMatch[1], 'jobId');
@@ -223,7 +231,7 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
       return sendJson(response, 404, { ok: false, error: 'NOT_FOUND' });
     } catch (error) {
       const status = error.statusCode || (error.code === 'INVALID_INPUT' ? 400 : 500);
-      return sendJson(response, status, { ok: false, error: safeError(error) });
+      return sendJson(response, status, { ok: false, error: safeError(error), ...(status === 409 && error.code ? { code: error.code } : {}) });
     }
   }).listen(port, host);
 }

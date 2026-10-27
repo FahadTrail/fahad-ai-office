@@ -411,6 +411,7 @@ button.map-node { cursor: pointer; }
 .synthesis-wait p + p { margin-top: var(--s-1); }
 .wait-mark { display: grid; place-items: center; flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
 .synthesis-wait.is-error .wait-mark { background: var(--danger-soft); color: var(--danger); }
+.synthesis-wait .resume-row { margin-top: var(--s-3); gap: var(--s-3); flex-wrap: wrap; align-items: center; }
 
 .emp-tabs { display: flex; gap: var(--s-2); overflow-x: auto; padding: 2px 2px var(--s-3); margin: 0 -2px; scrollbar-width: none; }
 .emp-tabs::-webkit-scrollbar { display: none; }

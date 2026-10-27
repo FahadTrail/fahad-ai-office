@@ -454,6 +454,7 @@ export async function renderJobDetail(ctx, id) {
   const ui = { tab: null, technical: null, technicalOpen: false };
   let signature = '';
   let renderedShell = false;
+  let composerRunning = null;
 
   const load = async () => {
     const workflow = await ctx.api(`/api/workflows/${id}`);
@@ -490,9 +491,14 @@ export async function renderJobDetail(ctx, id) {
         <section class="group" aria-labelledby="followTitle"><div class="group-head"><h2 id="followTitle">${t('المتابعة', 'Follow-up')}</h2></div><div id="followSlot"></div><div id="composerSlot"></div></section>
         <details class="exec-details" id="execDetails"><summary>${t('تفاصيل التنفيذ', 'Execution details')}</summary><div class="exec-body" id="execBody"></div></details>
       </div>`;
-      paintComposer(job, direct);
       const details = ctx.view.querySelector('#execDetails');
       details.addEventListener('toggle', () => { ui.technicalOpen = details.open; if (details.open && !ui.technical) loadTechnical(); });
+    }
+    // The composer is repainted only when the job starts or stops running
+    // (a resume or a stop), so a reply being typed is never wiped.
+    if (composerRunning !== !isTerminal(job.status)) {
+      composerRunning = !isTerminal(job.status);
+      paintComposer(job, direct);
     }
     const head = ctx.view.querySelector('#jobHead');
     head.innerHTML = `<div class="job-meta-row">${statusPill(ctx, row)}${workspace ? `<span class="meta" dir="auto">${ctx.esc(workspace.name)}</span>` : ''}${direct ? `<span class="meta">${dot(direct.slug)}${t('محادثة مباشرة مع', 'Direct chat with')} ${ctx.esc(direct.label || direct.slug)}</span>` : ''}</div>
@@ -520,6 +526,24 @@ export async function renderJobDetail(ctx, id) {
     });
   };
 
+  // Owner recovery: resume keeps delivered work and requeues only unfinished
+  // steps; stop skips queued steps. Both go through /api/jobs/:id/<action>.
+  const resumeAction = () => `<div class="row resume-row"><button class="btn btn-primary btn-sm" type="button" data-resume-job>${t('استأنف من حيث وقفت', 'Resume where it stopped')}</button><span class="small muted">${t('ما سلّمه الفريق يبقى محفوظ؛ نعيد الخطوات غير المكتملة فقط.', 'Delivered work is kept; only unfinished steps run again.')}</span></div>`;
+  const objectiveAction = async (job, action, button) => {
+    if (action === 'stop' && !(await ctx.confirmDialog(t('إيقاف هذه المهمة؟', 'Stop this job?'), t('يتوقف العمل الجاري. ما تم إنجازه يبقى محفوظًا، وتقدر تستأنفها لاحقًا.', 'Running work stops. Work already done is kept, and you can resume it later.')))) return;
+    if (button) button.disabled = true;
+    try {
+      await ctx.api(`/api/jobs/${job.id}/${action}`, { method: 'POST' });
+      ctx.toast(action === 'resume' ? t('استُؤنفت المهمة', 'Resumed') : t('تم الإيقاف', 'Stopped'));
+      signature = '';
+      refresher.start();
+      await refresher.trigger();
+    } catch (failure) {
+      ctx.toast(ctx.humanError(failure.message, lang(ctx)));
+      if (button) button.disabled = false;
+    }
+  };
+
   const paintSynthesis = ({ workflow, objective, progress, direct, message }) => {
     const slot = ctx.view.querySelector('#synthesis');
     const job = workflow.job;
@@ -542,9 +566,10 @@ export async function renderJobDetail(ctx, id) {
         ${width != null ? `<span class="bar bar-lg" aria-hidden="true"><span style="width:${width}%"></span></span>` : ''}</div></div>`;
     } else if (job.status === 'failed') {
       const reason = objective?.nextAction?.basis === 'RECORDED' ? objective.nextAction.text : null;
-      body = `<div class="synthesis-wait is-error"><span class="wait-mark" aria-hidden="true">${ICON.alert}</span><div><p>${t('توقفت المهمة قبل أن يكتمل التقرير النهائي.', 'This job stopped before a final report was produced.')}</p><p class="muted small" dir="auto">${reason ? ctx.esc(reason) : t('لم يُسجَّل سبب للفشل.', 'No failure reason was recorded.')}</p></div></div>`;
+      const human = reason ? ctx.humanError(reason, lang(ctx)) : null;
+      body = `<div class="synthesis-wait is-error"><span class="wait-mark" aria-hidden="true">${ICON.alert}</span><div><p>${t('توقفت المهمة قبل أن يكتمل التقرير النهائي.', 'This job stopped before a final report was produced.')}</p><p class="muted small" dir="auto">${human ? ctx.esc(human) : t('لم يُسجَّل سبب للفشل.', 'No failure reason was recorded.')}</p>${reason && reason !== human ? `<details class="error-details"><summary>${t('التفاصيل التقنية', 'Technical details')}</summary><code dir="ltr">${ctx.esc(reason.slice(0, 1200))}</code></details>` : ''}${resumeAction()}</div></div>`;
     } else if (job.status === 'cancelled') {
-      body = `<div class="synthesis-wait"><span class="wait-mark" aria-hidden="true">${ICON.alert}</span><div><p>${t('أُلغيت هذه المهمة قبل التقرير النهائي.', 'This job was cancelled before a final report.')}</p></div></div>`;
+      body = `<div class="synthesis-wait"><span class="wait-mark" aria-hidden="true">${ICON.alert}</span><div><p>${t('أُلغيت هذه المهمة قبل التقرير النهائي.', 'This job was cancelled before a final report.')}</p>${resumeAction()}</div></div>`;
     } else {
       body = `<div class="synthesis-wait"><span class="wait-mark" aria-hidden="true">${ICON.alert}</span><div><p>${t('اكتملت المهمة بدون تقرير نهائي مسجّل.', 'The job completed without a recorded final report.')}</p></div></div>`;
     }
@@ -552,6 +577,8 @@ export async function renderJobDetail(ctx, id) {
     slot.innerHTML = `<div class="synthesis-head"><div><span class="eyebrow">${dot('chief-of-staff')}${content ? ctx.esc(heading) : t('الخلاصة النهائية', 'Final synthesis')}</span><h2 id="synthesisTitle" class="sr-only">${ctx.esc(heading)}</h2>${workflow.final?.at ? `<span class="muted small"> · ${isoDate(ctx, workflow.final.at)}</span>` : ''}</div>
       ${content ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-copy-final>${ICON.copy}${t('نسخ', 'Copy')}</button><button class="btn btn-ghost btn-sm" type="button" data-download-final>${ICON.download}${t('تنزيل', 'Download')}</button></div>` : statusPill(ctx, { status: job.status, lifecycle: objective?.lifecycle })}</div>
       <div class="synthesis-body">${body}</div>`;
+    const resume = slot.querySelector('[data-resume-job]');
+    if (resume) resume.onclick = () => objectiveAction(job, 'resume', resume);
     if (content) {
       slot.querySelector('[data-copy-final]').onclick = () => navigator.clipboard?.writeText(content).then(() => ctx.toast(t('تم النسخ', 'Copied')));
       slot.querySelector('[data-download-final]').onclick = () => {
@@ -632,7 +659,9 @@ export async function renderJobDetail(ctx, id) {
     const conversationId = job.conversationId;
     const running = !isTerminal(job.status);
     if (!conversationId) {
-      slot.innerHTML = `<div class="follow-card"><p class="small muted">${t('هذه المهمة بدون محادثة مرتبطة. يمكنك بدء متابعة جديدة مع CHIEF.', 'This job has no linked conversation. You can start a follow-up with CHIEF.')}</p><button class="btn btn-sm" type="button" data-followup>${t('متابعة مع CHIEF', 'Follow up with CHIEF')}</button></div>`;
+      slot.innerHTML = `<div class="follow-card"><p class="small muted">${t('هذه المهمة بدون محادثة مرتبطة. يمكنك بدء متابعة جديدة مع CHIEF.', 'This job has no linked conversation. You can start a follow-up with CHIEF.')}</p><div class="row"><button class="btn btn-sm" type="button" data-followup>${t('متابعة مع CHIEF', 'Follow up with CHIEF')}</button>${running ? `<button class="btn btn-ghost btn-sm" type="button" data-stop-job>${t('أوقف', 'Stop')}</button>` : ''}</div></div>`;
+      const stopJob = slot.querySelector('[data-stop-job]');
+      if (stopJob) stopJob.onclick = () => objectiveAction(job, 'stop', stopJob);
       slot.querySelector('[data-followup]').onclick = () => {
         try { sessionStorage.setItem('hub-chief-draft', `${t('متابعة لـ', 'Follow-up on')}: ${job.title}\n\n`); } catch {}
         location.hash = '#/chief';

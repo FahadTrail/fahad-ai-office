@@ -8,6 +8,7 @@ import { SESSION_FIELDS, modelPoolSnapshot, publicSession, publicEvent } from '.
 import { ACTIVE_AGENTS, NICKNAMES } from './office/agents.js';
 import { officeAgent } from './office/agents.js';
 import { isTestObjective } from './hub-office-ops.js';
+import { stopObjective } from './hub-job-actions.js';
 
 // Structured memory (see the final-roster migration's project_memory check).
 export const MEMORY_KINDS = Object.freeze(['fact', 'decision', 'preference', 'constraint', 'product_decision', 'technical_decision',
@@ -483,10 +484,7 @@ export async function handleWorkspaceApi({ db, request, response, url, sendJson,
         // skipped and the request is marked cancelled. A model call already
         // in flight finishes on its own; its result is kept but not awaited.
         const open = await rows(db.from('jobs').select('id').eq('conversation_id', id).in('status', ['planning', 'running']));
-        for (const job of open) {
-          await db.from('tasks').update({ status: 'skipped' }).eq('job_id', job.id).in('status', ['queued', 'assigned']);
-          await db.from('jobs').update({ status: 'cancelled', completed_at: new Date().toISOString() }).eq('id', job.id).in('status', ['planning', 'running']);
-        }
+        for (const job of open) await stopObjective(db, job.id, { actor }).catch((error) => { if (error.statusCode !== 409) throw error; });
         return sendJson(response, 200, { ok: true, stopped: open.length }), true;
       }
       if (method === 'PATCH' && !conversationMatch[2]) {
