@@ -17,11 +17,13 @@ export class ChatCompletionsProtocol {
   //     as leaving it out, so this changes no intended behaviour; it exists for
   //     Workers AI, whose per-model input schema rejected the field (see the
   //     400/5006 incident in docs/cloudflare-reliability.md).
-  constructor({ apiKey, endpoint, pricing, fetchFn = fetch, timeoutMs = 600_000, maxTokensField = 'max_tokens', extraHeaders = {}, extraBody = {}, freeOnly = false, toolCallIds = null, omitEmptyTools = false, omitToolChoice = false } = {}) {
+  constructor({ apiKey, endpoint, pricing, fetchFn = fetch, timeoutMs = 600_000, maxTokensField = 'max_tokens', extraHeaders = {}, extraBody = {}, freeOnly = false, toolCallIds = null, omitEmptyTools = false, omitToolChoice = false, stringAssistantContent = false } = {}) {
     this.freeOnly = freeOnly;
     this.toolCallIds = toolCallIds;
     this.omitEmptyTools = omitEmptyTools;
     this.omitToolChoice = omitToolChoice;
+    // Workers AI rejects null content when replaying an assistant tool call.
+    this.stringAssistantContent = stringAssistantContent;
     if (!/^https:\/\//.test(String(endpoint || ''))) throw new TypeError('Chat Completions endpoint must be an HTTPS URL');
     this.protocol = 'chat-completions';
     this.apiKey = apiKey || null;
@@ -55,7 +57,7 @@ export class ChatCompletionsProtocol {
       },
       body: {
         model,
-        messages: toChatMessages(system, messages, { toolCallIds: this.toolCallIds }),
+        messages: toChatMessages(system, messages, { toolCallIds: this.toolCallIds, stringAssistantContent: this.stringAssistantContent }),
         ...(this.omitEmptyTools && !tools.length ? {} : {
           tools: tools.map((tool) => ({
             type: 'function',
@@ -134,7 +136,7 @@ export function alnum9(id) {
   return out;
 }
 
-export function toChatMessages(system, messages, { toolCallIds = null } = {}) {
+export function toChatMessages(system, messages, { toolCallIds = null, stringAssistantContent = false } = {}) {
   const mapId = toolCallIds === 'alnum9' ? alnum9 : (id) => id;
   const result = [{ role: 'system', content: system }];
   for (const message of messages) {
@@ -144,7 +146,7 @@ export function toChatMessages(system, messages, { toolCallIds = null } = {}) {
         id: mapId(block.id), type: 'function', function: { name: block.name, arguments: JSON.stringify(block.arguments || {}) },
       }));
       if (!textValue && !calls.length) continue;
-      result.push({ role: 'assistant', content: textValue || null, ...(calls.length ? { tool_calls: calls } : {}) });
+      result.push({ role: 'assistant', content: textValue || (stringAssistantContent ? '' : null), ...(calls.length ? { tool_calls: calls } : {}) });
       continue;
     }
     for (const block of message.content.filter((item) => item.type === 'tool_result')) {

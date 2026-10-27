@@ -40,6 +40,7 @@ function workersAiFetch(bodies) {
     if (Array.isArray(body.tools) && body.tools.length === 0) {
       return json({ error: { type: 'invalid_request_error', message: 'invalid request body' } }, 400);
     }
+    if (body.messages.some((message) => message.content === null)) return json({ success: false, errors: [{ code: 5006, message: 'null message content' }] }, 400);
     const usage = { prompt_tokens: 60, completion_tokens: 12 };
     if (body.tools?.length) {
       const answered = body.messages.some((message) => message.role === 'tool');
@@ -58,7 +59,7 @@ test('Cloudflare routes declare the no-empty-tools quirk and stay credential-gat
   const routes = pool.filter((route) => route.provider === 'cloudflare');
   assert.deepEqual(routes.map((route) => route.model), MODELS);
   for (const route of routes) {
-    assert.deepEqual(route.protocolOptions, { omitEmptyTools: true, omitToolChoice: true }, `${route.model}: empty tools and tool_choice are omitted`);
+    assert.deepEqual(route.protocolOptions, { omitEmptyTools: true, omitToolChoice: true, stringAssistantContent: true }, `${route.model}: empty tools and tool_choice are omitted`);
     assert.equal(route.endpoint, `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/v1/chat/completions`);
     assert.equal(route.billingClass, 'free');
     assert.deepEqual(route.unavailableReasons, []);
@@ -166,3 +167,44 @@ test('an empty assistant message is an error, not a successful turn that grades 
   assert.equal(result.errorCode, 'HTTP_502');
   assert.equal(result.passed, undefined);
 });
+
+for (const provider of ['cloudflare', 'deepseek']) {
+  test(`${provider} full tool round trip preserves call ids, arguments, results and assistant text`, async () => {
+    const bodies = [];
+    let expectedText = provider === 'cloudflare' ? '' : null;
+    const fetchFn = async (url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      if (body.messages.some((message) => message.role === 'tool')) {
+        const assistant = body.messages.find((message) => message.role === 'assistant');
+        assert.equal(assistant.content, expectedText);
+        assert.deepEqual(assistant.tool_calls, [{ id: 'call_1', type: 'function', function: { name: 'lookup_price', arguments: '{"item":"widget"}' } }]);
+        assert.deepEqual(body.messages.at(-1), { role: 'tool', tool_call_id: 'call_1', content: '29' });
+        return json({ choices: [{ finish_reason: 'stop', message: { content: '29' } }] });
+      }
+      return json({ choices: [{ finish_reason: 'tool_calls', message: { content: null, tool_calls: [
+        { id: 'call_1', type: 'function', function: { name: 'lookup_price', arguments: '{"item":"widget"}' } },
+      ] } }] });
+    };
+    const protocol = provider === 'cloudflare'
+      ? cloudflarePool(fetchFn).find((route) => route.model === MODELS[0]).protocolClient
+      : new ChatCompletionsProtocol({ apiKey: KEY, endpoint: 'https://api.deepseek.com/v1/chat/completions', fetchFn });
+    const turn = { provider, model: provider === 'cloudflare' ? MODELS[0] : 'deepseek-flash', system: 'S',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'price?' }] }],
+      tools: [{ name: 'lookup_price', description: 'Price', inputSchema: { type: 'object', properties: { item: { type: 'string' } } } }] };
+    const first = await protocol.turn(turn);
+    const followup = { ...turn, messages: [...turn.messages, first.message,
+      { role: 'user', content: [{ type: 'tool_result', callId: 'call_1', content: '29' }] }] };
+    const final = await protocol.turn(followup);
+    assert.equal(final.message.content[0].text, '29');
+    assert.equal(bodies.length, 2);
+    for (const body of bodies) {
+      assert.equal(body.tools[0].function.name, 'lookup_price');
+      assert.equal(body.tool_choice, provider === 'cloudflare' ? undefined : 'auto');
+    }
+    // Nonempty assistant text must survive even with the compatibility option.
+    first.message.content.unshift({ type: 'text', text: 'Checking the price.' });
+    expectedText = 'Checking the price.';
+    await protocol.turn(followup);
+  });
+}
