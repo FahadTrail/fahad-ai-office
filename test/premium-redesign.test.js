@@ -186,7 +186,10 @@ test('the screens use the existing APIs and write only through the existing conv
   const screens = read('screens.js');
   for (const endpoint of ['/api/work/current', '/api/work/history', '/api/work/objectives/', '/api/workflows/', '/api/operations', '/api/attention', '/api/office', '/api/work/sessions', "'/api/conversations'", '/messages', '/stop']) assert.ok(screens.includes(endpoint), endpoint);
   const writes = [...screens.matchAll(/method: '(POST|PATCH|PUT|DELETE)'/g)].length;
-  assert.equal(writes, 3, 'submit, Reply & Continue and Stop only');
+  assert.equal(writes, 4, 'submit, Reply & Continue, Stop, and the owner recovery action only');
+  assert.ok(screens.includes('/api/jobs/${job.id}/${action}'), 'the owner recovery action (resume / stop one objective)');
+  assert.match(screens, /objectiveAction\(job, 'resume'/);
+  assert.match(screens, /objectiveAction\(job, 'stop'/);
   assert.doesNotMatch(screens, /Math\.random|demo|sample|placeholder result|fake/i);
 });
 

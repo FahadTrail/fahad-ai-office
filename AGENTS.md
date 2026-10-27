@@ -69,6 +69,17 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
+## Completion mission (2026-10-27) — start here
+
+The authoritative status, inventory, owner decisions and continuation point
+are in `docs/FAHAD-OFFICE-COMPLETION.md`. Key facts:
+* Production data was reset around 2026-10-23 (0 jobs/sessions/attempts); no
+  workflow has been re-proven live since.
+* Owner recovery of Office objectives: `POST /api/jobs/:id/resume` (requeues
+  only unfinished steps, keeps delivered work) and `POST /api/jobs/:id/stop`
+  (`src/hub-job-actions.js`), with Arabic failure wording on the job screen.
+* No migration, provider, budget or privacy change was made.
+
 ## Cloudflare reliability (2026-10-26)
 
 Built on the merged fix in PR #123 (`d8e2f5d`, branch

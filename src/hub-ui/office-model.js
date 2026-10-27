@@ -405,6 +405,8 @@ export function createRefresher(run, { hidden = () => false, now = () => Date.no
     setConnected: (value) => { connected = Boolean(value); },
     visible: () => { if (!stale) return Promise.resolve(); stale = false; return trigger(); },
     stop: () => { stopped = true; },
+    // A terminal job page stopped refreshing; resuming the job restarts it.
+    start: () => { stopped = false; },
   };
 }
 
