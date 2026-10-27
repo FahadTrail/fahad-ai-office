@@ -321,7 +321,7 @@ export async function runCloudflareCanary({
     apiKey: env.CLOUDFLARE_API_TOKEN, endpoint, fetchFn: countingFetch,
     // Exactly the route's quirks (model-pool.js): a no-tool call sends neither
     // field, a tool call sends `tools` without `tool_choice`.
-    omitEmptyTools: true, omitToolChoice: true,
+    omitEmptyTools: true, omitToolChoice: true, stringAssistantContent: true,
     timeoutMs: hardCap(timeoutMs || CLOUDFLARE_CANARY_LIMITS.timeoutMs, CLOUDFLARE_CANARY_LIMITS.timeoutMs, { min: 1 }),
   });
 

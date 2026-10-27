@@ -278,6 +278,7 @@ test('the live canary measures a no-tool call and a real tool round trip without
     const usage = usageOf(24, 6);
     if (body.tools?.length) {
       const answered = body.messages.some((message) => message.role === 'tool');
+      if (answered && body.messages.some((message) => message.content === null)) return workersError(5006, "Type mismatch of '/messages/2/content'", 400);
       if (answered) return json({ choices: [{ finish_reason: 'stop', message: { content: '42' } }], usage });
       return json({
         choices: [{ finish_reason: 'tool_calls', message: { content: null, tool_calls: [
@@ -306,7 +307,7 @@ test('the live canary measures a no-tool call and a real tool round trip without
   // Tool-response handling: the assistant call is replayed with its id and the
   // result comes back as a `tool` message addressed to that call.
   assert.deepEqual(bodies[2].messages.map((message) => message.role), ['system', 'user', 'assistant', 'tool']);
-  assert.equal(bodies[2].messages[2].content, null);
+  assert.equal(bodies[2].messages[2].content, '');
   assert.equal(bodies[2].messages[2].tool_calls[0].id, 'call_1');
   assert.equal(bodies[2].messages[3].tool_call_id, 'call_1');
   assert.equal(bodies[2].messages[3].content, '42');

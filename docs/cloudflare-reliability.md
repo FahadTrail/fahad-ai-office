@@ -290,3 +290,23 @@ the only result that covers all three models.
 4. Only then qualify the routes in the background cycle and measure tokens per
    neuron from `model_attempts`; record the result as MEASURED in
    `docs/capacity-v2.md`.
+
+### 4.2 Tool-result follow-up (2026-10-27)
+
+The post-#127 production canary on `4de11155e95f` sent 3 requests: the no-tool
+check passed, the model returned `add_numbers`, and the tool-result follow-up
+failed with HTTP 400 / code 5006. Sanitized schema paths included
+`/messages/2/content` and `/messages/2`; overall `ok` was false.
+
+`toChatMessages` replayed a textless assistant tool call with `content: null`.
+The Cloudflare-only `stringAssistantContent` protocol option now serializes
+that content as an empty string. Tool calls, arguments, IDs and tool results
+are preserved. Other providers retain null content and their existing options.
+The canary uses the same option as production routes.
+
+Offline regression fixtures reject null message content and validate the full
+no-tool → tool-call → tool-result → final-answer sequence, including the
+unchanged default provider format and preservation of nonempty assistant text.
+This is a compatibility fix for the observed rejected shape, not a claim of
+live qualification. No new live call, deployment, migration or merge is part
+of this change; another bounded live test requires Fahad's approval.

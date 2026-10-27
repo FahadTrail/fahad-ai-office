@@ -343,7 +343,7 @@ export function capacityV2Routes(env = process.env) {
       // unreliable and its own SDK omits unless a caller forces a choice.
       // is semantically identical (auto is the OpenAI default), and the canary
       // now reports the rejected schema path if a tool call is still refused.
-      protocolOptions: { omitEmptyTools: true, omitToolChoice: true },
+      protocolOptions: { omitEmptyTools: true, omitToolChoice: true, stringAssistantContent: true },
     });
   }
   return routes;
