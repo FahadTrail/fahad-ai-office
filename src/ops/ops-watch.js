@@ -71,6 +71,46 @@ export function findings({ attempts = [], statuses = [], events = [], tasks = []
   return out;
 }
 
+// Data integrity: the core history tables only grow in normal use (the app
+// deletes single rows). A sharp drop between two snapshots is the signature of
+// the 2026-10-22 bulk deletion, so it is announced as a high finding; an
+// allowed, audited bulk delete (the guard's 'bulk_delete_allowed' event) is
+// announced too, so a reviewed cleanup is never silent either.
+export const INTEGRITY_TABLES = Object.freeze(['jobs', 'tasks', 'results', 'events', 'conversations', 'artifacts', 'agent_sessions', 'model_attempts']);
+const INTEGRITY_MIN_DROP = 25;
+
+export function integrityFindings(previous, current, bulkDeletes = []) {
+  const out = [];
+  if (previous?.counts && current?.counts) {
+    for (const table of INTEGRITY_TABLES) {
+      const before = Number(previous.counts[table]);
+      const now = Number(current.counts[table]);
+      if (!Number.isFinite(before) || !Number.isFinite(now)) continue;
+      const drop = before - now;
+      if (drop >= Math.max(INTEGRITY_MIN_DROP, Math.ceil(before * 0.2))) {
+        out.push({ key: `integrity:${table}:${before}->${now}`, severity: 'high',
+          text: `Data loss suspected: public.${table} fell from ${before} to ${now} rows since ${String(previous.at || '').slice(0, 16)} UTC. Do not write to the database; check the bulk-delete audit and backups (docs/FAHAD-OFFICE-COMPLETION.md §A).` });
+      }
+    }
+  }
+  for (const event of bulkDeletes) {
+    const payload = event.payload || {};
+    out.push({ key: `bulk-delete:${event.id}`, severity: 'medium',
+      text: `Allowed bulk delete: ${payload.operation === 'truncate' ? 'TRUNCATE' : `${payload.rows} rows from`} public.${payload.table} by ${payload.role || 'a database role'}.` });
+  }
+  return out;
+}
+
+// One exact row count per table; a table that cannot be counted is left out
+// (null) rather than read as zero, so a read error never looks like data loss.
+export async function readIntegrityCounts(db) {
+  const entries = await Promise.all(INTEGRITY_TABLES.map(async (table) => {
+    const { count, error } = await db.from(table).select('*', { count: 'exact', head: true });
+    return [table, error || count == null ? null : count];
+  }));
+  return Object.fromEntries(entries.filter(([, count]) => count != null));
+}
+
 // Only findings not announced before.
 export function newFindings(all, announcedKeys) {
   const seen = new Set(announcedKeys);
@@ -116,6 +156,26 @@ export async function runOpsWatch(args = process.argv.slice(2), { env = process.
     events: [...(events.data || []), ...(agentEvents.data || []).map((row) => ({ ...row, id: `agent:${row.id}` }))],
     health, configured,
   });
+  // Integrity snapshot: compared with the latest one, then stored at most
+  // hourly (or at once when a table shrank) as an events row. Failures here
+  // never stop the other checks.
+  try {
+    const [counts, last, bulk] = await Promise.all([
+      readIntegrityCounts(db),
+      db.from('events').select('payload,created_at').eq('type', 'activity').contains('payload', { kind: 'data_integrity_snapshot' }).order('created_at', { ascending: false }).limit(1),
+      db.from('events').select('id,payload').gte('created_at', since).eq('type', 'activity').contains('payload', { kind: 'bulk_delete_allowed' }),
+    ]);
+    const previous = last.data?.[0] ? { counts: last.data[0].payload?.counts, at: last.data[0].created_at } : null;
+    const current = { counts, at: new Date().toISOString() };
+    const integrity = integrityFindings(previous, current, bulk.data || []);
+    all.push(...integrity);
+    const stale = !previous || Date.now() - Date.parse(previous.at) > 55 * 60_000;
+    if (!dryRun && Object.keys(counts).length && (stale || integrity.some((item) => item.key.startsWith('integrity:')))) {
+      await db.from('events').insert({ type: 'activity', level: 'info', message: 'Data integrity snapshot.', payload: { kind: 'data_integrity_snapshot', counts } });
+    }
+  } catch (error) {
+    log(`ops watch: integrity check skipped (${error.message})`);
+  }
   const fresh = newFindings(all, (announced.data || []).flatMap((row) => row.payload?.keys || []));
   if (!fresh.length) { log(JSON.stringify({ ok: true, findings: all.length, new: 0 })); return { sent: 0 }; }
   const text = alertText(fresh);

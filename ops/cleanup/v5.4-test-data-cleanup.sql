@@ -460,6 +460,10 @@ begin
   end if;
 
   -- 11. Delete in foreign-key order. Each statement must remove exactly the previewed rows.
+  -- The bulk-delete guard (20261027200000) refuses large deletes unless this
+  -- transaction opts in; the opt-in is transaction-local and each allowed
+  -- statement is audited in public.events (kind 'bulk_delete_allowed').
+  perform set_config('office.allow_bulk_delete', 'all', true);
   if v_poc then
     delete from public.continuity_handoffs where task_id in (select task_id from v54_continuity);
     get diagnostics v_n = row_count;
