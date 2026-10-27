@@ -50,7 +50,7 @@ observed end to end), **UNPROVEN** (no current evidence).
 
 | Change | Files | PR |
 | --- | --- | --- |
-| `POST /api/jobs/:id/resume`: requeues only failed/blocked/skipped steps (two fresh attempts each, capacity-wait count reset, tool checkpoint kept), then flips the job `failed`/`cancelled` → `running` behind a status guard; delivered steps and results untouched; audit event `objective_resumed` | `src/hub-job-actions.js`, `src/hub-server.js` | see §4 |
+| `POST /api/jobs/:id/resume`: requeues only failed/blocked/skipped steps (two fresh attempts each, capacity-wait count reset, tool checkpoint kept), then flips the job `failed`/`cancelled` → `running` behind a status guard; delivered steps and results untouched; audit event `objective_resumed` | `src/hub-job-actions.js`, `src/hub-server.js` | [#130](https://github.com/FahadTrail/fahad-ai-office/pull/130) (all rows) |
 | `POST /api/jobs/:id/stop` for any running objective; conversation Stop now reuses it | `src/hub-job-actions.js`, `src/hub-workspace.js` | |
 | Job screen: "استأنف من حيث وقفت" on failed/stopped objectives, Stop on running ones without a conversation, page restarts refreshing after a resume, composer repaints only on a state flip | `src/hub-ui/screens.js`, `src/hub-ui/office-model.js`, `src/hub-ui/premium.css` | |
 | Arabic failure explanations (`humanError(message, 'ar')`) | `src/hub-ui/humanize.js` | |
@@ -96,6 +96,6 @@ Submit each from the Office composer and record job id, status, steps and cost h
 
 ## Continuation point
 
-* Branch `claude/kind-ptolemy-kd5e5j`; PR for this mission open against `main`.
+* Branch `claude/kind-ptolemy-kd5e5j`; PR [#130](https://github.com/FahadTrail/fahad-ai-office/pull/130) open against `main`.
 * Next: owner decisions §6.1 and §6.2. After the scenarios run, update §2 (E2E column) and §4 with job ids and costs from `jobs` / `model_attempts`.
 * Then, if Fahad wants it: Google Drive (§6.6), a backup restore drill on a throwaway project, and Continuity Supervisor activation only if a vendor CLI login is provided.
