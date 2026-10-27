@@ -95,7 +95,7 @@ export const ARTIFACT_TYPES = Object.freeze({
     },
   },
   financial_model: {
-    hint: '{"type":"financial_model","title":"Launch model","currency":"AED","months":12,"items":[{"category":"Build","item":"MVP development","one_time":30000,"monthly":0,"month":1,"basis":"ESTIMATED","note":"…"},{"category":"Hosting","item":"Servers","one_time":0,"monthly":400,"month":1,"basis":"KNOWN","note":"…"},{"category":"Team time","item":"Weekly review","one_time":0,"weekly":250,"month":1,"basis":"ESTIMATED","note":"use annual or weekly for yearly/weekly amounts — never pre-divide into a rounded monthly figure"}],"revenue":{"price_monthly":49,"starting_customers":0,"new_customers":[5,5,10,10,15,15,20,20,20,20,20,20],"churn_rate":0.05,"trial_months":0,"basis":"ASSUMPTION"},"variable_cost_per_customer":3,"claims":{"year_revenue":0,"year_costs":0,"net":0,"break_even_month":null}}',
+    hint: '{"type":"financial_model","title":"Launch model","currency":"AED","months":12,"items":[{"category":"Build","item":"MVP development","one_time":30000,"monthly":0,"month":1,"basis":"ESTIMATED","note":"…"},{"category":"Hosting","item":"Servers","one_time":0,"monthly":400,"month":1,"basis":"KNOWN","note":"…"},{"category":"Team time","item":"Weekly review","one_time":0,"weekly":250,"month":1,"basis":"ESTIMATED","note":"use annual or weekly for yearly/weekly amounts — never pre-divide into a rounded monthly figure"}],"revenue":{"price_monthly":49,"starting_customers":0,"new_customers":[5,5,10,10,15,15,20,20,20,20,20,20],"churn_rate":0.05,"trial_months":0,"basis":"ASSUMPTION","note":"subscription; for a café/shop/restaurant use unit sales instead: {\\"unit_price\\":18,\\"units_per_day\\":[60,70,80],\\"days_per_month\\":30,\\"unit_cost\\":4.5}"},"variable_cost_per_customer":3,"claims":{"year_revenue":0,"year_costs":0,"net":0,"break_even_month":null}}',
     clean: (raw) => {
       const items = list(raw.items).map((item) => ({ category: text(item?.category, 60), item: text(item?.item, 120), one_time: num(item?.one_time), monthly: num(item?.monthly),
         ...(num(item?.annual) !== null ? { annual: num(item.annual) } : {}), ...(num(item?.weekly) !== null ? { weekly: num(item.weekly) } : {}),
@@ -109,6 +109,12 @@ export const ARTIFACT_TYPES = Object.freeze({
         ...(Array.isArray(raw.revenue.new_customers) ? { new_customers: list(raw.revenue.new_customers, 36).map(num) } : num(raw.revenue.new_customers) !== null ? { new_customers: num(raw.revenue.new_customers) } : {}),
         ...(num(raw.revenue.churn_rate) !== null ? { churn_rate: num(raw.revenue.churn_rate) > 1 ? num(raw.revenue.churn_rate) / 100 : num(raw.revenue.churn_rate) } : {}),
         ...(num(raw.revenue.trial_months) !== null ? { trial_months: num(raw.revenue.trial_months) } : {}),
+        // Unit sales (cafés, shops, restaurants): units × price, cost per unit.
+        ...(num(raw.revenue.unit_price) !== null ? { unit_price: num(raw.revenue.unit_price) } : {}),
+        ...(Array.isArray(raw.revenue.units_per_month) ? { units_per_month: list(raw.revenue.units_per_month, 36).map(num) } : num(raw.revenue.units_per_month) !== null ? { units_per_month: num(raw.revenue.units_per_month) } : {}),
+        ...(Array.isArray(raw.revenue.units_per_day) ? { units_per_day: list(raw.revenue.units_per_day, 36).map(num) } : num(raw.revenue.units_per_day) !== null ? { units_per_day: num(raw.revenue.units_per_day) } : {}),
+        ...(num(raw.revenue.days_per_month) ? { days_per_month: Math.min(31, Math.max(1, num(raw.revenue.days_per_month))) } : {}),
+        ...(num(raw.revenue.unit_cost) !== null ? { unit_cost: num(raw.revenue.unit_cost) } : {}),
         basis: oneOf(raw.revenue.basis, ['KNOWN', 'ESTIMATED', 'ASSUMPTION'], 'ASSUMPTION'), note: text(raw.revenue.note, 240),
       } : null;
       const claims = raw.claims && typeof raw.claims === 'object'

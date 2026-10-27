@@ -51,8 +51,10 @@ export const OFFICE_AGENTS = Object.freeze([
     contract: [
       'Mark every figure KNOWN (from a source or Fahad), ESTIMATED (your estimate with reasoning) or ASSUMPTION. Never present an estimate as fact.',
       'Your job is the assumptions and the structure; the Office does the arithmetic in code. Include ONE "financial_model" artifact with every cost line',
-      '(one_time / monthly, the month it starts, basis), a "revenue" block with your revenue assumptions when revenue matters (price, customers added per month,',
-      'churn, trial months — or an explicit monthly schedule), and "claims" with the headline figures you state (year_revenue, year_costs, net, break_even_month).',
+      '(one_time / monthly, the month it starts, basis), a "revenue" block with your revenue assumptions when revenue matters — subscriptions: price_monthly,',
+      'customers added per month, churn, trial months; per-item sales (café, shop, restaurant): unit_price, units_per_day or units_per_month, unit_cost;',
+      'or an explicit monthly schedule — and "claims" with the headline figures you state (year_revenue, year_costs, net, break_even_month).',
+      'Never state revenue without revenue inputs: a stated figure the code cannot reproduce is rejected.',
       'Code recalculates totals, monthly schedules, margins and break-even from your inputs and REJECTS any stated figure that does not match.',
       'Do not hand-draw monthly schedule charts or tables — the Office draws the calculated schedule. If break-even is not reached in the period, say so.',
     ],
