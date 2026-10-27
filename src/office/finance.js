@@ -603,14 +603,21 @@ export function badScheduleTable(calculated, drift = 747) {
 
 const MONEY = '(?:AED|USD|US\\$|\\$|€|درهم)?\\s*~?\\s*(-?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:k|m|mn|million|thousand|ألف|مليون)?)(?!\\d|[,.]\\d|\\s*(?:%|months?|customers|users|شهر|per month|a month|/\\s*mo|monthly|each month|شهري))';
 
+const NEGATION = /\b(?:not|never|no|isn't|won't|beyond|after)\b|(?:^|[\s(«"'*-])(?:لن|لا|لم|ليس|غير|بدون)(?=[\s»"'*]|$)/i;
+
 // Headline figures written in prose: break-even month, year revenue/costs/net.
 export function proseClaims(prose) {
   const claims = [];
   const body = String(prose || '').replace(/\|[^\n]*\|/g, ' '); // tables are checked separately
   for (const match of body.matchAll(/break[\s-]?even[^.\n|]{0,60}?\bmonth\s*(\d{1,2})\b|\bmonth\s*(\d{1,2})\b[^.\n|]{0,30}?break[\s-]?even|(?:التعادل|نقطة التعادل)[^.\n|]{0,40}?الشهر\s*(\d{1,2})/gi)) {
     const value = Number(match[1] || match[2] || match[3]);
-    // "does not break even by month 12" / "no break-even within 12 months".
-    const negated = /\b(not|never|no|isn't|won't|beyond|after)\b|لن|لا/i.test(match[0]);
+    // "does not break even by month 12" / "no break-even within 12 months" /
+    // «لن نصل إلى التعادل قبل الشهر 12». Arabic negation must be a whole word:
+    // «لن» also occurs inside «النقدي» (ال + ن…), which once turned «التعادل
+    // النقدي التراكمي: الشهر 6» into a false "not reached". The clause just
+    // before the match is included, where Arabic puts the negation.
+    const before = body.slice(Math.max(0, match.index - 30), match.index).split(/[.\n|،;:]/).pop();
+    const negated = NEGATION.test(`${before} ${match[0]}`);
     claims.push({ kind: negated ? 'break_even_not' : 'break_even', label: 'break-even month', value, raw: match[0], quote: quote(body, match.index) });
   }
   const period = '(?:first[\\s-]year|year[\\s-]?(?:one|1)|12[\\s-]month|annual|yearly|السنة الأولى)';

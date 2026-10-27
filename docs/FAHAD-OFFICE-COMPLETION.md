@@ -10,6 +10,105 @@ Evidence levels used below: **CODE** (implemented), **TESTED** (automated
 tests pass), **DEPLOYED** (running in production), **E2E** (a real workflow was
 observed end to end), **UNPROVEN** (no current evidence).
 
+## R. Release status — Mission 3 (2026-10-27, authoritative)
+
+**Verdict: READY WITH LIMITATIONS.** Released and live; the data-protection
+migration is prepared and replay-proven but **not applied** (backup could not
+be proven from the agent's tools — owner step below); Google is **PENDING
+OWNER ACTION**.
+
+| Item | Evidence |
+| --- | --- |
+| PR | [#131](https://github.com/FahadTrail/fahad-ai-office/pull/131), merged as `81004b25cf7239a1ca3a57c3875294b89d3f8b04` |
+| CI | Validate run [40577619644](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40577619644): tests, locked runtime image, sandbox privilege separation, container-root sandbox tests — all green |
+| Deploy | Run [40577908347](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40577908347) succeeded 20:28 UTC; event 3583 "Office runtime started on commit 81004b25cf72"; Supabase tools self-check and Telegram re-paired; Office coding worker `healthy` (heartbeat 20:32) |
+| New code live | First `data_integrity_snapshot` event at 20:30:06 (ops-watch Package A) |
+| Budget / privacy | Unchanged after deploy: $2.00 limit, $0.00 spent, $0.00 reserved, policy version 8; same 8 provider permissions |
+| Local tests | `node --test` 846/846; `npm run db:replay` 39 migrations, every scenario green; `npm run verify:sandbox` ok (sandbox uid 1000, controller environment unreadable) |
+| Browser | 52 Playwright screens (light/dark, 1440/390, edge cases): no console errors, no horizontal overflow; Word/MD/PDF downloads of the final synthesis and the Deliverables report work on both widths; Resume → running → Stop → cancelled → Resume (preview) |
+
+### Production acceptance (free routes only, `free_only`, titled "Acceptance" so they stay out of Office views and Telegram)
+
+| Scenario | Job | Result |
+| --- | --- | --- |
+| 1 Research | `3be79c51-8889-476a-aefc-855fca4115bc` | **Completed**: CHIEF → RESEARCH → CHIEF synthesis in Gulf Arabic (4,395 chars), 7 artifacts, 2 handoffs; states honestly that commission rates are not published and labels press figures; $0 |
+| 2 Finance + revision | `ace99f39-a6f9-4dd0-a6a5-28918e39f865` | **Completed, honestly marked NOT CLOSED**: FINANCE was returned twice by code validation, CHIEF ran a revision round, the fact gate removed 10 contradicting statements. Root cause found: a validator false positive (below), fixed in the follow-up PR; $0 |
+| 3 Multi-agent | `e3113d70-eda6-4e41-94e9-5ea57fce76f7` | **Completed**: 7 workstreams (RESEARCH, CREATIVE, SOCIAL, FINANCE, LEGAL, AUDIT) + synthesis (11,147 chars), 15 artifacts, 20 handoffs; $0 |
+| 4 Deliverables | — | Downloads verified in the browser on the preview; production UI click not possible from the agent sandbox (Hub host blocked by its proxy) |
+| 5 Resume | — | Endpoint + UI verified locally; first real use on production is Fahad's |
+
+All 67 model attempts: **$0.00** recorded (free routes only: Gemini, Groq,
+OpenRouter free). A failed Gemini attempt failed over by itself.
+
+**Defect found by acceptance and fixed (follow-up PR):** the FINANCE prose
+checker treated «لن» inside «النقدي» as a negation, so the correct sentence
+«التعادل النقدي التراكمي: الشهر 6» was read as "break-even not reached" and
+sent FINANCE into a needless revision that degraded its model. Arabic
+negation is now matched as a whole word (also when it precedes the phrase);
+regression test `test/finance-arabic-negation.test.js`.
+
+### Package status
+
+| Package | Status |
+| --- | --- |
+| A Data protection | Code LIVE (integrity snapshots, alerts, stuck detection). Migration `20261027200000_bulk_delete_guard` **prepared, replay-proven, NOT applied** |
+| B Office & deliverables | LIVE; scenarios 1–3 exercised in production |
+| C Coding Agent onboarding | LIVE; a session on a non-Office repository has not run yet |
+| D Continuity alerts | LIVE |
+| E Google Drive/Docs/Sheets | LIVE code, **PENDING OWNER ACTION** (OAuth) |
+| F Model pool | Unchanged; free-first held ($0) |
+| G Security (Origin check, honest connector states) | LIVE |
+| H Inventory | Done (below); nothing closed |
+
+### Review fixes made during verification (before merge)
+
+* The guard refused deleting **one** real objective (its events cascade). Rows
+  removed by ON DELETE CASCADE are now recognised (their parent row is gone)
+  and limited to 1000; the parent statement keeps the 25-row limit.
+* The opt-in must carry the current transaction id
+  (`'<tables>@' || txid_current()`), so a session-wide or leftover setting
+  opens nothing.
+* Audit moved to `private.bulk_delete_audit`, append-only (DELETE, UPDATE and
+  TRUNCATE refused without exception), with role, session user, application
+  and client address.
+* Google reads are limited in code to the Office folder by default
+  (`drive.readonly` would reach the whole Drive); `GOOGLE_DRIVE_READ_SCOPE=drive`
+  is the owner's explicit opt-in.
+
+### Owner actions (the only remaining human steps)
+
+1. **URGENT — the history lost on 2026-10-22.** The organisation is on the
+   Supabase **Pro** plan (daily backups, 7-day retention). The last backups
+   from before the deletion (2026-10-21/22) are about to age out. If the old
+   history matters: Supabase Dashboard → project `fahad-ai-office` → Database →
+   Backups → restore the 2026-10-22 (pre-21:06 UTC) backup **into a new
+   project** (never over production). Nothing was restored by the agent.
+2. **Apply the bulk-delete guard.** In the same Backups page confirm a recent
+   daily backup exists, then run the file
+   `supabase/migrations/20261027200000_bulk_delete_guard.sql` in the SQL
+   editor (or tell the agent "backup confirmed, apply the guard"). Expected
+   result: 46 triggers named `*_bulk_delete_guard` / `*_truncate_guard`.
+   Rollback is at the end of the file. Data is not changed.
+3. **Google (optional):** create an OAuth client (Desktop app) with the Drive
+   API enabled, then follow the header of `src/ops/google-oauth-setup.js`
+   (client id/secret → consent link → refresh token piped into `.env` →
+   Office folder id). Until then the connector shows "Not configured".
+4. **Repository visibility (recommended):** make the repository private; it
+   holds no secrets, but shows the VPS hostname and paths.
+5. Optional: close superseded PRs #124, #125; review #109, #114.
+
+### Rollback
+
+* Code: revert merge `81004b2` on `main` (the deploy pipeline redeploys and
+  rolls back automatically on a failed healthcheck).
+* Migration (once applied): drop the 46 triggers and the two guard functions
+  (statements at the end of the migration); keep the audit table.
+
+### Next recommended stage
+
+Use the Office daily; run one Coding Agent task on a small non-Office
+repository to prove the new onboarding; connect Google if wanted.
+
 ## 0. Mission 2 — implementation without verification (2026-10-27, evening)
 
 Fahad's rule for this mission: **no tests of any kind, no live AI calls, no
@@ -200,9 +299,9 @@ Submit each from the Office composer and record job id, status, steps and cost h
 
 ## Continuation point
 
-* Production runs `4db3672` (PR #130). Branch `claude/kind-ptolemy-kd5e5j`
-  holds Mission 2 on top of it (head: see `git log`), **not tested, not in a
-  PR, not deployed** — by Fahad's instruction.
-* Next: Fahad authorizes verification → follow "Verification order" in §0.
-* Do not repeat the §A investigation or the Cloudflare work. Do not start new
-  features before §0 is verified.
+* Production runs `81004b2` (PR #131). Read §R first; §0 and below are history.
+* Open items: owner actions in §R (backup → apply the guard migration;
+  optional Google OAuth; visibility). Do not repeat the §A investigation or
+  the Cloudflare work.
+* All three acceptance objectives completed; scenario 2 should be re-run
+  once after the finance fix to confirm a CLOSED result.
