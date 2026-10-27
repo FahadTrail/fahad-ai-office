@@ -89,7 +89,8 @@ function statusLabel(status) {
 }
 const CATEGORY_LABEL = { APPROVAL: ['موافقة', 'APPROVAL'], 'ANSWER REQUIRED': ['جواب مطلوب', 'ANSWER REQUIRED'], 'NEEDS OWNER': ['يحتاجك', 'NEEDS OWNER'], 'FAILED TASK': ['مهمة فشلت', 'FAILED TASK'], COMPLETED: ['مكتمل', 'COMPLETED'], 'LEGAL DECISION': ['قرار قانوني', 'LEGAL DECISION'], 'SECURITY DECISION': ['قرار أمني', 'SECURITY DECISION'], 'PROJECT COMPLETE': ['اكتمل المشروع', 'PROJECT COMPLETE'] };
 const categoryLabel = (value) => (CATEGORY_LABEL[value] ? CATEGORY_LABEL[value][state.language === 'ar' ? 0 : 1] : (value || ''));
-const OWNER_PHRASE = { 'Waiting for your approval.': 'ينتظر موافقتك.', 'Completed.': 'مكتمل.', 'The team delivered; CHIEF consolidated the result.': 'الفريق سلّم، وCHIEF جمع النتيجة.' };
+const OWNER_PHRASE = { 'Waiting for your approval.': 'ينتظر موافقتك.', 'Completed.': 'مكتمل.', 'The team delivered; CHIEF consolidated the result.': 'الفريق سلّم، وCHIEF جمع النتيجة.',
+  'The Office could not finish this request. Open it to resume where it stopped; delivered work is kept.': 'المكتب ما قدر يكمّل هالطلب. افتحه واستأنف من حيث وقف، وما تم تسليمه يبقى محفوظ.', 'The task failed.': 'تعثّرت المهمة.' };
 const ownerPhrase = (text) => (state.language === 'ar' && OWNER_PHRASE[text] ? OWNER_PHRASE[text] : (text || ''));
 function agentStateLabel(name) {
   const arabic = { AVAILABLE: 'متاح', QUEUED: 'التالي', THINKING: 'يفكر', WORKING: 'يشتغل', TESTING: 'يختبر', REVIEWING: 'يراجع', WAITING: 'ينتظر', BLOCKED: 'متوقف', FAILED: 'فشل', 'NEEDS FAHAD': 'يحتاجك', COMPLETED: 'أنجز' };

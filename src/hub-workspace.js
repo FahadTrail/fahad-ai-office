@@ -237,7 +237,7 @@ export function attentionFrom({ sessions = [], approvals = [], failedJobs = [], 
     else if (session.status === 'completed') items.push({ kind: 'completed', severity: 'info', category: 'COMPLETED', priority: PRIORITY.INFO, taskId: session.id, title: session.title, detail: session.result?.summary ? String(session.result.summary).slice(0, 300) : 'Completed.', at: session.completed_at || session.updated_at });
   }
   for (const job of failedJobs) {
-    items.push({ kind: 'failed', severity: 'error', category: 'FAILED TASK', priority: PRIORITY.ACTION, conversationId: job.conversation_id, jobId: job.id, title: job.title || 'Chat request', detail: 'The Office could not finish this request.', at: job.completed_at || job.created_at });
+    items.push({ kind: 'failed', severity: 'error', category: 'FAILED TASK', priority: PRIORITY.ACTION, conversationId: job.conversation_id, jobId: job.id, title: job.title || 'Chat request', detail: 'The Office could not finish this request. Open it to resume where it stopped; delivered work is kept.', action: 'resume', at: job.completed_at || job.created_at });
   }
   for (const artifact of artifacts) {
     if (artifact.type === 'compliance_matrix') {
