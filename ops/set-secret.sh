@@ -50,6 +50,14 @@ declare -A SHAPE=(
   [OPENCODE_ZEN_API_KEY]='^[A-Za-z0-9._-]{20,512}$'
   [OLLAMA_API_KEY]='^[A-Za-z0-9._-]{20,512}$'
   [CLOUDFLARE_API_TOKEN]='^[A-Za-z0-9_-]{30,128}$'
+  # Google Workspace connector (src/integrations/google-workspace.js). The
+  # refresh token comes from tools/google-oauth-setup.mjs, which pipes it here
+  # so it is never printed. The folder id is not a secret: it limits where the
+  # Office may create new Docs/Sheets.
+  [GOOGLE_OAUTH_CLIENT_ID]='^[0-9]+-[A-Za-z0-9_]+\.apps\.googleusercontent\.com$'
+  [GOOGLE_OAUTH_CLIENT_SECRET]='^[A-Za-z0-9_-]{20,128}$'
+  [GOOGLE_OAUTH_REFRESH_TOKEN]='^1//[A-Za-z0-9_-]{20,512}$'
+  [GOOGLE_DRIVE_OFFICE_FOLDER_ID]='^[A-Za-z0-9_-]{10,200}$'
   # Not a secret: the Cloudflare account id (32 hex characters).
   [CLOUDFLARE_ACCOUNT_ID]='^[a-f0-9]{32}$'
   # Not a secret: which Cloudflare Workers plan the account is on. Workers AI

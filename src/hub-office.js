@@ -163,6 +163,8 @@ export function capabilityView({ toolRuns = [], webRuns = {}, env = {}, database
     { id: 'supabase_tools', label: 'Supabase tools for the Coding Agent', ...supabaseToolsState(last(['supabase']), supabaseCheck, present('CODING_SUPABASE_ACCESS_TOKEN'), state) },
     { id: 'web_search', label: 'Web search', ...state(webRuns.web_search || null, present('GEMINI_API_KEY'), 'web search') },
     { id: 'web_fetch', label: 'Web page reading', ...state(webRuns.web_fetch || null, true, 'page fetch') },
+    { id: 'google_workspace', label: 'Google Drive / Docs / Sheets', ...state(['drive_search', 'drive_read', 'docs_create', 'sheets_create'].map((name) => webRuns[name]).filter(Boolean).sort().at(-1) || null,
+      ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REFRESH_TOKEN'].every(present), 'Google Drive call') },
     { id: 'memory', label: 'Project memory', status: databaseOk ? 'Available' : 'Unavailable', verifiedAt: null, detail: `${memoryCount} saved item${memoryCount === 1 ? '' : 's'}` },
     { id: 'telegram', label: 'Telegram → CHIEF', ...telegramState(telegramDelivered, telegramCheck, present('TELEGRAM_BOT_TOKEN'), state) },
     { id: 'tool_broker', label: 'Tool Broker (audited tools)', ...state(toolRuns.filter((run) => run.status === 'succeeded').map((run) => run.last).sort().at(-1) || null, true, 'audited tool call') },
@@ -273,7 +275,7 @@ function telegramState(delivered, check, configuredHere, state) {
 // Which connectors an employee works with (ids match /api/capabilities).
 export function EMPLOYEE_CONNECTORS(employee) {
   const ids = ['database', 'memory'];
-  if (employee.webTools) ids.push('web_search', 'web_fetch');
+  if (employee.webTools) ids.push('web_search', 'web_fetch', 'google_workspace');
   if (employee.executor === 'coding') ids.push('github', 'repository', 'pull_requests', 'ci', 'deployment', 'supabase_tools', 'tool_broker');
   if (employee.executor === 'chief') ids.push('telegram');
   return ids;
@@ -284,7 +286,7 @@ export function connectorUsers(id) {
   const web = ACTIVE_AGENTS.filter((agent) => agent.webTools).map((agent) => agent.label);
   const coding = ACTIVE_AGENTS.filter((agent) => agent.executor === 'coding').map((agent) => agent.label);
   const everyone = ACTIVE_AGENTS.map((agent) => agent.label);
-  return ({ web_search: web, web_fetch: web, database: everyone, memory: everyone, telegram: ['CHIEF'] })[id] || coding;
+  return ({ web_search: web, web_fetch: web, google_workspace: web, database: everyone, memory: everyone, telegram: ['CHIEF'] })[id] || coding;
 }
 
 // ------------------------------------------------------------------ Office redesign: queues, deliveries, usage

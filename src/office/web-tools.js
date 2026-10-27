@@ -14,6 +14,7 @@
 
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { GOOGLE_WORKSPACE_TOOL_NAMES, runGoogleWorkspaceTool } from '../integrations/google-workspace.js';
 
 export const OFFICE_WEB_TOOLS = Object.freeze([
   {
@@ -187,8 +188,8 @@ export function officeWebTools() {
 // exactly what evidence was actually retrieved.
 const DEGRADED_CODES = new Set(['SEARCH_RATE_LIMITED', 'SEARCH_FAILED', 'SEARCH_UNAVAILABLE']);
 
-export function createOfficeToolExecutor({ env = process.env, fetchFn = fetch, resolve = lookup, allowSearch = true, search = webSearch, fetchPage = webFetch } = {}) {
-  const state = { searchDegraded: false, searchError: null, searchOk: 0, searchFailures: 0, fetchOk: 0, fetchFailures: 0, fetchedUrls: [] };
+export function createOfficeToolExecutor({ env = process.env, fetchFn = fetch, resolve = lookup, allowSearch = true, search = webSearch, fetchPage = webFetch, googleWorkspace = null } = {}) {
+  const state = { searchDegraded: false, searchError: null, searchOk: 0, searchFailures: 0, fetchOk: 0, fetchFailures: 0, fetchedUrls: [], workspaceOk: 0, workspaceFailures: 0, workspaceFiles: [] };
   const degraded = () => ({ ok: false, result: {
     error: 'SEARCH_DEGRADED', degraded: true,
     message: `Web search is unavailable right now (${state.searchError}). Do not call web_search again in this task. Continue with web_fetch on official or well-known URLs you can name, and label any claim you could not check as UNKNOWN.`,
@@ -223,12 +224,25 @@ export function createOfficeToolExecutor({ env = process.env, fetchFn = fetch, r
           return degraded();
         }
       }
+      // Google Workspace (only offered when connected and asked for; the run
+      // is then private). Created files are listed in report() as evidence.
+      if (googleWorkspace && GOOGLE_WORKSPACE_TOOL_NAMES.has(call.name)) {
+        try {
+          const result = await runGoogleWorkspaceTool(googleWorkspace, call);
+          state.workspaceOk += 1;
+          if (result?.created && state.workspaceFiles.length < 20) state.workspaceFiles.push({ id: result.id, name: result.name, link: result.link, type: result.type });
+          return { ok: true, result };
+        } catch (error) {
+          state.workspaceFailures += 1;
+          throw error;
+        }
+      }
       throw toolError('TOOL_UNKNOWN', `Unknown tool ${call.name}`);
     } catch (error) {
       return { ok: false, result: { error: error.code || 'TOOL_FAILED', message: String(error.message || 'Tool failed').slice(0, 300) } };
     }
   };
-  executor.report = () => ({ ...state, fetchedUrls: [...state.fetchedUrls], searchBreaker: searchBreaker.status() });
+  executor.report = () => ({ ...state, fetchedUrls: [...state.fetchedUrls], workspaceFiles: [...state.workspaceFiles], searchBreaker: searchBreaker.status() });
   return executor;
 }
 
