@@ -9,6 +9,7 @@ import { capabilityView } from '../src/hub-office.js';
 
 const READ = { GOOGLE_OAUTH_CLIENT_ID: '123-abc.apps.googleusercontent.com', GOOGLE_OAUTH_CLIENT_SECRET: 'GOCSPX-secretsecretsecret', GOOGLE_OAUTH_REFRESH_TOKEN: '1//refresh-token-value-xyz' };
 const FULL = { ...READ, GOOGLE_DRIVE_OFFICE_FOLDER_ID: 'FOLDER_abcdefghij' };
+const WHOLE_DRIVE = { ...READ, GOOGLE_DRIVE_READ_SCOPE: 'drive' };
 const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) });
 
 function fakeGoogle(routes) {
@@ -25,9 +26,11 @@ function fakeGoogle(routes) {
 test('status, tools and intent: nothing is offered until configured; writes need the Office folder', () => {
   assert.deepEqual(googleWorkspaceStatus({}).state, 'NOT_CONFIGURED');
   assert.deepEqual(googleWorkspaceTools({}), []);
-  assert.deepEqual(googleWorkspaceTools(READ).map((tool) => tool.name), ['drive_search', 'drive_read']);
+  assert.deepEqual(googleWorkspaceTools(READ), [], 'credentials alone grant nothing: reads stay inside the Office folder by default');
   assert.deepEqual(googleWorkspaceTools(FULL).map((tool) => tool.name), ['drive_search', 'drive_read', 'docs_create', 'sheets_create']);
+  assert.deepEqual(googleWorkspaceTools(WHOLE_DRIVE).map((tool) => tool.name), ['drive_search', 'drive_read'], 'whole-Drive reading only by explicit choice');
   assert.deepEqual(googleWorkspaceStatus(READ).missing, ['GOOGLE_DRIVE_OFFICE_FOLDER_ID']);
+  assert.deepEqual([googleWorkspaceStatus(FULL).readScope, googleWorkspaceStatus(WHOLE_DRIVE).readScope], ['folder', 'drive']);
   for (const text of ['Summarise the pricing sheet in my Google Drive', 'حط الخطة في مستند جوجل', 'لخّص الملف في درايف', 'put it in a Google Sheet']) assert.ok(wantsGoogleWorkspace(text), text);
   for (const text of ['Plan a bakery launch', 'How do we drive more traffic to the site?']) assert.ok(!wantsGoogleWorkspace(text), text);
   assert.ok(wantsGoogleWorkspace('read the pricing file in my drive'));
@@ -38,12 +41,16 @@ test('search escapes the query, reads Docs as text, and caches the access token'
   const { fetchFn, calls } = fakeGoogle([
     ['/files?', json({ files: [{ id: 'DOCID_123456', name: "Fahad's plan", mimeType: 'application/vnd.google-apps.document', modifiedTime: '2026-10-27T10:00:00Z', webViewLink: 'https://docs.google.com/d/DOCID_123456' }] })],
     ['/files/DOCID_123456/export', json('Plan text '.repeat(10))],
-    ['/files/DOCID_123456?', json({ id: 'DOCID_123456', name: "Fahad's plan", mimeType: 'application/vnd.google-apps.document' })],
+    ['/files/DOCID_123456?', json({ id: 'DOCID_123456', name: "Fahad's plan", mimeType: 'application/vnd.google-apps.document', parents: ['FOLDER_abcdefghij'] })],
+    ['/files/OUTSIDE_1234567?', json({ id: 'OUTSIDE_1234567', name: 'Private', mimeType: 'application/vnd.google-apps.document', parents: ['OTHER_FOLDER_1'] })],
   ]);
-  const client = createGoogleWorkspaceClient({ env: READ, fetchFn });
+  const client = createGoogleWorkspaceClient({ env: FULL, fetchFn });
   const found = await client.search({ query: "Fahad's plan" });
   assert.equal(found.files[0].id, 'DOCID_123456');
-  assert.match(decodeURIComponent(new URL(calls[1].url).searchParams.get('q')), /name contains 'Fahad\\'s plan'/);
+  const query = new URL(calls[1].url).searchParams.get('q');
+  assert.match(query, /name contains 'Fahad\\'s plan'/);
+  assert.match(query, /'FOLDER_abcdefghij' in parents/, 'search stays inside the Office folder');
+  await assert.rejects(client.read({ fileId: 'OUTSIDE_1234567' }), { code: 'FILE_OUTSIDE_OFFICE_FOLDER' });
   const doc = await client.read({ fileId: 'DOCID_123456' });
   assert.match(doc.text, /^Plan text/);
   assert.equal(calls.filter((call) => call.url.startsWith('https://oauth2')).length, 1, 'one token refresh for several calls');
@@ -68,7 +75,7 @@ test('creating files converts to Google formats inside the Office folder only, a
 
 test('a revoked grant is an account action, not a retry', async () => {
   const fetchFn = async () => json({ error: 'invalid_grant' }, 400);
-  await assert.rejects(createGoogleWorkspaceClient({ env: READ, fetchFn }).search({ query: 'x' }), { code: 'GOOGLE_REAUTHORIZE' });
+  await assert.rejects(createGoogleWorkspaceClient({ env: FULL, fetchFn }).search({ query: 'x' }), { code: 'GOOGLE_REAUTHORIZE' });
   await assert.rejects(createGoogleWorkspaceClient({ env: {}, fetchFn }).search({ query: 'x' }), { code: 'GOOGLE_NOT_CONFIGURED' });
 });
 

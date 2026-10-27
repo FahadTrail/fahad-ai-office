@@ -6,10 +6,12 @@
 // and never puts a credential in a URL, a prompt, a log or a tool result.
 //
 //   GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN
-//       → read tools (drive_search, drive_read)
 //   + GOOGLE_DRIVE_OFFICE_FOLDER_ID
-//       → write tools (docs_create, sheets_create), which only CREATE new files
-//         inside that one folder. Nothing is edited, shared, moved or deleted.
+//       → drive_search / drive_read inside that folder only, and docs_create /
+//         sheets_create, which only CREATE new files in it. Nothing is edited,
+//         shared, moved or deleted.
+//   GOOGLE_DRIVE_READ_SCOPE=drive (optional, Fahad's explicit choice)
+//       → search and read anywhere in his Drive.
 //
 // Privacy: Drive content is the owner's private data. A run that is offered
 // these tools is routed to privacy-approved models only (pool-runner), and the
@@ -35,13 +37,24 @@ export const GOOGLE_SCOPES = Object.freeze(['https://www.googleapis.com/auth/dri
 const READ_VARS = ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REFRESH_TOKEN'];
 const present = (env, name) => String(env[name] || '').trim().length > 0;
 
+// Read scope. Google has no OAuth scope for "one folder, including files
+// Fahad puts there himself" (drive.file only reaches files this app created),
+// so the token carries drive.readonly and the Office enforces the boundary in
+// code: by default it searches and reads only inside the Office folder.
+// GOOGLE_DRIVE_READ_SCOPE=drive is Fahad's explicit opt-in to whole-Drive reads.
+export function googleReadScope(env = process.env) {
+  return String(env.GOOGLE_DRIVE_READ_SCOPE || '').trim().toLowerCase() === 'drive' ? 'drive' : 'folder';
+}
+
 export function googleWorkspaceStatus(env = process.env) {
-  const missing = READ_VARS.filter((name) => !present(env, name));
-  const read = missing.length === 0;
-  const write = read && present(env, 'GOOGLE_DRIVE_OFFICE_FOLDER_ID');
+  const credentials = READ_VARS.filter((name) => !present(env, name));
+  const folder = present(env, 'GOOGLE_DRIVE_OFFICE_FOLDER_ID');
+  const readScope = googleReadScope(env);
+  const read = credentials.length === 0 && (folder || readScope === 'drive');
+  const write = credentials.length === 0 && folder;
   return {
-    state: read ? 'CONFIGURED_UNVERIFIED' : 'NOT_CONFIGURED',
-    read, write, missing: write ? [] : [...missing, ...(present(env, 'GOOGLE_DRIVE_OFFICE_FOLDER_ID') ? [] : ['GOOGLE_DRIVE_OFFICE_FOLDER_ID'])],
+    state: credentials.length === 0 ? 'CONFIGURED_UNVERIFIED' : 'NOT_CONFIGURED',
+    read, write, readScope, missing: [...credentials, ...(folder ? [] : ['GOOGLE_DRIVE_OFFICE_FOLDER_ID'])],
   };
 }
 
@@ -57,7 +70,7 @@ export const GOOGLE_WORKSPACE_TOOLS = Object.freeze({
   read: [
     {
       name: 'drive_search',
-      description: "Search Fahad's Google Drive by words in the file name or content. Returns file id, name, type, modified time and link. Use specific words.",
+      description: "Search Fahad's Google Drive (the Office folder unless he allowed his whole Drive) by words in the file name or content. Returns file id, name, type, modified time and link. Use specific words.",
       inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Words to look for' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['query'] },
     },
     {
@@ -161,14 +174,18 @@ export function createGoogleWorkspaceClient({ env = process.env, fetchFn = fetch
     async search({ query, limit = 10 }) {
       const words = String(query || '').trim().slice(0, 200);
       if (!words) throw workspaceError('QUERY_REQUIRED', 'query is required');
-      const q = `(name contains ${quote(words)} or fullText contains ${quote(words)}) and trashed = false`;
+      const inFolder = status.readScope === 'folder' ? ` and ${quote(env.GOOGLE_DRIVE_OFFICE_FOLDER_ID)} in parents` : '';
+      const q = `(name contains ${quote(words)} or fullText contains ${quote(words)}) and trashed = false${inFolder}`;
       const params = new URLSearchParams({ q, pageSize: String(Math.min(20, Math.max(1, Number(limit) || 10))), fields: 'files(id,name,mimeType,modifiedTime,webViewLink)', orderBy: 'modifiedTime desc', spaces: 'drive' });
       const body = await call(`${DRIVE}/files?${params}`);
       return { files: (body.files || []).map(fileView) };
     },
     async read({ fileId }) {
       if (!FILE_ID.test(String(fileId || ''))) throw workspaceError('FILE_ID_INVALID', 'Not a Google Drive file id');
-      const meta = await call(`${DRIVE}/files/${fileId}?${new URLSearchParams({ fields: 'id,name,mimeType,modifiedTime,webViewLink,size' })}`);
+      const meta = await call(`${DRIVE}/files/${fileId}?${new URLSearchParams({ fields: 'id,name,mimeType,modifiedTime,webViewLink,size,parents' })}`);
+      if (status.readScope === 'folder' && !(meta.parents || []).includes(env.GOOGLE_DRIVE_OFFICE_FOLDER_ID)) {
+        throw workspaceError('FILE_OUTSIDE_OFFICE_FOLDER', 'Only files inside the Office folder can be read (Fahad can allow whole-Drive reading with GOOGLE_DRIVE_READ_SCOPE=drive)');
+      }
       let text;
       if (meta.mimeType === 'application/vnd.google-apps.document') text = await call(`${DRIVE}/files/${fileId}/export?mimeType=text%2Fplain`, {}, { raw: true });
       else if (meta.mimeType === 'application/vnd.google-apps.spreadsheet') text = await call(`${DRIVE}/files/${fileId}/export?mimeType=text%2Fcsv`, {}, { raw: true });

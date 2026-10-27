@@ -34,12 +34,17 @@ test('the bulk-delete guard covers the history tables, is transaction-local, aud
   }
   assert.match(migration, /referencing old table as old_rows for each statement/);
   assert.match(migration, /before truncate/);
-  assert.match(migration, /v_limit constant int := 25/);
+  assert.match(migration, /v_direct <= 25 and v_cascaded <= 1000/, 'direct statements 25 rows, cascades 1000');
+  assert.match(migration, /c\.confdeltype = 'c'/, 'cascaded rows are recognised by their ON DELETE CASCADE parent');
+  assert.match(migration, /split_part\(v_value, '@', 2\) <> txid_current\(\)::text/, 'the opt-in is bound to the current transaction');
+  assert.match(migration, /create table private\.bulk_delete_audit/);
+  assert.match(migration, /BULK_DELETE_AUDIT_APPEND_ONLY/);
   assert.match(migration, /'bulk_delete_allowed'/);
   assert.match(migration, /revoke all on function private\.guard_bulk_delete\(\) from public, anon, authenticated, service_role/);
-  assert.match(read('supabase/verify/scenarios/bulk_delete_guard.sql'), /a 29-row delete was not refused/);
+  const scenario = read('supabase/verify/scenarios/bulk_delete_guard.sql');
+  for (const check of ['a 29-row delete was not refused', 'the single-job cascade did not complete', 'an opt-in without the transaction id opened the guard', 'the audit could be deleted']) assert.ok(scenario.includes(check), check);
   // The reviewed cleanup opts in for its own transaction only.
-  assert.match(read('ops/cleanup/v5.4-test-data-cleanup.sql'), /set_config\('office\.allow_bulk_delete', 'all', true\)/);
+  assert.match(read('ops/cleanup/v5.4-test-data-cleanup.sql'), /set_config\('office\.allow_bulk_delete', 'all@' \|\| txid_current\(\)::text, true\)/);
 });
 
 test('a running objective with nothing claimable is announced once its grace period passes', () => {

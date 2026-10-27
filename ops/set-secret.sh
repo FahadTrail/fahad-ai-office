@@ -58,6 +58,9 @@ declare -A SHAPE=(
   [GOOGLE_OAUTH_CLIENT_SECRET]='^[A-Za-z0-9_-]{20,128}$'
   [GOOGLE_OAUTH_REFRESH_TOKEN]='^1//[A-Za-z0-9_-]{20,512}$'
   [GOOGLE_DRIVE_OFFICE_FOLDER_ID]='^[A-Za-z0-9_-]{10,200}$'
+  # Not a secret: folder (default) keeps Drive reads inside the Office folder;
+  # drive is the owner's explicit choice to let employees read the whole Drive.
+  [GOOGLE_DRIVE_READ_SCOPE]='^(folder|drive)$'
   # Not a secret: the Cloudflare account id (32 hex characters).
   [CLOUDFLARE_ACCOUNT_ID]='^[a-f0-9]{32}$'
   # Not a secret: which Cloudflare Workers plan the account is on. Workers AI
