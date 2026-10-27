@@ -31,14 +31,21 @@ OWNER ACTION**.
 
 | Scenario | Job | Result |
 | --- | --- | --- |
-| 1 Research | `3be79c51-8889-476a-aefc-855fca4115bc` | **Completed**: CHIEF → RESEARCH → CHIEF synthesis in Gulf Arabic (4,395 chars), 7 artifacts, 2 handoffs; states honestly that commission rates are not published and labels press figures; $0 (gemini, openrouter free) |
-| 2 Finance + revision | `ace99f39-a6f9-4dd0-a6a5-28918e39f865` | CHIEF reviewed FINANCE and **requested a revision round** live; see continuation for the final state |
-| 3 Multi-agent | `e3113d70-eda6-4e41-94e9-5ea57fce76f7` | CHIEF planned 7 workstreams (RESEARCH, CREATIVE, SOCIAL, FINANCE, LEGAL, AUDIT, synthesis); 17 handoffs so far; see continuation |
+| 1 Research | `3be79c51-8889-476a-aefc-855fca4115bc` | **Completed**: CHIEF → RESEARCH → CHIEF synthesis in Gulf Arabic (4,395 chars), 7 artifacts, 2 handoffs; states honestly that commission rates are not published and labels press figures; $0 |
+| 2 Finance + revision | `ace99f39-a6f9-4dd0-a6a5-28918e39f865` | **Completed, honestly marked NOT CLOSED**: FINANCE was returned twice by code validation, CHIEF ran a revision round, the fact gate removed 10 contradicting statements. Root cause found: a validator false positive (below), fixed in the follow-up PR; $0 |
+| 3 Multi-agent | `e3113d70-eda6-4e41-94e9-5ea57fce76f7` | **Completed**: 7 workstreams (RESEARCH, CREATIVE, SOCIAL, FINANCE, LEGAL, AUDIT) + synthesis (11,147 chars), 15 artifacts, 20 handoffs; $0 |
 | 4 Deliverables | — | Downloads verified in the browser on the preview; production UI click not possible from the agent sandbox (Hub host blocked by its proxy) |
 | 5 Resume | — | Endpoint + UI verified locally; first real use on production is Fahad's |
 
-All model attempts so far: **$0.00** recorded (free routes only). A failed
-Gemini attempt failed over to another free route by itself.
+All 67 model attempts: **$0.00** recorded (free routes only: Gemini, Groq,
+OpenRouter free). A failed Gemini attempt failed over by itself.
+
+**Defect found by acceptance and fixed (follow-up PR):** the FINANCE prose
+checker treated «لن» inside «النقدي» as a negation, so the correct sentence
+«التعادل النقدي التراكمي: الشهر 6» was read as "break-even not reached" and
+sent FINANCE into a needless revision that degraded its model. Arabic
+negation is now matched as a whole word (also when it precedes the phrase);
+regression test `test/finance-arabic-negation.test.js`.
 
 ### Package status
 
@@ -296,5 +303,5 @@ Submit each from the Office composer and record job id, status, steps and cost h
 * Open items: owner actions in §R (backup → apply the guard migration;
   optional Google OAuth; visibility). Do not repeat the §A investigation or
   the Cloudflare work.
-* Check the final state of acceptance jobs `ace99f39…` and `e3113d70…`
-  (`select status, final_summary from jobs where title like 'Acceptance%'`).
+* All three acceptance objectives completed; scenario 2 should be re-run
+  once after the finance fix to confirm a CLOSED result.
