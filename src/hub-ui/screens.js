@@ -13,6 +13,7 @@ import {
   ROSTER, arabicCount, codingSessionState, createRefresher, deliveryProgress, fractionLabel, objectiveSignature, employeeColor, employeeCopy, employeeState, employeeTabs, fractionWidth, greeting,
   isTerminal, jobStatus, livingDashboard, nodeStateLabel, numericDate, outputTypes, phaseWords, archiveFilter, workflowMap, workflowMetrics,
 } from './office-model.js';
+import { exportReport } from './export.js?v=__UI_VERSION__';
 
 const ICON = {
   send: '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>',
@@ -575,18 +576,19 @@ export async function renderJobDetail(ctx, id) {
     }
     slot.classList.toggle('is-final', Boolean(content));
     slot.innerHTML = `<div class="synthesis-head"><div><span class="eyebrow">${dot('chief-of-staff')}${content ? ctx.esc(heading) : t('الخلاصة النهائية', 'Final synthesis')}</span><h2 id="synthesisTitle" class="sr-only">${ctx.esc(heading)}</h2>${workflow.final?.at ? `<span class="muted small"> · ${isoDate(ctx, workflow.final.at)}</span>` : ''}</div>
-      ${content ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-copy-final>${ICON.copy}${t('نسخ', 'Copy')}</button><button class="btn btn-ghost btn-sm" type="button" data-download-final>${ICON.download}${t('تنزيل', 'Download')}</button></div>` : statusPill(ctx, { status: job.status, lifecycle: objective?.lifecycle })}</div>
+      ${content ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-copy-final>${ICON.copy}${t('نسخ', 'Copy')}</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="word">${ICON.download}${t('وورد', 'Word')}</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="pdf">PDF</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="md">MD</button></div>` : statusPill(ctx, { status: job.status, lifecycle: objective?.lifecycle })}</div>
       <div class="synthesis-body">${body}</div>`;
     const resume = slot.querySelector('[data-resume-job]');
     if (resume) resume.onclick = () => objectiveAction(job, 'resume', resume);
     if (content) {
       slot.querySelector('[data-copy-final]').onclick = () => navigator.clipboard?.writeText(content).then(() => ctx.toast(t('تم النسخ', 'Copied')));
-      slot.querySelector('[data-download-final]').onclick = () => {
-        const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
-        const link = Object.assign(document.createElement('a'), { href: url, download: `${String(job.title || 'result').replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 80) || 'result'}.md` });
-        document.body.append(link); link.click(); link.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      };
+      // Word (.doc), PDF (print dialog) or the original Markdown.
+      slot.querySelectorAll('[data-download-final]').forEach((button) => {
+        button.onclick = () => {
+          try { exportReport(button.dataset.downloadFinal, { title: job.title || t('النتيجة', 'Result'), markdown: content, render: ctx.markdown }); }
+          catch (failure) { ctx.toast(failure.message); }
+        };
+      });
     }
   };
 
