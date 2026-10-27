@@ -110,7 +110,7 @@ export function stuckObjectives({ jobs = [], tasks = [], now = Date.now(), grace
   return jobs
     .filter((job) => ['running', 'planning'].includes(job.status) && !open.has(job.id) && now - Date.parse(job.created_at) > graceMinutes * 60_000)
     .map((job) => ({ key: `stuck:${job.id}`, severity: 'medium',
-      text: `Objective stuck: "${String(job.title || job.id).slice(0, 80)}" is ${job.status} but has no step queued or running. Open it in the Hub and Stop, then Resume.` }));
+      text: `Objective stuck: "${String(job.title || job.id).slice(0, 80)}" is ${job.status} but has no step queued or running. Open it in the Hub: Stop it, then Resume if a step failed, or send CHIEF a follow-up.` }));
 }
 
 // One exact row count per table; a table that cannot be counted is left out
