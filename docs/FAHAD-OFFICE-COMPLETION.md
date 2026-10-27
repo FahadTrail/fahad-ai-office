@@ -14,7 +14,8 @@ observed end to end), **UNPROVEN** (no current evidence).
 
 | Fact | Evidence |
 | --- | --- |
-| Production commit `a0b8022e94d9bb002198470ea9b76f7f2b2289b1` | Deploy run [40554067285](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40554067285) succeeded; `runtime_started` event "Office runtime started on commit a0b8022e94d9" |
+| Production commit at the start of the mission: `a0b8022e94d9bb002198470ea9b76f7f2b2289b1` | Deploy run [40554067285](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40554067285) succeeded; `runtime_started` event "Office runtime started on commit a0b8022e94d9" |
+| **Production commit now: `4db3672c2bb3ae91c3fc8e4121959905a432261b`** (PR #130 merged by Fahad) | Deploy run [40569532162](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40569532162) succeeded 2026-10-27 19:32 UTC; events `runtime_started` "Office runtime started on commit 4db3672c2bb3", Supabase tools self-check and Telegram channel re-paired right after |
 | Office coding worker alive | `coding_workers.office`: `healthy`, `MEASURED`, last seen 2026-10-27 18:48 UTC |
 | Telegram channel paired | `telegram_channel` events after each of the last deploys |
 | Budget | `workspace_policies`: $2.00/month, $0.00 spent, $0.00 reserved, period 2026-10-01 → 2026-11-01, max $0.10 per request |
@@ -31,7 +32,7 @@ observed end to end), **UNPROVEN** (no current evidence).
 | --- | --- | --- |
 | CHIEF objective → plan → specialists → synthesis | DONE: CODE, TESTED, DEPLOYED. E2E **UNPROVEN since the reset** | Last real runs predate 2026-10-23; the rows were removed. |
 | Multi-agent handoffs, revisions, consults, capacity wait | DONE: CODE, TESTED, DEPLOYED | `office-orchestration`, `office-capacity-wait` tests |
-| Owner recovery of a failed/stopped objective | **DONE in this mission** (CODE, TESTED, browser-verified on preview); deploy pending merge | Was MISSING: a failed objective had no retry, and Stop existed only for conversation jobs |
+| Owner recovery of a failed/stopped objective | **DONE in this mission** (CODE, TESTED, browser-verified on preview, DEPLOYED `4db3672`); E2E on a real objective UNPROVEN | Was MISSING: a failed objective had no retry, and Stop existed only for conversation jobs |
 | Failure reasons in Arabic | **DONE in this mission** | Raw English error was shown in the Arabic UI; now a Gulf-Arabic sentence plus technical details |
 | Deliverables Center (view, download, pin/archive/approve/revise) | DONE: CODE, TESTED, DEPLOYED | V5.3 |
 | Living Dashboard V2.2, Arabic-first RTL, desktop + mobile | DONE: CODE, TESTED, DEPLOYED | Screenshots: no console errors, no horizontal overflow |
@@ -77,7 +78,7 @@ production write, no deployment was made by this mission.
 
 ## 6. Owner decisions (one batch)
 
-1. **Merge this mission's PR** → deploys automatically (UI + two Hub endpoints; no migration). Rollback: revert the merge commit; the deploy pipeline rolls back on a failed healthcheck by itself.
+1. ~~Merge this mission's PR~~ **done**: #130 merged and deployed (`4db3672`). Rollback if ever needed: revert the merge commit.
 2. **Run the acceptance scenarios** in §7 on production after the deploy (free routes; expected cost $0, worst case a few cents inside the $2 cap).
 3. **Repository visibility**: make it private (recommended). Risk: none to the runtime; GitHub Actions then counts against the private-repo minute allowance. Rollback: make it public again.
 4. Optional: apply `20261009160000_platform_work_indexes` (two indexes, no data change; rollback `drop index`).
@@ -96,6 +97,6 @@ Submit each from the Office composer and record job id, status, steps and cost h
 
 ## Continuation point
 
-* Branch `claude/kind-ptolemy-kd5e5j`; PR [#130](https://github.com/FahadTrail/fahad-ai-office/pull/130) open against `main`.
-* Next: owner decisions §6.1 and §6.2. After the scenarios run, update §2 (E2E column) and §4 with job ids and costs from `jobs` / `model_attempts`.
+* PR [#130](https://github.com/FahadTrail/fahad-ai-office/pull/130) is merged and live on `4db3672`. Resume/Stop are deployed but not yet used on a real objective.
+* Next: owner decision §6.2 (run the five scenarios). After the scenarios run, update §2 (E2E column) and §4 with job ids and costs from `jobs` / `model_attempts`.
 * Then, if Fahad wants it: Google Drive (§6.6), a backup restore drill on a throwaway project, and Continuity Supervisor activation only if a vendor CLI login is provided.
