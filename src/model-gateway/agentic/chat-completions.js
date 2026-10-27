@@ -43,7 +43,7 @@ export class ChatCompletionsProtocol {
   async turn({ provider, model, system, messages, tools, maxOutputTokens = 16_000, clientRequestId, timeoutMs = null }) {
     if (!this.apiKey) throw providerError(`${provider} credential is unavailable`, { status: 401, type: 'authentication_error' });
     const startedAt = Date.now();
-    const { body, requestId, rateLimit } = await postJson({
+    const { body, requestId, rateLimit, providerStatus } = await postJson({
       fetchFn: this.fetchFn,
       url: this.endpoint,
       provider,
@@ -71,7 +71,6 @@ export class ChatCompletionsProtocol {
       },
     });
     const choice = body.choices?.[0];
-    if (!choice?.message) throw providerError(`${provider} returned no choice`, { status: 502, type: 'empty_response' });
     const usage = {
       inputTokens: body.usage?.prompt_tokens || 0,
       outputTokens: body.usage?.completion_tokens || 0,
@@ -83,6 +82,19 @@ export class ChatCompletionsProtocol {
     // gateway's free-route guard refuses any billed response on a free route.
     const reportedCost = Number(body.usage?.cost ?? body.usage?.total_cost ?? 0);
     if (Number.isFinite(reportedCost) && reportedCost > 0) usage.reportedCostUsd = Number(reportedCost.toFixed(8));
+    // A locally synthesized 502 is not the upstream HTTP status. Keep only
+    // fixed shape metadata, never response text or arbitrary provider fields.
+    const responseDiagnostics = {
+      messagePresent: Boolean(choice?.message),
+      finishReason: ['stop', 'length', 'tool_calls', 'content_filter'].includes(choice?.finish_reason) ? choice.finish_reason : 'unknown',
+      contentKind: typeof choice?.message?.content === 'string' ? 'string'
+        : Array.isArray(choice?.message?.content) ? 'array' : 'absent',
+      toolCallsPresent: Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0,
+    };
+    const emptyResponse = (message) => providerError(message, {
+      status: 502, type: 'empty_response', providerStatus, usage, responseDiagnostics,
+    });
+    if (!choice?.message) throw emptyResponse(`${provider} returned no choice`);
     if (choice.finish_reason === 'content_filter') {
       throw providerError(`${provider} filtered the request`, { status: 422, type: 'refusal', usage });
     }
@@ -110,7 +122,7 @@ export class ChatCompletionsProtocol {
     // to be returned as an empty success, which hid the cause: qualification
     // reported "0/7 checks passed" instead of naming the failure.
     if (!content.length) {
-      throw providerError(`${provider} returned an empty message`, { status: 502, type: 'empty_response', usage });
+      throw emptyResponse(`${provider} returned an empty message`);
     }
     return {
       message: { role: 'assistant', content },
