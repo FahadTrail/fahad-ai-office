@@ -1,80 +1,44 @@
-name: Deploy Fahad AI Office
-
+name: Office deployment transport diagnostic
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'test/**'
-      - 'ops/**'
-      - 'supabase/**'
-      - 'testing/**'
-      - '.github/workflows/deploy.yml'
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: fahad-ai-office-production
-  cancel-in-progress: false
-
 jobs:
-  deploy:
-    if: github.ref == 'refs/heads/main'
+  diagnose:
+    if: github.ref == 'refs/heads/codex/v3-deploy-network-diagnostic'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          package-manager-cache: false
-      - name: Validate code and zero-cost health-check behavior
-        run: |
-          set -euo pipefail
-          npm ci --no-audit --no-fund
-          find src testing -name '*.js' -print0 | xargs -0 -n1 node --check
-          node --test
-          bash -n setup.sh deploy-setup.sh ops/deploy.sh ops/install-deploy.sh
-          # The migration replay must not be skipped silently in CI.
-          ls /usr/lib/postgresql/*/bin/initdb
-          bash supabase/verify/replay.sh > /dev/null
-      - name: Verify the application image builds before contacting production
-        run: docker build --tag fahad-office-ci:${{ github.sha }} .
-      - name: Verify Coding Agent sandbox privilege separation in the built image
-        run: docker run --rm --user 0 --entrypoint node fahad-office-ci:${{ github.sha }} src/coding-agent/verify-isolation.js
-      - name: Deploy through the restricted VPS command
+      - name: Compare endpoint and test transport without credentials or deployment
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY_B64 }}
-          EXPECTED_COMMIT: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          umask 077
-          [[ -n "$VPS_HOST" && "$VPS_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'VPS_HOST is missing or invalid'; exit 1; }
-          [[ -n "$VPS_SSH_KEY_B64" ]] || { echo 'VPS_SSH_KEY_B64 is missing'; exit 1; }
-          key_dir=$(mktemp -d)
-          trap 'rm -f -- "$key_dir/key" "$key_dir/known_hosts"; rmdir -- "$key_dir"' EXIT
-          printf '%s' "$VPS_SSH_KEY_B64" | base64 --decode > "$key_dir/key"
-          unset VPS_SSH_KEY_B64
-          ssh-keygen -y -f "$key_dir/key" >/dev/null
-          # Public host key verified through the authenticated Hostinger console.
-          printf '%s ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOSC5ry15faVONfILaLBKQRSuicz8h0akf2gZxbww93x\n' "$VPS_HOST" > "$key_dir/known_hosts"
-          ssh -T -i "$key_dir/key" \
-            -o IdentitiesOnly=yes -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 \
-            -o UserKnownHostsFile="$key_dir/known_hosts" \
-            -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
-            "deploy@$VPS_HOST" 2>&1 | tee deployment.log
-          grep -Fq 'DEPLOYMENT SUCCESSFUL' deployment.log
-          grep -Fq "now running commit ${EXPECTED_COMMIT:0:7}" deployment.log || {
-            echo 'The deployed revision differs from this workflow revision. Check the next main run.'
-            exit 1
-          }
-          printf '### Deployment succeeded\n\nCommit: `%s`\n\nThe VPS built and checked the candidate before replacement.\n' "$EXPECTED_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import os, socket, hashlib, base64
+          expected_ip = '187.53.136.113'
+          expected_name = 'srv1964598.hstgr.cloud'
+          host = os.environ.get('VPS_HOST', '')
+          print('configured_host_present=' + str(bool(host)).lower())
+          print('configured_host_has_outer_whitespace=' + str(host != host.strip()).lower())
+          print('configured_host_matches_expected_literal=' + str(host in (expected_ip, expected_name)).lower())
+          def probe(label, target):
+              try:
+                  ips = {v[4][0] for v in socket.getaddrinfo(target, 22, type=socket.SOCK_STREAM)}
+                  print(label + '_dns_resolves=true')
+                  print(label + '_resolves_expected_ip=' + str(expected_ip in ips).lower())
+                  with socket.create_connection((target,22),timeout=15) as s:
+                      s.settimeout(5)
+                      banner=s.recv(255)
+                      print(label + '_tcp22_open=true')
+                      print(label + '_ssh_banner=' + str(banner.startswith(b'SSH-')).lower())
+              except Exception as e:
+                  print(label + '_transport_error=' + type(e).__name__)
+          if host and host.strip() == host and all(c.isalnum() or c in '.-' for c in host):
+              probe('configured',host)
+          else:
+              print('configured_host_valid=false')
+          probe('approved_ip', expected_ip)
+          probe('approved_dns', expected_name)
+          PY
