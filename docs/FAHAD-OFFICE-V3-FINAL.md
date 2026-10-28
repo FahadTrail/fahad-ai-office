@@ -171,7 +171,7 @@ Recovery plan:
 | --- | --- | --- | --- |
 | [#135](https://github.com/FahadTrail/fahad-ai-office/pull/135) | `f79e5c9` | Stalled objectives (no false "running"), real `.docx`, Coding Agent toolchain truth + Python image, code-privacy choice, V3 docs | Run [40643895814](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40643895814) success; event "Office runtime started on commit f79e5c995633" 06:29:54 UTC |
 | [#136](https://github.com/FahadTrail/fahad-ai-office/pull/136) | `6d473e8` | Written, tested, merged and deployed **by the Coding Agent** (below) | Run [40645165109](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40645165109) success; "Office runtime started on commit 6d473e8fbf90" 06:42:43 UTC |
-| V3.0 records PR | — | `.docx` renders Hub artifacts as lists (found on real content), this record | see the PR |
+| [#137](https://github.com/FahadTrail/fahad-ai-office/pull/137) | `6f3d238` | `.docx` renders Hub artifacts as lists (found on real content), this record | Run [40649057522](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40649057522) success; public `/healthz` returned HTTP 200 and version `6f3d2382c487` at 08:30 UTC on 2026-10-28 |
 
 ### Coding Agent — live cycle (2026-10-28, session `3cf33b7f-d81f-4790-b96a-f8ac52da911c`)
 
@@ -248,8 +248,15 @@ Ordered by value. None blocks daily use of the Office.
 2. **Google Drive/Docs/Sheets (optional):** create a Google OAuth client
    (Desktop app) with the Drive API enabled, then follow the header of
    `src/ops/google-oauth-setup.js` (client id/secret → consent link → refresh
-   token into `.env` via `ops/set-secret.sh` → Office folder id). Scopes:
-   `drive.file` + read limited in code to the Office folder.
+   token into `.env` via `ops/set-secret.sh` → Office folder id). Actual OAuth
+   scopes: `drive.readonly` **and** `drive.file`. Google authorizes reading
+   all Drive files; the Office restricts reads to its folder **in application
+   code**, not through a folder-scoped OAuth token. `drive.file` permits
+   app-created/explicitly opened files. A compromised refresh token therefore
+   has a broader read capability than the Office UI. Keep
+   `GOOGLE_DRIVE_READ_SCOPE=folder`; never select `drive` without Fahad's
+   specific approval. Setup, secret-handling and verification:
+   [activation audit](V3-ACTIVATION-AUDIT-2026-10-28.md#google-oauth).
 3. **Independent backup:** confirm daily backups in Supabase Dashboard →
    Database → Backups, and run one restore into a scratch project (drill).
    Optionally schedule a `pg_dump` to storage you control.
@@ -259,27 +266,31 @@ Ordered by value. None blocks daily use of the Office.
    `docs/CODING-CONTINUITY-SUPERVISOR.md`). Each uses your own subscription;
    nothing is enabled without your login.
 5. **Repository visibility (recommended):** make
-   `FahadTrail/fahad-ai-office` private. Impact checked: deploys use an SSH
-   forced command (unaffected); the Coding Agent and CI use tokens/Actions
-   (unaffected); GitHub Actions minutes then count against the private-repo
-   allowance; the Coding Agent's "Public repository" privacy option must no
-   longer be used for it. Rollback: make it public again.
+   `FahadTrail/fahad-ai-office` private **only after explicit approval**.
+   The SSH forced-command mechanism can remain, but server git-fetch and
+   Coding Agent token access must be verified for a private repository first.
+   Actions consumes the account's private-repository allowance and can incur
+   overage. Every new coding session must use PRIVATE; PUBLIC-only free
+   routes then stop qualifying, so free coding capacity may be unavailable.
+   Do not bypass privacy or enable paid routes to compensate. Account billing,
+   server fetch credentials and runtime token scopes are not verified by this
+   audit. See the [activation audit](V3-ACTIVATION-AUDIT-2026-10-28.md).
 6. **A separate test repository for the Coding Agent (optional):** create an
    empty private repository and add it to the Coding Agent's GitHub token,
    so future agent drills never touch the production repository.
 7. **Leaked-password protection (optional):** Supabase Auth setting; the Hub
    signs in with e-mail OTP, so impact is low.
-8. **Close old PRs** #124, #125, #109, #114 (reviewed below; nothing in them
-   needs to be carried over).
+8. **DONE (2026-10-28):** #124, #125, #109, #114 closed with review comments;
+   API read-back confirmed all four closed, unmerged. All branches retained.
 
-### Old pull requests (reviewed 2026-10-28)
+### Old pull requests (reviewed and closed 2026-10-28)
 
 | PR | What it is | Recommendation |
 | --- | --- | --- |
-| #124 `feat/cloudflare-reliability` (draft) | First version of the Cloudflare fail-closed work | Close: superseded by merged #126 (`27ab29c`) and the closed Cloudflare workstream |
-| #125 `claude/focused-rubin-ryev82` (draft) | Cloudflare canary caps | Close: superseded by #126 |
-| #109 `cursor/cloud-agent-environment-2419` (draft) | Cursor Cloud setup notes for AGENTS.md | Close: Cursor-specific; the durable rules it lists are already in AGENTS.md |
-| #114 `v5.4-activation-followup` | Docs after the V5.4 activation (Supervisor ON correction, cleanup manifest counts) | Close: its key fact (Supervisor ON) is now in AGENTS.md and this record; the manifest it updates was overtaken by the 2026-10-22 owner cleanup |
+| #124 `feat/cloudflare-reliability` (draft) | First version of the Cloudflare fail-closed work | Closed: superseded by merged #126 (`27ab29c`); head is an ancestor of main |
+| #125 `claude/focused-rubin-ryev82` (draft) | Cloudflare canary caps | Closed: head has the exact tree of merged #126 |
+| #109 `cursor/cloud-agent-environment-2419` (draft) | Cursor Cloud setup notes for AGENTS.md | Closed: environment-specific; durable rules are current, branch preserves optional Cursor notes |
+| #114 `v5.4-activation-followup` | Docs after V5.4 activation | Closed: current facts covered by V3 records; cleanup inventory superseded on 2026-10-22; historical evidence retained in PR/branch |
 
 ## 12. Limits (truthful)
 
