@@ -1,12 +1,11 @@
 -- Bulk-delete guard for the Office's durable history.
 --
--- Incident (docs/FAHAD-OFFICE-COMPLETION.md §A): shortly before 2026-10-22
--- 21:06 UTC every job, task, run, result, event, coding session and model
--- attempt was deleted in one pass, while configuration tables were kept. No
--- repository script or application path can do that, so it was a privileged
--- manual or agent SQL statement, and nothing recorded who ran it. This
--- migration makes that class of accident refuse itself and records who opted
--- in when a bulk delete is intended.
+-- Context (docs/FAHAD-OFFICE-COMPLETION.md §A): on 2026-10-22 the owner had
+-- all test jobs, sessions and logs removed in one pass — an intended cleanup.
+-- It showed that nothing distinguished an approved bulk delete from an
+-- accidental one, and nothing recorded who ran it. This migration refuses
+-- unapproved bulk deletes and records every approved one; approved cleanups
+-- keep working through the per-transaction opt-in below.
 --
 -- Rules
 -- * A statement run directly may delete at most 25 rows from a guarded table.

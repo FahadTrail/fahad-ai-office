@@ -57,3 +57,12 @@ test('a running objective with nothing claimable is announced once its grace per
   const tasks = [{ job_id: 'a', status: 'done' }, { job_id: 'a', status: 'failed' }, { job_id: 'b', status: 'queued' }];
   assert.deepEqual(stuckObjectives({ jobs, tasks, now }).map((item) => item.key), ['stuck:a']);
 });
+
+test('a drop covered by an approved, audited bulk delete is reported as a cleanup, not data loss', () => {
+  const previous = { at: '2026-11-01T10:00:00Z', counts: { jobs: 120, events: 3000 } };
+  const current = { counts: { jobs: 0, events: 40 } };
+  const approved = [{ id: 9, payload: { kind: 'bulk_delete_allowed', table: 'jobs', operation: 'delete', rows: 120, role: 'postgres' } }];
+  const keys = integrityFindings(previous, current, approved).map((item) => [item.key, item.severity]);
+  assert.deepEqual(keys, [['cleanup:jobs:120->0', 'medium'], ['integrity:events:3000->40', 'high'], ['bulk-delete:9', 'medium']],
+    'jobs was approved; events was not named in the opt-in, so its drop is still suspected data loss');
+});
