@@ -80,4 +80,15 @@ test('the policy text matches what the code does', () => {
   assert.ok(en.includes('3,500') && ar.includes('3,500'));
   assert.match(en, /backups/i);
   assert.match(ar, /النسخ الاحتياطية/);
+  // The Limited Use statement names the same recipients as "Service providers"
+  // (not the AI provider alone), and that section's storage heading exists.
+  assert.doesNotMatch(en, /except the AI provider/);
+  assert.doesNotMatch(ar, /غير مزوّد الذكاء الاصطناعي الذي/);
+  assert.match(en, /except the service providers listed below/);
+  assert.match(ar, /غير مقدّمي الخدمات المذكورين أدناه/);
+  assert.match(en, /^## Storage and retention$/m);
+  assert.match(ar, /^## التخزين والاحتفاظ$/m);
+  // web_fetch stays offered to private runs, and the policy says so.
+  assert.match(runner, /useWebTools \|\| workspaceTools\.length \? officeWebTools\(\)/);
+  assert.ok(en.includes('public web pages') && ar.includes('صفحات ويب عامة'));
 });
