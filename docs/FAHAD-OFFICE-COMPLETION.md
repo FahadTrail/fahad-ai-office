@@ -274,7 +274,7 @@ of what was removed.
 | Budget | `workspace_policies`: $2.00/month, $0.00 spent, $0.00 reserved, period 2026-10-01 → 2026-11-01, max $0.10 per request |
 | Test suite (main) | `node --test`: 822 tests, 822 pass, 0 fail, 0 skipped (local, no network) |
 | **Production test data was cleared at the owner's request (2026-10-22)** | `jobs`, `tasks`, `runs`, `results`, `agent_sessions`, `model_attempts`, `tool_executions` all have **0 rows**; the oldest remaining `events.id` is 3550 (2026-10-23). No objective and no coding session has run since. |
-| Migrations | Production has 37 applied. Repository migration `20261009160000_platform_work_indexes` (two partial indexes, no data change) is **not applied**. |
+| Migrations | Production has 37 applied. `20261009160000_platform_work_indexes` (two partial indexes, no data change) was **applied 2026-10-28** with owner approval; production now has 39 and its fingerprint equals the repository's (`docs/migrations/20261009160000-apply-runbook.md`). |
 | Repository visibility | **Public**. No credential, `.env`, key file or personal email found in the tree or in any of the 391 commits (pattern scan for Anthropic/OpenAI/GitHub/Google/Groq/Cerebras/Slack/Telegram tokens, JWTs, private keys). |
 | Supabase security advisor | RLS on every public table with no policies (deny-by-default for anon/authenticated; service-role only, as designed). One WARN: leaked-password protection off (the Hub uses email OTP, so low impact). |
 | Production reachability from agent sandboxes | Blocked by the sandbox egress proxy (HTTP 403 on CONNECT). `/healthz` was read through deploy evidence, not directly. |
@@ -334,7 +334,7 @@ production write, no deployment was made by this mission.
 1. ~~Merge this mission's PR~~ **done**: #130 merged and deployed (`4db3672`). Rollback if ever needed: revert the merge commit.
 2. **Run the acceptance scenarios** in §7 on production after the deploy (free routes; expected cost $0, worst case a few cents inside the $2 cap).
 3. **Repository visibility**: make it private (recommended). Risk: none to the runtime; GitHub Actions then counts against the private-repo minute allowance. Rollback: make it public again.
-4. Optional: apply `20261009160000_platform_work_indexes` (two indexes, no data change; rollback `drop index`).
+4. Done 2026-10-28: `20261009160000_platform_work_indexes` applied (two indexes, no data change).
 5. Optional: close PRs #124, #125, #109 and #114.
 6. Optional, only if wanted: Google Drive — create an OAuth client or service account and store it with `ops/set-secret.sh`; then an agent can build the connector.
 

@@ -51,6 +51,8 @@ Docs or Sheets in a request.
   to train their models.
 * Web search is not used during such a request unless the search provider is
   also approved for private data.
+* The AI model may open public web pages while answering. Such a fetch sends
+  that website only the page address; no file is attached to it.
 
 The use and transfer of information received from Google APIs adheres to the
 [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
@@ -60,8 +62,8 @@ including the Limited Use requirements. Google user data is:
 * never sold;
 * never used for advertising;
 * never used to train generalized AI or machine-learning models;
-* never transferred to anyone except the AI provider that processes the
-  owner's own request.
+* never transferred to anyone except the service providers listed below, which
+  process it only to run the app for the owner.
 
 ## Service providers
 
@@ -84,13 +86,14 @@ the owner:
 
 Google user data is not shared with anyone else.
 
+## Storage and retention
 
 * **Google credentials.** The OAuth client secret and the refresh token are
   stored only in the owner's server configuration. Access tokens are kept in
   memory only. Credentials are never written to logs, prompts or the database.
 * **Where data is stored.** Everything below is kept in the owner's private
-  database, which only the owner's server can access, until the owner deletes
-  it.
+  database, hosted by Supabase, until the owner deletes it. Only the owner's
+  server and the owner can access it.
 * **Answers.** The app's answers to the owner may quote or summarize the
   files that were read.
 * **Activity record.** The task's activity record contains the search words

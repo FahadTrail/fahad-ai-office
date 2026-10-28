@@ -309,3 +309,14 @@ Next for Google (owner, in Google Cloud Console):
 The scheduled read-only check on 2026-11-05 16:13 UTC verifies that the
 token keeps working past day 8.
 
+
+## V3.0 final closure — 2026-10-28 (night)
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Privacy text | **Fixed** | The Limited Use bullet said Google data goes only to the AI provider, which contradicted the Supabase, Hostinger and Telegram disclosures. It now names the service providers listed in the policy, in both languages. The missing "Storage and retention" heading was restored. The text now states that the database is hosted by Supabase. The `web_fetch` page opens (still offered to Drive runs) are now disclosed. `test/hub-privacy.test.js` pins all four points. |
+| Migration `20261009160000` | **APPLIED** | See the [runbook](migrations/20261009160000-apply-runbook.md#applied--2026-10-28-supabase-sql-tool-the-apply-block-above-unchanged). Production fingerprint 1218 lines, `82b415e0…`, equal to the repository. |
+| Production health (database view) | **PASS** | Read-only snapshot at 23:44 UTC. The runtime reports `dad6ac9e59e6` (started 23:03). The `office` coding worker is healthy (seen 23:43). Other figures: 0 stuck objectives, 0 orphaned runs, 0 failed jobs or tasks in 24 h, 0 pending approvals, 0 blocked sessions, 0 active leases. Budget is $2.00 with $0.00 spent, $0.00 reserved, $0.00 model cost this month, and 0 paid attempts in 24 h. There are 0 `GOOGLE_*` errors in 7 days. |
+| Restore drill on production | **BLOCKED (owner)** | The agent has no database password, and its network cannot reach the database or `office.trimedia.me`. |
+| Google OAuth production + re-consent | **BLOCKED (owner)** | Needs the Google Cloud Console and Fahad's own consent. `drive.readonly` is a restricted scope. Publishing without verification lifts the Testing 7-day refresh-token expiry. It keeps the unverified-app warning and the 100-user cap, which is acceptable for one owner (Google *OAuth 2.0* and *restricted scope verification* pages, read through search because the agent network blocks Google's help sites). The 8-day check is scheduled for 2026-11-05 16:13 UTC. It counts from the re-consent date, so it reports PENDING until 8 days after the re-consent. |
+| Coding Agent token: remove the fixture repository | **BLOCKED (owner)** | Fine-grained PAT settings are visible only to the token owner. Steps are in §2. |

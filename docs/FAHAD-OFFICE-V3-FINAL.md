@@ -157,15 +157,16 @@ worker `src/coding-worker.js`; full description in `docs/coding-agent.md`.
 | --- | --- |
 | Tool Broker: discovery, AUTO / APPROVAL / DENY grants, audit (`tool_executions`), redaction, result validation | DEPLOYED, TESTED |
 | GitHub (repo, PR, CI, merge, deploy watch), Supabase tools (read; writes need approval), web search/fetch, Telegram | DEPLOYED; Supabase self-check and Telegram pairing re-verified at every start |
-| Google Drive/Docs/Sheets (search/read in the Office folder; create-only writes; no delete or share) | IMPLEMENTED, TESTED — **PENDING OWNER ACTION** (OAuth production publish + re-consent; no Office run has used Drive yet). Privacy policy DEPLOYED at `/privacy` and `/privacy/ar` (2026-10-28, `dad6ac9`) |
+| Google Drive/Docs/Sheets (search/read in the Office folder; create-only writes; no delete or share) | IMPLEMENTED, TESTED — **PENDING OWNER ACTION** (OAuth production publish + re-consent; no Office run has used Drive yet). Privacy policy DEPLOYED at `/privacy` and `/privacy/ar` (2026-10-28, `dad6ac9`; Limited Use wording aligned with the listed service providers in the V3.0 final closure) |
 | Hub auth (email OTP), Origin check on writes, RLS deny-by-default (service role only) | DEPLOYED. Supabase security advisor 2026-10-28: 0 ERROR; 1 WARN (leaked-password protection, owner's choice) |
 | Bulk-delete guard + append-only audit | APPLIED 2026-10-28; approved cleanups opt in per transaction |
 | Deploy: forced-command SSH, candidate build, health observations, automatic rollback | DEPLOYED |
 | Hermes separation | Enforced by path, command and gate policies; untouched |
 
 **Backups and recovery.** Supabase manages daily backups for the project
-(Pro plan); their list is not visible to the agent tools, so a restore drill
-is **PENDING OWNER ACTION**. `backup_20261028` is a snapshot inside the same
+(Pro plan, last 7 daily backups per Supabase's *Database Backups* docs); their
+list is not visible to the agent tools, and the agent has no database
+password, so the production restore drill is **PENDING OWNER ACTION**. `backup_20261028` is a snapshot inside the same
 database (good against bad deletes, useless if the database is lost).
 Recovery plan:
 
