@@ -18,6 +18,7 @@ import { handleOperationsApi } from './hub-office-ops.js';
 import { handlePlatformApi } from './hub-platform.js';
 import { handleContinuityApi } from './hub-continuity.js';
 import { handleDeliverablesApi } from './hub-deliverables.js';
+import { PRIVACY_PATHS, sendPrivacyPage } from './hub-privacy.js';
 import { rollExpiredBudgetPeriod } from './workspace-policy/supabase-store.js';
 import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -129,6 +130,8 @@ export function createHubServer({ db, authClient = db?.auth, store, continuity =
       if (request.method === 'GET' && (requestUrl.pathname === '/' || requestUrl.pathname === '/index.html')) {
         return send(response, 200, WORKSPACE_HTML, 'text/html; charset=utf-8');
       }
+      // Public privacy policy (Google OAuth consent screen); 404 until the owner publishes it.
+      if (request.method === 'GET' && PRIVACY_PATHS[requestUrl.pathname]) return sendPrivacyPage(response, PRIVACY_PATHS[requestUrl.pathname]);
       if (request.method === 'GET' && (requestUrl.pathname === '/classic' || requestUrl.pathname === '/classic/')) {
         return send(response, 200, HUB_HTML, 'text/html; charset=utf-8');
       }

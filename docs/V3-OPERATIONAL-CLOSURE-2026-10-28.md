@@ -112,8 +112,9 @@ Steps (owner):
    second run proves the token no longer expires. Record the Drive file ids.
 
 **Privacy pages — DRAFTED, not published.**
-[`docs/legal/google-privacy-policy.md`](legal/google-privacy-policy.md) and its
-Arabic version were written from the code (each statement cites its source).
+The text is `src/legal/privacy-en.md` and `src/legal/privacy-ar.md`, served at
+`/privacy` and `/privacy/ar` (see the 2026-10-28 late update below and
+[`docs/legal/README.md`](legal/README.md)).
 
 * The drafts in the ChatGPT Work environment were not available to this
   session, so these drafts were written independently.
@@ -241,3 +242,37 @@ session-runs fix as `20261009105021` where the repository says
 The live production run needs the database password, which only Fahad holds.
 The production restore drill therefore stays OWNER until he runs it and keeps
 the printed report.
+
+## Update — 2026-10-28 (late)
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Token access to `fahad-office-python-acceptance` removed | **BLOCKED (owner)** | Not verifiable by an agent: the token is a server secret and its repository list is visible only on the owner's GitHub settings page |
+| Restore drill on real production data | **BLOCKED (owner)** | No authorized database credential exists in the agent environment. Reading rows through the SQL tool would copy production data into a chat transcript, so it was refused as unsafe. The script, its tests and the command are unchanged (§5) |
+| `/privacy` page | **PR for review, not published** | `src/hub-privacy.js`, `test/hub-privacy.test.js`. Two corrections were found against the code and are now stated (below) |
+| Google connection | **Unproven** | `events` has **zero** Drive tool events (`drive_search`, `drive_read`, `docs_create`, `sheets_create`) since the project started, and no `GOOGLE_*` error. No Office run has used Drive in production yet |
+| Migration `20261009160000` | **Prepared, not applied** | [`docs/migrations/20261009160000-apply-runbook.md`](migrations/20261009160000-apply-runbook.md): read-only checks, lock analysis, atomic apply and rollback, local rehearsal reproducing production's digest exactly |
+
+**Corrections to the earlier privacy draft (verified in code).**
+
+* **Paused requests store excerpts.** While a request waits for model
+  capacity, `tasks.wait_info.checkpoint` stores a summary of each completed
+  tool call: at most 1,200 characters (`fitCheckpoint` in `src/workflow.js`).
+  For a Drive read, this summary is an excerpt of the file. It is not cleared
+  when the task finishes. The earlier draft said no copy of file contents is
+  stored; the published text now states this storage.
+* **Search words and file ids are logged.** The provider-switch checkpoint
+  event in `events.payload` records each tool call's arguments: the search
+  words and the file ids. The published text states this too.
+
+**Publishing gate.** Merging the PR publishes nothing. `/privacy` answers 404
+until the owner sets both values on the server:
+
+```bash
+sudo bash ops/set-secret.sh PRIVACY_CONTACT_EMAIL
+```
+
+```bash
+sudo bash ops/set-secret.sh PRIVACY_EFFECTIVE_DATE
+```
+
