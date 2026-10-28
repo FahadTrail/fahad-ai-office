@@ -9,6 +9,7 @@ import { WAITING_MESSAGE } from './office/capacity.js';
 import { ownerAction, approvalCard } from './hub-workspace.js';
 import { OfficeStream, handoffView, timelineView } from './hub-office-live.js';
 import { isTestObjective } from './hub-office-ops.js';
+import { stuckObjectives } from './ops/ops-watch.js';
 
 // Historical test / demo / certification objectives stay in storage as audit
 // evidence but never appear in the normal Office views; active work always does.
@@ -98,7 +99,7 @@ export function officeState({ agents = [], jobs = [], tasks = [], sessions = [],
 }
 
 // The workflow of one objective: Fahad → Chief → workstreams → synthesis.
-export function workflowView({ job, tasks = [], agents = [], results = [], handoffs = [], events = [], sessions = [], artifacts = [] }) {
+export function workflowView({ job, tasks = [], agents = [], results = [], handoffs = [], events = [], sessions = [], artifacts = [], now = Date.now() }) {
   const agentById = new Map(agents.map((agent) => [agent.id, agent]));
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const latestResult = new Map();
@@ -127,7 +128,10 @@ export function workflowView({ job, tasks = [], agents = [], results = [], hando
   const decisions = nodes.filter((node) => node.output?.decisions).map((node) => ({ from: node.agentLabel, text: node.output.decisions }));
   return {
     job: { id: job.id, title: job.title, objective: job.goal, status: job.status, progress: job.progress || 0, createdAt: job.created_at, completedAt: job.completed_at || null,
-      costUsd: job.cost_usd == null || job.cost_usd === '' ? null : Number(job.cost_usd), conversationId: job.conversation_id || null },
+      costUsd: job.cost_usd == null || job.cost_usd === '' ? null : Number(job.cost_usd), conversationId: job.conversation_id || null, projectId: job.project_id || null,
+      // Running, but no step can be claimed: the same rule as the ops watch,
+      // so the page never shows "working" for an objective nothing will run.
+      stalled: stuckObjectives({ jobs: [job], tasks, now }).length > 0 },
     multiAgent: nodes.some((node) => node.kind === 'workstream' || node.kind === 'development') && nodes.some((node) => node.kind === 'synthesis'),
     participants, nodes, decisions,
     handoffs: handoffs.map((handoff) => ({

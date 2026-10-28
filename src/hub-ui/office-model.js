@@ -81,10 +81,13 @@ const JOB_STATUS = Object.freeze({
   completed: ['مكتملة', 'Completed', 'done'],
   failed: ['فشلت', 'Failed', 'error'],
   cancelled: ['ملغاة', 'Cancelled', 'muted'],
+  stalled: ['متوقفة — تحتاج تدخلك', 'Stalled — needs you', 'alert'],
 });
-export function jobStatus({ status, lifecycle } = {}, language = 'ar') {
+export function jobStatus({ status, lifecycle, stalled = false } = {}, language = 'ar') {
   let key = null;
-  if (lifecycle === 'NEEDS_OWNER') key = 'needs';
+  // Running with nothing able to run (workflowView job.stalled): never "in progress".
+  if (stalled && !TERMINAL_STATUSES.includes(status)) key = 'stalled';
+  else if (lifecycle === 'NEEDS_OWNER') key = 'needs';
   else if (lifecycle === 'WAITING') key = 'waiting';
   else if (lifecycle === 'COMPLETED') key = 'completed';
   else if (lifecycle === 'FAILED') key = 'failed';

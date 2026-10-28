@@ -5,6 +5,8 @@
 //   Print     any artifact, laid out for "Save as PDF" or presenting
 // Everything runs in the browser on data already on screen; nothing is sent.
 
+import { DOCX_TYPE, markdownToDocx } from './docx.js?v=__UI_VERSION__';
+
 const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const csvCell = (value) => {
   const text = clean(value);
@@ -126,8 +128,9 @@ export function printArtifact(html, title) {
 // Full reports (an employee's report, CHIEF's final synthesis) as documents
 // Fahad can keep or forward. The Markdown is rendered by the same safe
 // renderer the Hub uses (everything escaped; links limited to http/mailto).
-//   Word      an HTML document saved as .doc — Word, Google Docs and Pages
-//             open it with headings, lists and tables; dir follows the text.
+//   Word      a real .docx (src/hub-ui/docx.js): headings, lists, tables,
+//             Arabic paragraphs right-to-left; opens in Word, Word mobile,
+//             Google Docs/Drive, Pages and LibreOffice without a warning.
 //   PDF       the browser's print dialog on the rendered report (Save as PDF).
 //   Markdown  the original text.
 const ARABIC = /[؀-ۿ]/;
@@ -147,8 +150,7 @@ code{font-family:Consolas,monospace;font-size:13px}pre{white-space:pre-wrap;back
 export function exportReport(format, { title, markdown, render }) {
   const text = String(markdown || '');
   if (format === 'md') return download(reportFileName(title, 'md'), text, 'text/markdown;charset=utf-8');
-  const html = render(text);
-  if (format === 'word') return download(reportFileName(title, 'doc'), `﻿${reportDocument(title, html, { text })}`, 'application/msword;charset=utf-8');
-  if (format === 'pdf') return printArtifact(`<div class="md" dir="auto">${html}</div>`, clean(title));
+  if (format === 'word') return download(reportFileName(title, 'docx'), new Blob([markdownToDocx(text, { title: clean(title) })], { type: DOCX_TYPE }));
+  if (format === 'pdf') return printArtifact(`<div class="md" dir="auto">${render(text)}</div>`, clean(title));
   throw new Error(`Unknown export format ${format}`);
 }
