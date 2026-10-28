@@ -111,17 +111,35 @@ Steps (owner):
 5. Evidence: one search, read and create now, and again **after 8 days**. The
    second run proves the token no longer expires. Record the Drive file ids.
 
-**Privacy pages.** No privacy policy or terms page exists in this repository,
-and the drafts written in the ChatGPT Work environment are not available to
-this session. They are needed once: send them, and they will be reviewed
-against the actual data flow before anything is published. The facts they
-must state truthfully:
+**Privacy pages — DRAFTED, not published.**
+[`docs/legal/google-privacy-policy.md`](legal/google-privacy-policy.md) and its
+Arabic version were written from the code (each statement cites its source).
+
+* The drafts in the ChatGPT Work environment were not available to this
+  session, so these drafts were written independently.
+* Publishing needs the owner's approval of three things:
+  * the text;
+  * a contact address;
+  * where it is served (for example a static `/privacy` page on the Hub
+    domain, which needs a small code change and a deploy).
+
+The facts the pages state:
 
 * read-only access limited in code to the Office folder;
 * create-only writes;
 * no deletion or sharing;
 * Drive content goes only to privacy-approved models;
 * revoke at <https://myaccount.google.com/permissions>.
+
+**Production evidence today:** the database holds no trace of an Office run
+using Drive in the last 5 days:
+
+* no Drive links in results or artifacts;
+* no `GOOGLE_*` errors.
+
+The earlier successful read and create was a setup test outside Office
+workflows. Continuous use is therefore unproven until the re-consent and the
+8-day check in the steps above.
 
 ## 5. Independent backup and restore drill — PLAN (tested locally), owner runs it
 
@@ -131,8 +149,9 @@ need no new service:
 
 ```sh
 # Dashboard → Connect → "Session pooler" URI (port 5432). Hidden prompt.
-docker run --rm -it -v "$PWD":/w -w /w postgres:17 \
-  bash supabase/verify/restore-drill.sh --keep-dump /w/backups
+mkdir -p "$HOME/office-backups"     # outside any git repository
+docker run --rm -it -v "$PWD":/w:ro -v "$HOME/office-backups":/backups -w /w postgres:17 \
+  bash supabase/verify/restore-drill.sh --keep-dump /backups
 ```
 
 `supabase/verify/restore-drill.sh`:
@@ -170,6 +189,54 @@ normal user.
 * The kept dump is 0600.
 * The source is unchanged.
 * A malformed URI is refused without being echoed.
+
+**Where dumps go.**
+
+* Without `--keep-dump`, the dump lives only in a private temporary
+  directory and is deleted on exit.
+* `--keep-dump DIR` is refused before connecting when `DIR` is inside this
+  repository or inside any git work tree.
+* The kept directory is set to 0700 and the dump file to 0600.
+* `.gitignore` also ignores `*.dump` and `backups/`.
+* The repository is mounted read-only in the docker command.
+
+**Coverage — what the drill proves and what it does not.**
+Production was inventoried read-only on 2026-10-28.
+
+| Data | In the drill | Production today | Protection |
+| --- | --- | --- | --- |
+| `public`, `private` (44 tables, all Office data, ~1.9k rows, 23 MB database) | Yes: row counts and structure | — | drill + Supabase daily backups |
+| `supabase_migrations.schema_migrations` (migration history) | Yes: row count | 38 rows | drill + daily backups |
+| `auth` (Hub login) | **No** (Supabase-owned schema; does not restore into plain PostgreSQL) | 2 users, 2 identities | Supabase daily backups. If lost, the Hub admits the owner by `HUB_OWNER_EMAIL` with an email code, so signing in again recreates the user. Nothing in the Office depends on the old user id except the legacy `office_owners` row (RLS helper; the server uses the service role) |
+| `storage` | No | 0 buckets, 0 objects | nothing to protect today |
+| `vault` | No | 0 secrets | secrets live only in the server `.env` |
+| `backup_20261028` | No | in-database snapshot of 21 tables | redundant with the drill's copy |
+
+A **full** restore, including `auth`, is proven only by restoring a Supabase
+daily backup. Doing that into a new project is paid. It was not done and is
+not claimed.
+
+Production pre-check (read-only): no `public`/`private` object depends on an
+extension, so the restore needs no Supabase-only extension. The server is
+PostgreSQL 17.6, so the drill must run with PostgreSQL 17 tools. The docker
+image does that. The local tests ran with PostgreSQL 16, the only version
+available in the agent environment, and the drill refuses tools older than
+the source.
+
+**Schema drift found (read-only).** Production has 1216 fingerprint lines
+against 1218 in the repository. The repository migration
+`20261009160000_platform_work_indexes` is not applied in production. It adds
+two indexes on `public.jobs`:
+
+* `jobs_project_current_idx`
+* `jobs_project_history_idx`
+
+They are additive and change no data. Applying it is a production migration,
+so it needs the owner's approval.
+
+Production also records the bulk-delete guard as `20261028054117`, and the
+session-runs fix as `20261009105021` where the repository says
+`20261009090000`. These are history metadata only, and the objects match.
 
 The live production run needs the database password, which only Fahad holds.
 The production restore drill therefore stays OWNER until he runs it and keeps

@@ -20,7 +20,10 @@ case $ACTION in
     "${P[@]}" -f "$ROOT/supabase/verify/supabase-stubs.sql" >/dev/null 2>&1
     for f in "$ROOT"/supabase/migrations/*.sql; do "${P[@]}" -1 -f "$f" >/dev/null 2>&1; done
     "${P[@]}" -c "insert into auth.users(id, email) values ('00000000-0000-4000-8000-000000000001', 'owner@example.test');
-      insert into public.office_owners(user_id, email) values ('00000000-0000-4000-8000-000000000001', 'owner@example.test');" >/dev/null ;;
+      insert into public.office_owners(user_id, email) values ('00000000-0000-4000-8000-000000000001', 'owner@example.test');
+      create schema supabase_migrations;
+      create table supabase_migrations.schema_migrations (version text primary key, statements text[], name text);
+      insert into supabase_migrations.schema_migrations(version, name) values ('20260920163620', 'office_core_schema');" >/dev/null ;;
   count)
     "${R[@]}" "$PGBIN/psql" -h "$SRC" -p "$PORT" -U postgres -d postgres -X -A -t -c 'select count(*) from public.office_owners' ;;
   stop)

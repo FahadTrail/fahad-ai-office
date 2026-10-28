@@ -38,3 +38,7 @@ desktop.ini
 
 # Migration names legitimately mention roles such as service_role.
 !supabase/migrations/*.sql
+
+# Database dumps hold production data: never commit them
+*.dump
+backups/

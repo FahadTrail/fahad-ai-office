@@ -47,7 +47,7 @@ test('the restore drill proves a complete, read-only, credential-free restore', 
   assert.match(drill.stdout, /restore errors\s+: 0/);
   assert.match(drill.stdout, /row-count mismatches: 0/);
   assert.match(drill.stdout, /structure mismatches: 0/);
-  assert.match(drill.stdout, /tables\s+: [1-9]\d*/);
+  assert.match(drill.stdout, /tables\s+: 45,/, '44 application tables plus the migration history');
   // No credential in the report, and the kept dump is private.
   assert.ok(!output.includes(PASSWORD) && !output.includes(encodeURIComponent(PASSWORD)), 'the password never appears in the output');
   const dumps = readdirSync(keep);
@@ -64,4 +64,16 @@ test('the restore drill refuses a malformed source URI without doing anything', 
   });
   assert.notEqual(drill.status, 0);
   assert.ok(!`${drill.stdout}${drill.stderr}`.includes('secret-xyz'), 'the rejected value is never echoed');
+});
+
+test('the restore drill refuses to keep a dump inside a git work tree, before connecting', () => {
+  for (const dir of [join(root, 'backups'), join(root, 'docs')]) {
+    const drill = spawnSync('bash', [join(root, 'supabase/verify/restore-drill.sh'), '--keep-dump', dir], {
+      env: { ...process.env, PGBIN: postgresBin() || '/nonexistent', RESTORE_SOURCE_URL: 'postgresql://u:never-used@127.0.0.1:1/db' }, encoding: 'utf8',
+    });
+    assert.notEqual(drill.status, 0);
+    assert.match(drill.stderr, /Refusing --keep-dump/);
+    assert.ok(!drill.stderr.includes('never-used'));
+  }
+  rmSync(join(root, 'backups'), { recursive: true, force: true });
 });

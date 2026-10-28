@@ -2,7 +2,8 @@
 # Independent backup + restore drill for the Office database, at no cost.
 #
 # Takes a consistent, READ-ONLY logical dump of the application schemas
-# (public, private) from the Supabase database, restores it into a throwaway
+# (public, private) and the migration history (supabase_migrations) from the
+# Supabase database, restores it into a throwaway
 # local PostgreSQL cluster, and proves the restore is complete:
 #   * every table's exact row count equals the source, counted in the very
 #     snapshot that was dumped (no drift from live writes);
@@ -23,10 +24,15 @@
 # Requires PostgreSQL client + server binaries at least as new as the source
 # (17 for the production project); set PGBIN, or run inside the official
 # image (no installation, no cost):
-#   docker run --rm -it -v "$PWD":/w -w /w postgres:17 bash supabase/verify/restore-drill.sh
+#   mkdir -p "$HOME/office-backups"
+#   docker run --rm -it -v "$PWD":/w:ro -v "$HOME/office-backups":/backups -w /w postgres:17 \
+#     bash supabase/verify/restore-drill.sh --keep-dump /backups
 #
-# --keep-dump DIR keeps the dump (custom format, mode 0600) as an independent
-# copy outside Supabase; otherwise it is deleted with the scratch cluster.
+# --keep-dump DIR keeps the dump (custom format, mode 0600, directory 0700) as
+# an independent copy outside Supabase; otherwise it is deleted with the
+# scratch cluster. DIR must be outside this repository and any git work tree.
+# Not covered: Supabase-owned schemas (auth, storage, vault, realtime) — rely
+# on Supabase's daily backups for those (see docs/V3-OPERATIONAL-CLOSURE-2026-10-28.md).
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 KEEP_DIR=
@@ -36,6 +42,17 @@ while (($#)); do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+# A kept dump holds production data: never inside this repository or any
+# other git work tree, where it could be committed and pushed.
+if [[ -n $KEEP_DIR ]]; then
+  KEEP_DIR=$(realpath -m -- "$KEEP_DIR")
+  repo_real=$(cd -- "$ROOT" && pwd -P)
+  refuse_keep() { echo "Refusing --keep-dump $KEEP_DIR: $1. Use a private directory outside any git repository (for example \$HOME/office-backups)." >&2; exit 1; }
+  [[ $KEEP_DIR == "$repo_real" || $KEEP_DIR == "$repo_real"/* ]] && refuse_keep 'it is inside the Office repository'
+  dir=$KEEP_DIR
+  while :; do [[ -e $dir/.git ]] && refuse_keep "it is inside the git work tree $dir"; [[ $dir == / ]] && break; dir=$(dirname -- "$dir"); done
+  mkdir -p "$KEEP_DIR"; chmod 700 "$KEEP_DIR"
+fi
 PGBIN=${PGBIN:-$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1)}
 for tool in initdb pg_ctl psql pg_dump pg_restore; do
   [[ -x "$PGBIN/$tool" ]] || { echo "PostgreSQL binary $tool not found (set PGBIN)" >&2; exit 1; }
@@ -67,7 +84,10 @@ esc() { local value=${1//\\/\\\\}; printf '%s' "${value//:/\\:}"; }
 unset SRC_PASS
 SRC_ENV=(env PGPASSFILE="$WORK/pgpass" PGHOST="$SRC_HOST" PGPORT="$SRC_PORT" PGUSER="$SRC_USER" PGDATABASE="$SRC_DB"
   PGSSLMODE="${PGSSLMODE:-require}" PGOPTIONS='-c default_transaction_read_only=on' PGAPPNAME=office-restore-drill)
-SCHEMAS="'public','private'"
+# Application data (public, private) and the migration history. Supabase-owned
+# schemas (auth, storage, vault, realtime) are not covered: see the coverage
+# section of docs/V3-OPERATIONAL-CLOSURE-2026-10-28.md.
+SCHEMAS="'public','private','supabase_migrations'"
 COUNT_SQL="select format('select %L || ''|'' || count(*) from %I.%I', n.nspname || '.' || c.relname, n.nspname, c.relname)
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where c.relkind in ('r','p') and n.nspname in ($SCHEMAS) order by 1"
@@ -120,7 +140,7 @@ ask "$WORK/auth.sql" "select format('insert into auth.users(id) select distinct 
 ask "$WORK/publications.sql" "select format('alter publication %I add table %I.%I;', pubname, schemaname, tablename)
   from pg_publication_tables where pubname = 'supabase_realtime' and schemaname in ($SCHEMAS) order by 1;"
 "${RUN[@]}" "${SRC_ENV[@]}" "$PGBIN/pg_dump" --snapshot="$snapshot" --format=custom --no-owner --no-privileges \
-  --schema=public --schema=private --file="$WORK/office.dump"
+  --schema=public --schema=private --schema=supabase_migrations --file="$WORK/office.dump"
 ask "$WORK/out" 'commit;'
 printf '\\q\n' >&"${SRC[1]}" || true
 dump_bytes=$(stat -c %s "$WORK/office.dump")
@@ -159,6 +179,8 @@ if [[ -n $KEEP_DIR ]]; then
   mkdir -p "$KEEP_DIR"
   kept="$KEEP_DIR/office-$(date -u +%Y%m%dT%H%M%SZ).dump"
   ( umask 077; cp "$WORK/office.dump" "$kept" )
+  # Inside docker the copy is made by root; give it to the directory's owner.
+  chown --reference="$KEEP_DIR" "$kept" 2>/dev/null || true
 fi
 
 verdict=PASS
