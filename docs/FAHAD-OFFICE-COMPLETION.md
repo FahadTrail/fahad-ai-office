@@ -19,7 +19,7 @@ OWNER ACTION**.
 
 | Item | Evidence |
 | --- | --- |
-| PR | [#131](https://github.com/FahadTrail/fahad-ai-office/pull/131), merged as `81004b25cf7239a1ca3a57c3875294b89d3f8b04` |
+| PRs | [#131](https://github.com/FahadTrail/fahad-ai-office/pull/131) `81004b2` (release), [#132](https://github.com/FahadTrail/fahad-ai-office/pull/132) `466bc3a` (Arabic negation fix), [#133](https://github.com/FahadTrail/fahad-ai-office/pull/133) `2adb03a` (per-unit sales) |
 | CI | Validate run [40577619644](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40577619644): tests, locked runtime image, sandbox privilege separation, container-root sandbox tests — all green |
 | Deploy | Run [40577908347](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40577908347) succeeded 20:28 UTC; event 3583 "Office runtime started on commit 81004b25cf72"; Supabase tools self-check and Telegram re-paired; Office coding worker `healthy` (heartbeat 20:32) |
 | New code live | First `data_integrity_snapshot` event at 20:30:06 (ops-watch Package A) |
@@ -32,15 +32,24 @@ OWNER ACTION**.
 | Scenario | Job | Result |
 | --- | --- | --- |
 | 1 Research | `3be79c51-8889-476a-aefc-855fca4115bc` | **Completed**: CHIEF → RESEARCH → CHIEF synthesis in Gulf Arabic (4,395 chars), 7 artifacts, 2 handoffs; states honestly that commission rates are not published and labels press figures; $0 |
-| 2 Finance + revision | `ace99f39-a6f9-4dd0-a6a5-28918e39f865` | **Completed, honestly marked NOT CLOSED**: FINANCE was returned twice by code validation, CHIEF ran a revision round, the fact gate removed 10 contradicting statements. Root cause found: a validator false positive (below), fixed in the follow-up PR; $0 |
+| 2 Finance + revision | `ace99f39-a6f9-4dd0-a6a5-28918e39f865` | Completed, honestly marked NOT CLOSED: FINANCE was returned by code validation, CHIEF ran a revision round, the fact gate removed 10 contradicting statements. Two root causes found and fixed (PR #132, PR #133, below); $0 |
+| 2b Finance re-run (after #132) | `196b2d92-b84d-46bb-bb7d-c8c71e3f8cae` | **Completed and CLOSED**: FINANCE INCONSISTENT twice → CHIEF revision → **VERIFIED** after 1 correction round; fact gate preserved 9 validated figures and removed 2 contradicting statements; $0 |
 | 3 Multi-agent | `e3113d70-eda6-4e41-94e9-5ea57fce76f7` | **Completed**: 7 workstreams (RESEARCH, CREATIVE, SOCIAL, FINANCE, LEGAL, AUDIT) + synthesis (11,147 chars), 15 artifacts, 20 handoffs; $0 |
 | 4 Deliverables | — | Downloads verified in the browser on the preview; production UI click not possible from the agent sandbox (Hub host blocked by its proxy) |
 | 5 Resume | — | Endpoint + UI verified locally; first real use on production is Fahad's |
 
-All 67 model attempts: **$0.00** recorded (free routes only: Gemini, Groq,
+All 81 model attempts across the four objectives: **$0.00** recorded (free routes only: Gemini, Groq,
 OpenRouter free). A failed Gemini attempt failed over by itself.
 
-**Defect found by acceptance and fixed (follow-up PR):** the FINANCE prose
+**Defects found by acceptance and fixed (both merged and deployed):**
+
+* PR [#133](https://github.com/FahadTrail/fahad-ai-office/pull/133) (`2adb03a`):
+  FINANCE had no way to express per-item sales (a café's cups): the revenue
+  schema knew only subscriptions or an explicit schedule, and the sanitizer
+  dropped other fields, so revenue was always "0 from the stated inputs". New
+  `unit_sales` model (unit_price × units per day/month, unit_cost),
+  break-even in units and months; test `test/finance-unit-sales.test.js`.
+* PR [#132](https://github.com/FahadTrail/fahad-ai-office/pull/132) (`466bc3a`): the FINANCE prose
 checker treated «لن» inside «النقدي» as a negation, so the correct sentence
 «التعادل النقدي التراكمي: الشهر 6» was read as "break-even not reached" and
 sent FINANCE into a needless revision that degraded its model. Arabic
@@ -299,9 +308,9 @@ Submit each from the Office composer and record job id, status, steps and cost h
 
 ## Continuation point
 
-* Production runs `81004b2` (PR #131). Read §R first; §0 and below are history.
+* Production runs `2adb03a` (PRs #131–#133). Read §R first; §0 and below are history.
 * Open items: owner actions in §R (backup → apply the guard migration;
   optional Google OAuth; visibility). Do not repeat the §A investigation or
   the Cloudflare work.
-* All three acceptance objectives completed; scenario 2 should be re-run
-  once after the finance fix to confirm a CLOSED result.
+* All acceptance objectives completed; the finance re-run closed VERIFIED.
+  Production runs `2adb03a` (PRs #131, #132, #133).
