@@ -1,6 +1,7 @@
 // Technical infrastructure problems in human language. The original text is
 // kept for "View details"; this only chooses the words Fahad reads first.
 const RULES = [
+  [/TOOLCHAIN_MISSING|is not installed in the worker image/i, 'This project needs a toolchain the Coding Agent does not have (only Node.js and Python are installed). Run it on a Node.js or Python repository, or ask for the toolchain to be added.'],
   [/^Stalled: no step can run/i, 'Stalled: no step can run, so this objective will not progress on its own. Stop it, then resume it where it stopped.'],
   [/WAITING_FOR_CAPACITY|NO_FREE_CAPACITY|free model capacity/i, 'Waiting for free model capacity — will resume automatically.'],
   [/\b429\b|RATE_LIMIT|rate.?limit|too many requests|quota|COOLDOWN_QUOTA/i, 'Free model capacity is temporarily full. The task will resume automatically.'],
@@ -16,6 +17,7 @@ const RULES = [
 // The same problems in natural Gulf Arabic, for the Arabic interface. The
 // Office-specific causes come first so a step failure reads as what happened.
 const RULES_AR = [
+  [/TOOLCHAIN_MISSING|is not installed in the worker image/i, 'هذا المشروع يحتاج أدوات برمجة غير مثبتة عند وكيل البرمجة (المثبت فقط Node.js و Python). شغّله على مستودع Node.js أو Python، أو اطلب إضافة الأدوات.'],
   [/^Stalled: no step can run/i, 'المهمة متوقفة: ما في خطوة تقدر تشتغل، فما بتتقدم بروحها. أوقفها ثم استأنفها من حيث وقفت.'],
   [/web search provider returned no results|web search is unavailable|SEARCH_UNAVAILABLE/i, 'خدمة البحث على الإنترنت ما ردّت بنتائج. تقدر تستأنف المهمة، والفريق بيعيد المحاولة.'],
   [/Stale: no heartbeat|assumed crashed/i, 'انقطع العامل أثناء الشغل (إعادة تشغيل أو عطل). تقدر تستأنف المهمة من حيث وقفت.'],
