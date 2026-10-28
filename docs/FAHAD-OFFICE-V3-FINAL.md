@@ -32,8 +32,8 @@ _Filled in at release; see §9 for the release evidence._
 | 6 | Live progress of every employee | DEPLOYED, TESTED (browser) | Living Dashboard, job page, SSE; production UI cannot be driven from the agent sandbox (proxy) |
 | 7 | Results and documents are delivered | E2E VERIFIED (synthesis); Word `.docx` TESTED + browser-verified | Final syntheses of the acceptance objectives; Word/PDF/Markdown export (§4) |
 | 8 | Revision and resume without losing work | Revision E2E VERIFIED (`196b2d92`); Resume TESTED + DEPLOYED | Resume/Stop endpoints, stalled detection (§3) |
-| 9 | Coding Agent on an authorised repository | see §5 | |
-| 10 | Development cycle to PR, CI and deploy on approval | see §5 | |
+| 9 | Coding Agent on an authorised repository | E2E VERIFIED (2026-10-28) | Session `3cf33b7f` on `FahadTrail/fahad-ai-office` (§5, §9) |
+| 10 | Development cycle to PR, CI and deploy on approval | E2E VERIFIED (2026-10-28) | PR #136 → CI → approval → merge `6d473e8` → deploy → `/healthz` version check (§9) |
 | 11 | Cost, privacy and permissions | E2E VERIFIED | $2 cap, $0 spent, privacy-forced routing, approvals (§7) |
 | 12 | Work continues after a worker stops or a model runs out | E2E VERIFIED | Capacity wait + auto-resume (2026-09-27), failover (2026-09-25, 2026-10-27); stale-run requeue, coding lease reclaim (TESTED) |
 
@@ -87,7 +87,7 @@ worker `src/coding-worker.js`; full description in `docs/coding-agent.md`.
 | Step | Status |
 | --- | --- |
 | Full cycle with real models, failover, worker restarts, CI repair, merge, deploy (2026-09-25) | E2E VERIFIED (historical rows were removed by the 2026-10-22 cleanup; the record is in `docs/coding-agent.md`) |
-| V3.0 live cycle on the production worker | see §9 |
+| V3.0 live cycle on the production worker (2026-10-28) | **E2E VERIFIED**: TASK → CODE → TEST → PR → CI → APPROVAL → MERGE → DEPLOY → worker restart → resume from checkpoint → VERIFY; $0 (§9) |
 | Isolation: sandbox uid 1000, controller credentials unreadable | TESTED in CI inside the runtime image as root |
 | Node.js projects (npm, pnpm, yarn, bun) | IMPLEMENTED, TESTED |
 | Python projects | IMPLEMENTED, TESTED; the runtime image gains `python3` + `pip` with this release — **PENDING OWNER ACTION** (`sudo bash ops/install-deploy.sh` applies a Dockerfile change; deploys ship only `src/` and the lockfiles) |
