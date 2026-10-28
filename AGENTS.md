@@ -72,14 +72,15 @@ inside the built runtime image as root.
 ## Completion mission (2026-10-27) — start here
 
 **Current state (Mission 3):** production runs `2adb03a` (PRs #131–#133); see §R of
-`docs/FAHAD-OFFICE-COMPLETION.md`. The bulk-delete guard migration
-`20261027200000` is replay-proven but NOT applied (owner confirms the backup
-first); Google is pending owner OAuth.
+`docs/FAHAD-OFFICE-COMPLETION.md`. The bulk-delete guard (`20261027200000`) is
+APPLIED (2026-10-28) — an approved cleanup opts in per transaction with
+`set_config('office.allow_bulk_delete', '<tables>@' || txid_current()::text, true)`.
+Google is pending owner OAuth.
 
 The authoritative status, inventory, owner decisions and continuation point
 are in `docs/FAHAD-OFFICE-COMPLETION.md`. Key facts:
-* Production data was reset around 2026-10-23 (0 jobs/sessions/attempts); no
-  workflow has been re-proven live since.
+* On 2026-10-22 Fahad had all test data removed (his request, not an
+  incident); production acceptance has since run successfully (2026-10-27).
 * Owner recovery of Office objectives: `POST /api/jobs/:id/resume` (requeues
   only unfinished steps, keeps delivered work) and `POST /api/jobs/:id/stop`
   (`src/hub-job-actions.js`), with Arabic failure wording on the job screen.

@@ -12,10 +12,46 @@ observed end to end), **UNPROVEN** (no current evidence).
 
 ## R. Release status — Mission 3 (2026-10-27, authoritative)
 
-**Verdict: READY WITH LIMITATIONS.** Released and live; the data-protection
-migration is prepared and replay-proven but **not applied** (backup could not
-be proven from the agent's tools — owner step below); Google is **PENDING
-OWNER ACTION**.
+**Verdict: READY WITH LIMITATIONS.** Released and live (PRs #131–#133); the
+bulk-delete guard is **applied in production** (2026-10-28, after a verified
+in-database backup — see "Database protection"); Google is **PENDING OWNER
+ACTION**.
+
+### Database protection (2026-10-28)
+
+* **Backup first.** A snapshot of every table holding data was taken into the
+  non-API schema `backup_20261028` (21 tables, 1,249 rows; anon,
+  authenticated and service_role have no access). Each copy was compared with
+  its source by row count and content checksum: 20 identical; `coding_workers`
+  identical except its live heartbeat columns. The Supabase Pro plan's daily
+  managed backups exist in addition but cannot be listed from the agent's
+  tools. Drop the snapshot schema once it is no longer wanted (it is not
+  guarded).
+* **Applied:** `bulk_delete_guard` (recorded by Supabase as version
+  `20261028054117`; repository file `20261027200000_bulk_delete_guard.sql`,
+  identical text). 46 guard triggers present; the three private functions'
+  `pg_get_functiondef` hashes equal `supabase/verify/schema-fingerprint.txt`;
+  policy, provider-permission and tool-grant checksums unchanged by the apply.
+* **Approved cleanups keep working.** For a cleanup Fahad approves, run it in
+  one transaction that first states which tables it may empty:
+
+  ```sql
+  begin;
+  select set_config('office.allow_bulk_delete', 'jobs,tasks,events@' || txid_current()::text, true);  -- or 'all@' || …
+  delete from public.jobs where /* the approved selection */;
+  commit;
+  ```
+
+  The opt-in ends with the transaction; every allowed delete is written to
+  `private.bulk_delete_audit` (append-only) and to `events`, and the ops watch
+  announces it on Telegram. Without the opt-in, a statement deleting more than
+  25 rows (1000 for rows removed by cascade) or any TRUNCATE is refused with
+  the exact line to use. `ops/cleanup/v5.4-test-data-cleanup.sql` already
+  opts in this way.
+* A live production check (refuse / allow-with-opt-in / cascade, inside a
+  rolled-back transaction) was attempted, but the Supabase tool's
+  confirmation prompt for it went unanswered, so it did not run. The same
+  checks pass in the replay scenario `bulk_delete_guard.sql`.
 
 | Item | Evidence |
 | --- | --- |
@@ -86,18 +122,9 @@ regression test `test/finance-arabic-negation.test.js`.
 
 ### Owner actions (the only remaining human steps)
 
-1. **URGENT — the history lost on 2026-10-22.** The organisation is on the
-   Supabase **Pro** plan (daily backups, 7-day retention). The last backups
-   from before the deletion (2026-10-21/22) are about to age out. If the old
-   history matters: Supabase Dashboard → project `fahad-ai-office` → Database →
-   Backups → restore the 2026-10-22 (pre-21:06 UTC) backup **into a new
-   project** (never over production). Nothing was restored by the agent.
-2. **Apply the bulk-delete guard.** In the same Backups page confirm a recent
-   daily backup exists, then run the file
-   `supabase/migrations/20261027200000_bulk_delete_guard.sql` in the SQL
-   editor (or tell the agent "backup confirmed, apply the guard"). Expected
-   result: 46 triggers named `*_bulk_delete_guard` / `*_truncate_guard`.
-   Rollback is at the end of the file. Data is not changed.
+1. ~~2026-10-22 history~~ — **closed**: that deletion was Fahad's own
+   requested cleanup of test data; nothing is to be restored.
+2. ~~Apply the bulk-delete guard~~ — **done** 2026-10-28 (see "Database protection").
 3. **Google (optional):** create an OAuth client (Desktop app) with the Drive
    API enabled, then follow the header of `src/ops/google-oauth-setup.js`
    (client id/secret → consent link → refresh token piped into `.env` →
@@ -129,7 +156,7 @@ PENDING**. Tests were written for every change but none was executed; only
 
 | Package | Previously complete | Implemented now | Remaining | Blocker | Verification pending |
 | --- | --- | --- | --- | --- | --- |
-| A Data incident & recovery safety | Explicit-ID cleanup script with expected counts | Bulk-delete/TRUNCATE guard migration on 23 history tables (opt-in per transaction, audited); ops watch row-count snapshots + data-loss and allowed-bulk-delete alerts; cleanup script opts in | Apply the migration; a backup restore drill | Owner approval for the migration; backups depend on the Supabase plan (not visible from here) | `test/data-safety.test.js`, replay scenario `bulk_delete_guard.sql`, regenerate `schema-fingerprint.txt` |
+| A Data protection | Explicit-ID cleanup script with expected counts | Bulk-delete/TRUNCATE guard migration on 23 history tables (opt-in per transaction, audited); ops watch row-count snapshots + data-loss and allowed-bulk-delete alerts; cleanup script opts in | Apply the migration; a backup restore drill | Owner approval for the migration; backups depend on the Supabase plan (not visible from here) | `test/data-safety.test.js`, replay scenario `bulk_delete_guard.sql`, regenerate `schema-fingerprint.txt` |
 | B Office experience & deliverables | Versions, pin/archive/approve/revise, artifact exports, Resume/Stop (#130) | Full reports (employee + CHIEF synthesis) download as Word (.doc), PDF (print) or Markdown; failed objectives in Needs Fahad point to Resume, in Arabic | Live use of every flow | None (code) | `test/report-export.test.js` + browser check |
 | C Coding Agent | Full lifecycle, protected-file approvals (V2), checkpoints, CI repair | Repository profile: Node (npm/pnpm/yarn/bun), Python, Go, Rust; dependency install once before the test gate; project summary in the system prompt | A live session on a non-Office repository | Sandbox network for installs is unverified | `test/repo-profile.test.js` + one real session |
 | D Continuity | Stale-task requeue, coding lease reclaim, capacity wait, owner Resume | Ops watch flags an objective that is running with nothing able to run | Supervisor activation (vendor CLIs) | Vendor CLI logins on the VPS (owner) | `test/data-safety.test.js` (stuck case) |
@@ -151,7 +178,12 @@ PENDING**. Tests were written for every change but none was executed; only
 | `1218529` | G | Origin check on Hub writes |
 | `b6bc44b` | B/G | Telegram notices for finished Hub objectives |
 
-### §A — the 2026-10-22 data loss (read-only investigation)
+### §A — the 2026-10-22 cleanup (closed)
+
+**Resolved 2026-10-28: Fahad confirmed he requested this deletion himself —
+all jobs, sessions and logs were test data. It is not an incident and nothing
+is to be restored.** The read-only findings below are kept only as the record
+of what was removed.
 
 * `pg_stat_user_tables`: every operational table was autovacuumed at
   **2026-10-22 21:06:05 UTC**; delete counters show jobs 121, tasks 291, runs
@@ -162,12 +194,11 @@ PENDING**. Tests were written for every change but none was executed; only
 * The Telegram conversation was recreated by the runtime at 21:05:56, so the
   deletion happened just before. No commit, deploy or migration is near that
   time; the only repository delete script works on explicit IDs with expected
-  counts and could not select everything. **Cause: a privileged manual or
-  agent SQL run, not explained by repository code.** Who ran it is not
-  recorded (Postgres logs from that day are not retained).
-* Nothing was restored or modified. If the history matters, a Supabase
-  point-in-time restore (plan-dependent) to a **new** project is the only
-  route; check Dashboard → Database → Backups.
+  counts and could not select everything, so it was run directly in SQL at
+  the owner's request.
+* What it showed: nothing told an approved bulk delete apart from an
+  accidental one, and nothing recorded who ran it. The bulk-delete guard (now
+  applied) fixes both while keeping approved cleanups possible.
 
 ### Engineering decisions
 
@@ -231,7 +262,7 @@ PENDING**. Tests were written for every change but none was executed; only
 | Telegram channel paired | `telegram_channel` events after each of the last deploys |
 | Budget | `workspace_policies`: $2.00/month, $0.00 spent, $0.00 reserved, period 2026-10-01 → 2026-11-01, max $0.10 per request |
 | Test suite (main) | `node --test`: 822 tests, 822 pass, 0 fail, 0 skipped (local, no network) |
-| **Production data was reset** | `jobs`, `tasks`, `runs`, `results`, `agent_sessions`, `model_attempts`, `tool_executions` all have **0 rows**; the oldest remaining `events.id` is 3550 (2026-10-23). No objective and no coding session has run since. |
+| **Production test data was cleared at the owner's request (2026-10-22)** | `jobs`, `tasks`, `runs`, `results`, `agent_sessions`, `model_attempts`, `tool_executions` all have **0 rows**; the oldest remaining `events.id` is 3550 (2026-10-23). No objective and no coding session has run since. |
 | Migrations | Production has 37 applied. Repository migration `20261009160000_platform_work_indexes` (two partial indexes, no data change) is **not applied**. |
 | Repository visibility | **Public**. No credential, `.env`, key file or personal email found in the tree or in any of the 391 commits (pattern scan for Anthropic/OpenAI/GitHub/Google/Groq/Cerebras/Slack/Telegram tokens, JWTs, private keys). |
 | Supabase security advisor | RLS on every public table with no policies (deny-by-default for anon/authenticated; service-role only, as designed). One WARN: leaked-password protection off (the Hub uses email OTP, so low impact). |
@@ -282,7 +313,7 @@ production write, no deployment was made by this mission.
 
 ## 5. Risks
 
-1. **Nothing has been exercised in production since the data reset.** All "DONE" items above are code/test/deploy evidence; a live objective must be run before calling the Office proven again.
+1. *(Resolved: production acceptance ran on 2026-10-27; see §R.)* Nothing had been exercised in production since the owner's test-data cleanup. All "DONE" items above are code/test/deploy evidence; a live objective must be run before calling the Office proven again.
 2. Public repository: no secrets, but architecture, domain, Supabase project ref and ops scripts are visible. RLS denies anon access, so the ref alone grants nothing.
 3. Budget period ends 2026-11-01; the rollover function (`20261005230000`) is applied. Confirm on 2026-11-01 that `budget_period_end` moved forward.
 4. Stale open PRs: #124 and #125 (superseded by merged #126), #109 and #114 (old docs/activation follow-ups).
@@ -308,9 +339,9 @@ Submit each from the Office composer and record job id, status, steps and cost h
 
 ## Continuation point
 
-* Production runs `2adb03a` (PRs #131–#133). Read §R first; §0 and below are history.
-* Open items: owner actions in §R (backup → apply the guard migration;
-  optional Google OAuth; visibility). Do not repeat the §A investigation or
-  the Cloudflare work.
-* All acceptance objectives completed; the finance re-run closed VERIFIED.
-  Production runs `2adb03a` (PRs #131, #132, #133).
+* Production runs `2adb03a` (PRs #131–#133); the bulk-delete guard is applied
+  (2026-10-28). Read §R first; §0 and below are history.
+* The 2026-10-22 deletion was the owner's requested cleanup — closed.
+* Remaining owner items: Google OAuth (optional), repository visibility
+  (recommended), old PRs. Next: real objectives in daily use and further
+  Office development.

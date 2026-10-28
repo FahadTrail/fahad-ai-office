@@ -81,6 +81,9 @@ const INTEGRITY_MIN_DROP = 25;
 
 export function integrityFindings(previous, current, bulkDeletes = []) {
   const out = [];
+  // Tables an approved, audited bulk delete touched since the last snapshot:
+  // their drop is the owner's cleanup, reported as such, not as data loss.
+  const approved = new Set(bulkDeletes.map((event) => event.payload?.table).filter(Boolean));
   if (previous?.counts && current?.counts) {
     for (const table of INTEGRITY_TABLES) {
       const before = Number(previous.counts[table]);
@@ -88,6 +91,11 @@ export function integrityFindings(previous, current, bulkDeletes = []) {
       if (!Number.isFinite(before) || !Number.isFinite(now)) continue;
       const drop = before - now;
       if (drop >= Math.max(INTEGRITY_MIN_DROP, Math.ceil(before * 0.2))) {
+        if (approved.has(table)) {
+          out.push({ key: `cleanup:${table}:${before}->${now}`, severity: 'medium',
+            text: `Approved cleanup: public.${table} went from ${before} to ${now} rows (opt-in recorded in private.bulk_delete_audit).` });
+          continue;
+        }
         out.push({ key: `integrity:${table}:${before}->${now}`, severity: 'high',
           text: `Data loss suspected: public.${table} fell from ${before} to ${now} rows since ${String(previous.at || '').slice(0, 16)} UTC. Do not write to the database; check the bulk-delete audit and backups (docs/FAHAD-OFFICE-COMPLETION.md §A).` });
       }
@@ -172,12 +180,14 @@ export async function runOpsWatch(args = process.argv.slice(2), { env = process.
   // hourly (or at once when a table shrank) as an events row. Failures here
   // never stop the other checks.
   try {
-    const [counts, last, bulk] = await Promise.all([
+    const [counts, last] = await Promise.all([
       readIntegrityCounts(db),
       db.from('events').select('payload,created_at').eq('type', 'activity').contains('payload', { kind: 'data_integrity_snapshot' }).order('created_at', { ascending: false }).limit(1),
-      db.from('events').select('id,payload').gte('created_at', since).eq('type', 'activity').contains('payload', { kind: 'bulk_delete_allowed' }),
     ]);
     const previous = last.data?.[0] ? { counts: last.data[0].payload?.counts, at: last.data[0].created_at } : null;
+    // Approved bulk deletes since the previous snapshot (the drop's window).
+    const bulk = await db.from('events').select('id,payload').gte('created_at', previous?.at && previous.at < since ? previous.at : since)
+      .eq('type', 'activity').contains('payload', { kind: 'bulk_delete_allowed' });
     const current = { counts, at: new Date().toISOString() };
     const integrity = integrityFindings(previous, current, bulk.data || []);
     all.push(...integrity);
