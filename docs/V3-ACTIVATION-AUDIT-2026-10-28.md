@@ -53,6 +53,17 @@ When an authorized operator is available:
 
 ## Google OAuth
 
+Follow-up after #138: the Desktop setup helper is being hardened with S256
+PKCE, per-attempt state, exact callback/client/expiry validation, private
+temporary session storage and refusal of partial scope consent. These are
+offline-tested safeguards, not evidence of Google account authorization.
+Use `--url` and `--exchange` in the same runtime/user within ten minutes;
+do not recreate the container between them. A full loopback callback URL is
+required, and a successful exchange consumes its temporary session. Existing
+refresh-token use in the connector is unchanged. The fix needs CI/review and
+deployment before any real authorization attempt; no secrets are required to
+test it. [Google Desktop OAuth guidance](https://developers.google.com/identity/protocols/oauth2/native-app).
+
 **BLOCKED:** no verified server access or existing Office OAuth client was
 available. The connected Google plugin is separate from the Office OAuth
 client. No consent URL with a real client ID was generated; no secret changed.

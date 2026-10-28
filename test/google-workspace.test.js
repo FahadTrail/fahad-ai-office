@@ -4,6 +4,7 @@ import {
   createGoogleWorkspaceClient, googleWorkspaceStatus, googleWorkspaceTools, wantsGoogleWorkspace, rowsToCsv, markdownToDocHtml, GOOGLE_SCOPES,
 } from '../src/integrations/google-workspace.js';
 import { consentUrl, codeFrom, exchangeCode } from '../src/ops/google-oauth-setup.js';
+import { newSession } from '../src/ops/google-oauth-session.js';
 import { createOfficeToolExecutor } from '../src/office/web-tools.js';
 import { capabilityView } from '../src/hub-office.js';
 
@@ -97,11 +98,12 @@ test('the Integrations page shows the connector honestly', () => {
 });
 
 test('the one-time setup builds an offline consent link and never needs the token on screen', async () => {
-  const url = new URL(consentUrl('123-abc.apps.googleusercontent.com'));
+  const session = newSession('123-abc.apps.googleusercontent.com');
+  const url = new URL(consentUrl('123-abc.apps.googleusercontent.com', session));
   assert.equal(url.searchParams.get('access_type'), 'offline');
   assert.equal(url.searchParams.get('redirect_uri'), 'http://127.0.0.1:8765/');
   assert.equal(codeFrom('http://127.0.0.1:8765/?code=4/0Abc-def_123&scope=x'), '4/0Abc-def_123');
   assert.throws(() => codeFrom('http://127.0.0.1:8765/?error=access_denied'));
-  const token = await exchangeCode({ code: '4/0Abc', env: READ, fetchFn: async () => json({ refresh_token: '1//new', scope: GOOGLE_SCOPES.join(' ') }) });
+  const token = await exchangeCode({ code: '4/0Abc', codeVerifier: session.verifier, env: READ, fetchFn: async () => json({ refresh_token: '1//new', scope: GOOGLE_SCOPES.join(' ') }) });
   assert.equal(token, '1//new');
 });
