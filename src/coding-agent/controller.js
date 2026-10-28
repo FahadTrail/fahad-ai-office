@@ -850,11 +850,18 @@ class SessionRun {
     // the head this session last pushed, or — for a bound Continuity branch's
     // first push — at the exact head the sandbox was cloned from.
     const leaseHead = this.state.git.pushedHead || this.state.git.boundRemoteHead || null;
-    await this.required('git.push', 'publish', {
+    const push = await this.required('git.push', 'publish', {
       branch: this.session.workBranch, expected_head: head, ...(leaseHead ? { previous_head: leaseHead } : {}),
-    }, 'push');
+    }, 'push', { proveEffect: true });
+    if (push.structured.verified !== true || push.structured.remoteHead !== head) {
+      throw new Stop('blocked', `The push of ${this.session.workBranch} could not be verified on GitHub (expected ${head.slice(0, 7)}). Nothing was assumed published; resume to retry.`, { code: 'PUSH_NOT_VERIFIED' });
+    }
+    if (this.state.git.pushedHead && push.structured.previousRemoteHead === null) {
+      await this.event('github', `The recorded push of ${this.state.git.pushedHead.slice(0, 7)} was not on GitHub (stale session state); publishing it now.`, { branch: this.session.workBranch, recorded: this.state.git.pushedHead }, 'warning');
+    }
     this.state.git.pushedHead = head;
-    await this.event('github', `Pushed ${this.session.workBranch} at ${head.slice(0, 7)}.`, { branch: this.session.workBranch, head });
+    await this.event('github', `Pushed ${this.session.workBranch} at ${head.slice(0, 7)}; ${push.structured.alreadyPublished ? 'it was already on GitHub' : 'verified on GitHub'}.`, { branch: this.session.workBranch, head, alreadyPublished: Boolean(push.structured.alreadyPublished) });
+    await this.checkpoint('phase');
     if (this.config.publish === 'pull_request') {
       const body = [
         `Automated change by the Fahad AI Office Coding Agent (session \`${this.session.id}\`).`,
@@ -868,11 +875,13 @@ class SessionRun {
         `Test gate: \`${this.testCommand || 'none'}\` → ${this.state.lastTest ? `exit ${this.state.lastTest.exitCode}` : 'not run'}`,
         `Models: ${this.state.routesUsed.join(', ')} · Switches: ${this.session.providerSwitches}`,
       ].join('\n');
-      const prArgs = { branch: this.session.workBranch, base: this.session.baseBranch, title: this.session.title.slice(0, 200), body };
-      let pr = await this.required('github.pr_create', 'publish', prArgs, 'pull request');
-      // After a restart the create call is replayed without its result; asking
-      // again is safe because an open PR for the branch is reused, not duplicated.
-      if (!pr.structured.number) pr = await this.required('github.pr_create', 'publish', prArgs, 'pull request', { fresh: true });
+      const prArgs = { branch: this.session.workBranch, base: this.session.baseBranch, title: this.session.title.slice(0, 200), body, head };
+      // Asking again after a replay is safe: an open PR for the branch is
+      // reused, not duplicated, and the branch is proven on GitHub first.
+      const pr = await this.required('github.pr_create', 'publish', prArgs, 'pull request', { proveEffect: true });
+      if (!pr.structured.number) {
+        throw new Stop('blocked', `GitHub returned no pull request for ${this.session.workBranch}. Nothing was assumed opened; resume to retry.`, { code: 'PR_NOT_VERIFIED' });
+      }
       this.state.pr = { number: pr.structured.number, url: pr.structured.url };
       await this.event('github', `${pr.structured.reused ? 'Updated' : 'Opened'} pull request #${pr.structured.number}.`, this.state.pr, 'success');
     }
@@ -881,9 +890,18 @@ class SessionRun {
   // Controller-owned tool call that must succeed. Writes use a deterministic
   // idempotency key (exactly once, even across restarts); polls pass
   // `fresh: true` so every poll really executes instead of replaying.
-  async required(tool, action, args, label, { fresh = false } = {}) {
+  // External effects (push, pull request) pass `proveEffect: true`: a ledger
+  // replay only proves the call was recorded — a refused push is audited as a
+  // completed call that carried its error — so a replay is never accepted as
+  // the effect. The call runs again; those tools verify the remote themselves
+  // and are idempotent (an existing branch head or open PR is reused).
+  async required(tool, action, args, label, { fresh = false, proveEffect = false } = {}) {
     const base = `${tool}-${this.session.iteration}-${createHash('sha256').update(JSON.stringify(args)).digest('hex').slice(0, 12)}`;
-    const outcome = await this.invoke(tool, action, args, { callId: fresh ? `${base}-${randomUUID().slice(0, 8)}` : base, quiet: fresh });
+    let outcome = await this.invoke(tool, action, args, { callId: fresh ? `${base}-${randomUUID().slice(0, 8)}` : base, quiet: fresh });
+    if (proveEffect && outcome.replayed) {
+      await this.event('github', `A recorded ${label} is not proof that it reached GitHub; verifying it again.`, { tool });
+      outcome = await this.invoke(tool, action, args, { callId: `${base}-${randomUUID().slice(0, 8)}` });
+    }
     if (outcome.approvalRejected) throw new Stop('blocked', `The owner rejected the ${label}.`, { code: 'APPROVAL_REJECTED' });
     if (outcome.error || outcome.structured?.error) {
       const code = outcome.code || outcome.structured.error;

@@ -193,6 +193,10 @@ export class Sandbox {
 
   // Moves a sandbox branch into the controller-owned publish repository via a
   // bundle (pure data), then pushes it with the controller's credential.
+  // The outcome is proven against the remote itself, never assumed: the remote
+  // branch is read before the push (a branch already at the tested head is a
+  // verified no-op, so a restarted session never pushes twice) and again
+  // after it (a push is reported only once the remote holds the tested head).
   async publishBranch({ repository, branch, token, pushUrl = null, expectedHead, previousHead = null }) {
     const bundle = join(this.homeDir, 'tmp', 'publish.bundle');
     await rm(bundle, { force: true });
@@ -205,18 +209,36 @@ export class Sandbox {
     }
     const controlBundle = join(this.controlDir, 'publish.bundle');
     await writeFile(controlBundle, await readFile(bundle));
-    const fetched = await this.controllerGit(['--git-dir', this.publishRepo, 'fetch', '--no-tags', '--force', controlBundle, `+refs/heads/${branch}:refs/heads/${branch}`]);
-    if (fetched.code !== 0) throw policyError('PUBLISH_FETCH_FAILED', 'Could not import the work branch');
-    const head = (await this.controllerGit(['--git-dir', this.publishRepo, 'rev-parse', `refs/heads/${branch}`])).stdout.trim();
-    if (expectedHead && head !== expectedHead) throw policyError('PUBLISH_HEAD_MISMATCH', 'Published head differs from the tested head');
-    const url = pushUrl || `https://github.com/${repository}.git`;
-    // Explicit lease: the remote branch must still be at the head this session
-    // last pushed (or must not exist yet), so concurrent changes are never lost.
-    const lease = `--force-with-lease=refs/heads/${branch}:${/^[0-9a-f]{40}$/.test(previousHead || '') ? previousHead : ''}`;
-    const pushed = await this.controllerGit(['--git-dir', this.publishRepo, 'push', lease, url, `refs/heads/${branch}:refs/heads/${branch}`], { token, timeoutMs: 300_000 });
-    await rm(controlBundle, { force: true });
-    if (pushed.code !== 0) throw policyError('PUSH_FAILED', `Push failed: ${pushed.stderr.split('\n').filter(Boolean).at(-1) || 'unknown error'}`);
-    return { head };
+    try {
+      const fetched = await this.controllerGit(['--git-dir', this.publishRepo, 'fetch', '--no-tags', '--force', controlBundle, `+refs/heads/${branch}:refs/heads/${branch}`]);
+      if (fetched.code !== 0) throw policyError('PUBLISH_FETCH_FAILED', 'Could not import the work branch');
+      const head = (await this.controllerGit(['--git-dir', this.publishRepo, 'rev-parse', `refs/heads/${branch}`])).stdout.trim();
+      if (expectedHead && head !== expectedHead) throw policyError('PUBLISH_HEAD_MISMATCH', 'Published head differs from the tested head');
+      const url = pushUrl || `https://github.com/${repository}.git`;
+      const before = await this.remoteBranchHead(url, branch, token);
+      if (before === head) return { head, remoteHead: before, previousRemoteHead: before, verified: true, alreadyPublished: true };
+      // Explicit lease: the remote branch must still be at the head this
+      // session last pushed (or must not exist yet), so concurrent changes are
+      // never lost. A recorded head the remote never received (the branch is
+      // absent) proves nothing was pushed, so the branch is created as new.
+      const lease = /^[0-9a-f]{40}$/.test(previousHead || '') ? previousHead : '';
+      const expectedRemote = before === null ? '' : lease;
+      const pushed = await this.controllerGit(['--git-dir', this.publishRepo, 'push', `--force-with-lease=refs/heads/${branch}:${expectedRemote}`, url, `refs/heads/${branch}:refs/heads/${branch}`], { token, timeoutMs: 300_000 });
+      if (pushed.code !== 0) throw pushError(pushed.stderr, repository);
+      const after = await this.remoteBranchHead(url, branch, token);
+      if (after !== head) throw policyError('PUSH_NOT_VERIFIED', `Push reported success but ${branch} on GitHub is ${after ? `at ${after.slice(0, 7)}` : 'missing'}, not at ${head.slice(0, 7)}`);
+      return { head, remoteHead: after, previousRemoteHead: before, verified: true, alreadyPublished: false };
+    } finally {
+      await rm(controlBundle, { force: true });
+    }
+  }
+
+  // The remote head of one branch, or null when the branch does not exist.
+  async remoteBranchHead(url, branch, token = null) {
+    const listed = await this.controllerGit(['ls-remote', '--heads', url, `refs/heads/${branch}`], { token, timeoutMs: 120_000 });
+    if (listed.code !== 0) throw pushError(listed.stderr, null, 'REMOTE_READ_FAILED');
+    const line = listed.stdout.split('\n').find((entry) => entry.endsWith(`\trefs/heads/${branch}`));
+    return line ? line.split('\t')[0] : null;
   }
 
   // ---------------------------------------------------------------- files
@@ -483,4 +505,26 @@ export async function killUidProcesses(uid) {
     } catch {}
   }
   return killed;
+}
+
+// Classifies a failed push or remote read so the owner sees the real cause and
+// the next action (HTTP 403: the credential may not write this repository).
+function pushError(stderr, repository, fallback = 'PUSH_FAILED') {
+  const lines = String(stderr || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const last = lines.at(-1) || 'unknown error';
+  const text = lines.join('\n');
+  const target = repository ? ` to ${repository}` : '';
+  if (/returned error: 403|Permission to \S+ denied|pre-receive hook declined/i.test(text)) {
+    return policyError('PUSH_FORBIDDEN', `GitHub refused the push${target} (HTTP 403): the Coding Agent credential has no write permission on this repository. Grant it Contents: write and Pull requests: write, then resume. (${last})`);
+  }
+  if (/returned error: 401|Authentication failed|could not read Username/i.test(text)) {
+    return policyError('PUSH_UNAUTHORIZED', `GitHub rejected the Coding Agent credential${target} (HTTP 401): it is missing, expired or revoked. (${last})`);
+  }
+  if (/stale info|fetch first|non-fast-forward/i.test(text)) {
+    return policyError('PUSH_FAILED', `Push refused: the remote branch changed since this session last pushed; it was not overwritten. (${last})`);
+  }
+  if (/returned error: 404|Repository not found/i.test(text)) {
+    return policyError('PUSH_REPOSITORY_NOT_FOUND', `GitHub repository${target} was not found, or the credential cannot see it. (${last})`);
+  }
+  return policyError(fallback, `Push failed: ${last}`);
 }

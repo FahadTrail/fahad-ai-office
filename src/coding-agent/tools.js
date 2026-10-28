@@ -49,7 +49,7 @@ const DEFINITIONS = [
   { name: 'git.push', action: 'publish', scopes: ['github:branch'], risk: 'medium', timeoutMs: 600_000, secretRef: GITHUB,
     input: object({ branch: str('Work branch'), expected_head: str('Tested head commit'), previous_head: str('Head this session pushed before, if any') }, ['branch', 'expected_head']) },
   { name: 'github.pr_create', action: 'publish', scopes: ['github:pull_request'], risk: 'medium', timeoutMs: 60_000, secretRef: GITHUB,
-    input: object({ branch: str('Head branch'), base: str('Base branch'), title: str('Title'), body: str('Body') }, ['branch', 'base', 'title', 'body']) },
+    input: object({ branch: str('Head branch'), base: str('Base branch'), title: str('Title'), body: str('Body'), head: str('Verified pushed head commit the remote branch must be at') }, ['branch', 'base', 'title', 'body']) },
   { name: 'github.pr_status', action: 'read', scopes: ['github:read'], risk: 'low', timeoutMs: 60_000, secretRef: GITHUB,
     input: object({ number: int('Pull request number', { minimum: 1 }) }, ['number']) },
   { name: 'github.ci_status', action: 'read', scopes: ['github:read'], risk: 'low', timeoutMs: 60_000, secretRef: GITHUB,

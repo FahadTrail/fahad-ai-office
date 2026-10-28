@@ -30,7 +30,12 @@ export class GitHubClient {
     });
     if (!response.ok) {
       let message = '';
-      try { message = (await response.json())?.message || ''; } catch {}
+      try {
+        const detail = await response.json();
+        // GitHub's 422 "Validation Failed" names the real reason in errors[].
+        const reasons = (detail?.errors || []).map((entry) => entry?.message || [entry?.field, entry?.code].filter(Boolean).join(' ')).filter(Boolean);
+        message = [detail?.message || '', ...reasons].filter(Boolean).join('; ');
+      } catch {}
       throw githubError(`GITHUB_HTTP_${response.status}`, `GitHub ${method} ${path.split('?')[0]} failed (HTTP ${response.status})${message ? `: ${redact(message, this.env, 300)}` : ''}`, response.status);
     }
     if (raw) return response.text();
@@ -48,11 +53,38 @@ export class GitHubClient {
     return pulls[0] ? summarizePull(pulls[0]) : null;
   }
 
-  async createPullRequest({ branch, base, title, body }) {
+  // The head commit of a branch on GitHub, or null when it does not exist.
+  async branchHead(branch) {
+    try {
+      const found = await this.request(this.repoPath(`/branches/${encodeURIComponent(branch)}`));
+      return found?.commit?.sha || null;
+    } catch (error) {
+      if (error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  // Idempotent: an open pull request for the branch is reused, never
+  // duplicated. The head branch is proven on GitHub first (at the tested
+  // commit when `head` is given), so a branch that never arrived is reported
+  // as exactly that instead of GitHub's opaque 422.
+  async createPullRequest({ branch, base, title, body, head = null }) {
     const existing = await this.findPullRequest(branch);
     if (existing) return { ...existing, reused: true };
-    const pull = await this.request(this.repoPath('/pulls'), { method: 'POST', body: { title, head: branch, base, body, draft: false } });
-    return { ...summarizePull(pull), reused: false };
+    const remote = await this.branchHead(branch);
+    if (!remote) throw githubError('REMOTE_BRANCH_MISSING', `Branch ${branch} was not found on the remote (GitHub ${this.repository}); it must be pushed before a pull request can be opened`, 404);
+    if (head && remote !== head) throw githubError('REMOTE_HEAD_MISMATCH', `Branch ${branch} on GitHub is at ${remote.slice(0, 7)}, not at the tested head ${head.slice(0, 7)}`, 409);
+    try {
+      const pull = await this.request(this.repoPath('/pulls'), { method: 'POST', body: { title, head: branch, base, body, draft: false } });
+      return { ...summarizePull(pull), reused: false };
+    } catch (error) {
+      // A concurrent attempt may have opened it in the meantime.
+      if (error.status === 422) {
+        const raced = await this.findPullRequest(branch);
+        if (raced) return { ...raced, reused: true };
+      }
+      throw error;
+    }
   }
 
   async getPullRequest(number) {
