@@ -12,6 +12,9 @@
 //   revenue  — optional: either a subscription model
 //                {price_monthly, starting_customers, new_customers (number or
 //                 list per month), churn_rate (0–1 per month), trial_months}
+//              or unit sales (cafés, shops, restaurants)
+//                {unit_price, units_per_month or units_per_day (number or
+//                 list per month), days_per_month (default 30), unit_cost}
 //              or an explicit schedule {monthly:[…]} (itself an assumption)
 //   variable_cost_per_customer, starting_cash, months (default 12)
 //   claims   — the headline figures FINANCE states (year_revenue,
@@ -93,10 +96,23 @@ export function calculateFinance(data = {}) {
   const customers = Array(months).fill(0);
   const paying = Array(months).fill(0);
   const revenue = Array(months).fill(0);
+  const units = Array(months).fill(0);
   let model = 'costs_only';
   if (revenueInput && Array.isArray(revenueInput.monthly) && revenueInput.monthly.some((value) => finite(value) !== null)) {
     model = 'explicit_schedule';
     perMonth(revenueInput.monthly, months).forEach((value, index) => { revenue[index] = Math.max(0, value); });
+  } else if (revenueInput && finite(revenueInput.unit_price) !== null) {
+    // Unit sales: units × price each month; cost of goods per unit is the
+    // variable cost (a café's cup, a shop's item).
+    model = 'unit_sales';
+    const unitPrice = finite(revenueInput.unit_price);
+    const days = finite(revenueInput.days_per_month) || 30;
+    const volume = revenueInput.units_per_month !== undefined ? perMonth(revenueInput.units_per_month, months)
+      : perMonth(revenueInput.units_per_day, months).map((value) => value * days);
+    for (let index = 0; index < months; index += 1) {
+      units[index] = Math.max(0, volume[index] || 0);
+      revenue[index] = round2(units[index] * unitPrice);
+    }
   } else if (revenueInput && finite(revenueInput.price_monthly) !== null) {
     model = 'subscription';
     const price = finite(revenueInput.price_monthly);
@@ -115,7 +131,8 @@ export function calculateFinance(data = {}) {
     for (let index = 0; index < months; index += 1) revenue[index] = round2(paying[index] * price);
   }
   // Exact values first; each schedule is rounded once so its months add up to its total.
-  const variableExact = customers.map((count) => count * variable);
+  const unitCost = Math.max(0, finite(revenueInput?.unit_cost) ?? variable);
+  const variableExact = model === 'unit_sales' ? units.map((count) => count * unitCost) : customers.map((count) => count * variable);
   const variableCosts = allocateCents(variableExact);
   const costs = allocateCents(oneTime.map((value, index) => value + fixed[index] + variableExact[index]));
   const net = revenue.map((value, index) => round2(value - costs[index]));
@@ -131,8 +148,8 @@ export function calculateFinance(data = {}) {
   // that month's recurring costs (fixed + variable).
   const cashBreakEven = hasRevenue ? (cumulative[0] >= 0 ? 1 : firstIndex((value, index) => index > 0 && value >= 0 && cumulative[index - 1] < 0)) : null;
   const operatingIndex = hasRevenue ? revenue.findIndex((value, index) => value > 0 && value >= fixed[index] + variableCosts[index]) : -1;
-  const price = finite(revenueInput?.price_monthly);
-  const contribution = price !== null ? round2(price - variable) : null;
+  const price = model === 'unit_sales' ? finite(revenueInput.unit_price) : finite(revenueInput?.price_monthly);
+  const contribution = price !== null ? round2(price - (model === 'unit_sales' ? unitCost : variable)) : null;
   const lastFixed = fixed[months - 1];
   const fixedSchedule = allocateCents(fixed);
   const calculated = {
@@ -147,10 +164,15 @@ export function calculateFinance(data = {}) {
       break_even_month: cashBreakEven,
       operating_break_even_month: operatingIndex >= 0 ? operatingIndex + 1 : null,
       contribution_per_customer: contribution,
-      break_even_customers: contribution && contribution > 0 ? Math.ceil(lastFixed / contribution) : null,
+      break_even_customers: model !== 'unit_sales' && contribution && contribution > 0 ? Math.ceil(lastFixed / contribution) : null,
+      ...(model === 'unit_sales' ? {
+        contribution_per_unit: contribution,
+        break_even_units_per_month: contribution && contribution > 0 ? Math.ceil(lastFixed / contribution) : null,
+        units_month_12: units[months - 1],
+      } : {}),
     } : {}),
     ...(startingCash !== null ? { starting_cash: startingCash, ending_cash: round2(startingCash + (cumulative[months - 1] || 0)), runway_months: runway(startingCash, net) } : {}),
-    schedule: { revenue, costs, net, cumulative, ...(model === 'subscription' ? { customers, paying } : {}), one_time: allocateCents(oneTime), fixed: fixedSchedule, variable: variableCosts },
+    schedule: { revenue, costs, net, cumulative, ...(model === 'subscription' ? { customers, paying } : {}), ...(model === 'unit_sales' ? { units } : {}), one_time: allocateCents(oneTime), fixed: fixedSchedule, variable: variableCosts },
   };
   if (hasRevenue && !data.__core) calculated.sensitivity = sensitivities(data);
   return calculated;
@@ -175,11 +197,16 @@ function sensitivities(data) {
   };
   const scale = (factor) => (revenue) => {
     if (Array.isArray(revenue.monthly)) revenue.monthly = revenue.monthly.map((value) => (finite(value) ?? 0) * factor);
+    else if (finite(revenue.unit_price) !== null) revenue.unit_price = finite(revenue.unit_price) * factor;
     else revenue.price_monthly = finite(revenue.price_monthly) * factor;
   };
+  const scaleList = (value, factor) => (Array.isArray(value) ? value.map((entry) => (finite(entry) ?? 0) * factor) : (finite(value) ?? 0) * factor);
   const volume = (factor) => (revenue) => {
     if (Array.isArray(revenue.monthly)) revenue.monthly = revenue.monthly.map((value) => (finite(value) ?? 0) * factor);
-    else revenue.new_customers = Array.isArray(revenue.new_customers) ? revenue.new_customers.map((value) => (finite(value) ?? 0) * factor) : (finite(revenue.new_customers) ?? 0) * factor;
+    else if (finite(revenue.unit_price) !== null) {
+      if (revenue.units_per_month !== undefined) revenue.units_per_month = scaleList(revenue.units_per_month, factor);
+      else revenue.units_per_day = scaleList(revenue.units_per_day, factor);
+    } else revenue.new_customers = Array.isArray(revenue.new_customers) ? revenue.new_customers.map((value) => (finite(value) ?? 0) * factor) : (finite(revenue.new_customers) ?? 0) * factor;
   };
   return [variant('Price −20%', scale(0.8)), variant('Price +20%', scale(1.2)), variant('Customers −20%', volume(0.8)), variant('Customers +20%', volume(1.2))];
 }
