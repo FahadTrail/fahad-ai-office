@@ -22,9 +22,25 @@ Evidence labels (honest, never upgraded without proof):
 All twelve V3.0 capabilities are implemented and deployed; **10 of 12 are
 E2E VERIFIED in production** and the other two are TESTED + DEPLOYED (live
 progress view; owner Resume — its first production use will be Fahad's).
-What keeps V3.0 from "fully completed" are owner-only steps (§11): the
-runtime image rebuild for Python, Google OAuth, an independent backup drill,
-and vendor logins for external coding workers.
+What keeps V3.0 from "fully completed" are owner-only steps (§11): Google
+OAuth for continuous use, an independent backup/restore drill, and vendor
+logins for external coding workers. Python is now E2E VERIFIED (2026-10-28,
+see below).
+
+**Update 2026-10-28 evening — Python Coding Agent E2E VERIFIED.** The resume
+defect behind the Python acceptance failure was fixed in
+[#141](https://github.com/FahadTrail/fahad-ai-office/pull/141)
+(merge `bcdb95a`, [deploy #120](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40756500097)
+success, event "Office runtime started on commit bcdb95ac25c9" 19:44:17 UTC);
+root cause and fix in `docs/coding-agent-publish-verification.md`. Session
+`bb02c85e` was resumed with the Hub's `resume_agent_session` at 19:45 UTC:
+it warned that its recorded push was not on GitHub, pushed the original
+commit `659573e` (authored 17:48) and verified it on the remote, opened
+exactly one PR ([fixture #1](https://github.com/FahadTrail/fahad-office-python-acceptance/pull/1),
+`refs/pull/1` is the only pull ref), CI passed (1 check), session
+`completed`, $0. After the resume the ledger shows only `git.push`,
+`github.pr_create` and two `github.ci_status` calls: no file write, edit or
+command, so no completed work was redone. The 9 tests pass on `659573e`.
 
 | | |
 | --- | --- |
@@ -104,7 +120,7 @@ worker `src/coding-worker.js`; full description in `docs/coding-agent.md`.
 | V3.0 live cycle on the production worker (2026-10-28) | **E2E VERIFIED**: TASK → CODE → TEST → PR → CI → APPROVAL → MERGE → DEPLOY → worker restart → resume from checkpoint → VERIFY; $0 (§9) |
 | Isolation: sandbox uid 1000, controller credentials unreadable | TESTED in CI inside the runtime image as root |
 | Node.js projects (npm, pnpm, yarn, bun) | IMPLEMENTED, TESTED |
-| Python projects | IMPLEMENTED, TESTED; the runtime image gains `python3` + `pip` with this release — **PENDING OWNER ACTION** (`sudo bash ops/install-deploy.sh` applies a Dockerfile change; deploys ship only `src/` and the lockfiles) |
+| Python projects | **E2E VERIFIED** 2026-10-28: Python 3.11.2 + pip in both containers; session `bb02c85e` → 9 tests → push (verified on GitHub) → PR → CI success, including a resume after a refused push (see §1 update) |
 | Go, Rust | DEFERRED: the image has no Go/Rust toolchain. Such a session now stops with the clear blocker `TOOLCHAIN_MISSING` instead of looping on gate failures |
 | Code privacy choice in the Hub | IMPLEMENTED (V3.0): "خصوصية الكود" — Private (default; privacy-approved models only) or Public repository (free models may read the code). Before V3.0 every Hub task was private, so free routes were always refused |
 
@@ -241,10 +257,11 @@ objectives, blocked sessions, paid calls and data-loss signals.
 
 Ordered by value. None blocks daily use of the Office.
 
-1. **Rebuild the runtime image once** so Python projects work in the Coding
-   Agent: on the VPS, `sudo bash ops/install-deploy.sh` (installs the reviewed
-   `Dockerfile`; the next deploy builds with `python3` + `pip`). Until then a
-   Python session stops with `TOOLCHAIN_MISSING`.
+1. **Done 2026-10-28:** runtime image rebuilt with Python. **Remaining:**
+   remove the Coding Agent credential's temporary access to
+   `FahadTrail/fahad-office-python-acceptance` (GitHub → Settings → Developer
+   settings → the token's repository access), and decide whether to merge or
+   close fixture PR #1.
 2. **Google Drive/Docs/Sheets (optional):** create a Google OAuth client
    (Desktop app) with the Drive API enabled, then follow the header of
    `src/ops/google-oauth-setup.js` (client id/secret → consent link → refresh
@@ -311,8 +328,7 @@ Ordered by value. None blocks daily use of the Office.
   release group, CI green, merge, watch `deploy.yml`, confirm the
   `runtime_started` event names the merge commit.
 * Next technical steps, in order of value:
-  1. After Fahad runs `ops/install-deploy.sh`, run one Coding Agent session on
-     a small Python repository and record it here.
+  1. Done 2026-10-28 (Python session `bb02c85e`, §1 update).
   2. When Google is connected, run one Office objective that saves a
      document to the Office folder and record the Drive file id.
   3. Optional: Go/Rust toolchains in the image (size and update cost
