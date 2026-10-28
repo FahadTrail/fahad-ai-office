@@ -259,9 +259,9 @@ Ordered by value. None blocks daily use of the Office.
 
 1. **Done 2026-10-28:** runtime image rebuilt with Python. **Remaining:**
    remove the Coding Agent credential's temporary access to
-   `FahadTrail/fahad-office-python-acceptance` (GitHub → Settings → Developer
-   settings → the token's repository access), and decide whether to merge or
-   close fixture PR #1.
+   `FahadTrail/fahad-office-python-acceptance` (steps in
+   [operational closure §2](V3-OPERATIONAL-CLOSURE-2026-10-28.md)). Fixture
+   PR #1 was closed unmerged on 2026-10-28; its branch is kept as evidence.
 2. **Google Drive/Docs/Sheets (optional):** create a Google OAuth client
    (Desktop app) with the Drive API enabled, then follow the header of
    `src/ops/google-oauth-setup.js` (client id/secret → consent link → refresh
@@ -274,9 +274,11 @@ Ordered by value. None blocks daily use of the Office.
    `GOOGLE_DRIVE_READ_SCOPE=folder`; never select `drive` without Fahad's
    specific approval. Setup, secret-handling and verification:
    [activation audit](V3-ACTIVATION-AUDIT-2026-10-28.md#google-oauth).
-3. **Independent backup:** confirm daily backups in Supabase Dashboard →
-   Database → Backups, and run one restore into a scratch project (drill).
-   Optionally schedule a `pg_dump` to storage you control.
+3. **Independent backup:** run `supabase/verify/restore-drill.sh` once
+   (free, read-only, local restore; keeps a 0600 dump with `--keep-dump`) and
+   keep its PASS report — [operational closure §5](V3-OPERATIONAL-CLOSURE-2026-10-28.md).
+   Google OAuth scope analysis and the Testing → production plan are in §3–4
+   of the same document.
 4. **External coding workers (optional):** to enable Claude Code CLI or Codex
    CLI as continuity workers, log in to each CLI on the VPS as the app user,
    then enable the worker (`ops/setup-continuity-workers.sh`; see
