@@ -128,6 +128,14 @@ export function scriptedPool({ pauseFile = null, log = [] } = {}) {
   ];
 }
 
+function remoteBranchHead(bare, branch) {
+  try {
+    return execFileSync('git', ['--git-dir', bare, 'rev-parse', '--verify', '-q', `refs/heads/${branch}`], { stdio: 'pipe' }).toString().trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 // In-process fake of the GitHub, Supabase Management and health APIs.
 export function fakeApis({ bare, pendingPolls = 0 }) {
   // pendingPolls: how many polls a commit's checks (and the deploy run) stay
@@ -145,9 +153,20 @@ export function fakeApis({ bare, pendingPolls = 0 }) {
     if (url.host === 'api.github.test') {
       const path = url.pathname.replace(`/repos/${REPOSITORY}`, '');
       if (path === '/pulls' && method === 'GET') return json(state.pulls.filter((pull) => pull.head.ref === url.searchParams.get('head').split(':')[1]));
+      const branchRead = path.match(/^\/branches\/(.+)$/);
+      if (branchRead && method === 'GET') {
+        const head = remoteBranchHead(bare, decodeURIComponent(branchRead[1]));
+        return head ? json({ name: decodeURIComponent(branchRead[1]), commit: { sha: head } }) : json({ message: 'Branch not found' }, 404);
+      }
       if (path === '/pulls' && method === 'POST') {
         const body = JSON.parse(init.body);
-        const head = execFileSync('git', ['--git-dir', bare, 'rev-parse', `refs/heads/${body.head}`]).toString().trim();
+        const head = remoteBranchHead(bare, body.head);
+        // Like GitHub: a pull request for a head branch that is not on the
+        // remote is refused with 422 Validation Failed.
+        if (!head) {
+          state.rejectedPulls = (state.rejectedPulls || 0) + 1;
+          return json({ message: 'Validation Failed', errors: [{ resource: 'PullRequest', field: 'head', code: 'invalid' }] }, 422);
+        }
         const pull = { number: state.pulls.length + 1, html_url: `https://github.test/${REPOSITORY}/pull/${state.pulls.length + 1}`, state: 'open', head: { ref: body.head, sha: head }, base: { ref: body.base }, title: body.title };
         state.pulls.push(pull);
         return json(pull, 201);

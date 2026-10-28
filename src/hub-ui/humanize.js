@@ -1,6 +1,9 @@
 // Technical infrastructure problems in human language. The original text is
 // kept for "View details"; this only chooses the words Fahad reads first.
 const RULES = [
+  [/PUSH_FORBIDDEN/, 'GitHub refused the Coding Agent\'s push (HTTP 403): its GitHub credential cannot write to this repository. Grant it Contents and Pull requests write access, then resume — the finished code is kept.'],
+  [/PUSH_UNAUTHORIZED/, 'GitHub rejected the Coding Agent\'s credential (missing, expired or revoked). Renew it on the server, then resume — the finished code is kept.'],
+  [/REMOTE_BRANCH_MISSING|PUSH_NOT_VERIFIED|PR_NOT_VERIFIED/, 'The work branch is not on GitHub yet, so no pull request was opened. Resume to publish it again — the finished code is kept.'],
   [/TOOLCHAIN_MISSING|is not installed in the worker image/i, 'This project needs a toolchain the Coding Agent does not have (only Node.js and Python are installed). Run it on a Node.js or Python repository, or ask for the toolchain to be added.'],
   [/^Stalled: no step can run/i, 'Stalled: no step can run, so this objective will not progress on its own. Stop it, then resume it where it stopped.'],
   [/WAITING_FOR_CAPACITY|NO_FREE_CAPACITY|free model capacity/i, 'Waiting for free model capacity — will resume automatically.'],
@@ -17,6 +20,9 @@ const RULES = [
 // The same problems in natural Gulf Arabic, for the Arabic interface. The
 // Office-specific causes come first so a step failure reads as what happened.
 const RULES_AR = [
+  [/PUSH_FORBIDDEN/, 'GitHub رفض رفع شغل وكيل البرمجة (HTTP 403): صلاحية GitHub عنده ما تسمح بالكتابة في هذا المستودع. أعطه صلاحية Contents و Pull requests للكتابة ثم استأنف — الكود المنجز محفوظ.'],
+  [/PUSH_UNAUTHORIZED/, 'GitHub رفض صلاحية وكيل البرمجة (ناقصة أو منتهية أو ملغاة). جدّدها على السيرفر ثم استأنف — الكود المنجز محفوظ.'],
+  [/REMOTE_BRANCH_MISSING|PUSH_NOT_VERIFIED|PR_NOT_VERIFIED/, 'فرع الشغل مو موجود على GitHub للحين، فما انفتح طلب دمج. استأنف عشان ينرفع مرة ثانية — الكود المنجز محفوظ.'],
   [/TOOLCHAIN_MISSING|is not installed in the worker image/i, 'هذا المشروع يحتاج أدوات برمجة غير مثبتة عند وكيل البرمجة (المثبت فقط Node.js و Python). شغّله على مستودع Node.js أو Python، أو اطلب إضافة الأدوات.'],
   [/^Stalled: no step can run/i, 'المهمة متوقفة: ما في خطوة تقدر تشتغل، فما بتتقدم بروحها. أوقفها ثم استأنفها من حيث وقفت.'],
   [/web search provider returned no results|web search is unavailable|SEARCH_UNAVAILABLE/i, 'خدمة البحث على الإنترنت ما ردّت بنتائج. تقدر تستأنف المهمة، والفريق بيعيد المحاولة.'],
