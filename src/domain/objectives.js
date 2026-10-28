@@ -3,7 +3,7 @@
 
 import { officeAgent } from '../office/agents.js';
 import { classifyWork } from './classification.js';
-import { briefOf, isTerminalCategory, jobLifecycle, taskExecution } from './lifecycle.js';
+import { STALLED_REASON, briefOf, isTerminalCategory, jobLifecycle, taskExecution } from './lifecycle.js';
 
 const STEP_ORDER = Object.freeze(['plan', 'delegate', 'assign', 'depend', 'deliver', 'review', 'revise', 'synthesize', 'close']);
 
@@ -84,6 +84,9 @@ export function nextActionOf({ job, tasks = [], agents = [], sessions = [], appr
       basis: life.reasonBasis || 'UNKNOWN',
       taskId: null,
     };
+  }
+  if (life.category === 'NEEDS_OWNER' && life.reason === STALLED_REASON && !life.ownerAttention.length) {
+    return { code: 'RECOVER_STALLED', owner: 'fahad', text: STALLED_REASON, basis: 'RECORDED', taskId: null };
   }
   if (life.category === 'NEEDS_OWNER') {
     const item = life.ownerAttention[0];

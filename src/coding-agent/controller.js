@@ -22,7 +22,7 @@ import { ReadTracker, compactTestOutput, elideOldToolResults } from './context-b
 import { taskSize, turnBudgetAction } from './turn-budget.js';
 import { continuationMessage, finalReport, initialMessage, systemPrompt } from './prompts.js';
 import { createCodeIntelligence } from '../continuity/code-intelligence.js';
-import { detectRepositoryProfile, profileSummary, setupNeeded } from './repo-profile.js';
+import { detectRepositoryProfile, profileSummary, setupNeeded, toolchainMissing } from './repo-profile.js';
 
 export const DEFAULT_LIMITS = Object.freeze({
   maxIterations: 120,
@@ -804,6 +804,8 @@ class SessionRun {
         const setup = await this.invoke('shell.run', 'execute', { command: this.profile.setupCommand, timeout_seconds: 1200 }, { callId: `setup-${this.session.iteration}-${randomUUID().slice(0, 8)}` });
         if (setup.error || setup.structured?.exitCode !== 0) {
           await this.event('test', `Dependency setup failed: ${this.profile.setupCommand}`, { setup: true, exitCode: setup.structured?.exitCode ?? null }, 'warning');
+          const missing = toolchainMissing(this.profile.setupCommand, setup.structured?.exitCode, setup.text);
+          if (missing) throw new Stop('blocked', missing, { code: 'TOOLCHAIN_MISSING' });
         } else {
           this.state.setupDone = true;
           await this.event('test', `Dependencies installed: ${this.profile.setupCommand}`, { setup: true, exitCode: 0 });
@@ -815,6 +817,8 @@ class SessionRun {
         this.state.lastTest = { command: this.testCommand, exitCode: testOutcome.structured.exitCode, at: new Date(this.c.now()).toISOString(), output: truncate(testOutcome.text, 4000) };
         await this.event('test', `Gate: ${this.testCommand} → exit ${testOutcome.structured.exitCode}`, { exitCode: testOutcome.structured.exitCode, gate: true },
           testOutcome.structured.exitCode === 0 ? 'success' : 'warning');
+        const missing = testOutcome.structured.exitCode !== 0 ? toolchainMissing(this.testCommand, testOutcome.structured.exitCode, testOutcome.text) : null;
+        if (missing) throw new Stop('blocked', missing, { code: 'TOOLCHAIN_MISSING' });
         if (testOutcome.structured.exitCode !== 0) failures.push(`Test gate failed (${this.testCommand}, exit ${testOutcome.structured.exitCode}):\n${truncate(compactTestOutput(testOutcome.text).text, 12_000)}`);
       }
     }

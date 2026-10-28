@@ -456,11 +456,15 @@ export async function renderJobDetail(ctx, id) {
   let signature = '';
   let renderedShell = false;
   let composerRunning = null;
+  // The objective's own project, not the one selected in the sidebar: a job
+  // opened from a link or search may belong to another project.
+  let projectId = null;
 
   const load = async () => {
     const workflow = await ctx.api(`/api/workflows/${id}`);
+    projectId = workflow.job.projectId || ctx.ws();
     const [objective, conversation] = await Promise.all([
-      ctx.api(`/api/work/objectives/${id}${ctx.q({ workspaceId: ctx.ws(), tier: 'operational' })}`).then((data) => data.objective).catch(() => null),
+      ctx.api(`/api/work/objectives/${id}${ctx.q({ workspaceId: projectId, tier: 'operational' })}`).then((data) => data.objective).catch(() => null),
       workflow.job.conversationId ? ctx.api(`/api/conversations/${workflow.job.conversationId}`).catch(() => null) : Promise.resolve(null),
     ]);
     if (!ctx.isCurrent()) return workflow.job.status;
@@ -473,7 +477,7 @@ export async function renderJobDetail(ctx, id) {
 
   const paint = ({ workflow, objective, conversation }) => {
     const job = workflow.job;
-    const row = { status: job.status, lifecycle: objective?.lifecycle };
+    const row = { status: job.status, lifecycle: objective?.lifecycle, stalled: job.stalled };
     const status = jobStatus(row, lang(ctx));
     const progress = deliveryProgress(workflow.nodes, { final: workflow.final, jobStatus: job.status });
     const tabs = employeeTabs(workflow.nodes);
@@ -560,6 +564,9 @@ export async function renderJobDetail(ctx, id) {
       content = message.assistant.text;
       heading = direct ? `${t('رد', 'Reply from')} ${direct.label || direct.slug}` : t('رد CHIEF', 'CHIEF’s answer');
       body = ctx.markdown(content);
+    } else if (!isTerminal(job.status) && job.stalled) {
+      // Nothing can be claimed: say so instead of "the team is working".
+      body = `<div class="synthesis-wait is-error"><span class="wait-mark" aria-hidden="true">${ICON.alert}</span><div><p>${t('المهمة متوقفة: لا توجد خطوة قابلة للتشغيل، فلن تتقدم وحدها.', 'This job is stalled: no step can run, so it will not progress on its own.')}</p><p class="muted small">${t('أوقفها ثم استأنفها من حيث وقفت؛ ما سلّمه الفريق يبقى محفوظًا.', 'Stop it, then resume where it stopped; delivered work is kept.')}</p><div class="row resume-row"><button class="btn btn-primary btn-sm" type="button" data-stop-stalled>${t('أوقف المهمة', 'Stop the job')}</button></div></div></div>`;
     } else if (!isTerminal(job.status)) {
       const width = fractionWidth(progress);
       body = `<div class="synthesis-wait"><span class="wait-mark" aria-hidden="true">${ICON.clock}</span><div><p>${t('الفريق يعمل على المهمة. سيجمع CHIEF النتائج في تقرير نهائي بعد اكتمال المخرجات المطلوبة.', 'The team is working on this. CHIEF will consolidate the results into a final report once the required deliverables are in.')}</p>
@@ -576,13 +583,15 @@ export async function renderJobDetail(ctx, id) {
     }
     slot.classList.toggle('is-final', Boolean(content));
     slot.innerHTML = `<div class="synthesis-head"><div><span class="eyebrow">${dot('chief-of-staff')}${content ? ctx.esc(heading) : t('الخلاصة النهائية', 'Final synthesis')}</span><h2 id="synthesisTitle" class="sr-only">${ctx.esc(heading)}</h2>${workflow.final?.at ? `<span class="muted small"> · ${isoDate(ctx, workflow.final.at)}</span>` : ''}</div>
-      ${content ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-copy-final>${ICON.copy}${t('نسخ', 'Copy')}</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="word">${ICON.download}${t('وورد', 'Word')}</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="pdf">PDF</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="md">MD</button></div>` : statusPill(ctx, { status: job.status, lifecycle: objective?.lifecycle })}</div>
+      ${content ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-copy-final>${ICON.copy}${t('نسخ', 'Copy')}</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="word">${ICON.download}${t('وورد', 'Word')}</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="pdf">PDF</button><button class="btn btn-ghost btn-sm" type="button" data-download-final="md">MD</button></div>` : statusPill(ctx, { status: job.status, lifecycle: objective?.lifecycle, stalled: job.stalled })}</div>
       <div class="synthesis-body">${body}</div>`;
     const resume = slot.querySelector('[data-resume-job]');
     if (resume) resume.onclick = () => objectiveAction(job, 'resume', resume);
+    const stop = slot.querySelector('[data-stop-stalled]');
+    if (stop) stop.onclick = () => objectiveAction(job, 'stop', stop);
     if (content) {
       slot.querySelector('[data-copy-final]').onclick = () => navigator.clipboard?.writeText(content).then(() => ctx.toast(t('تم النسخ', 'Copied')));
-      // Word (.doc), PDF (print dialog) or the original Markdown.
+      // Word (.docx), PDF (print dialog) or the original Markdown.
       slot.querySelectorAll('[data-download-final]').forEach((button) => {
         button.onclick = () => {
           try { exportReport(button.dataset.downloadFinal, { title: job.title || t('النتيجة', 'Result'), markdown: content, render: ctx.markdown }); }
@@ -730,7 +739,7 @@ export async function renderJobDetail(ctx, id) {
 
   const loadTechnical = async () => {
     try {
-      const { objective } = await ctx.api(`/api/work/objectives/${id}${ctx.q({ workspaceId: ctx.ws(), tier: 'technical' })}`);
+      const { objective } = await ctx.api(`/api/work/objectives/${id}${ctx.q({ workspaceId: projectId || ctx.ws(), tier: 'technical' })}`);
       ui.technical = objective.technical || { attempts: null, events: null };
     } catch (failure) {
       ui.technical = { error: failure.message };

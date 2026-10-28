@@ -1,7 +1,11 @@
 FROM node:22-slim
 
+# python3 + pip: the Coding Agent's Python project support (repository
+# profile → `python3 -m pip install --user --break-system-packages`, `python3
+# -m pytest`). Go and Rust toolchains are not installed; such sessions stop
+# with TOOLCHAIN_MISSING (docs/FAHAD-OFFICE-V3-FINAL.md).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates git ripgrep \
+ && apt-get install -y --no-install-recommends ca-certificates git ripgrep python3 python3-pip \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

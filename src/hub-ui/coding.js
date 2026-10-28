@@ -16,6 +16,7 @@ const WORDS = {
     back: 'CODING', kicker: 'CODING', heading: 'What do you want me to build or fix?', sub: 'CODING plans, builds and tests. Protected actions still need your approval.',
     placeholder: 'Describe the change, the problem or the feature. Include acceptance criteria if you have them.', start: 'Start task', starting: 'Starting…',
     options: 'Options', repository: 'Repository (owner/name)', budget: 'Budget (USD)', routing: 'Model routing', auto: 'AUTO (recommended)', economy: 'Economy — free and cheapest first',
+    dataClass: 'Code privacy', privateClass: 'Private (default) — privacy-approved models only', publicClass: 'Public repository — free models may read the code',
     balanced: 'Balanced', quality: 'Quality — strongest first', testCommand: 'Test command (auto-detected when empty)', deploy: 'Merge & deploy after CI passes (the merge always asks for your approval)',
     noRepo: 'not set', budgetLine: 'AUTO routing · budget', needsYou: 'Needs you', inProgress: 'In progress', recent: 'Recent', allTasks: 'All tasks',
     emptyActive: 'Nothing is running. Describe a task above to start one.', emptyRecent: 'Finished tasks appear here.',
@@ -43,6 +44,7 @@ const WORDS = {
     back: 'CODING', kicker: 'CODING', heading: 'شو تبغي نطوّر أو نصلح؟', sub: 'CODING يخطط ويطوّر ويختبر. الإجراءات المحمية تبقى بحاجة لموافقتك.',
     placeholder: 'وصف التغيير أو المشكلة أو الميزة. اكتب معايير القبول إذا عندك.', start: 'ابدأ المهمة', starting: 'جارٍ البدء…',
     options: 'خيارات', repository: 'المستودع (owner/name)', budget: 'الميزانية (دولار)', routing: 'توجيه المودلات', auto: 'تلقائي (موصى به)', economy: 'اقتصادي — المجاني والأرخص أولًا',
+    dataClass: 'خصوصية الكود', privateClass: 'خاص (الافتراضي) — نماذج معتمدة للخصوصية فقط', publicClass: 'مستودع عام — يسمح للنماذج المجانية بقراءة الكود',
     balanced: 'متوازن', quality: 'الجودة — الأقوى أولًا', testCommand: 'أمر الاختبار (يُكتشف تلقائيًا إذا تركته فاضي)', deploy: 'ادمج وانشر بعد نجاح CI (الدمج دايمًا يطلب موافقتك)',
     noRepo: 'غير محدد', budgetLine: 'توجيه تلقائي · ميزانية', needsYou: 'يحتاجك', inProgress: 'قيد التنفيذ', recent: 'الأخيرة', allTasks: 'كل المهام',
     emptyActive: 'ما في شي شغال. اكتب مهمة فوق عشان تبدأ.', emptyRecent: 'المهام المكتملة بتظهر هني.',
@@ -280,6 +282,7 @@ export async function renderCodingHome(ctx) {
         <label class="field-label" for="tRepo">${esc(w.repository)}</label><input id="tRepo" class="input" dir="ltr" value="${esc(project.defaultRepository || '')}" placeholder="owner/name">
         <div class="cw-options-grid"><div><label class="field-label" for="tBudget">${esc(w.budget)}</label><input id="tBudget" class="input" type="number" min="0.5" max="500" step="0.5" value="2"></div>
           <div><label class="field-label" for="tStrategy">${esc(w.routing)}</label><select id="tStrategy" class="input"><option value="">${esc(w.auto)}</option><option value="economy">${esc(w.economy)}</option><option value="balanced">${esc(w.balanced)}</option><option value="quality">${esc(w.quality)}</option></select></div></div>
+        <label class="field-label" for="tDataClass">${esc(w.dataClass)}</label><select id="tDataClass" class="input"><option value="">${esc(w.privateClass)}</option><option value="PUBLIC">${esc(w.publicClass)}</option></select>
         <label class="field-label" for="tTest">${esc(w.testCommand)}</label><input id="tTest" class="input" dir="ltr" placeholder="npm test">
         <label class="check cw-check"><input id="tDeploy" type="checkbox"> <span>${esc(w.deploy)}</span></label>
       </div>
@@ -308,6 +311,8 @@ export async function renderCodingHome(ctx) {
       const body = { workspaceId: ws(), instruction: input.value.trim(), budgetUsd: Number($('#tBudget').value || 2) };
       if ($('#tRepo').value.trim()) body.repository = $('#tRepo').value.trim();
       if ($('#tStrategy').value) body.strategy = $('#tStrategy').value;
+      // Owner statement that the repository is public; unset keeps PRIVATE.
+      if ($('#tDataClass').value === 'PUBLIC') body.dataClass = 'PUBLIC';
       if ($('#tTest').value.trim()) body.testCommand = $('#tTest').value.trim();
       if ($('#tDeploy').checked) body.deploy = true;
       const { task } = await api('/api/tasks', { method: 'POST', body });

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { detectRepositoryProfile, profileSummary, setupNeeded } from '../src/coding-agent/repo-profile.js';
+import { readFileSync } from 'node:fs';
 
 // A sandbox stand-in with the two calls the profile uses.
 function sandbox(files) {
@@ -28,7 +29,7 @@ test('Node projects: the lockfile chooses the manager, its frozen install and it
 
 test('Python, Go and Rust projects, and unknown layouts', async () => {
   const python = await detectRepositoryProfile(sandbox({ 'requirements.txt': 'flask', tests: '' }));
-  assert.deepEqual([python.setupCommand, python.testCommand], ['python -m pip install --user -r requirements.txt', 'python -m pytest -q']);
+  assert.deepEqual([python.setupCommand, python.testCommand], ['python3 -m pip install --user --break-system-packages -r requirements.txt', 'python3 -m pytest -q']);
   const go = await detectRepositoryProfile(sandbox({ 'go.mod': 'module x' }));
   assert.deepEqual([go.setupCommand, go.testCommand, go.checks], ['go mod download', 'go test ./...', ['go vet ./...']]);
   const rust = await detectRepositoryProfile(sandbox({ 'Cargo.toml': '' }));
@@ -45,4 +46,20 @@ test('setup runs once, only when dependencies are declared and missing', async (
   assert.equal(await setupNeeded(sandbox(files), profile, { setupDone: true }), false);
   assert.equal(await setupNeeded(sandbox({ ...files, node_modules: '' }), profile, {}), false);
   assert.match(profileSummary(profile), /npm ci/);
+});
+
+test('a missing toolchain (exit 127, the command itself not found) is a clear blocker, never a test failure', async () => {
+  const { toolchainMissing } = await import('../src/coding-agent/repo-profile.js');
+  assert.match(toolchainMissing('go test ./...', 127, 'sh: 1: go: not found'), /`go` is not installed in the worker image/);
+  assert.match(toolchainMissing('cargo test', 127, 'bash: cargo: command not found'), /`cargo`/);
+  assert.match(toolchainMissing('python3 -m pytest -q', 127, '/bin/sh: python3: not found'), /`python3`/);
+  // A failing test, or a test whose output mentions "not found", is not a toolchain problem.
+  assert.equal(toolchainMissing('go test ./...', 1, 'sh: 1: go: not found'), null);
+  assert.equal(toolchainMissing('npm test', 127, 'sh: 1: jest: not found'), null);
+  assert.equal(toolchainMissing('npm test', 0, ''), null);
+});
+
+test('the controller stops with TOOLCHAIN_MISSING when the setup or the test gate cannot find its command', () => {
+  const source = readFileSync(new URL('../src/coding-agent/controller.js', import.meta.url), 'utf8');
+  assert.equal((source.match(/code: 'TOOLCHAIN_MISSING'/g) || []).length, 2);
 });

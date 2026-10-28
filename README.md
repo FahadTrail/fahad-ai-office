@@ -1,12 +1,24 @@
 # Fahad AI Office
 
-GitHub is the source of truth for code. Supabase holds the database, results,
-events and handoffs. Hostinger runs the production container. Step 3C adds the
-first durable multi-agent path: Chief → Research → Chief.
+A personal AI office run by one owner (Fahad): CHIEF plans an objective,
+delegates it to specialist employees (RESEARCH, CREATIVE, PRODUCT, FINANCE,
+CODING, AUDIT, SOCIAL, LEGAL), they work in parallel with handoffs and one
+revision round, and CHIEF delivers a final synthesis. A Coding Agent takes
+development tasks on an authorised repository through plan → code → test → PR
+→ CI → approval → merge → deploy → verify. Everything is durable in Supabase,
+free-first on models, capped at $2 a month, and visible live in the Hub
+(Arabic first, English optional).
 
-## Provider-neutral model gateway
+**Start here:** `docs/FAHAD-OFFICE-V3-FINAL.md` (features, evidence, how to
+use it, owner actions, limits). Agent instructions: `AGENTS.md`.
 
-Phase 2B introduces an in-process `ModelGateway` boundary without changing the
+The sections below describe the architecture as it was built, phase by phase;
+where they disagree with `docs/FAHAD-OFFICE-V3-FINAL.md`, that file wins.
+
+## Provider-neutral model gateway (history: Phase 2B)
+
+Today routing is free-first over a multi-provider pool (`src/model-gateway/agentic/`).
+Phase 2B introduced an in-process `ModelGateway` boundary without changing the
 default production route. Anthropic remains the only provider allowed by
 default. Provider failover is disabled unless both
 `MODEL_GATEWAY_FAILOVER_ENABLED=true` and an explicit

@@ -227,6 +227,21 @@ export function sessionLifecycle(session, { approvals = [], now = Date.now() } =
 // The objective's single primary category, plus separate attention. Executing
 // work stays ACTIVE even when another task needs the owner; the attention list
 // still carries that request. Nothing here writes a status.
+// A running objective whose every loaded step has finished or failed, past
+// the planning grace, can never progress on its own (nothing is claimable):
+// it needs Fahad (Stop, then Resume). Same rule as the ops watch's
+// stuckObjectives; an objective with no loaded steps is never judged here, so
+// a truncated task list cannot mislabel a healthy objective.
+export const STALL_GRACE_MS = 30 * 60_000;
+export const STALLED_REASON = 'Stalled: no step can run, so this objective will not progress on its own. Stop it, then resume it where it stopped.';
+const SETTLED_TASK = new Set(['done', 'skipped', 'failed', 'blocked', 'cancelled']);
+export function isStalled(job, tasks = [], now = Date.now()) {
+  if (!job || !['planning', 'running'].includes(job.status)) return false;
+  const own = tasks.filter((task) => !task.job_id || task.job_id === job.id);
+  const created = time(job.created_at);
+  return own.length > 0 && own.every((task) => SETTLED_TASK.has(task.status)) && created != null && now - created > STALL_GRACE_MS;
+}
+
 export function jobLifecycle(job, { tasks = [], approvals = [], sessions = [], now = Date.now() } = {}) {
   if (!job) return null;
   const terminal = JOB_TERMINAL[job.status] || null;
@@ -259,6 +274,10 @@ export function jobLifecycle(job, { tasks = [], approvals = [], sessions = [], n
   } else if (!executing && waits.blocking) {
     category = 'WAITING';
     reason = waits.reason;
+    reasonBasis = 'RECORDED';
+  } else if (!executing && !scheduled && !sessions.some((session) => OPEN_SESSION_STATUSES.includes(session.status)) && isStalled(job, tasks, now)) {
+    category = 'NEEDS_OWNER';
+    reason = STALLED_REASON;
     reasonBasis = 'RECORDED';
   } else if (executing || scheduled || ['planning', 'running', 'review'].includes(job.status)) {
     category = 'ACTIVE';

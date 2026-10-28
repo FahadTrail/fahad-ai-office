@@ -53,10 +53,12 @@ export async function detectRepositoryProfile(sandbox) {
   if (python) {
     profile.languages.push('python');
     if (!profile.setupCommand && await exists(sandbox, 'requirements.txt')) {
-      profile.setupCommand = 'python -m pip install --user -r requirements.txt';
+      // Debian's python3 is "externally managed" (PEP 668): a user-site
+      // install inside the sandbox needs the explicit flag.
+      profile.setupCommand = 'python3 -m pip install --user --break-system-packages -r requirements.txt';
       profile.setupMarker = null; // no reliable marker: run once per sandbox
     }
-    if (!profile.testCommand && (await exists(sandbox, 'pytest.ini') || await exists(sandbox, 'pyproject.toml') || await exists(sandbox, 'tests'))) profile.testCommand = 'python -m pytest -q';
+    if (!profile.testCommand && (await exists(sandbox, 'pytest.ini') || await exists(sandbox, 'pyproject.toml') || await exists(sandbox, 'tests'))) profile.testCommand = 'python3 -m pytest -q';
   }
 
   if (await exists(sandbox, 'go.mod')) {
@@ -73,6 +75,23 @@ export async function detectRepositoryProfile(sandbox) {
   }
 
   return profile;
+}
+
+// A shell reports "command not found" as exit 127. When the setup or the
+// test gate exits 127, the worker image lacks the project's toolchain (the
+// production image ships Node.js and Python; Go and Rust are not installed):
+// no model turn can fix that, so the session stops with an honest blocker.
+export const COMMAND_NOT_FOUND = 127;
+export function toolchainMissing(command, exitCode, output = '') {
+  if (exitCode !== COMMAND_NOT_FOUND) return null;
+  const tool = String(command || '').trim().split(/\s+/)[0];
+  if (!tool) return null;
+  // Only the command itself being absent counts ("sh: 1: go: not found",
+  // "bash: cargo: command not found"), never a test that prints those words.
+  const escaped = tool.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`(^|[\\s:])${escaped}: (command )?not found`, 'm').test(String(output).slice(0, 8000))) return null;
+  return `The Coding Agent worker cannot run \`${String(command).slice(0, 200)}\`: \`${tool}\` is not installed in the worker image. `
+    + 'Node.js and Python projects are supported; Go and Rust need a worker image with their toolchain (docs/FAHAD-OFFICE-V3-FINAL.md, Coding Agent).';
 }
 
 // Whether the setup still has to run in this sandbox.

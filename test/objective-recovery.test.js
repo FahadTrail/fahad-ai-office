@@ -147,3 +147,36 @@ test('failure reasons read as natural Arabic in the Arabic interface, with the o
   assert.match(humanError('something unexpected', 'ar'), /^تعثّرت المهمة/);
   assert.equal(humanError('something unexpected'), 'something unexpected', 'English keeps the original wording');
 });
+
+test('a running objective with no claimable step is reported as stalled, so the job page never shows it as working', async () => {
+  const { workflowView } = await import('../src/hub-office.js');
+  const now = Date.parse('2026-10-28T12:00:00Z');
+  const job = { id: JOB, title: 'Launch plan', goal: 'Plan', status: 'running', created_at: '2026-10-28T10:00:00Z' };
+  const done = { id: T(1), job_id: JOB, title: 'Plan', status: 'done', brief: '{}', sequence: 1, created_at: job.created_at };
+  const failed = { id: T(2), job_id: JOB, title: 'Research', status: 'failed', brief: '{}', sequence: 2, created_at: job.created_at };
+  assert.equal(workflowView({ job, tasks: [done, failed], now }).job.stalled, true);
+  // A queued step can still be claimed: not stalled.
+  assert.equal(workflowView({ job, tasks: [done, { ...failed, status: 'queued' }], now }).job.stalled, false);
+  // A plan still being written (inside the grace period) is not stalled.
+  assert.equal(workflowView({ job: { ...job, created_at: '2026-10-28T11:50:00Z' }, tasks: [done], now }).job.stalled, false);
+  // Finished objectives are never stalled.
+  assert.equal(workflowView({ job: { ...job, status: 'completed' }, tasks: [done], now }).job.stalled, false);
+});
+
+test('the job page offers Stop on a stalled objective (Stop, then Resume, is the recovery path)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const screens = readFileSync(new URL('../src/hub-ui/screens.js', import.meta.url), 'utf8');
+  assert.match(screens, /job\.stalled/);
+  assert.match(screens, /data-stop-stalled/);
+  assert.match(screens, /objectiveAction\(job, 'stop', stop\)/);
+});
+
+test('the job page reads the objective from its own project, not the project selected in the sidebar', async () => {
+  const { workflowView } = await import('../src/hub-office.js');
+  const { readFileSync } = await import('node:fs');
+  const view = workflowView({ job: { id: JOB, title: 'x', goal: 'x', status: 'completed', project_id: '11111111-1111-4111-8111-111111111111', created_at: '2026-10-28T10:00:00Z' } });
+  assert.equal(view.job.projectId, '11111111-1111-4111-8111-111111111111');
+  const screens = readFileSync(new URL('../src/hub-ui/screens.js', import.meta.url), 'utf8');
+  assert.match(screens, /projectId = workflow\.job\.projectId \|\| ctx\.ws\(\)/);
+  assert.doesNotMatch(screens, /work\/objectives\/\$\{id\}\$\{ctx\.q\(\{ workspaceId: ctx\.ws\(\)/);
+});

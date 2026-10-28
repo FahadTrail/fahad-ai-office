@@ -10,7 +10,18 @@ Evidence levels used below: **CODE** (implemented), **TESTED** (automated
 tests pass), **DEPLOYED** (running in production), **E2E** (a real workflow was
 observed end to end), **UNPROVEN** (no current evidence).
 
-## R. Release status — Mission 3 (2026-10-27, authoritative)
+## V3.0 (2026-10-28) — read `docs/FAHAD-OFFICE-V3-FINAL.md` first
+
+The V3.0 mission's product record, evidence and owner actions are in
+`docs/FAHAD-OFFICE-V3-FINAL.md`. This file keeps the release history (§R and
+below) and the database-protection details.
+
+Corrections made by V3.0 to statements below: the Continuity Supervisor is
+**ON** in production since 2026-10-04 (§2's "PARTIAL … only the native worker
+enabled" remains true for the workers); PRs #124, #125, #109, #114 were
+reviewed — see `docs/FAHAD-OFFICE-V3-FINAL.md` §11 → *Old pull requests*.
+
+## R. Release status — Mission 3 (2026-10-27)
 
 **Verdict: READY WITH LIMITATIONS.** Released and live (PRs #131–#133); the
 bulk-delete guard is **applied in production** (2026-10-28, after a verified
