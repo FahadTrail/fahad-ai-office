@@ -79,3 +79,15 @@ head branch, and `GET /branches/:name`.
 2. Resume the session. Its stored `pushedHead` is false, so the controller
    logs the stale-state warning, pushes `659573e` for real, verifies the
    branch and opens one PR. It does not edit or test anything again.
+
+## Production verification (2026-10-28, after deploy `bcdb95a`)
+
+| Check | Evidence |
+| --- | --- |
+| Deploy | Run 40756500097 success; "DEPLOYMENT SUCCESSFUL — now running commit bcdb95a; container healthy"; `coding_workers.office` healthy at 19:44:50 |
+| Resume | 19:45:07 "Resumed from checkpoint 18 (blocked) by worker cee720b58c50:1" |
+| Stale state reported | 19:45:13 warning "The recorded push of 659573e was not on GitHub (stale session state); publishing it now." |
+| Real push | new `git.push` execution 19:45:09; `git ls-remote` shows the work branch at `659573e19f8e…` |
+| One PR | "Opened pull request #1"; only `refs/pull/1` exists |
+| CI | "CI passed on 659573e (1 checks)"; session `completed` 19:45:52, $0 |
+| No redone work | after 19:40 only `git.push`, `github.pr_create`, `github.ci_status` ×2; `repo.write` 1 and `repo.edit` 1 in total, both from 17:47 |

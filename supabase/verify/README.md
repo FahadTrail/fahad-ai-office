@@ -19,6 +19,12 @@ repository.
   Carriage returns and the PostgreSQL 17 MAINTAIN privilege bit are normalized.
 * `schema-fingerprint.txt` — the expected fingerprint after all repository
   migrations. `test/schema-replay.test.js` fails if a replay differs.
+* `restore-drill.sh [--keep-dump DIR]` — independent backup + restore drill:
+  read-only snapshot dump of `public`/`private` from the live database, restore
+  into a throwaway local cluster, PASS only with zero restore errors, equal
+  row counts and equal structure. No credential is printed. See
+  `docs/V3-OPERATIONAL-CLOSURE-2026-10-28.md` §5; tested by
+  `test/restore-drill.test.js`.
 
 ## Changing the schema
 
