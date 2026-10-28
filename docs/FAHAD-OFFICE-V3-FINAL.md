@@ -157,7 +157,7 @@ worker `src/coding-worker.js`; full description in `docs/coding-agent.md`.
 | --- | --- |
 | Tool Broker: discovery, AUTO / APPROVAL / DENY grants, audit (`tool_executions`), redaction, result validation | DEPLOYED, TESTED |
 | GitHub (repo, PR, CI, merge, deploy watch), Supabase tools (read; writes need approval), web search/fetch, Telegram | DEPLOYED; Supabase self-check and Telegram pairing re-verified at every start |
-| Google Drive/Docs/Sheets (search/read in the Office folder; create-only writes; no delete or share) | IMPLEMENTED, TESTED — **PENDING OWNER ACTION** (OAuth client). Shows "Not configured" until a real call succeeds |
+| Google Drive/Docs/Sheets (search/read in the Office folder; create-only writes; no delete or share) | IMPLEMENTED, TESTED — **PENDING OWNER ACTION** (OAuth production publish + re-consent; no Office run has used Drive yet). Privacy policy DEPLOYED at `/privacy` and `/privacy/ar` (2026-10-28, `dad6ac9`) |
 | Hub auth (email OTP), Origin check on writes, RLS deny-by-default (service role only) | DEPLOYED. Supabase security advisor 2026-10-28: 0 ERROR; 1 WARN (leaked-password protection, owner's choice) |
 | Bulk-delete guard + append-only audit | APPLIED 2026-10-28; approved cleanups opt in per transaction |
 | Deploy: forced-command SSH, candidate build, health observations, automatic rollback | DEPLOYED |

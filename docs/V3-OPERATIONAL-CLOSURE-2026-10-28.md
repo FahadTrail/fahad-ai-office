@@ -275,3 +275,37 @@ owner approved:
 the actual publication date in the commit that publishes, after the owner
 approves the final text. No server change is needed.
 
+## Privacy page published — 2026-10-28 23:03 UTC
+
+* The owner approved the text and the contact `idotaste@gmail.com`, with two
+  required corrections, both verified against the code:
+  * the service providers are named: Supabase, Hostinger, the owner-approved
+    AI providers, and Telegram (from `src/channels/office-bridge.js`);
+  * records and excerpts are included in backups, whose retention may differ
+    from the original data's.
+* [PR #143](https://github.com/FahadTrail/fahad-ai-office/pull/143) was merged
+  as `dad6ac9` with effective date `2026-10-28` (UTC).
+* [Deploy run 40784191743](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40784191743)
+  succeeded. Event: "Office runtime started on commit dad6ac9e59e6" at
+  23:03:28 UTC. The coding worker is healthy.
+* The CI route test on that commit shows `/privacy` and `/privacy/ar` answer
+  200 without sign-in, with the CSP and the full text.
+* Not done: the agent environment cannot reach `office.trimedia.me` (its
+  network blocks the host), so the live check of both links is the owner's.
+
+Next for Google (owner, in Google Cloud Console):
+
+1. Branding:
+   * Home page `https://office.trimedia.me`;
+   * Privacy policy `https://office.trimedia.me/privacy`.
+2. Audience: **Publish app** (In production), without submitting for
+   verification.
+3. Revoke the old grant at <https://myaccount.google.com/permissions>.
+4. Re-run `src/ops/google-oauth-setup.js` (`--url`, then `--exchange` in the
+   same runtime within 10 minutes) and store the refresh token with
+   `ops/set-secret.sh`.
+5. Make one Hub request that searches Google Drive.
+
+The scheduled read-only check on 2026-11-05 16:13 UTC verifies that the
+token keeps working past day 8.
+
