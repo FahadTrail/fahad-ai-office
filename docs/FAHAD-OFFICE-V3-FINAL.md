@@ -18,7 +18,21 @@ Evidence labels (honest, never upgraded without proof):
 
 ## 1. Status at a glance
 
-_Filled in at release; see §9 for the release evidence._
+**Verdict: READY FOR DAILY USE — WITH LIMITATIONS (not "fully completed").**
+All twelve V3.0 capabilities are implemented and deployed; **10 of 12 are
+E2E VERIFIED in production** and the other two are TESTED + DEPLOYED (live
+progress view; owner Resume — its first production use will be Fahad's).
+What keeps V3.0 from "fully completed" are owner-only steps (§11): the
+runtime image rebuild for Python, Google OAuth, an independent backup drill,
+and vendor logins for external coding workers.
+
+| | |
+| --- | --- |
+| Production | `main`, deployed by `deploy.yml`; see §9 for each release |
+| Tests | `node --test` 867/867; CI `validate` green (tests, runtime image build, sandbox isolation as root) |
+| Cost | October 2026: **$0.00** of the $2.00 budget (every V3.0 run on free routes) |
+| Security | Supabase advisor 0 ERROR; RLS deny-by-default; no secret in the tree |
+| Open P0/P1 defects | none known |
 
 ## 2. The twelve V3.0 capabilities
 
@@ -32,8 +46,8 @@ _Filled in at release; see §9 for the release evidence._
 | 6 | Live progress of every employee | DEPLOYED, TESTED (browser) | Living Dashboard, job page, SSE; production UI cannot be driven from the agent sandbox (proxy) |
 | 7 | Results and documents are delivered | E2E VERIFIED (synthesis); Word `.docx` TESTED + browser-verified | Final syntheses of the acceptance objectives; Word/PDF/Markdown export (§4) |
 | 8 | Revision and resume without losing work | Revision E2E VERIFIED (`196b2d92`); Resume TESTED + DEPLOYED | Resume/Stop endpoints, stalled detection (§3) |
-| 9 | Coding Agent on an authorised repository | see §5 | |
-| 10 | Development cycle to PR, CI and deploy on approval | see §5 | |
+| 9 | Coding Agent on an authorised repository | E2E VERIFIED (2026-10-28) | Session `3cf33b7f` on `FahadTrail/fahad-ai-office` (§5, §9) |
+| 10 | Development cycle to PR, CI and deploy on approval | E2E VERIFIED (2026-10-28) | PR #136 → CI → approval → merge `6d473e8` → deploy → `/healthz` version check (§9) |
 | 11 | Cost, privacy and permissions | E2E VERIFIED | $2 cap, $0 spent, privacy-forced routing, approvals (§7) |
 | 12 | Work continues after a worker stops or a model runs out | E2E VERIFIED | Capacity wait + auto-resume (2026-09-27), failover (2026-09-25, 2026-10-27); stale-run requeue, coding lease reclaim (TESTED) |
 
@@ -87,7 +101,7 @@ worker `src/coding-worker.js`; full description in `docs/coding-agent.md`.
 | Step | Status |
 | --- | --- |
 | Full cycle with real models, failover, worker restarts, CI repair, merge, deploy (2026-09-25) | E2E VERIFIED (historical rows were removed by the 2026-10-22 cleanup; the record is in `docs/coding-agent.md`) |
-| V3.0 live cycle on the production worker | see §9 |
+| V3.0 live cycle on the production worker (2026-10-28) | **E2E VERIFIED**: TASK → CODE → TEST → PR → CI → APPROVAL → MERGE → DEPLOY → worker restart → resume from checkpoint → VERIFY; $0 (§9) |
 | Isolation: sandbox uid 1000, controller credentials unreadable | TESTED in CI inside the runtime image as root |
 | Node.js projects (npm, pnpm, yarn, bun) | IMPLEMENTED, TESTED |
 | Python projects | IMPLEMENTED, TESTED; the runtime image gains `python3` + `pip` with this release — **PENDING OWNER ACTION** (`sudo bash ops/install-deploy.sh` applies a Dockerfile change; deploys ship only `src/` and the lockfiles) |
@@ -151,7 +165,55 @@ Recovery plan:
 
 ## 9. Release evidence (V3.0)
 
-_Filled in at release._
+### Releases
+
+| PR | Merge | What | Deploy |
+| --- | --- | --- | --- |
+| [#135](https://github.com/FahadTrail/fahad-ai-office/pull/135) | `f79e5c9` | Stalled objectives (no false "running"), real `.docx`, Coding Agent toolchain truth + Python image, code-privacy choice, V3 docs | Run [40643895814](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40643895814) success; event "Office runtime started on commit f79e5c995633" 06:29:54 UTC |
+| [#136](https://github.com/FahadTrail/fahad-ai-office/pull/136) | `6d473e8` | Written, tested, merged and deployed **by the Coding Agent** (below) | Run [40645165109](https://github.com/FahadTrail/fahad-ai-office/actions/runs/40645165109) success; "Office runtime started on commit 6d473e8fbf90" 06:42:43 UTC |
+| V3.0 records PR | — | `.docx` renders Hub artifacts as lists (found on real content), this record | see the PR |
+
+### Coding Agent — live cycle (2026-10-28, session `3cf33b7f-d81f-4790-b96a-f8ac52da911c`)
+
+Objective: humanize the new `TOOLCHAIN_MISSING` blocker in
+`src/hub-ui/humanize.js`, test first. Settings: repository
+`FahadTrail/fahad-ai-office`, code privacy PUBLIC, free routes only, budget
+$0.50, merge & deploy, verify `https://office.trimedia.me/healthz`.
+
+| Step | Evidence (agent events, UTC) |
+| --- | --- |
+| TASK | Session started 06:30:23 by worker `c8cda2cb7045:1`; sandbox on branch `fahad/humanize-the-toolchain-missing-c-3cf33b7f` |
+| PLAN | 4-step plan, test first |
+| TEST (red) | `node --test test/humanize-toolchain.test.js → exit 1` 06:31:32 |
+| CODE | Two rules added (English + Arabic) |
+| TEST (green) | targeted test exit 0; full `node --test` exit 0 06:34:21 |
+| GATE | `npm ci`, gate `node --test → exit 0`, "Finish gate passed" 06:36:26 |
+| PR | Commit `7303ce5`, pushed, PR [#136](https://github.com/FahadTrail/fahad-ai-office/pull/136) 06:36:36 |
+| CI | `validate` passed on `7303ce5` 06:38:45 |
+| APPROVAL | Merge approval requested 06:38:47; approved 06:39:04 after a diff review (Claude, under Fahad's standing V3.0 pre-approval) |
+| MERGE | Merged as `6d473e8` 06:39:17 |
+| DEPLOY | Deploy run watched; the deploy **restarted the coding worker mid-session** |
+| CONTINUITY | "Resumed from checkpoint 27 by worker 76067c3d72e3:1" 06:46:09 — no step repeated |
+| VERIFY | "Production verification passed: HTTP 200, version=6d473e8fbf90 (expected 6d473e8)" 06:46:15 |
+| REPORT | Session completed 06:46:16; 19 model attempts (OpenRouter Nemotron Ultra, free), **$0.00**, 35 audited tool executions |
+
+### Office — CHIEF multi-agent acceptance (2026-10-28, objective `c6b4dfcb-eb6d-4aab-9512-ee9b04e91df0`)
+
+Café launch plan (research, budget and break-even, licensing), free routes only.
+
+| | |
+| --- | --- |
+| Flow | CHIEF plan → RESEARCH and LEGAL in parallel → FINANCE (after research) → AUDIT → CHIEF revision request → FINANCE revision → CHIEF synthesis → CHIEF final synthesis; completed 06:48:26 → 07:07:16 |
+| Quality gates | FINANCE returned by code validation (INCONSISTENT, 6 then 7 issues), revised, **VERIFIED**; CHIEF fact gate preserved 8 validated figures and removed 2 contradicting statements |
+| Figures (re-checked by hand) | Revenue 16 × 120 × 360 = AED 691,200; total costs 533,400 (216,000 variable + 242,400 fixed + 75,000 one-time); net 157,800; gross margin 68.75 %; cash break-even month 4 |
+| Output | Final synthesis 5,969 characters in Gulf Arabic, 12 artifacts, 12 handoffs |
+| Models | 52 attempts on Gemini, Groq, OpenRouter and Cloudflare free routes, with automatic failover after Gemini failures; **$0.00** |
+| Report export | The real synthesis exported with `src/hub-ui/docx.js` and rendered by LibreOffice: Arabic RTL, mirrored tables; the run exposed raw JSON for a Hub checklist artifact and reversed Arabic inside code — both fixed in the V3.0 records PR |
+
+### Earlier production acceptance still valid
+
+2026-10-27 objectives `3be79c51` (research), `196b2d92` (finance, VERIFIED),
+`e3113d70` (7 workstreams, 20 handoffs) — `docs/FAHAD-OFFICE-COMPLETION.md` §R.
 
 ## 10. How to use it
 
@@ -233,4 +295,16 @@ Ordered by value. None blocks daily use of the Office.
 
 ## 13. Continuation (for the next agent)
 
-_Filled in at release._
+* Read `AGENTS.md` → *Current state — V3.0*, then this file.
+* Development branch convention: work on a branch, one coherent PR per
+  release group, CI green, merge, watch `deploy.yml`, confirm the
+  `runtime_started` event names the merge commit.
+* Next technical steps, in order of value:
+  1. After Fahad runs `ops/install-deploy.sh`, run one Coding Agent session on
+     a small Python repository and record it here.
+  2. When Google is connected, run one Office objective that saves a
+     document to the Office folder and record the Drive file id.
+  3. Optional: Go/Rust toolchains in the image (size and update cost
+     first), a scheduled independent backup.
+* Nothing is running in the background for this mission; no session holds a
+  lease; no approval is pending.

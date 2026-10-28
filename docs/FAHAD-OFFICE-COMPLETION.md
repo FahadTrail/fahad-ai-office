@@ -350,6 +350,14 @@ Submit each from the Office composer and record job id, status, steps and cost h
 
 ## Continuation point
 
+* **V3.0 (2026-10-28) supersedes this section:** continue from
+  `docs/FAHAD-OFFICE-V3-FINAL.md` §13. Production runs the V3.0 releases
+  (#135, #136 and the V3.0 records PR); the Coding Agent and a CHIEF
+  multi-agent objective were E2E verified again on 2026-10-28 at $0.
+
+Earlier continuation (history):
+
+
 * Production runs `2adb03a` (PRs #131–#133); the bulk-delete guard is applied
   (2026-10-28). Read §R first; §0 and below are history.
 * The 2026-10-22 deletion was the owner's requested cleanup — closed.

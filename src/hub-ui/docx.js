@@ -6,7 +6,8 @@
 //
 // Supported: headings (#–######), paragraphs, bold/italic/strike, inline and
 // fenced code, bullet and numbered lists (one indent level per two spaces),
-// blockquotes, tables and horizontal rules. Links keep their text and show the
+// blockquotes, tables and horizontal rules; an ```artifact block (a Hub card)
+// becomes a titled list or table. Links keep their text and show the
 // address after it. Every paragraph whose text contains Arabic is laid out
 // right-to-left (w:bidi) and its runs marked complex-script (w:rtl), so mixed
 // Arabic/English reports read correctly in both directions.
@@ -98,7 +99,7 @@ function runXml(run, rtl, extra = '') {
   const props = [
     run.code ? '<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>' : '',
     run.bold ? '<w:b/><w:bCs/>' : '', run.italic ? '<w:i/><w:iCs/>' : '', run.strike ? '<w:strike/>' : '',
-    extra, rtl ? '<w:rtl/>' : '',
+    extra, rtl || run.rtlText ? '<w:rtl/>' : '',
   ].join('');
   return `<w:r>${props ? `<w:rPr>${props}</w:rPr>` : ''}<w:t xml:space="preserve">${xml(run.text)}</w:t></w:r>`;
 }
@@ -127,6 +128,26 @@ function table(header, rows) {
     + `${row(header, true)}${rows.map((cells) => row(cells, false)).join('')}</w:tbl>${paragraph('')}`;
 }
 
+const ITEM_TEXT = ['text', 'title', 'label', 'name', 'requirement', 'risk', 'item', 'claim', 'hook', 'milestone'];
+function artifactBlocks(source) {
+  let data;
+  try { data = JSON.parse(source); } catch { return []; }
+  if (!data || typeof data !== 'object') return [];
+  const blocks = data.title ? [paragraph(String(data.title), { style: 'Heading3' })] : [];
+  if (Array.isArray(data.columns) && Array.isArray(data.rows)) return [...blocks, table(data.columns.map(String), data.rows.map((row) => (Array.isArray(row) ? row : []).map((cell) => String(cell ?? ''))))];
+  const list = [data.items, data.entries, data.findings, data.claims, data.steps].find(Array.isArray) || [];
+  for (const entry of list) {
+    const key = entry && typeof entry === 'object' ? ITEM_TEXT.find((name) => typeof entry[name] === 'string' && entry[name].trim()) : null;
+    const text = typeof entry === 'string' ? entry : key ? entry[key] : '';
+    if (text) pushItem(blocks, text, entry);
+  }
+  return blocks;
+}
+function pushItem(blocks, text, entry) {
+  const owner = entry && typeof entry === 'object' && typeof entry.owner === 'string' && entry.owner ? ` — ${entry.owner}` : '';
+  blocks.push(paragraph(`${text}${owner}`, { numbering: { id: 1, level: 0 } }));
+}
+
 export function markdownToDocumentXml(markdown, title = '') {
   const lines = String(markdown ?? '').replace(/\r\n?/g, '\n').split('\n');
   const out = [];
@@ -135,14 +156,16 @@ export function markdownToDocumentXml(markdown, title = '') {
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) { index += 1; continue; }
-    const fence = line.match(/^\s*(```|~~~)/);
+    const fence = line.match(/^\s*(```|~~~)\s*([\w-]*)/);
     if (fence) {
+      const body = [];
       index += 1;
-      while (index < lines.length && !lines[index].trim().startsWith(fence[1])) {
-        out.push(paragraph(lines[index], { style: 'Code', rtl: false, keepText: true }));
-        index += 1;
-      }
+      while (index < lines.length && !lines[index].trim().startsWith(fence[1])) { body.push(lines[index]); index += 1; }
       index += 1;
+      // A structured artifact (drawn as a card in the Hub) becomes a titled
+      // list or table, never raw JSON; anything unreadable is left out.
+      if (fence[2] === 'artifact') { out.push(...artifactBlocks(body.join('\n'))); continue; }
+      for (const code of body) out.push(paragraph(code, { style: 'Code', rtl: false, runs: [{ text: code, rtlText: ARABIC.test(code) }] }));
       continue;
     }
     const heading = line.match(/^\s*(#{1,6})\s+(.*?)\s*#*\s*$/);

@@ -94,8 +94,11 @@ Facts every agent must know:
   external CLI workers (Claude Code, Codex, Gemini CLI, OpenCode, Kilo,
   Antigravity, FreeBuff) are disabled until Fahad logs them in on the VPS.
   Older notes below that say "Supervisor OFF" or "unmerged" are history.
-* Coding Agent toolchains in the worker image: Node.js and Python. Go and Rust
-  sessions stop with `TOOLCHAIN_MISSING` until the image gains them.
+* Coding Agent: full cycle E2E VERIFIED again on 2026-10-28 (session
+  `3cf33b7f`, PR #136: test-first → PR → CI → approval → merge → deploy →
+  worker restart → resume → `/healthz` verify, $0). Toolchains: Node.js now;
+  Python once Fahad runs `ops/install-deploy.sh` (Dockerfile); Go and Rust
+  sessions stop with `TOOLCHAIN_MISSING`.
 * Google Drive/Docs/Sheets is built but PENDING OWNER ACTION (OAuth).
 * Approved merges and deploys of non-destructive code that passed every gate
   are pre-authorised by Fahad (V3.0 mission); new production migrations,

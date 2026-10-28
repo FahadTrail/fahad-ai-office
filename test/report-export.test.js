@@ -73,3 +73,14 @@ test('the Word button downloads a .docx, not an HTML .doc', () => {
   assert.match(source, /markdownToDocx/);
   assert.doesNotMatch(source, /application\/msword/);
 });
+
+test('the .docx turns a Hub artifact into a titled list, never raw JSON, and keeps Arabic in code readable', async () => {
+  const { markdownToDocumentXml } = await import('../src/hub-ui/docx.js');
+  const markdown = '## Next actions\n```artifact\n{"type":"checklist","title":"مهام الإطلاق","items":[{"text":"تحديد الموقع","owner":"legal"},{"text":"POS","status":"todo"}]}\n```\n\n```artifact\n{"type":"table","title":"Plan","columns":["A","B"],"rows":[["1","2"]]}\n```\n\n```artifact\nnot json\n```\n\n```\nconst label = "مرحبا";\n```';
+  const body = markdownToDocumentXml(markdown);
+  assert.doesNotMatch(body, /&quot;type&quot;|"type"|not json/);
+  assert.match(body, /<w:pStyle w:val="Heading3"\/><w:bidi\/>.*مهام الإطلاق/s);
+  assert.match(body, /تحديد الموقع — legal/);
+  assert.match(body, /<w:tbl>.*Plan|Plan.*<w:tbl>/s);
+  assert.match(body, /<w:rtl\/><\/w:rPr><w:t xml:space="preserve">const label = &quot;مرحبا&quot;;/);
+});
