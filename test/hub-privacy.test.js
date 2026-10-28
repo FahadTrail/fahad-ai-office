@@ -72,4 +72,12 @@ test('the policy text matches what the code does', () => {
   // The paused-request excerpt limit stated in the policy (1,200 characters).
   assert.match(workflow, /summary: String\(call\.summary \|\| ''\)\.slice\(0, 1200\)/);
   assert.ok(en.includes('1,200') && ar.includes('1,200'));
+  // Service providers and backups (owner-requested disclosures), tied to the code.
+  const bridge = read('src/channels/office-bridge.js');
+  for (const name of ['Supabase', 'Hostinger', 'Telegram']) assert.ok(en.includes(name) && ar.includes(name), name);
+  assert.match(bridge, /clip\(body, 3500\)/, 'Telegram answers are clipped at 3,500 characters');
+  assert.match(bridge, /clip\(job\.title \|\| job\.goal \|\| '', 140\)/, 'Hub objectives send only a title notice');
+  assert.ok(en.includes('3,500') && ar.includes('3,500'));
+  assert.match(en, /backups/i);
+  assert.match(ar, /النسخ الاحتياطية/);
 });

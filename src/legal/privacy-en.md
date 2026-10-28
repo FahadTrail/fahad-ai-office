@@ -63,7 +63,27 @@ including the Limited Use requirements. Google user data is:
 * never transferred to anyone except the AI provider that processes the
   owner's own request.
 
-## Storage and retention
+## Service providers
+
+The app runs on these services, which process data only to operate it for
+the owner:
+
+* **Supabase** hosts the owner's database. Everything described under
+  "Storage and retention" is stored there.
+* **Hostinger** hosts the server (a virtual private server) that runs the
+  app and holds its configuration, including the Google credentials.
+* **AI providers approved by the owner for private data** process the
+  owner's requests, as described above.
+* **Telegram** delivers the owner's own messages, but only if the owner uses
+  the app's private Telegram bot.
+  * When a request is sent through that bot, the answer is delivered to the
+    owner's Telegram chat. That answer may quote Drive files, and up to 3,500
+    characters are sent.
+  * For requests made in the Office itself, only a short completion notice
+    with the request's title is sent there.
+
+Google user data is not shared with anyone else.
+
 
 * **Google credentials.** The OAuth client secret and the refresh token are
   stored only in the owner's server configuration. Access tokens are kept in
@@ -82,6 +102,14 @@ including the Limited Use requirements. Google user data is:
 * **Created files.** The ids, names and links of the files the app created
   are kept with the request.
 * No other copy of Drive file contents is stored.
+* **Backups.** The records and excerpts above are part of the database, so
+  they are also included in backups. These are:
+  * Supabase's automatic database backups;
+  * any database snapshot or backup copy the owner makes.
+
+  Backups follow their own retention period, which can differ from the
+  original data's. A record deleted from the database can therefore remain
+  in an existing backup until that backup expires or is deleted.
 
 ## Revoking access
 
