@@ -177,11 +177,59 @@ objectives, blocked sessions, paid calls and data-loss signals.
 
 ## 11. Owner actions (only Fahad can do these)
 
-_Filled in at release._
+Ordered by value. None blocks daily use of the Office.
+
+1. **Rebuild the runtime image once** so Python projects work in the Coding
+   Agent: on the VPS, `sudo bash ops/install-deploy.sh` (installs the reviewed
+   `Dockerfile`; the next deploy builds with `python3` + `pip`). Until then a
+   Python session stops with `TOOLCHAIN_MISSING`.
+2. **Google Drive/Docs/Sheets (optional):** create a Google OAuth client
+   (Desktop app) with the Drive API enabled, then follow the header of
+   `src/ops/google-oauth-setup.js` (client id/secret → consent link → refresh
+   token into `.env` via `ops/set-secret.sh` → Office folder id). Scopes:
+   `drive.file` + read limited in code to the Office folder.
+3. **Independent backup:** confirm daily backups in Supabase Dashboard →
+   Database → Backups, and run one restore into a scratch project (drill).
+   Optionally schedule a `pg_dump` to storage you control.
+4. **External coding workers (optional):** to enable Claude Code CLI or Codex
+   CLI as continuity workers, log in to each CLI on the VPS as the app user,
+   then enable the worker (`ops/setup-continuity-workers.sh`; see
+   `docs/CODING-CONTINUITY-SUPERVISOR.md`). Each uses your own subscription;
+   nothing is enabled without your login.
+5. **Repository visibility (recommended):** make
+   `FahadTrail/fahad-ai-office` private. Impact checked: deploys use an SSH
+   forced command (unaffected); the Coding Agent and CI use tokens/Actions
+   (unaffected); GitHub Actions minutes then count against the private-repo
+   allowance; the Coding Agent's "Public repository" privacy option must no
+   longer be used for it. Rollback: make it public again.
+6. **A separate test repository for the Coding Agent (optional):** create an
+   empty private repository and add it to the Coding Agent's GitHub token,
+   so future agent drills never touch the production repository.
+7. **Leaked-password protection (optional):** Supabase Auth setting; the Hub
+   signs in with e-mail OTP, so impact is low.
+8. **Close old PRs** #124, #125, #109, #114 (reviewed below; nothing in them
+   needs to be carried over).
+
+### Old pull requests (reviewed 2026-10-28)
+
+| PR | What it is | Recommendation |
+| --- | --- | --- |
+| #124 `feat/cloudflare-reliability` (draft) | First version of the Cloudflare fail-closed work | Close: superseded by merged #126 (`27ab29c`) and the closed Cloudflare workstream |
+| #125 `claude/focused-rubin-ryev82` (draft) | Cloudflare canary caps | Close: superseded by #126 |
+| #109 `cursor/cloud-agent-environment-2419` (draft) | Cursor Cloud setup notes for AGENTS.md | Close: Cursor-specific; the durable rules it lists are already in AGENTS.md |
+| #114 `v5.4-activation-followup` | Docs after the V5.4 activation (Supervisor ON correction, cleanup manifest counts) | Close: its key fact (Supervisor ON) is now in AGENTS.md and this record; the manifest it updates was overtaken by the 2026-10-22 owner cleanup |
 
 ## 12. Limits (truthful)
 
-_Filled in at release._
+* The agent sandbox cannot open the production Hub (egress proxy), so
+  production UI clicks are verified on the real Hub code over preview data;
+  production state is read from Supabase and GitHub.
+* Go and Rust repositories are not supported by the worker image.
+* External CLI coding workers are disabled (owner logins).
+* Google Workspace is not connected (owner OAuth).
+* No independent backup or restore drill has been performed by the agent.
+* Free model capacity varies; long objectives may wait for capacity (they
+  resume by themselves) — that is by design under the $2 cap.
 
 ## 13. Continuation (for the next agent)
 
