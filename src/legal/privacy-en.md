@@ -21,8 +21,8 @@ folder chosen by the owner (the "Office folder"):
 * every search is restricted to that folder;
 * a file outside it is refused.
 
-Whole-Drive reading happens only if the owner explicitly enables it on his own
-server.
+Whole-Drive reading happens only if the owner explicitly enables it on the
+owner's own server.
 
 What the app reads:
 

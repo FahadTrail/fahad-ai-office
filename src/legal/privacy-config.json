@@ -1,0 +1,5 @@
+{
+  "_comment": "Owner-approved publication values for /privacy. The page answers 404 until effectiveDate is set; set it to the actual publication date in the commit that publishes.",
+  "contactEmail": "idotaste@gmail.com",
+  "effectiveDate": null
+}

@@ -2,9 +2,10 @@
 // (English) and /privacy/ar (Arabic). The text lives in src/legal/ and is
 // rendered with the Hub's safe Markdown renderer.
 //
-// Owner approval gate: the page is served only once the owner has set both
-// PRIVACY_CONTACT_EMAIL and PRIVACY_EFFECTIVE_DATE (YYYY-MM-DD) on the server.
-// Until then both paths answer 404, so merging the code publishes nothing.
+// Owner approval gate: src/legal/privacy-config.json holds the owner-approved
+// contact address and the effective date (YYYY-MM-DD, the actual publication
+// date). Until both are valid both paths answer 404, so code alone publishes
+// nothing.
 
 import { readFileSync } from 'node:fs';
 import { renderMarkdown } from './hub-ui/markdown.js';
@@ -13,21 +14,22 @@ const TEXT = Object.freeze({
   en: readFileSync(new URL('./legal/privacy-en.md', import.meta.url), 'utf8'),
   ar: readFileSync(new URL('./legal/privacy-ar.md', import.meta.url), 'utf8'),
 });
+const APPROVED = JSON.parse(readFileSync(new URL('./legal/privacy-config.json', import.meta.url), 'utf8'));
 const EMAIL = /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const PRIVACY_PATHS = Object.freeze({ '/privacy': 'en', '/privacy/': 'en', '/privacy/ar': 'ar', '/privacy/ar/': 'ar' });
 
-export function privacyConfig(env = process.env) {
-  const contact = String(env.PRIVACY_CONTACT_EMAIL || '').trim();
-  const effective = String(env.PRIVACY_EFFECTIVE_DATE || '').trim();
+export function privacyConfig(config = APPROVED) {
+  const contact = String(config?.contactEmail || '').trim();
+  const effective = String(config?.effectiveDate || '').trim();
   const valid = EMAIL.test(contact) && DATE.test(effective) && !Number.isNaN(Date.parse(`${effective}T00:00:00Z`));
   return valid ? { contact, effective } : null;
 }
 
 // The complete HTML page, or null when the owner has not published it.
-export function privacyPage(lang, env = process.env) {
-  const config = privacyConfig(env);
+export function privacyPage(lang, approved = APPROVED) {
+  const config = privacyConfig(approved);
   if (!config || !TEXT[lang]) return null;
   const body = renderMarkdown(TEXT[lang].replaceAll('{{CONTACT_EMAIL}}', config.contact).replaceAll('{{EFFECTIVE_DATE}}', config.effective));
   const ar = lang === 'ar';
@@ -45,8 +47,8 @@ ul{padding-inline-start:22px}</style></head>
 <body><main><nav>${other}</nav>${body}</main></body></html>`;
 }
 
-export function sendPrivacyPage(response, lang, env = process.env) {
-  const html = privacyPage(lang, env);
+export function sendPrivacyPage(response, lang, approved = APPROVED) {
+  const html = privacyPage(lang, approved);
   if (!html) {
     response.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
     return response.end(JSON.stringify({ ok: false, error: 'NOT_FOUND' }));

@@ -3,9 +3,10 @@
 * **Privacy policy (Google OAuth consent screen).**
   * Published text: `src/legal/privacy-en.md` and `src/legal/privacy-ar.md`.
   * Served by the Hub at `/privacy` and `/privacy/ar` (`src/hub-privacy.js`).
-  * The page answers **404 until the owner approves it**, by setting
-    `PRIVACY_CONTACT_EMAIL` and `PRIVACY_EFFECTIVE_DATE` with
-    `ops/set-secret.sh`.
+  * The owner-approved contact and the effective date are in
+    `src/legal/privacy-config.json`. The page answers **404 until the
+    effective date is set**, which happens in the publishing commit after the
+    owner approves the final text.
 * **Proof that the text matches the code.** `test/hub-privacy.test.js` fails
   if any of these change without the text changing:
   * the requested scopes;

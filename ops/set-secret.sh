@@ -61,10 +61,6 @@ declare -A SHAPE=(
   # Not a secret: folder (default) keeps Drive reads inside the Office folder;
   # drive is the owner's explicit choice to let employees read the whole Drive.
   [GOOGLE_DRIVE_READ_SCOPE]='^(folder|drive)$'
-  # Not secrets: the owner's approval to publish the /privacy page (Google
-  # OAuth consent screen). The page answers 404 until both are set.
-  [PRIVACY_CONTACT_EMAIL]='^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$'
-  [PRIVACY_EFFECTIVE_DATE]='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
   # Not a secret: the Cloudflare account id (32 hex characters).
   [CLOUDFLARE_ACCOUNT_ID]='^[a-f0-9]{32}$'
   # Not a secret: which Cloudflare Workers plan the account is on. Workers AI

@@ -265,14 +265,13 @@ the printed report.
   event in `events.payload` records each tool call's arguments: the search
   words and the file ids. The published text states this too.
 
-**Publishing gate.** Merging the PR publishes nothing. `/privacy` answers 404
-until the owner sets both values on the server:
+**Publishing gate.** `src/legal/privacy-config.json` holds the values the
+owner approved:
 
-```bash
-sudo bash ops/set-secret.sh PRIVACY_CONTACT_EMAIL
-```
+* the contact address `idotaste@gmail.com`, approved 2026-10-28;
+* the effective date.
 
-```bash
-sudo bash ops/set-secret.sh PRIVACY_EFFECTIVE_DATE
-```
+`/privacy` answers 404 while the effective date is empty. The date is set to
+the actual publication date in the commit that publishes, after the owner
+approves the final text. No server change is needed.
 
