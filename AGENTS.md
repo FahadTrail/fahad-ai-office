@@ -69,27 +69,38 @@ inside the built runtime image as root.
   claimed "verified" only after `canary:agentic` succeeds with real credentials.
 * Do not claim quota numbers a provider does not report.
 
-## Completion mission (2026-10-27) — start here
+## Current state — V3.0 (2026-10-28) — start here
 
-**Current state (Mission 3):** production runs `2adb03a` (PRs #131–#133); see §R of
-`docs/FAHAD-OFFICE-COMPLETION.md`. The bulk-delete guard (`20261027200000`) is
-APPLIED (2026-10-28) — an approved cleanup opts in per transaction with
-`set_config('office.allow_bulk_delete', '<tables>@' || txid_current()::text, true)`.
-Google is pending owner OAuth.
+The authoritative product record is `docs/FAHAD-OFFICE-V3-FINAL.md`
+(features with evidence levels, tests, deployment, cost, security, limits,
+owner actions, how to operate and how to continue). The release history and
+database-protection details are in `docs/FAHAD-OFFICE-COMPLETION.md`. Where
+anything below disagrees with those two files, they win: the sections below
+this one are history.
 
-The authoritative status, inventory, owner decisions and continuation point
-are in `docs/FAHAD-OFFICE-COMPLETION.md`. Key facts:
-* On 2026-10-22 Fahad had all test data removed (his request, not an
-  incident); production acceptance has since run successfully (2026-10-27).
-* Owner recovery of Office objectives: `POST /api/jobs/:id/resume` (requeues
-  only unfinished steps, keeps delivered work) and `POST /api/jobs/:id/stop`
-  (`src/hub-job-actions.js`), with Arabic failure wording on the job screen.
-* No migration, provider, budget or privacy change was made.
-* Mission 2 (same day, branch `claude/kind-ptolemy-kd5e5j`): bulk-delete guard
-  migration (unapplied), data-loss/stuck alerts, Google Drive/Docs/Sheets
-  connector (not connected), Word/PDF report export, Coding Agent repository
-  profile, Hub Origin check, Telegram notices. **Implemented, verification
-  pending** — nothing tested, merged or deployed; see §0 of the record.
+Facts every agent must know:
+* Production deploys from `main`; `/healthz` and the `runtime_started` event
+  ("Office runtime started on commit …") name the running commit.
+* The bulk-delete guard (`20261027200000`) is APPLIED. An approved cleanup
+  opts in per transaction with
+  `set_config('office.allow_bulk_delete', '<tables>@' || txid_current()::text, true)`.
+  The 2026-10-22 deletion was Fahad's own requested test-data cleanup — never
+  try to restore it. `backup_20261028` is an in-database snapshot, not an
+  independent backup.
+* Budget: $2/month, free-first. Never raise it or enable a paid provider.
+* The **Continuity Supervisor is ON** in production (its 60-second
+  `freeze_stale_coding_leases` poll is in the Supabase edge logs; verified
+  again 2026-10-28). Only the native `office` coding worker is enabled; the
+  external CLI workers (Claude Code, Codex, Gemini CLI, OpenCode, Kilo,
+  Antigravity, FreeBuff) are disabled until Fahad logs them in on the VPS.
+  Older notes below that say "Supervisor OFF" or "unmerged" are history.
+* Coding Agent toolchains in the worker image: Node.js and Python. Go and Rust
+  sessions stop with `TOOLCHAIN_MISSING` until the image gains them.
+* Google Drive/Docs/Sheets is built but PENDING OWNER ACTION (OAuth).
+* Approved merges and deploys of non-destructive code that passed every gate
+  are pre-authorised by Fahad (V3.0 mission); new production migrations,
+  sensitive permission changes, cost increases, repository visibility and
+  destructive operations each need his specific approval.
 
 ## Cloudflare reliability (2026-10-26)
 
@@ -135,7 +146,7 @@ V2.0 was merged as PR #120 and deployed at `56ff190e432939b0ec573b6807077978a602
 * Visual QA: `node tools/redesign-shots.mjs <dir> --edge`.
 * V2.1 development is on `feat/office-premium-v2-1`; see `docs/office-premium-v2.1.md`.
 * V2.2 development is on `feat/office-v2-2-living-dashboard`; see `docs/office-premium-v2.2.md`. It adds the real-data Living Dashboard to the Office homepage without backend changes.
-* Do not merge or deploy V2.2 without Fahad.
+* V2.2 was merged as #122 (`fe05019`) and is deployed.
 
 ## Live Operations (2026-10-09)
 
@@ -173,7 +184,7 @@ The approved "Daylight Atrium" redesign of the Live Office was merged as #115 (`
 * It adds only additive, read-only API fields and no migration.
 * QA runs through `tools/office-shots.mjs` (the ten views) and `tools/office-a11y.mjs`.
 
-## V5.4 functional certification (2026-10-06, open PR, unmerged)
+## V5.4 functional certification (history: merged as #112 `a8491e0` and deployed 2026-10-06; both migrations applied)
 
 The certification is on branch `v5.4-functional-certification`. The report is `docs/v5.4-certification.md`.
 
@@ -206,7 +217,7 @@ Do not merge, deploy, apply the migrations or run the cleanup without Fahad.
 
 Details are in `docs/v5.3-deliverables-coding.md`.
 
-## Continuity update (2026-10-02, development-only completion)
+## Continuity update (2026-10-02; history — the stack #102–#106 was merged 2026-10-04 and the Supervisor is ON)
 
 Fahad stopped all readiness/testing work for this sprint. The #106 checkout adds an official Claude Code CLI adapter, a shared external driver, Codex CLI hardening, guarded worktree transfers, same-worker CLI resume metadata, owner controls and recovery safeguards. The three executable adapters in **source** are Office, Codex and Claude; the external two are default OFF and are not authenticated or live-verified by this sprint. Four other non-native workers remain manual/disabled. The two development commits are now on GitHub (#106 baseline `bcd572f`); the former push-authentication issue is historical. A separate local Graphify pilot (`docs/GRAPHIFY.md`) is code-only, read-only, optional and default OFF for Coding; it must not affect Supervisor decisions. No full Continuity test suite, DB replay, real handoff, UI audit or production action was run after this development. #102/#104/#105/#106 remain unmerged; migration unapplied; Supervisor OFF. See the current top of `docs/HANDOVER.md`, `docs/CODEX-CONTINUE.md` and `.continuity/checkpoint.json`. Do not start final testing without Fahad's next instruction.
 
@@ -375,10 +386,5 @@ The Coding Continuity Supervisor is implemented in an open, unmerged PR stack: #
 
 ## Next actions
 
-1. Codex: confirm CI and DB replay on #106's final Phase N-readiness head; then resolve the executable third-worker and isolated Office/Codex environment blocker and run the documented real Phase N drill. Keep #102/#104/#105/#106 open and unmerged, with the migration unapplied and Supervisor off. The activation order and rollback plan are in `docs/CONTINUITY-PHASE-N-READINESS.md`.
-2. Use it: Hub → Coding Agent → project, repository, detailed objective,
-   budget, routing → Start; approve merges in the Hub.
-3. Optional: Supabase access token for the agent, more providers (keys,
-   privacy flags, workspace authorization), each followed by a live canary.
-4. Office specialties can reuse the agentic gateway, routing policy and Tool
-   Broker when prioritized.
+See *Continuation* in `docs/FAHAD-OFFICE-V3-FINAL.md`. The older Phase N /
+Continuity next actions that used to be here are complete or superseded.
