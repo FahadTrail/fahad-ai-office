@@ -10,7 +10,7 @@ Historical reports remain unchanged. No previous acceptance tests were repeated.
 | Independent backup and isolated restore | DONE | Existing PostgreSQL 17 drill: PASS, 45 tables, 2,158 rows; zero restore errors, row-count differences or structural differences |
 | Encryption and external custody | DONE | AES-256; decryption roundtrip matched original SHA-256; encrypted copy and restore-report hashes rechecked on approved owner-controlled external storage |
 | Temporary transfer authorization | DONE | Removed after transfer |
-| Residual plaintext deletion | OPEN | Exact file identified privately; awaiting explicit owner deletion approval |
+| Residual plaintext deletion | DONE | Owner approved deletion of the identified 749,867-byte file; its hash was checked before unlink; absence verified (PLAINTEXT_DELETION_VERIFIED), encrypted copy retained |
 | Coding Agent token scope | DONE | Previously inspected owner settings: main Office repository retained, acceptance fixture absent; token unchanged |
 | Google Drive search/read | DONE | Prior successful evidence and owner's current confirmation; no repeat test or test-file creation |
 | OAuth publishing | DONE | Last observed state: In production, External; existing scopes unchanged |
@@ -60,6 +60,6 @@ The earlier report records the checkpoint; active scheduler execution was not
 independently confirmed here. A successful Drive check does not complete
 Google verification.
 
-Overall: OPEN until plaintext cleanup and the outstanding Google verification/
+Overall: OPEN until the outstanding Google verification and
 authorization-continuity items are resolved. Deferred recurring backups remain
 an explicitly unactivated proposal. Production settings and budgets unchanged.
