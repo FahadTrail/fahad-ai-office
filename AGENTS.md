@@ -99,7 +99,9 @@ Facts every agent must know:
   worker restart → resume → `/healthz` verify, $0). Toolchains: Node.js now;
   Python once Fahad runs `ops/install-deploy.sh` (Dockerfile); Go and Rust
   sessions stop with `TOOLCHAIN_MISSING`.
-* Google Drive/Docs/Sheets is built but PENDING OWNER ACTION (OAuth).
+* Google Drive/Docs/Sheets: search and read E2E VERIFIED in production on
+  2026-10-29 (`docs/V3-OPERATIONS-CHECK-2026-10-29.md`); token longevity past
+  Google's 7-day Testing limit is unproven until the 2026-11-05 check.
 * Approved merges and deploys of non-destructive code that passed every gate
   are pre-authorised by Fahad (V3.0 mission); new production migrations,
   sensitive permission changes, cost increases, repository visibility and

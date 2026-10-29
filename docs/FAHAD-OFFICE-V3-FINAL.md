@@ -46,7 +46,7 @@ command, so no completed work was redone. The 9 tests pass on `659573e`.
 | --- | --- |
 | Production | `main`, deployed by `deploy.yml`; see §9 for each release |
 | Tests | `node --test` 867/867; CI `validate` green (tests, runtime image build, sandbox isolation as root) |
-| Cost | October 2026: **$0.00** of the $2.00 budget (every V3.0 run on free routes) |
+| Cost | October 2026: **$0.0125** of the $2.00 budget (2026-10-29: 176 free attempts; 9 paid DeepSeek attempts for two private Google Drive objectives, max $0.0082 per objective) |
 | Security | Supabase advisor 0 ERROR; RLS deny-by-default; no secret in the tree |
 | Open P0/P1 defects | none known |
 
@@ -146,7 +146,9 @@ worker `src/coding-worker.js`; full description in `docs/coding-agent.md`.
   guarantee (a billed or rerouted free call blocks the route and is
   charged to the ledger). Code: `src/model-gateway/agentic/`.
 * Budget: **$2.00 per month**, max $0.10 per request; October 2026 spend
-  **$0.00** (81 model attempts, all free). Paid routes only within the cap.
+  **$0.0125** on 2026-10-29 (185 attempts: 176 free, 9 paid on DeepSeek, the
+  privacy-approved route that private Drive work requires). Paid routes only
+  within the cap.
 * Every attempt records provider, model, tokens, cost, duration and outcome
   (`model_attempts`); the Hub shows the source of each response.
 * Cloudflare work is closed (`docs/cloudflare-reliability.md`).
@@ -157,7 +159,7 @@ worker `src/coding-worker.js`; full description in `docs/coding-agent.md`.
 | --- | --- |
 | Tool Broker: discovery, AUTO / APPROVAL / DENY grants, audit (`tool_executions`), redaction, result validation | DEPLOYED, TESTED |
 | GitHub (repo, PR, CI, merge, deploy watch), Supabase tools (read; writes need approval), web search/fetch, Telegram | DEPLOYED; Supabase self-check and Telegram pairing re-verified at every start |
-| Google Drive/Docs/Sheets (search/read in the Office folder; create-only writes; no delete or share) | IMPLEMENTED, TESTED — **PENDING OWNER ACTION** (OAuth production publish + re-consent; no Office run has used Drive yet). Privacy policy DEPLOYED at `/privacy` and `/privacy/ar` (2026-10-28, `dad6ac9`; Limited Use wording aligned with the listed service providers in the V3.0 final closure) |
+| Google Drive/Docs/Sheets (search/read in the Office folder; create-only writes; no delete or share) | **E2E VERIFIED** 2026-10-29: objective `7bb71b4e`, CHIEF → RESEARCH → `drive_search` + `drive_read` in the Office folder → CHIEF synthesis ([operations check](V3-OPERATIONS-CHECK-2026-10-29.md) §1). Token longevity past Google's 7-day Testing limit is still unproven (check scheduled 2026-11-05; OAuth production publish is the owner's). Privacy policy DEPLOYED at `/privacy` and `/privacy/ar` (2026-10-28, `dad6ac9`; Limited Use wording aligned with the listed service providers in the V3.0 final closure) |
 | Hub auth (email OTP), Origin check on writes, RLS deny-by-default (service role only) | DEPLOYED. Supabase security advisor 2026-10-28: 0 ERROR; 1 WARN (leaked-password protection, owner's choice) |
 | Bulk-delete guard + append-only audit | APPLIED 2026-10-28; approved cleanups opt in per transaction |
 | Deploy: forced-command SSH, candidate build, health observations, automatic rollback | DEPLOYED |
@@ -319,7 +321,7 @@ Ordered by value. None blocks daily use of the Office.
   production state is read from Supabase and GitHub.
 * Go and Rust repositories are not supported by the worker image.
 * External CLI coding workers are disabled (owner logins).
-* Google Workspace is not connected (owner OAuth).
+* Google Workspace is connected; whether its refresh token outlives Google's 7-day Testing limit is unproven until the 2026-11-05 check.
 * No independent backup or restore drill has been performed by the agent.
 * Free model capacity varies; long objectives may wait for capacity (they
   resume by themselves) — that is by design under the $2 cap.
