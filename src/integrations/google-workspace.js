@@ -66,6 +66,12 @@ export function wantsGoogleWorkspace(text) {
   return INTENT.test(String(text || ''));
 }
 
+// Writes land in Fahad's real Drive, so a file is created only on his request:
+// a live "is Drive connected?" question once made RESEARCH create a test Doc
+// and Sheet (job 1a96a5c5). The rule sits in the tool itself because CHIEF
+// writes RESEARCH's brief and may leave it out.
+const CREATE_ONLY_WHEN_ASKED = 'Use only when Fahad explicitly asks for a new file; never to test or prove the connection (drive_search / drive_read do that).';
+
 export const GOOGLE_WORKSPACE_TOOLS = Object.freeze({
   read: [
     {
@@ -82,12 +88,12 @@ export const GOOGLE_WORKSPACE_TOOLS = Object.freeze({
   write: [
     {
       name: 'docs_create',
-      description: "Create a NEW Google Doc in Fahad's Office folder from Markdown (headings, lists, tables). Returns its link. Never edits existing files.",
+      description: `Create a NEW Google Doc in Fahad's Office folder from Markdown (headings, lists, tables). Returns its link. Never edits existing files. ${CREATE_ONLY_WHEN_ASKED}`,
       inputSchema: { type: 'object', properties: { title: { type: 'string' }, markdown: { type: 'string' } }, required: ['title', 'markdown'] },
     },
     {
       name: 'sheets_create',
-      description: "Create a NEW Google Sheet in Fahad's Office folder from rows (first row = header). Returns its link. Never edits existing files.",
+      description: `Create a NEW Google Sheet in Fahad's Office folder from rows (first row = header). Returns its link. Never edits existing files. ${CREATE_ONLY_WHEN_ASKED}`,
       inputSchema: {
         type: 'object',
         // Cells are strings (numbers as text): some providers refuse union types in tool schemas.

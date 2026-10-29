@@ -29,6 +29,9 @@ test('status, tools and intent: nothing is offered until configured; writes need
   assert.deepEqual(googleWorkspaceTools({}), []);
   assert.deepEqual(googleWorkspaceTools(READ), [], 'credentials alone grant nothing: reads stay inside the Office folder by default');
   assert.deepEqual(googleWorkspaceTools(FULL).map((tool) => tool.name), ['drive_search', 'drive_read', 'docs_create', 'sheets_create']);
+  for (const tool of googleWorkspaceTools(FULL).filter((tool) => tool.name.endsWith('_create'))) {
+    assert.match(tool.description, /only when Fahad explicitly asks for a new file; never to test or prove the connection/, `${tool.name} creates a file only on Fahad's request, whatever brief CHIEF wrote`);
+  }
   assert.deepEqual(googleWorkspaceTools(WHOLE_DRIVE).map((tool) => tool.name), ['drive_search', 'drive_read'], 'whole-Drive reading only by explicit choice');
   assert.deepEqual(googleWorkspaceStatus(READ).missing, ['GOOGLE_DRIVE_OFFICE_FOLDER_ID']);
   assert.deepEqual([googleWorkspaceStatus(FULL).readScope, googleWorkspaceStatus(WHOLE_DRIVE).readScope], ['folder', 'drive']);
