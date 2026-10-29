@@ -1,4 +1,4 @@
-import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validatePlan } from './chief.js';
+import { WORKFLOW_LIMITS, chiefJob, planJob, reviewResearch, validateOrchestration, validatePlan } from './chief.js';
 import { DISPATCHABLE, mentionedEmployees, officeAgent } from './office/agents.js';
 import { converseDirect, parseConsultRequest, parseRevisionRequest, performOfficeWork, synthesizeWorkflow } from './office/specialist.js';
 import { parseArtifacts, parseSources } from './office/artifacts.js';
@@ -248,6 +248,10 @@ export class OfficeWorkflow {
       ...(this.modelRunner ? { run: this.poolRun(task, STAGES.PLAN, { job, request, preference, validate: request.drills.escalate ? escalationDrill(validatePlan) : validatePlan }) } : {}),
     }));
 
+    // CHIEF plans without tools; the Drive/Docs/Sheets tools are offered only to
+    // employees with web tools. A direct answer to a Google Workspace request
+    // could only claim "no access", so the request goes to RESEARCH instead.
+    if (outcome.plan.route === 'answer' && wantsGoogleWorkspace(request.goal)) outcome.plan = workspacePlan(request.goal, outcome.plan);
     if (outcome.plan.route === 'answer') return this.finishWithAnswer(task, outcome, outcome.plan.answer, 'Chief answered directly.');
     if (outcome.plan.route === 'development') return this.launchDevelopment(task, outcome, context, request);
     if (outcome.plan.route === 'orchestrate') return this.dispatchWorkflow(task, outcome);
@@ -1103,6 +1107,20 @@ export function decodeBrief(value) {
     throw new Error('Task does not belong to the supported Step 3C workflow');
   }
   return brief;
+}
+
+// One RESEARCH workstream that carries Fahad's Google Workspace request.
+export function workspacePlan(goal, plan = {}) {
+  return validateOrchestration({
+    route: 'orchestrate',
+    plan_summary: String(plan.plan_summary || 'Google Drive request handled by RESEARCH.').slice(0, 200),
+    workstreams: [{
+      id: 'google-workspace', agent: 'research', title: 'Google Drive',
+      brief: `Fahad's request uses his Google Drive / Docs / Sheets. Use the drive_search and drive_read tools (and docs_create / sheets_create only if he asks to create a file) to do exactly what he asks, and report the file names, links and findings. If a tool fails, quote its error code. Request: ${goal}`,
+      depends_on: [],
+    }],
+    synthesis_brief: 'Give Fahad the result of the Google Drive work: what was found or read (with file names and links) or the exact error.',
+  });
 }
 
 function hasWebTools(tools = []) {

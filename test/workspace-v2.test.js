@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { OfficeWorkflow } from '../src/workflow.js';
-import { validatePlan } from '../src/chief.js';
+import { planJob, validatePlan } from '../src/chief.js';
 import { buildJobContext } from '../src/job-context.js';
 import { taskTimeline, taskNow, ownerAction, attentionFrom, autoTitle, parseOwnerQuestion, approvalCard, taskView } from '../src/hub-workspace.js';
 import { MemoryStore } from '../testing/fixtures/office-memory-store.js';
@@ -41,6 +41,30 @@ test('"answer": the Chief replies in one step with the conversation context in i
   assert.equal(store.jobs[0].status, 'completed');
   assert.equal(store.tasks.length, 1, 'no specialist task was created');
   assert.ok(store.results.some((result) => /\$2\/month/.test(result.content)));
+});
+
+test('a Google Drive request is never answered by CHIEF (no tools): it goes to RESEARCH, which is offered the Drive tools', async () => {
+  const store = new MemoryStore({ goal: 'ابحث في Google Drive عن ملف موجود عندي، وافتحه واقرأ محتواه.' });
+  const seen = [];
+  const workflow = new OfficeWorkflow({ store, plan: chiefReturning({ route: 'answer', answer: 'لا أستطيع الوصول إلى Google Drive.', plan_summary: 'No access' }, seen), recoveryIntervalMs: Infinity });
+  await workflow.runOnce();
+  const research = store.tasks.find((task) => task.agent_slug === 'research-strategy');
+  assert.ok(research, 'a RESEARCH workstream was created');
+  assert.match(research.brief, /drive_search/);
+  assert.ok(store.tasks.some((task) => task.title === 'Chief synthesis'));
+  assert.ok(!store.results.some((result) => /لا أستطيع الوصول/.test(result.content)), 'the no-access answer is not delivered');
+  // A request that does not name Drive keeps the direct answer.
+  const plain = new MemoryStore({ goal: 'Hello there' });
+  await drain(new OfficeWorkflow({ store: plain, plan: chiefReturning({ route: 'answer', answer: 'Hello Fahad!', plan_summary: 'Greeting' }), recoveryIntervalMs: Infinity }));
+  assert.equal(plain.tasks.length, 1);
+});
+
+test('the Chief prompt tells it to orchestrate RESEARCH for Google Drive requests', async () => {
+  let prompt = '';
+  await planJob({ agent: { system_prompt: '' }, goal: 'Read my Google Docs report', run: async (input) => { prompt = input.prompt; return { text: '{"route":"answer","answer":"x","plan_summary":"x"}' }; } });
+  assert.match(prompt, /FAHAD ASKS FOR GOOGLE DRIVE/);
+  await planJob({ agent: { system_prompt: '' }, goal: 'Hello', run: async (input) => { prompt = input.prompt; return { text: '{"route":"answer","answer":"x","plan_summary":"x"}' }; } });
+  assert.doesNotMatch(prompt, /FAHAD ASKS FOR GOOGLE DRIVE/);
 });
 
 test('"development": the Chief launches a Coding Agent task linked to the conversation', async () => {
