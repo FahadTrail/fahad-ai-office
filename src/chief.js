@@ -2,6 +2,7 @@ import { CHIEF_MAX_TURNS, CHIEF_MODEL } from './config.js';
 import { runModel } from './model-runner.js';
 import { ACTIVE_AGENTS, DISPATCHABLE, NICKNAMES, mentionedEmployees, officeAgent } from './office/agents.js';
 import { languageInstruction, officeFacts } from './office/language.js';
+import { wantsGoogleWorkspace } from './integrations/google-workspace.js';
 
 const SPECIALIST_ROLES = ['research', 'content', 'branding', 'seo', 'finance'];
 
@@ -45,6 +46,7 @@ export async function planJob({ agent, goal, context = '', run = runModel, onAct
       'Fahad\'s CURRENT message, whatever language earlier turns or the project context use.',
       '',
       context ? `CONTEXT (project and earlier messages in this conversation):\n${context}\n` : '',
+      wantsGoogleWorkspace(goal) ? 'FAHAD ASKS FOR GOOGLE DRIVE / DOCS / SHEETS. You have no Drive tools; RESEARCH does (search, read, create in the Office folder). Do not choose "answer": orchestrate a "research" workstream that does the Drive work.' : '',
       named.length ? `EMPLOYEES FAHAD NAMED IN THIS MESSAGE: ${named.map((key) => officeAgent(key).label).join(', ')} — route to them.` : '',
       `FAHAD'S MESSAGE: ${goal}`,
     ].join('\n'),
